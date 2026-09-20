@@ -128,14 +128,21 @@ Doğrulama sırası şu şekildedir:
 
 ## Sürümleme ve yayın
 
-`vX.Y.Z` etiketi yalnız güncel `main` commit'ini gösteriyorsa ve etiket sürümü
-Dockerfile içindeki Keycloak sürümüyle eşleşiyorsa kabul edilir.
+`main` geliştirme ve entegrasyon dalıdır. Canlı adayları yalnız `production`
+dalından çıkar. `production` dalına gönderilen her commit tam doğrulamadan sonra
+`production` ve değişmez `sha-<commit>` imaj etiketlerini üretir.
+
+`vX.Y.Z` etiketi yalnız güncel `production` commit'ini gösteriyorsa ve etiket
+sürümü Dockerfile içindeki Keycloak sürümüyle eşleşiyorsa kabul edilir. Bu etiket
+aynı test edilmiş imajı `X.Y.Z` ve `latest` adlarıyla da yayınlar. Böylece dal
+tabanlı canlı dağıtım korunurken kesin geri dönüş noktaları kaybolmaz.
 
 Korunan derleme işi registry yazma yetkisi almaz. Aday imajı test eder, fiziksel
 WebAuthn kapısını doğrular ve imaj kimliği, commit SHA'sı, tema JAR'ı ile
 checksum'ları bir günlük kısa ömürlü artefakta koyar. Yalnız ona bağlı yayın işi
-`packages: write` yetkisi alır; aktarılan aynı imajı `X.Y.Z`, `latest`, `main`
-ve `production` etiketleriyle GHCR'a gönderir.
+`packages: write` yetkisi alır; aktarılan aynı imajı yayın türüne göre
+`sha-<commit>`, `production`, `X.Y.Z` ve `latest` etiketleriyle GHCR'a gönderir.
+`main` adlı imaj etiketi yayınlanmaz.
 
 Üretim kurulumu değişebilir etiketle değil, iş akışının kaydettiği değişmez
 manifest digest'iyle yapılır. Ayrıntılı geçiş ve geri dönüş adımları

@@ -79,7 +79,7 @@ grep -Fq "image: $RABBITMQ_IMAGE" "$SCRIPT_DIR/docker-compose.integration.yml" \
 
 grep -Fq 'pull_request:' "$KEYCLOAK_CI" \
   || fail 'Keycloak CI must run on pull requests'
-grep -Fq 'branches: [main]' "$KEYCLOAK_CI" \
-  || fail 'Keycloak CI must run on main pushes'
+grep -Fq 'branches: [main, production]' "$KEYCLOAK_CI" \
+  || fail 'Keycloak CI must run on main and production pushes'
 
 printf 'Keycloak and fixture image versions are consistent.\n'

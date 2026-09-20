@@ -142,11 +142,14 @@ job.
 
 ## 5. Immutable artifact and proxy boundary
 
-The release workflow builds one candidate, tests that local image, and pushes
-the same image as the version plus the `latest`, `main` and `production`
-aliases. Those mutable aliases move only after the tagged release passes the
-physical WebAuthn gate. The workflow records the registry manifest digest in
-its summary. The repository is hardcoded in Compose as
+The release workflow builds one candidate and tests that local image. A push
+to the `production` branch publishes those exact bytes under `production` and
+the immutable `sha-<commit>` alias. A `vX.Y.Z` tag is accepted only when it
+points at the current `production` commit and matches the Keycloak version in
+the Dockerfile; it additionally publishes `X.Y.Z` and `latest`. The `main`
+branch and image alias cannot advance production. Every publication passes the
+physical WebAuthn gate, and the workflow records the registry manifest digest
+in its summary. The repository is hardcoded in Compose as
 `ghcr.io/skylab-kulubu/e-skylab-keycloak`; operators can supply only the 64
 hexadecimal characters after `sha256:` as `KEYCLOAK_IMAGE_DIGEST`. Production
 compose constructs one exact `repository@sha256:digest` for runtime, preflight

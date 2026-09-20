@@ -100,6 +100,12 @@ end
 
 def assert_release_boundary(workflow)
   document = YAML.load_file(workflow, aliases: true)
+  triggers = document[true] || document["on"]
+  push = triggers.fetch("push")
+  unless push.fetch("branches") == ["production"] && push.fetch("tags") == ["v*"]
+    abort "#{workflow} must publish only from production and semantic version tags"
+  end
+
   build_job = document.fetch("jobs").fetch("keycloak-build")
   publish_job = document.fetch("jobs").fetch("keycloak-publish")
   build_steps = build_job.fetch("steps")
@@ -148,20 +154,43 @@ def assert_release_boundary(workflow)
     abort "#{workflow} keycloak-publish must load the tested artifact, not rebuild it"
   end
 
+  source_guard = build_steps.find do |step|
+    step.fetch("name", "") == "Require the release to point at current production"
+  end&.fetch("run", "")
+  unless source_guard&.include?("origin/production") && !source_guard.include?("origin/main")
+    abort "#{workflow} must bind branch and version releases to current production"
+  end
+
   publication = publish_steps.fetch(publish_index).fetch("run", "")
-  for alias_name in ["latest", "main", "production"]
+  for alias_name in ["production", "latest"]
     unless publication.include?(%($PUBLISH_IMAGE:#{alias_name}))
       abort "#{workflow} tested Keycloak release must publish the #{alias_name} alias"
     end
   end
+  unless publication.include?('$PUBLISH_IMAGE:sha-$GITHUB_SHA')
+    abort "#{workflow} must publish an immutable commit alias"
+  end
+  if publication.include?('$PUBLISH_IMAGE:main')
+    abort "#{workflow} must not publish production bytes through a main alias"
+  end
   unless publication.include?('published_images=(') &&
       publication.include?('docker image inspect') &&
       publication.include?('docker buildx imagetools inspect --raw') &&
-      publication.include?('test "$version_digest" = "$alias_digest"')
+      publication.include?('test "$commit_digest" = "$alias_digest"')
     abort "#{workflow} all release aliases must be bound to the tested image ID and manifest digest"
   end
 end
 
+def assert_ci_branches(workflow)
+  document = YAML.load_file(workflow, aliases: true)
+  triggers = document[true] || document["on"]
+  branches = triggers.fetch("push").fetch("branches")
+  unless branches == ["main", "production"]
+    abort "#{workflow} must validate both main and production pushes"
+  end
+end
+
+assert_ci_branches(File.join(root, ".github/workflows/ci.yml"))
 assert_order(File.join(root, ".github/workflows/ci.yml"), "integration")
 assert_order(File.join(root, ".github/workflows/release.yml"), "keycloak-build")
 assert_release_boundary(File.join(root, ".github/workflows/release.yml"))

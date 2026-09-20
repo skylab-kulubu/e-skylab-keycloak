@@ -139,9 +139,24 @@ def assert_release_boundary(workflow)
   verify_index = publish_steps.index { |step| step.fetch("name", "") == "Verify and load the tested candidate" }
   login_index = publish_steps.index { |step| step.fetch("uses", "") == "docker/login-action@v4" }
   publish_index = publish_steps.index { |step| step.fetch("name", "") == "Publish the tested image bytes" }
+  webhook_index = publish_steps.index { |step| step.fetch("name", "") == "Trigger the production Dokploy deployment" }
   unless download_index && verify_index && login_index && publish_index &&
       download_index < verify_index && verify_index < login_index && login_index < publish_index
     abort "#{workflow} keycloak-publish must verify the transferred bytes before registry login and publication"
+  end
+  unless webhook_index && publish_index < webhook_index
+    abort "#{workflow} must trigger Dokploy only after the tested image bytes are published"
+  end
+
+  webhook = publish_steps.fetch(webhook_index)
+  unless webhook["if"] == "github.ref == 'refs/heads/production'" &&
+      webhook.fetch("env", {}).fetch("DOKPLOY_DEPLOY_HOOK", nil) == "${{ secrets.DOKPLOY_DEPLOY_HOOK }}"
+    abort "#{workflow} Dokploy deployment must be production-only and use the repository secret"
+  end
+  webhook_command = webhook.fetch("run", "")
+  unless webhook_command.include?('curl') && webhook_command.include?('DOKPLOY_DEPLOY_HOOK') &&
+      webhook_command.include?('response_code')
+    abort "#{workflow} Dokploy deployment must validate the webhook HTTP response"
   end
 
   verification = publish_steps.fetch(verify_index).fetch("run", "")

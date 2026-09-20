@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import skyLabLogoUrl from "../assets/skylab-logo.png";
 import skyLabWatermarkUrl from "../assets/skylab-watermark.svg";
+import AnimatedSkyLabLogo from "./AnimatedSkyLabLogo";
 
 type LegacyFrameProps = {
   children: ReactNode;
@@ -51,7 +51,7 @@ export default function LegacyFrame(props: LegacyFrameProps) {
       <main id={mainId} className="sl-legacy-main" tabIndex={-1}>
         <div className="sl-legacy-stack">
           <header className="sl-legacy-logo">
-            <img src={skyLabLogoUrl} alt="SKY LAB" />
+            <AnimatedSkyLabLogo />
           </header>
 
           <section className="sl-legacy-card" aria-labelledby={titleId}>

@@ -7,7 +7,7 @@ Only the two original brand image assets were carried forward.
 ## Runtime contract
 
 - Keycloakify is pinned to `11.16.0` and targets Keycloak `26.7.4` through the
-  single `all-other-versions` artifact `e-skylab-theme-2.0.0.jar`.
+  single `all-other-versions` artifact `e-skylab-theme-2.0.1.jar`.
 - The foundation image builds the theme from this directory and installs one
   login-theme JAR. A checked-in generated JAR is not used.
 - The WebAuthn registration context must retain `authenticatorAttachment`,

@@ -10,7 +10,7 @@ export default defineConfig({
       themeName: "e-skylab-theme",
       keycloakVersionTargets: {
         "22-to-25": false,
-        "all-other-versions": "e-skylab-theme-2.0.0.jar"
+        "all-other-versions": "e-skylab-theme-2.0.1.jar"
       }
     })
   ]

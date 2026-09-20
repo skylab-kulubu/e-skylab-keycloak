@@ -4,7 +4,7 @@ set -Eeuo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 KEYCLOAK_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
 THEME_DIR="$KEYCLOAK_DIR/theme"
-THEME_JAR=${THEME_JAR:-$THEME_DIR/dist_keycloak/e-skylab-theme-2.0.0.jar}
+THEME_JAR=${THEME_JAR:-$THEME_DIR/dist_keycloak/e-skylab-theme-2.0.1.jar}
 THEME_JAR_DIR=$(cd -- "$(dirname -- "$THEME_JAR")" && pwd)
 THEME_JAR="$THEME_JAR_DIR/$(basename -- "$THEME_JAR")"
 
@@ -36,6 +36,7 @@ jq -e '.themes == [{"name":"e-skylab-theme","types":["login"]}]' <<<"$theme_meta
   || fail 'theme metadata exposes an unexpected name or theme type'
 
 bundle_text=$(unzip -p "$THEME_JAR" 'theme/e-skylab-theme/login/resources/dist/assets/*.js')
+bundle_css=$(unzip -p "$THEME_JAR" 'theme/e-skylab-theme/login/resources/dist/assets/*.css')
 for required_token in \
   residentKey \
   requireResidentKey \
@@ -44,10 +45,14 @@ for required_token in \
   isSetRetry \
   rememberMe \
   '30 gün boyunca tekrar sorma' \
+  data-skylab-logo-animation \
   mediation; do
   grep -Fq "$required_token" <<<"$bundle_text" \
     || fail "generated theme bundle lost $required_token"
 done
+
+grep -Fq 'sl-legacy-logo-draw' <<<"$bundle_css" \
+  || fail 'generated theme bundle lost the SKY LAB logo drawing animation'
 
 if grep -Fq '\${execution}' <<<"$bundle_text"; then
   fail 'WebAuthn retry still contains the historical literal execution defect'

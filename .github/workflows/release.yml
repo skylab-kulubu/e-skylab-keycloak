@@ -2,6 +2,8 @@ name: Release
 
 on:
   push:
+    branches:
+      - production
     tags:
       - 'v*'
 
@@ -23,13 +25,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Require the tag to point at current main
+      - name: Require the release to point at current production
         run: |
-          git fetch --no-tags origin main
-          tagged_commit=$(git rev-parse "${GITHUB_SHA}^{commit}")
-          main_commit=$(git rev-parse origin/main)
-          if [[ "$tagged_commit" != "$main_commit" ]]; then
-            echo "The Keycloak release tag must point at the current main commit." >&2
+          git fetch --no-tags origin production
+          release_commit=$(git rev-parse "${GITHUB_SHA}^{commit}")
+          production_commit=$(git rev-parse origin/production)
+          if [[ "$release_commit" != "$production_commit" ]]; then
+            echo "The Keycloak release must point at the current production commit." >&2
             exit 1
           fi
 
@@ -60,18 +62,27 @@ jobs:
       - name: Extract and validate version
         id: get_version
         run: |
-          version=${GITHUB_REF#refs/tags/v}
           approved_version=$(sed -n \
             's|^ARG KEYCLOAK_IMAGE=.*keycloak:\([^@]*\)@sha256:.*|\1|p' \
             Dockerfile)
-          if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "The Keycloak release tag must contain a semantic version." >&2
+
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            version=${GITHUB_REF#refs/tags/v}
+            if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "The Keycloak release tag must contain a semantic version." >&2
+              exit 1
+            fi
+            if [[ "$version" != "$approved_version" ]]; then
+              echo "Tag version $version does not match image version $approved_version." >&2
+              exit 1
+            fi
+          elif [[ "$GITHUB_REF" == "refs/heads/production" ]]; then
+            version=$approved_version
+          else
+            echo "Only the production branch and semantic version tags may publish Keycloak." >&2
             exit 1
           fi
-          if [[ "$version" != "$approved_version" ]]; then
-            echo "Tag version $version does not match image version $approved_version." >&2
-            exit 1
-          fi
+
           echo "VERSION=$version" >> "$GITHUB_OUTPUT"
 
       - name: Build candidate image once
@@ -173,36 +184,44 @@ jobs:
         env:
           VERSION: ${{ needs.keycloak-build.outputs.version }}
         run: |
-          version_image="$PUBLISH_IMAGE:$VERSION"
-          latest_image="$PUBLISH_IMAGE:latest"
-          main_image="$PUBLISH_IMAGE:main"
+          commit_image="$PUBLISH_IMAGE:sha-$GITHUB_SHA"
           production_image="$PUBLISH_IMAGE:production"
           candidate_id=$(docker image inspect --format '{{.Id}}' "$KEYCLOAK_TEST_IMAGE")
 
           published_images=(
-            "$version_image"
-            "$latest_image"
-            "$main_image"
+            "$commit_image"
             "$production_image"
           )
+
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            published_images+=(
+              "$PUBLISH_IMAGE:$VERSION"
+              "$PUBLISH_IMAGE:latest"
+            )
+          fi
+
           for image in "${published_images[@]}"; do
             docker tag "$KEYCLOAK_TEST_IMAGE" "$image"
             test "$(docker image inspect --format '{{.Id}}' "$image")" = "$candidate_id"
             docker push "$image"
           done
 
-          version_digest="sha256:$(docker buildx imagetools inspect --raw "$version_image" | sha256sum | cut -d' ' -f1)"
+          commit_digest="sha256:$(docker buildx imagetools inspect --raw "$commit_image" | sha256sum | cut -d' ' -f1)"
           for image in "${published_images[@]:1}"; do
             alias_digest="sha256:$(docker buildx imagetools inspect --raw "$image" | sha256sum | cut -d' ' -f1)"
-            test "$version_digest" = "$alias_digest"
+            test "$commit_digest" = "$alias_digest"
           done
 
           {
             echo "### Tested Keycloak artifact"
             echo
-            echo "\`$version_image@$version_digest\`"
+            echo "\`$commit_image@$commit_digest\`"
             echo
-            echo "Mutable aliases: \`latest\`, \`main\`, \`production\`"
+            echo "Production alias: \`production\`"
+            if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+              echo
+              echo "Version aliases: \`$VERSION\`, \`latest\`"
+            fi
             echo
             echo "Candidate commit: \`$GITHUB_SHA\`"
           } >> "$GITHUB_STEP_SUMMARY"

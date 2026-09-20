@@ -1,4 +1,24 @@
-# SKY LAB Keycloak image
+<div align="center">
+  <a href="https://yildizskylab.com">
+    <img src="https://raw.githubusercontent.com/skylab-kulubu/skylab-assets/main/logos/skylab/skylab-colored.svg" alt="SKY LAB Logo" width="120" />
+  </a>
+
+  <h1>SKY LAB Keycloak</h1>
+
+  <p>
+    SKY LAB kimlik altyapısının optimize edilmiş çalışma zamanı,<br />
+    giriş teması ve kimlik uzantıları.
+  </p>
+
+  <p>
+    <a href="https://github.com/skylab-kulubu/e-skylab-keycloak/actions/workflows/ci.yml"><img src="https://github.com/skylab-kulubu/e-skylab-keycloak/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+    <img src="https://img.shields.io/badge/Keycloak-26.7.4-4D4D4D?style=flat-square&logo=keycloak" alt="Keycloak 26.7.4" />
+    <img src="https://img.shields.io/badge/Java-21-ED8B00?style=flat-square&logo=openjdk&logoColor=white" alt="Java 21" />
+    <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker Ready" />
+  </p>
+</div>
+
+---
 
 This repository owns the Keycloak runtime used by `e.yildizskylab.com`.
 

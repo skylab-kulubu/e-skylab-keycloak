@@ -115,12 +115,12 @@ jobs:
           trap 'docker rm -f "$candidate_container" >/dev/null 2>&1 || true' EXIT
           docker cp "$candidate_container:/opt/keycloak/providers/." "$provider_dir/"
           test "$(find "$provider_dir" -maxdepth 1 -type f -name 'e-skylab-theme-*.jar' | wc -l | tr -d ' ')" = 1
-          cp "$provider_dir/e-skylab-theme-2.0.0.jar" "$artifact_dir/"
-          THEME_JAR="$artifact_dir/e-skylab-theme-2.0.0.jar" \
+          cp "$provider_dir/e-skylab-theme-2.0.1.jar" "$artifact_dir/"
+          THEME_JAR="$artifact_dir/e-skylab-theme-2.0.1.jar" \
             bash tests/check-theme-contract.sh
           (
             cd "$artifact_dir"
-            sha256sum candidate-image.tar.gz e-skylab-theme-2.0.0.jar > SHA256SUMS
+            sha256sum candidate-image.tar.gz e-skylab-theme-2.0.1.jar > SHA256SUMS
           )
 
       - name: Upload the commit-bound tested candidate
@@ -167,8 +167,8 @@ jobs:
           trap 'docker rm -f "$candidate_container" >/dev/null 2>&1 || true' EXIT
           docker cp "$candidate_container:/opt/keycloak/providers/." "$provider_dir/"
           test "$(find "$provider_dir" -maxdepth 1 -type f -name 'e-skylab-theme-*.jar' | wc -l | tr -d ' ')" = 1
-          cmp "$provider_dir/e-skylab-theme-2.0.0.jar" "$CANDIDATE_DIR/e-skylab-theme-2.0.0.jar"
-          THEME_JAR="$CANDIDATE_DIR/e-skylab-theme-2.0.0.jar" \
+          cmp "$provider_dir/e-skylab-theme-2.0.1.jar" "$CANDIDATE_DIR/e-skylab-theme-2.0.1.jar"
+          THEME_JAR="$CANDIDATE_DIR/e-skylab-theme-2.0.1.jar" \
             bash tests/check-theme-contract.sh
 
       - uses: docker/setup-buildx-action@v4
@@ -225,3 +225,30 @@ jobs:
             echo
             echo "Candidate commit: \`$GITHUB_SHA\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Trigger the production Dokploy deployment
+        if: github.ref == 'refs/heads/production'
+        env:
+          DOKPLOY_DEPLOY_HOOK: ${{ secrets.DOKPLOY_DEPLOY_HOOK }}
+        run: |
+          if [[ -z "$DOKPLOY_DEPLOY_HOOK" ]]; then
+            echo "DOKPLOY_DEPLOY_HOOK is required for production deployment." >&2
+            exit 1
+          fi
+
+          response_file=$(mktemp)
+          trap 'rm -f "$response_file"' EXIT
+          response_code=$(
+            curl --silent --show-error \
+              --output "$response_file" \
+              --write-out '%{http_code}' \
+              --user-agent 'DokployDeployHook/1.0' \
+              --request POST \
+              "$DOKPLOY_DEPLOY_HOOK"
+          )
+
+          echo "Dokploy hook HTTP $response_code"
+          if [[ ! "$response_code" =~ ^2[0-9][0-9]$ ]]; then
+            echo "Dokploy did not accept the production deployment request." >&2
+            exit 1
+          fi

@@ -133,11 +133,36 @@
   justify-content: center;
 }
 
-.sl-legacy-logo img {
-  width: auto;
+.sl-legacy-logo__animation {
+  width: 8.5rem;
   height: 8rem;
-  object-fit: contain;
+  color: var(--sl-legacy-accent);
   filter: drop-shadow(0 0 30px rgba(224, 200, 229, 0.3));
+}
+
+.sl-legacy-logo__svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.sl-legacy-logo__svg path {
+  fill: currentColor;
+  fill-opacity: 0;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-opacity: 1;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  vector-effect: non-scaling-stroke;
+  animation-name: sl-legacy-logo-draw, sl-legacy-logo-fill, sl-legacy-logo-stroke-fade;
+  animation-duration: 2s, 0.8s, 0.5s;
+  animation-delay:
+    calc(0.6s + var(--sl-logo-path-index) * 0.08s),
+    calc(2.1s + var(--sl-logo-path-index) * 0.08s),
+    calc(2.9s + var(--sl-logo-path-index) * 0.08s);
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1), ease-out, ease-out;
+  animation-fill-mode: both;
 }
 
 .sl-legacy-card,
@@ -507,6 +532,24 @@
   }
 }
 
+@keyframes sl-legacy-logo-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes sl-legacy-logo-fill {
+  to {
+    fill-opacity: 1;
+  }
+}
+
+@keyframes sl-legacy-logo-stroke-fade {
+  to {
+    stroke-opacity: 0;
+  }
+}
+
 @media (max-width: 48rem) {
   .sl-legacy-background__mark {
     right: -70%;
@@ -519,7 +562,8 @@
     max-width: 24rem;
   }
 
-  .sl-legacy-logo img {
+  .sl-legacy-logo__animation {
+    width: 6.4rem;
     height: 6rem;
   }
 
@@ -574,5 +618,12 @@
 
   .sl-legacy-background__mark {
     opacity: 0.14;
+  }
+
+  .sl-legacy-logo__svg path {
+    animation: none;
+    fill-opacity: 1;
+    stroke-opacity: 0;
+    stroke-dashoffset: 0;
   }
 }

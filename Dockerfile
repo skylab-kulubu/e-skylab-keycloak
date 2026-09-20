@@ -30,7 +30,7 @@ COPY theme/scripts ./scripts
 COPY theme/src ./src
 RUN npm test && npm run build-keycloak-theme && \
     test "$(find dist_keycloak -maxdepth 1 -type f -name '*.jar' | wc -l | tr -d ' ')" = 1 && \
-    test -f dist_keycloak/e-skylab-theme-2.0.0.jar
+    test -f dist_keycloak/e-skylab-theme-2.0.1.jar
 
 FROM ${KEYCLOAK_IMAGE} AS builder
 
@@ -41,7 +41,7 @@ ENV KC_DB=postgres \
 
 COPY --from=providers --chown=keycloak:keycloak --chmod=0644 /build/spi/target/e-skylab-spi-1.8.0.jar /opt/keycloak/providers/e-skylab-spi-1.8.0.jar
 COPY --from=providers --chown=keycloak:keycloak --chmod=0644 /build/rabbitmq-provider/target/keycloak-to-rabbit-3.1.0.jar /opt/keycloak/providers/keycloak-to-rabbit-3.1.0.jar
-COPY --from=theme --chown=keycloak:keycloak --chmod=0644 /build/theme/dist_keycloak/e-skylab-theme-2.0.0.jar /opt/keycloak/providers/e-skylab-theme-2.0.0.jar
+COPY --from=theme --chown=keycloak:keycloak --chmod=0644 /build/theme/dist_keycloak/e-skylab-theme-2.0.1.jar /opt/keycloak/providers/e-skylab-theme-2.0.1.jar
 
 # Keep provider mtimes stable across Docker implementations. Keycloak records them
 # while augmenting the optimized image and checks them again at runtime.

@@ -10,6 +10,14 @@ test("login uses semantic landmarks and preserves remember-me for passkeys", asy
   await expect(page.getByRole("button", { name: "Erişim anahtarı ile giriş yap" })).toBeVisible();
   await expect(page.getByRole("contentinfo")).toContainText("e-skylab by WEBLAB");
 
+  const logo = page.locator('[data-skylab-logo-animation="draw"]');
+  await expect(logo).toBeVisible();
+  await expect(logo.locator("path")).toHaveCount(19);
+  await expect(logo.locator("path").first()).toHaveCSS(
+    "animation-name",
+    "sl-legacy-logo-draw, sl-legacy-logo-fill, sl-legacy-logo-stroke-fade"
+  );
+
   await page.getByRole("button", { name: "YTÜ Öğrencisi Değilim" }).click();
   await expect(page.getByRole("button", { name: "Giriş yap", exact: true })).toBeVisible();
 
@@ -51,6 +59,12 @@ test("known-username pages keep a labelled landmark and page heading", async ({ 
 test("reduced motion and secondary-button contrast survive hover", async ({ browser }) => {
   const context = await browser.newContext({ reducedMotion: "reduce", locale: "tr-TR" });
   const page = await context.newPage();
+  await page.goto("/?page=login.ftl");
+
+  const logoPath = page.locator('[data-skylab-logo-animation="draw"] path').first();
+  await expect(logoPath).toHaveCSS("animation-name", "none");
+  await expect(logoPath).toHaveCSS("fill-opacity", "1");
+
   await page.goto("/?page=login-update-password.ftl");
 
   const glow = page.locator(".sl-glow").first();

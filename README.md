@@ -41,7 +41,7 @@ realm ayarı bırakmamaktır.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
 - `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.8.0`),
-  kaynaktan derlenen bir SKY LAB giriş teması (`2.0.0`) ve bir RabbitMQ olay
+  kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.1.0`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
   etkinleştirilir.
@@ -143,6 +143,20 @@ checksum'ları bir günlük kısa ömürlü artefakta koyar. Yalnız ona bağlı
 `packages: write` yetkisi alır; aktarılan aynı imajı yayın türüne göre
 `sha-<commit>`, `production`, `X.Y.Z` ve `latest` etiketleriyle GHCR'a gönderir.
 `main` adlı imaj etiketi yayınlanmaz.
+
+`production` imajı başarıyla yayımlandıktan sonra iş akışı
+`DOKPLOY_DEPLOY_HOOK` GitHub secret'ını çağırır. Secret eksikse veya Dokploy
+2xx dışında yanıt verirse yayın işi bunu sessizce geçmez. Webhook adresini
+sohbete ya da diske yazmadan kurmak veya döndürmek için:
+
+```bash
+./scripts/setup-production-webhook.sh
+```
+
+Sihirbaz adresi yalnız terminalde gizli olarak alır, hedefi onaylatır ve
+`skylab-kulubu/e-skylab-keycloak` deposunun GitHub Actions secret'ına kaydeder.
+Webhook'u kurulum sırasında çağırmaz; ilk çağrı sonraki `production` yayınında
+yapılır.
 
 Üretim kurulumu değişebilir etiketle değil, iş akışının kaydettiği değişmez
 manifest digest'iyle yapılır. Ayrıntılı geçiş ve geri dönüş adımları

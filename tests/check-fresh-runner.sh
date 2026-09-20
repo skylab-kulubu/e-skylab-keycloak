@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/../.." && pwd)
+REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 MISSING_IMAGE="account-keycloak-definitely-missing-$RANDOM-$$"
 INTEGRATION_COMPOSE="$SCRIPT_DIR/docker-compose.integration.yml"
 
@@ -71,13 +71,13 @@ def assert_order(workflow, job_name)
   job = document.fetch("jobs").fetch(job_name)
   steps = job.fetch("steps")
   static_index = steps.index do |step|
-    step.fetch("run", "").include?("keycloak/tests/check-fresh-runner.sh")
+    step.fetch("run", "").include?("tests/check-fresh-runner.sh")
   end
   build_index = steps.index do |step|
     step["uses"] == "docker/build-push-action@v7"
   end
   integration_index = steps.index do |step|
-    step.fetch("run", "").include?("keycloak/tests/run-integration.sh")
+    step.fetch("run", "").include?("tests/run-integration.sh")
   end
   unless static_index && build_index && integration_index &&
       static_index < build_index && build_index < integration_index
@@ -115,8 +115,8 @@ def assert_release_boundary(workflow)
     abort "#{workflow} keycloak-publish must depend on the tested and physically approved build job"
   end
 
-  integration_index = build_steps.index { |step| step.fetch("run", "").include?("keycloak/tests/run-integration.sh") }
-  gate_index = build_steps.index { |step| step.fetch("run", "").include?("keycloak/tests/check-physical-webauthn-release.sh") }
+  integration_index = build_steps.index { |step| step.fetch("run", "").include?("tests/run-integration.sh") }
+  gate_index = build_steps.index { |step| step.fetch("run", "").include?("tests/check-physical-webauthn-release.sh") }
   package_index = build_steps.index { |step| step.fetch("name", "") == "Package the tested image bytes" }
   upload_index = build_steps.index { |step| step.fetch("uses", "") == "actions/upload-artifact@v4" }
   unless integration_index && gate_index && package_index && upload_index &&
@@ -162,9 +162,9 @@ def assert_release_boundary(workflow)
   end
 end
 
-assert_order(File.join(root, ".github/workflows/keycloak-ci.yml"), "integration")
-assert_order(File.join(root, ".github/workflows/deploy.yml"), "keycloak-build")
-assert_release_boundary(File.join(root, ".github/workflows/deploy.yml"))
+assert_order(File.join(root, ".github/workflows/ci.yml"), "integration")
+assert_order(File.join(root, ".github/workflows/release.yml"), "keycloak-build")
+assert_release_boundary(File.join(root, ".github/workflows/release.yml"))
 RUBY
 
 printf 'Fresh-runner portability, explicit candidate wiring and workflow order checks passed.\n'

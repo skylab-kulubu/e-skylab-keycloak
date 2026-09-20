@@ -10,7 +10,7 @@ MAVEN_IMAGE='maven:3.9.11-eclipse-temurin-21@sha256:6fdc855a6ed81d288ca7ca37ac6f
 NODE_IMAGE='node:22.22.1-bookworm-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9ed5bfaf3d'
 POSTGRES_IMAGE='postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94'
 RABBITMQ_IMAGE='rabbitmq:4.2-management-alpine@sha256:643139a7e9b4d7e2c1d6a06295d0296c3c58e5de7666a09630b4564a15c951cd'
-KEYCLOAK_CI="$KEYCLOAK_DIR/../.github/workflows/keycloak-ci.yml"
+KEYCLOAK_CI="$KEYCLOAK_DIR/.github/workflows/ci.yml"
 
 fail() {
   printf 'version consistency failure: %s\n' "$1" >&2
@@ -77,7 +77,9 @@ fi
 grep -Fq "image: $RABBITMQ_IMAGE" "$SCRIPT_DIR/docker-compose.integration.yml" \
   || fail 'integration RabbitMQ image is not digest-pinned'
 
-[[ $(grep -Fc -- '- ".github/workflows/deploy.yml"' "$KEYCLOAK_CI") == 2 ]] \
-  || fail 'Keycloak CI must gate deploy workflow changes on pull request and main push'
+grep -Fq 'pull_request:' "$KEYCLOAK_CI" \
+  || fail 'Keycloak CI must run on pull requests'
+grep -Fq 'branches: [main]' "$KEYCLOAK_CI" \
+  || fail 'Keycloak CI must run on main pushes'
 
 printf 'Keycloak and fixture image versions are consistent.\n'

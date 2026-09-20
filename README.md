@@ -1,6 +1,6 @@
 # SKY LAB Keycloak image
 
-This directory owns the Keycloak runtime used by `e.yildizskylab.com`.
+This repository owns the Keycloak runtime used by `e.yildizskylab.com`.
 
 ## Runtime contract
 
@@ -81,15 +81,15 @@ falls back to the password form.
 Requirements: Docker, `bash`, `curl` and `jq`.
 
 ```bash
-docker build --platform linux/amd64 -t account-keycloak:test keycloak
-KEYCLOAK_TEST_IMAGE=account-keycloak:test bash keycloak/tests/run-integration.sh
+docker build --platform linux/amd64 -t account-keycloak:test .
+KEYCLOAK_TEST_IMAGE=account-keycloak:test bash tests/run-integration.sh
 ```
 
 For a local image build, use the standalone build definition. It deliberately
 does not inherit production's external-volume or preflight contract:
 
 ```bash
-docker compose -f keycloak/docker-compose.build.yml build
+docker compose -f docker-compose.build.yml build
 ```
 
 Static/render checks deliberately run before the candidate exists. After the
@@ -105,7 +105,7 @@ Keycloak admin event reaches RabbitMQ. Source-level Chromium coverage runs
 before the image build; the runtime fixture verifies the generated theme loads
 on Keycloak 26.7.4. Physical-authenticator evidence remains a release gate.
 
-`keycloak/vX.Y.Z` releases are accepted only when the tag points at the current
+`vX.Y.Z` releases are accepted only when the tag points at the current
 `main` commit and matches the version in the pinned Keycloak image reference.
 The protected build job has no package-write permission: it builds and loads
 one candidate image, runs the full fixture and commit-bound physical WebAuthn
@@ -119,4 +119,4 @@ path, never by an ordinary push to `main`. Production deployment still uses the
 immutable manifest digest recorded by the workflow, not a mutable alias.
 
 Production deployment must follow
-[`docs/keycloak-26.7.4-upgrade-runbook.md`](../docs/keycloak-26.7.4-upgrade-runbook.md).
+[`docs/keycloak-26.7.4-upgrade-runbook.md`](docs/keycloak-26.7.4-upgrade-runbook.md).

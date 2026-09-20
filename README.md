@@ -1,142 +1,161 @@
 <div align="center">
   <a href="https://yildizskylab.com">
-    <img src="https://raw.githubusercontent.com/skylab-kulubu/skylab-assets/main/logos/skylab/skylab-colored.svg" alt="SKY LAB Logo" width="120" />
+    <img src="https://raw.githubusercontent.com/skylab-kulubu/skylab-assets/main/logos/skylab/skylab-colored.svg" alt="SKY LAB Logosu" width="120" />
   </a>
 
   <h1>SKY LAB Keycloak</h1>
 
   <p>
-    SKY LAB kimlik altyapısının optimize edilmiş çalışma zamanı,<br />
-    giriş teması ve kimlik uzantıları.
+    SKY LAB kimlik altyapısının güvenli çalışma zamanı,<br />
+    giriş teması ve kulübe özel kimlik uzantıları.
   </p>
 
   <p>
-    <a href="https://github.com/skylab-kulubu/e-skylab-keycloak/actions/workflows/ci.yml"><img src="https://github.com/skylab-kulubu/e-skylab-keycloak/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+    <a href="https://github.com/skylab-kulubu/e-skylab-keycloak/actions/workflows/ci.yml"><img src="https://github.com/skylab-kulubu/e-skylab-keycloak/actions/workflows/ci.yml/badge.svg" alt="Sürekli Entegrasyon" /></a>
     <img src="https://img.shields.io/badge/Keycloak-26.7.4-4D4D4D?style=flat-square&logo=keycloak" alt="Keycloak 26.7.4" />
     <img src="https://img.shields.io/badge/Java-21-ED8B00?style=flat-square&logo=openjdk&logoColor=white" alt="Java 21" />
-    <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker Ready" />
+    <img src="https://img.shields.io/badge/Docker-Hazır-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker Hazır" />
   </p>
 </div>
 
 ---
 
-This repository owns the Keycloak runtime used by `e.yildizskylab.com`.
+## Projenin amacı
 
-## Runtime contract
+Bu depo, `e.yildizskylab.com` üzerinde çalışan SKY LAB kimlik sisteminin tek
+kaynak deposudur. Keycloak imajını, markalı giriş ekranını, kulübe özel
+kimlik sağlayıcılarını, geçiş anahtarı akışlarını ve Hesap Merkezi
+yapılandırmasını birlikte ve sürümlü biçimde üretir.
 
-- Keycloak `26.7.4`, pinned as one atomic tag-plus-digest image reference.
-- Java 21 for Keycloak and both provider builds.
-- Digest-pinned Maven, PostgreSQL and RabbitMQ build/test images.
-- An optimized PostgreSQL image built with `kc.sh build`.
-- Exactly one SKY LAB SPI (`1.8.0`), one source-built SKY LAB login theme (`2.0.0`) and
-  one RabbitMQ event provider (`3.1.0`) in `/opt/keycloak/providers`.
-- `account-api:v1`, PAR, passkeys and WebAuthn are explicitly enabled at
-  image build time.
-- Realm/client configuration is reconciled by
-  `config/reconcile-account-center.sh`; it is not a one-time realm import.
-- Production is pull-only from the source-controlled
-  `ghcr.io/skylab-kulubu/e-skylab-keycloak` repository and accepts only a
-  validated `KEYCLOAK_IMAGE_DIGEST` input. Runtime, preflight and reconciler
-  resolve to the same `repository@sha256:digest`.
-  Local builds use the standalone `docker-compose.build.yml` explicitly.
-- Production connects to the existing shared PostgreSQL 18 service. Compose
-  never declares a PostgreSQL service, mounts its data volume or creates a
-  Keycloak data volume. A read-only, non-root preflight validates the immutable
-  image and shared-database inputs, then proves the configured database endpoint
-  is reachable without receiving the database password. Keycloak performs the
-  authenticated database and schema checks during normal startup.
-- Forwarded headers are accepted only from the required
-  `KEYCLOAK_PROXY_TRUSTED_ADDRESSES` allowlist.
+Amaç; bütün SKY LAB ürünlerinin aynı kullanıcı, grup, oturum ve yetki
+sözleşmesini kullanmasını sağlarken üretimde elle kopyalanmış JAR, tema veya
+realm ayarı bırakmamaktır.
 
-The login theme is rebuilt from [`theme/`](theme/) with Keycloakify `11.16.0`.
-The optimized image installs exactly one generated JAR and never consumes the
-removed, source-less `1.1.1` binary. Unit, artifact and Chromium tests protect
-the Keycloak 26.7 WebAuthn fields, retry execution, conditional-passkey
-remember-me propagation, AIA controls, landmarks, keyboard operation,
-contrast and reduced motion. The initial rollout requires a physical Touch ID
-check. Face ID, Android Credential Manager, Windows Hello and mobile-WebView
-checks are explicitly deferred to post-release compatibility testing.
+## Çalışma zamanı sözleşmesi
 
-## Account Center client
+- Keycloak `26.7.4`, etiket ve digest birlikte sabitlenmiş tek bir imaj
+  referansı olarak kullanılır.
+- Keycloak ve iki sağlayıcı derlemesi Java 21 kullanır.
+- Maven, Node.js, PostgreSQL ve RabbitMQ derleme/test imajları digest ile
+  sabitlenmiştir.
+- `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
+  üretilir.
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.8.0`),
+  kaynaktan derlenen bir SKY LAB giriş teması (`2.0.0`) ve bir RabbitMQ olay
+  sağlayıcısı (`3.1.0`) bulunur.
+- `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
+  etkinleştirilir.
+- Realm ve istemci ayarları `config/reconcile-account-center.sh` ile sürekli
+  uzlaştırılır; tek seferlik realm içe aktarımına güvenilmez.
+- Üretim yalnız
+  `ghcr.io/skylab-kulubu/e-skylab-keycloak` deposundan imaj çeker ve doğrulanmış
+  bir `KEYCLOAK_IMAGE_DIGEST` kabul eder. Çalışma zamanı, ön kontrol ve
+  uzlaştırıcı aynı `repository@sha256:digest` değerini kullanır.
+- Üretim mevcut ortak PostgreSQL 18 servisine bağlanır. Compose ayrı bir
+  PostgreSQL servisi veya veri diski oluşturmaz.
+- Yönlendirilmiş HTTP başlıkları yalnız
+  `KEYCLOAK_PROXY_TRUSTED_ADDRESSES` izin listesindeki vekillerden kabul edilir.
 
-The reconciler manages a confidential `account-center` client with:
+Giriş teması [`theme/`](theme/) içinden Keycloakify `11.16.0` ile yeniden
+derlenir. Birim, imaj, gerçek Keycloak ve Chromium testleri; WebAuthn alanlarını,
+yeniden denemeyi, “beni hatırla” aktarımını, AIA ekranlarını, klavye kullanımını,
+kontrastı ve azaltılmış hareket tercihlerini korur.
 
-- Authorization Code only; implicit, Direct Access Grants and service accounts
-  disabled.
-- exact `https://my.yildizskylab.com/api/auth/callback` redirect and no web
-  origins;
-- required S256 PKCE and Pushed Authorization Requests;
-- exact backchannel logout and post-logout callback URLs;
-- a client-specific copy of the browser flow whose first alternative execution
-  atomically redeems `sky_native_handoff` over HMAC-authenticated mTLS;
-- one custom default client scope that limits and emits the built-in Account
-  API audience and `manage-account` / `view-profile` roles;
-- one source-controlled core-claims scope that emits only access-token `sub`
-  and ID/access-token `auth_time`, without depending on the realm-global
-  `basic`, `profile` or `email` scopes;
-- no optional client scopes, matching the BFF's minimal `openid`
-  authorization request.
+İlk fiziksel doğrulama Touch ID üzerinde tamamlanmıştır. Face ID, Android
+Credential Manager, Windows Hello ve mobil WebView yüzeyleri sürüm sonrası
+uyumluluk kapsamındadır; test edilmiş gibi gösterilmez.
 
-Realm session, AIA, theme and passwordless WebAuthn settings live in
-`config/account-center-realm.json`. The standard client browser execution graph
-has an exact source-controlled signature; reconciliation rebuilds it if an
-execution requirement, priority, provider, subflow or authenticator
-configuration drifts. Mapper, Account role, default-scope and optional-scope
-allowlists remove unknown entries.
+## Hesap Merkezi istemcisi
 
-The steady reconciler authenticates as the service-only
-`account-center-config` client. Creating or rotating that client is a separate,
-audited bootstrap step; master administrator credentials are absent from the
-normal compose stack.
+Uzlaştırıcı, gizli `account-center` istemcisini şu sözleşmeyle yönetir:
 
-The `sky-native-handoff` execution is bound only to the Account Center client.
-Without a bridge hint it marks itself attempted and leaves normal desktop login
-unchanged. With a hint it removes the note before network I/O, redeems exactly
-once, selects the enabled user only by `sub`, and carries the original
-`auth_time` into the new browser session. A failed or replayed bridge never
-falls back to the password form.
+- Yalnız Authorization Code akışı açıktır; implicit, Direct Access Grants ve
+  service account kapalıdır.
+- Yönlendirme adresi tam olarak
+  `https://my.yildizskylab.com/api/auth/callback` değeridir ve web origin
+  tanımlanmaz.
+- S256 PKCE ve Pushed Authorization Requests zorunludur.
+- Backchannel logout ve çıkış sonrası dönüş adresleri birebir sabitlenir.
+- İstemciye özel tarayıcı akışının ilk alternatif adımı,
+  `sky_native_handoff` değerini HMAC doğrulamalı mTLS üzerinden tek seferlik
+  olarak kullanır.
+- Özel varsayılan istemci kapsamı yalnız Account API audience değerini ve
+  `manage-account` / `view-profile` rollerini taşır.
+- Core claim kapsamı yalnız gerekli `sub` ve `auth_time` alanlarını üretir.
+- BFF'nin en küçük `openid` isteğine uygun biçimde isteğe bağlı kapsam yoktur.
 
-## Local verification
+Realm oturumu, AIA, tema ve şifresiz WebAuthn ayarları
+`config/account-center-realm.json` içinde kaynak kontrolündedir. Tarayıcı akışı
+beklenen imzadan saparsa uzlaştırıcı akışı yeniden kurar; bilinmeyen mapper,
+rol ve kapsamlar izin listeleriyle temizlenir.
 
-Requirements: Docker, `bash`, `curl` and `jq`.
+Sürekli uzlaştırma yalnız servis amaçlı `account-center-config` istemcisiyle
+kimlik doğrular. Bu istemcinin oluşturulması veya gizli anahtarının döndürülmesi
+ayrı ve denetlenebilir bir başlangıç adımıdır; ana yönetici bilgileri normal
+Compose yığınına girmez.
+
+`sky-native-handoff` yalnız Hesap Merkezi istemcisine bağlıdır. Köprü ipucu
+yoksa masaüstü girişini değiştirmez. Geçerli bir ipucunu yalnız bir kez kullanır,
+etkin kullanıcıyı `sub` ile seçer ve özgün `auth_time` değerini yeni tarayıcı
+oturumuna taşır. Başarısız veya yeniden oynatılmış köprü parola formuna düşmez.
+
+## Yerel geliştirme ve doğrulama
+
+Gereksinimler: Docker, `bash`, `curl` ve `jq`.
 
 ```bash
 docker build --platform linux/amd64 -t account-keycloak:test .
 KEYCLOAK_TEST_IMAGE=account-keycloak:test bash tests/run-integration.sh
 ```
 
-For a local image build, use the standalone build definition. It deliberately
-does not inherit production's external-volume or preflight contract:
+Yalnız yerel imaj derlemesi için üretim sözleşmesini devralmayan bağımsız
+Compose tanımını kullanın:
 
 ```bash
 docker compose -f docker-compose.build.yml build
 ```
 
-Static/render checks deliberately run before the candidate exists. After the
-build, a separate runtime preflight reaches a PostgreSQL fixture across an
-internal Docker network and rejects an unreachable endpoint or malformed
-production input. The main fixture then starts PostgreSQL, RabbitMQ and the
-optimized image; runs reconciliation twice with deliberate configuration drift
-between runs; checks
-the exact OIDC client contract and a live minimal `openid` PAR request;
-completes a browser Authorization Code + S256 exchange; asserts the ID
-token's `sub`, `sid` and integer/non-future `auth_time`; and proves an actual
-Keycloak admin event reaches RabbitMQ. Source-level Chromium coverage runs
-before the image build; the runtime fixture verifies the generated theme loads
-on Keycloak 26.7.4. Physical-authenticator evidence remains a release gate.
+Doğrulama sırası şu şekildedir:
 
-`vX.Y.Z` releases are accepted only when the tag points at the current
-`main` commit and matches the version in the pinned Keycloak image reference.
-The protected build job has no package-write permission: it builds and loads
-one candidate image, runs the full fixture and commit-bound physical WebAuthn
-gate, then uploads a one-day artifact containing the tested image, its exact
-source-built theme JAR, commit SHA, image ID and checksums. Only the dependent
-publish job receives package-write permission. It verifies those identities,
-the one-JAR/theme contract and the transferred checksums before retagging and
-pushing the same image bytes as `X.Y.Z`, `latest`, `main` and `production`; it
-never rebuilds them. The mutable aliases are updated only by this gated release
-path, never by an ordinary push to `main`. Production deployment still uses the
-immutable manifest digest recorded by the workflow, not a mutable alias.
+1. Sürüm, sabit imajlar, Compose ve yayın sınırları denetlenir.
+2. Tema birim ve Chromium testlerinden geçirilip JAR olarak derlenir.
+3. Aday Keycloak imajı bir kez oluşturulur.
+4. PostgreSQL, RabbitMQ, OIDC, PAR/PKCE, oturum, AIA, tema ve olay yayını
+   sözleşmeleri gerçek servislerle sınanır.
+5. Commit'e bağlı fiziksel WebAuthn kanıtı doğrulanır.
+6. Test edilen aynı imaj baytları paketlenir; yayın aşamasında yeniden derleme
+   yapılmaz.
 
-Production deployment must follow
-[`docs/keycloak-26.7.4-upgrade-runbook.md`](docs/keycloak-26.7.4-upgrade-runbook.md).
+## Sürümleme ve yayın
+
+`vX.Y.Z` etiketi yalnız güncel `main` commit'ini gösteriyorsa ve etiket sürümü
+Dockerfile içindeki Keycloak sürümüyle eşleşiyorsa kabul edilir.
+
+Korunan derleme işi registry yazma yetkisi almaz. Aday imajı test eder, fiziksel
+WebAuthn kapısını doğrular ve imaj kimliği, commit SHA'sı, tema JAR'ı ile
+checksum'ları bir günlük kısa ömürlü artefakta koyar. Yalnız ona bağlı yayın işi
+`packages: write` yetkisi alır; aktarılan aynı imajı `X.Y.Z`, `latest`, `main`
+ve `production` etiketleriyle GHCR'a gönderir.
+
+Üretim kurulumu değişebilir etiketle değil, iş akışının kaydettiği değişmez
+manifest digest'iyle yapılır. Ayrıntılı geçiş ve geri dönüş adımları
+[`docs/keycloak-26.7.4-upgrade-runbook.md`](docs/keycloak-26.7.4-upgrade-runbook.md)
+belgesindedir.
+
+## Katkıda bulunanlar
+
+Projeye katkı veren kişiler GitHub commit geçmişinden otomatik olarak
+listelenir.
+
+<a href="https://github.com/skylab-kulubu/e-skylab-keycloak/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=skylab-kulubu/e-skylab-keycloak" alt="Katkıda bulunanlar" />
+</a>
+
+## Geliştiren ekip
+
+<div align="center">
+  <p>SKY LAB kimlik altyapısı, kulüp ürün ekiplerinin desteğiyle <strong>WebLab</strong> tarafından geliştirilmektedir.</p>
+  <a href="https://github.com/skylab-kulubu">
+    <img src="https://raw.githubusercontent.com/skylab-kulubu/skylab-assets/main/logos/arge/weblab/weblab-colored.svg" alt="SKY LAB WebLab" width="150" />
+  </a>
+</div>

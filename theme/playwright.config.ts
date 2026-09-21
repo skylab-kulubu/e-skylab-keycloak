@@ -6,6 +6,9 @@ export default defineConfig({
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
   reporter: "line",
+  // Baselines are rendered on Linux only (see scripts/update-visual-baselines.sh);
+  // no platform suffix so the committed files are the single source of truth.
+  snapshotPathTemplate: "{testDir}/{testFileDir}/{testFileName}-snapshots/{arg}{ext}",
   use: {
     baseURL: "http://127.0.0.1:4173",
     browserName: "chromium",

@@ -51,9 +51,28 @@ test("keyboard navigation exposes the skip link and localized legacy copy", asyn
 test("known-username pages keep a labelled landmark and page heading", async ({ page }) => {
   await page.goto("/?page=login-password.ftl");
 
-  await expect(page.locator(".sl-card")).toHaveAttribute("aria-labelledby", "kc-page-title");
+  await expect(page.locator(".sl-legacy-card")).toHaveAttribute("aria-labelledby", "kc-page-title");
   await expect(page.locator("#kc-page-title")).toBeVisible();
   await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
+  await expect(page.locator("#sl-main-content")).toHaveAttribute("tabindex", "-1");
+  await expect(page.locator("#kc-attempted-username")).toHaveText("ayse.yilmaz@std.yildiz.edu.tr");
+});
+
+test("every Keycloak page shares the login chrome and the animated logo", async ({ page }) => {
+  for (const pageId of ["login-update-password.ftl", "login-config-totp.ftl", "select-authenticator.ftl", "error.ftl"]) {
+    await page.goto(`/?page=${pageId}`);
+    await expect(page.locator(".sl-legacy-shell")).toHaveAttribute("data-sl-translations", "ready");
+    await expect(page.locator('[data-skylab-logo-animation="draw"] path')).toHaveCount(19);
+    await expect(page.locator(".sl-legacy-logo img")).toHaveCount(0);
+    await expect(page.getByRole("contentinfo")).toContainText("KVKK Metni");
+    await expect(page.getByRole("navigation", { name: "Dil seçimi" }).getByRole("link", { name: "English" })).toBeVisible();
+  }
+
+  await page.goto("/?page=login-update-password.ftl");
+  await expect(page.locator("#kc-passwd-update-form .sl-legacy-submit")).toHaveCSS("background-color", "rgb(26, 115, 196)");
+  await page.locator("#kc-passwd-update-form .sl-legacy-submit").hover();
+  await expect(page.locator("#kc-passwd-update-form .sl-legacy-submit")).toHaveCSS("background-color", "rgb(217, 31, 109)");
+  await expect(page).toHaveTitle("Parolanı yenile · SKY LAB");
 });
 
 test("reduced motion and secondary-button contrast survive hover", async ({ browser }) => {
@@ -67,13 +86,15 @@ test("reduced motion and secondary-button contrast survive hover", async ({ brow
 
   await page.goto("/?page=login-update-password.ftl");
 
-  const glow = page.locator(".sl-glow").first();
-  await expect(glow).toHaveCSS("animation-name", "none");
+  const mark = page.locator(".sl-legacy-background__mark");
+  await expect(mark).toHaveCSS("animation-name", "none");
+  await expect(page.locator('[data-skylab-logo-animation="draw"] path').first()).toHaveCSS("animation-name", "none");
 
-  const secondary = page.locator(".sl-button--secondary").first();
-  await expect(secondary).toHaveCSS("background-color", "rgb(41, 44, 57)");
+  const secondary = page.locator('button[name="cancel-aia"].sl-legacy-choice');
+  await expect(secondary).toHaveCSS("background-color", "rgba(255, 255, 255, 0.05)");
+  await expect(secondary).toHaveCSS("color", "rgb(244, 244, 245)");
   await secondary.hover();
-  await expect(secondary).toHaveCSS("background-color", "rgb(56, 60, 75)");
+  await expect(secondary).toHaveCSS("background-color", "rgba(255, 255, 255, 0.1)");
 
   await context.close();
 });
@@ -94,10 +115,10 @@ test("optional passkey offer is explicit, branded and always has a safe exit", a
   await page.goto("/?page=passkey-offer.ftl");
 
   await expect(page.locator(".sl-legacy-shell")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Passkey ekle" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Erişim anahtarı ekle" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Şimdi ekle" })).toHaveCSS(
     "background-color",
-    "rgb(41, 147, 228)"
+    "rgb(26, 115, 196)"
   );
   await expect(page.getByRole("button", { name: "30 gün boyunca tekrar sorma" })).toBeVisible();
 });

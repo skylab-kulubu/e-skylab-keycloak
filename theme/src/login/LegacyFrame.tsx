@@ -2,33 +2,56 @@ import type { ReactNode } from "react";
 import skyLabWatermarkUrl from "../assets/skylab-watermark.svg";
 import AnimatedSkyLabLogo from "./AnimatedSkyLabLogo";
 
+export type LegacyFrameLanguage = {
+  href: string;
+  label: string;
+  languageTag: string;
+};
+
+export type LegacyFrameLanguageMenu = {
+  currentLanguageTag: string;
+  label: string;
+  languages: LegacyFrameLanguage[];
+};
+
 type LegacyFrameProps = {
+  /** Rendered between the title and the card body; can be empty for pages whose body is the message. */
   children: ReactNode;
-  description: ReactNode;
+  description?: ReactNode;
+  /** Optional slot rendered directly under the title, before `children` (alerts, attempted username). */
+  headerExtras?: ReactNode;
   kvkkLinkText: ReactNode;
   kvkkPrefix: ReactNode;
   kvkkSuffix: ReactNode;
+  languageMenu?: LegacyFrameLanguageMenu;
   mainId: string;
   skipToContent: string;
   title: ReactNode;
   titleId: string;
+  /** False while Keycloakify is still fetching the current locale's base messages. */
+  translationsReady?: boolean;
 };
 
 export default function LegacyFrame(props: LegacyFrameProps) {
   const {
     children,
     description,
+    headerExtras,
     kvkkLinkText,
     kvkkPrefix,
     kvkkSuffix,
+    languageMenu,
     mainId,
     skipToContent,
     title,
-    titleId
+    titleId,
+    translationsReady = true
   } = props;
 
+  const showLanguageMenu = languageMenu !== undefined && languageMenu.languages.length > 1;
+
   return (
-    <div className="sl-legacy-shell">
+    <div className="sl-legacy-shell" data-sl-translations={translationsReady ? "ready" : "loading"}>
       <a
         className="sl-legacy-skip-link"
         href={`#${mainId}`}
@@ -57,8 +80,12 @@ export default function LegacyFrame(props: LegacyFrameProps) {
           <section className="sl-legacy-card" aria-labelledby={titleId}>
             <div className="sl-legacy-intro">
               <h1 id={titleId}>{title}</h1>
-              <p>{description}</p>
+              {description !== undefined && description !== null && description !== "" && (
+                <p>{description}</p>
+              )}
             </div>
+
+            {headerExtras}
 
             {children}
           </section>
@@ -73,6 +100,25 @@ export default function LegacyFrame(props: LegacyFrameProps) {
             </p>
             <strong>e-skylab by WEBLAB</strong>
             <span className="sl-legacy-credit">Developed by Yusuf Açmacı</span>
+
+            {showLanguageMenu && (
+              <nav className="sl-legacy-languages" aria-label={languageMenu.label}>
+                <ul>
+                  {languageMenu.languages.map(({ href, label, languageTag }) => (
+                    <li key={languageTag}>
+                      <a
+                        href={href}
+                        lang={languageTag}
+                        hrefLang={languageTag}
+                        aria-current={languageTag === languageMenu.currentLanguageTag ? "page" : undefined}
+                      >
+                        {label}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </nav>
+            )}
           </footer>
         </div>
       </main>

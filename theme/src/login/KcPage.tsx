@@ -3,11 +3,13 @@ import DefaultPage from "keycloakify/login/DefaultPage";
 import type { ClassKey } from "keycloakify/login";
 import type { KcContext } from "./KcContext";
 import Login from "./Login";
+import LoginPageExpired from "./LoginPageExpired";
 import PasskeyOffer from "./PasskeyOffer";
 import Template from "./Template";
 import { useI18n } from "./i18n";
 import { usePasskeyRememberMeBridge } from "./rememberMeBridge";
-import "./theme.css";
+// One stylesheet, one token set: the login page design system for every page.
+import "./legacy-login.css";
 
 const UserProfileFormFields = lazy(() => import("keycloakify/login/UserProfileFormFields"));
 
@@ -19,8 +21,22 @@ export default function KcPage(props: { kcContext: KcContext }) {
 
   if (kcContext.pageId === "login.ftl") {
     return (
-      <Suspense fallback={<main className="sl-loading" aria-live="polite">Yükleniyor…</main>}>
+      <Suspense fallback={<main className="sl-loading" aria-live="polite">{i18n.msgStr("skylabLoading")}</main>}>
         <Login
+          kcContext={kcContext}
+          i18n={i18n}
+          classes={classes}
+          Template={Template}
+          doUseDefaultCss={false}
+        />
+      </Suspense>
+    );
+  }
+
+  if (kcContext.pageId === "login-page-expired.ftl") {
+    return (
+      <Suspense fallback={<main className="sl-loading" aria-live="polite">{i18n.msgStr("skylabLoading")}</main>}>
+        <LoginPageExpired
           kcContext={kcContext}
           i18n={i18n}
           classes={classes}
@@ -33,14 +49,14 @@ export default function KcPage(props: { kcContext: KcContext }) {
 
   if (kcContext.pageId === "passkey-offer.ftl") {
     return (
-      <Suspense fallback={<main className="sl-loading" aria-live="polite">Yükleniyor…</main>}>
+      <Suspense fallback={<main className="sl-loading" aria-live="polite">{i18n.msgStr("skylabLoading")}</main>}>
         <PasskeyOffer kcContext={kcContext} i18n={i18n} />
       </Suspense>
     );
   }
 
   return (
-    <Suspense fallback={<main className="sl-loading" aria-live="polite">Yükleniyor…</main>}>
+    <Suspense fallback={<main className="sl-loading" aria-live="polite">{i18n.msgStr("skylabLoading")}</main>}>
       <DefaultPage
         kcContext={kcContext}
         i18n={i18n}
@@ -54,18 +70,20 @@ export default function KcPage(props: { kcContext: KcContext }) {
   );
 }
 
+// Keycloakify's class contract, pointed at the login page's own class names so
+// DefaultPage controls share the exact rules of Login.tsx instead of copies.
 export const classes = {
   kcFormClass: "sl-form",
-  kcFormGroupClass: "sl-field",
-  kcFormGroupErrorClass: "sl-field--error",
-  kcLabelClass: "sl-label",
+  kcFormGroupClass: "sl-legacy-field",
+  kcFormGroupErrorClass: "sl-legacy-field--error",
+  kcLabelClass: "sl-legacy-label",
   kcLabelWrapperClass: "sl-label-wrap",
   kcInputWrapperClass: "sl-input-wrap",
-  kcInputClass: "sl-input",
-  kcInputLargeClass: "sl-input--large",
-  kcTextareaClass: "sl-input sl-textarea",
-  kcInputGroup: "sl-input-group",
-  kcInputErrorMessageClass: "sl-field-error",
+  kcInputClass: "sl-legacy-input",
+  kcInputLargeClass: "sl-legacy-input--large",
+  kcTextareaClass: "sl-legacy-input sl-textarea",
+  kcInputGroup: "sl-legacy-password-input",
+  kcInputErrorMessageClass: "sl-legacy-field-error",
   kcInputHelperTextBeforeClass: "sl-helper-text",
   kcInputHelperTextAfterClass: "sl-helper-text",
   kcFormOptionsClass: "sl-options",
@@ -73,17 +91,17 @@ export const classes = {
   kcFormSettingClass: "sl-settings",
   kcFormButtonsClass: "sl-actions",
   kcFormButtonsWrapperClass: "sl-actions",
-  kcButtonClass: "sl-button",
-  kcButtonPrimaryClass: "sl-button--primary",
-  kcButtonSecondaryClass: "sl-button--secondary",
-  kcButtonDefaultClass: "sl-button--secondary",
-  kcButtonLargeClass: "sl-button--large",
-  kcButtonBlockClass: "sl-button--block",
-  kcFormPasswordVisibilityButtonClass: "sl-password-toggle",
+  kcButtonClass: "sl-legacy-button",
+  kcButtonPrimaryClass: "sl-legacy-submit",
+  kcButtonSecondaryClass: "sl-legacy-choice",
+  kcButtonDefaultClass: "sl-legacy-choice",
+  kcButtonLargeClass: "sl-legacy-button--large",
+  kcButtonBlockClass: "sl-legacy-button--block",
+  kcFormPasswordVisibilityButtonClass: "sl-legacy-password-toggle",
   kcFormPasswordVisibilityIconShow: "sl-eye sl-eye--show",
   kcFormPasswordVisibilityIconHide: "sl-eye sl-eye--hide",
-  kcAlertClass: "sl-alert",
-  kcAlertTitleClass: "sl-alert__title",
+  kcAlertClass: "sl-legacy-alert",
+  kcAlertTitleClass: "sl-legacy-alert__title",
   kcFeedbackSuccessIcon: "sl-feedback-icon sl-feedback-icon--success",
   kcFeedbackWarningIcon: "sl-feedback-icon sl-feedback-icon--warning",
   kcFeedbackErrorIcon: "sl-feedback-icon sl-feedback-icon--error",
@@ -93,7 +111,7 @@ export const classes = {
   kcFormSocialAccountSectionClass: "sl-social",
   kcFormSocialAccountListClass: "sl-social__list",
   kcFormSocialAccountListGridClass: "sl-social__list--grid",
-  kcFormSocialAccountListButtonClass: "sl-button sl-button--secondary sl-button--block",
+  kcFormSocialAccountListButtonClass: "sl-legacy-button sl-legacy-choice sl-legacy-button--block",
   kcFormSocialAccountNameClass: "sl-social__name",
   kcFormSocialAccountGridItem: "sl-social__item",
   kcFormSocialAccountLinkClass: "sl-social__link",
@@ -116,15 +134,15 @@ export const classes = {
   kcWebAuthnBLE: "sl-key-icon",
   kcWebAuthnInternal: "sl-key-icon",
   kcAuthenticatorDefaultClass: "sl-authenticator-icon",
-  kcAuthenticatorPasswordClass: "sl-authenticator-icon",
-  kcAuthenticatorOTPClass: "sl-authenticator-icon",
-  kcAuthenticatorWebAuthnClass: "sl-authenticator-icon",
-  kcAuthenticatorWebAuthnPasswordlessClass: "sl-authenticator-icon",
+  kcAuthenticatorPasswordClass: "sl-authenticator-icon sl-authenticator-icon--password",
+  kcAuthenticatorOTPClass: "sl-authenticator-icon sl-authenticator-icon--otp",
+  kcAuthenticatorWebAuthnClass: "sl-authenticator-icon sl-authenticator-icon--passkey",
+  kcAuthenticatorWebAuthnPasswordlessClass: "sl-authenticator-icon sl-authenticator-icon--passkey",
   kcLoginOTPListClass: "sl-otp-list",
   kcLoginOTPListInputClass: "sl-otp-list__input",
   kcLoginOTPListItemHeaderClass: "sl-otp-list__header",
   kcLoginOTPListItemIconBodyClass: "sl-otp-list__icon",
-  kcLoginOTPListItemIconClass: "sl-authenticator-icon",
+  kcLoginOTPListItemIconClass: "sl-authenticator-icon sl-authenticator-icon--otp",
   kcLoginOTPListItemTitleClass: "sl-otp-list__title",
   kcInputClassRadio: "sl-choice",
   kcInputClassRadioInput: "sl-choice__input",

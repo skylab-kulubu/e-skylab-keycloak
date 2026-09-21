@@ -1,8 +1,7 @@
-import { useEffect } from "react";
-import { useSetClassName } from "keycloakify/tools/useSetClassName";
 import type { KcContext } from "./KcContext";
 import type { I18n } from "./i18n";
 import LegacyFrame from "./LegacyFrame";
+import { getLegacyChromeProps, useLegacyChrome } from "./legacyChrome";
 
 type PasskeyOfferProps = {
   kcContext: Extract<KcContext, { pageId: "passkey-offer.ftl" }>;
@@ -11,44 +10,18 @@ type PasskeyOfferProps = {
 
 export default function PasskeyOffer(props: PasskeyOfferProps) {
   const { kcContext, i18n } = props;
-  const { currentLanguage, msgStr } = i18n;
-  const isTurkish = currentLanguage.languageTag.toLowerCase().startsWith("tr");
-  const copy = isTurkish
-    ? {
-        title: "Passkey ekle",
-        description:
-          "Touch ID, Face ID veya Windows Hello ile daha hızlı ve parolasız giriş yapabilirsin.",
-        privacy: "Passkey yalnızca bu cihazda güvenli şekilde saklanır; SKY LAB biyometrik verine erişmez.",
-        now: "Şimdi ekle",
-        later: "30 gün boyunca tekrar sorma"
-      }
-    : {
-        title: "Add a passkey",
-        description:
-          "Sign in faster without a password by using Touch ID, Face ID or Windows Hello.",
-        privacy: "Your passkey stays protected on this device; SKY LAB never receives your biometric data.",
-        now: "Add now",
-        later: "Do not ask again for 30 days"
-      };
+  const { msgStr } = i18n;
+  const title = msgStr("passkeyOfferTitle");
 
-  useSetClassName({ qualifiedName: "html", className: "sl-html" });
-  useSetClassName({ qualifiedName: "body", className: "sl-body" });
-
-  useEffect(() => {
-    document.documentElement.lang = currentLanguage.languageTag;
-    document.title = `${copy.title} · SKY LAB`;
-  }, [copy.title, currentLanguage.languageTag]);
+  useLegacyChrome(i18n, title);
 
   return (
     <LegacyFrame
+      {...getLegacyChromeProps(i18n)}
       mainId="sl-passkey-offer-main"
       titleId="sl-passkey-offer-title"
-      title={copy.title}
-      description={copy.description}
-      skipToContent={msgStr("skipToContent")}
-      kvkkPrefix={msgStr("kvkkPrefix")}
-      kvkkLinkText={msgStr("kvkkLinkText")}
-      kvkkSuffix={msgStr("kvkkSuffix")}
+      title={title}
+      description={msgStr("passkeyOfferDescription")}
     >
       <form
         id="kc-passkey-offer-form"
@@ -56,7 +29,7 @@ export default function PasskeyOffer(props: PasskeyOfferProps) {
         action={kcContext.url.loginAction}
         method="post"
       >
-        <p className="sl-passkey-offer__privacy">{copy.privacy}</p>
+        <p className="sl-passkey-offer__privacy">{msgStr("passkeyOfferPrivacy")}</p>
         <div className="sl-passkey-offer__actions">
           <button
             className="sl-legacy-submit"
@@ -64,7 +37,7 @@ export default function PasskeyOffer(props: PasskeyOfferProps) {
             name="passkey-choice"
             value="yes"
           >
-            {copy.now}
+            {msgStr("passkeyOfferNow")}
           </button>
           <button
             className="sl-legacy-choice sl-passkey-offer__later"
@@ -72,7 +45,7 @@ export default function PasskeyOffer(props: PasskeyOfferProps) {
             name="passkey-choice"
             value="no"
           >
-            {copy.later}
+            {msgStr("passkeyOfferLater")}
           </button>
         </div>
       </form>

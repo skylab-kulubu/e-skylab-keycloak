@@ -207,6 +207,31 @@ active_browser_flow_before=$(kcadm get \
   'authentication/flows/browser%20plus%20passkey/executions' \
   -r e-skylab-test -c | jq -S -c '.')
 
+# Reproduce the production drift that originally caused every Account REST
+# request to return 403. Client scope mappings only limit roles which may enter
+# a token; they do not grant those roles to a user. Remove the Account REST
+# roles from the realm default role before reconciliation so the test proves
+# the isolated Account Center scope supplies them without granting realm-wide
+# roles to existing or future users.
+account_client_uuid=$(kcadm get clients -r e-skylab-test -c \
+  | jq -r '.[] | select(.clientId == "account") | .id')
+default_role=$(kcadm get roles/default-roles-e-skylab-test \
+  -r e-skylab-test -c)
+default_role_uuid=$(jq -r '.id' <<<"$default_role")
+required_default_account_roles=$(kcadm get \
+  "clients/$account_client_uuid/roles" -r e-skylab-test -c \
+  | jq -c '[.[] | select(.name == "manage-account" or .name == "view-profile")]')
+[[ $(jq 'length' <<<"$required_default_account_roles") == 2 ]] \
+  || fail 'built-in Account REST roles are unavailable in the fixture realm'
+kcadm delete "roles-by-id/$default_role_uuid/composites" \
+  -r e-skylab-test -b "$required_default_account_roles" >/dev/null
+default_account_roles_before=$(kcadm get \
+  "roles-by-id/$default_role_uuid/composites/clients/$account_client_uuid" \
+  -r e-skylab-test -c)
+json_assert "$default_account_roles_before" \
+  '([.[].name] | map(select(. == "manage-account" or . == "view-profile"))) | length == 0' \
+  'Account REST role drift was not injected into the realm default role'
+
 # Capture the immutable built-in scope inventory before reconciliation. This
 # catches accidental fallback to an arbitrary scope when exact lookup fails.
 built_in_scope_snapshot=$(kcadm get client-scopes -r e-skylab-test -c \
@@ -435,7 +460,7 @@ while IFS= read -r built_in_scope_uuid; do
     "client-scopes/$built_in_scope_uuid/protocol-mappers/models" \
     -r e-skylab-test -c)
   json_assert "$built_in_mappers" \
-    '[.[] | select(.name == "account-api-audience" or .name == "account-api-roles" or .name == "account-center-audience")] | length == 0' \
+    '[.[] | select(.name == "account-api-audience" or .name == "account-api-manage-account" or .name == "account-api-view-profile" or .name == "account-api-roles" or .name == "account-center-audience")] | length == 0' \
     "an Account Center mapper was injected into built-in scope $built_in_scope_uuid"
 done < <(jq -r '.[].id' <<<"$built_in_scope_snapshot")
 
@@ -444,8 +469,10 @@ scope_uuid=$(kcadm get client-scopes -r e-skylab-test -c \
 scope=$(kcadm get "client-scopes/$scope_uuid" -r e-skylab-test -c)
 json_assert "$scope" '.protocol == "openid-connect" and .attributes["include.in.token.scope"] == "false"' 'Account API scope drift was not repaired'
 mappers=$(kcadm get "client-scopes/$scope_uuid/protocol-mappers/models" -r e-skylab-test -c)
-json_assert "$mappers" 'length == 2' 'unexpected or duplicate Account API mappers remain'
+json_assert "$mappers" 'length == 4' 'unexpected or duplicate Account API mappers remain'
 json_assert "$mappers" '[.[] | select(.name == "account-api-audience" and .config["included.client.audience"] == "account")] | length == 1' 'Account API audience mapper differs'
+json_assert "$mappers" '[.[] | select(.name == "account-api-manage-account" and .protocolMapper == "oidc-hardcoded-role-mapper" and .config.role == "account.manage-account")] | length == 1' 'Account API manage-account role mapper differs'
+json_assert "$mappers" '[.[] | select(.name == "account-api-view-profile" and .protocolMapper == "oidc-hardcoded-role-mapper" and .config.role == "account.view-profile")] | length == 1' 'Account API view-profile role mapper differs'
 json_assert "$mappers" '[.[] | select(.name == "account-api-roles" and .config["usermodel.clientRoleMapping.clientId"] == "account")] | length == 1' 'Account API role mapper differs'
 
 core_scope_uuid=$(kcadm get client-scopes -r e-skylab-test -c \
@@ -502,6 +529,12 @@ account_roles=$(kcadm get \
 json_assert "$account_roles" \
   '([.[].name] | sort) == ["manage-account", "view-profile"]' \
   'unexpected Account API role mappings remain'
+default_account_roles=$(kcadm get \
+  "roles-by-id/$default_role_uuid/composites/clients/$account_client_uuid" \
+  -r e-skylab-test -c)
+json_assert "$default_account_roles" \
+  '([.[].name] | map(select(. == "manage-account" or . == "view-profile"))) | length == 0' \
+  'Account Center reconciliation granted Account REST roles realm-wide'
 
 config_client_uuid=$(kcadm get clients -r e-skylab-test -c \
   | jq -r '.[] | select(.clientId == "account-center-config") | .id')
@@ -613,8 +646,6 @@ json_assert "$aia_par_response" \
 
 fixture_user_uuid=$(kcadm get users -r e-skylab-test -q username=account-fixture -c \
   | jq -r '.[] | select(.username == "account-fixture") | .id')
-kcadm create "users/$fixture_user_uuid/role-mappings/clients/$account_client_uuid" \
-  -r e-skylab-test -b "$account_roles" >/dev/null
 
 CURRENT_STAGE='native handoff real Keycloak SSO contract'
 native_code_verifier=account-center-native-handoff-verifier-0123456789abcdefghijklmnop

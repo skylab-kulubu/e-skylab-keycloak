@@ -55,22 +55,6 @@ function waitForCallbackRequest(page: Page): Promise<string> {
   });
 }
 
-function waitForCallbackNavigation(page: Page): Promise<void> {
-  return page.waitForEvent("framenavigated", {
-    predicate: frame => {
-      if (frame !== page.mainFrame()) {
-        return false;
-      }
-      const navigationUrl = new URL(frame.url());
-      return (
-        (navigationUrl.origin === callback.origin && navigationUrl.pathname === callback.pathname) ||
-        navigationUrl.protocol === "chrome-error:"
-      );
-    },
-    timeout: 45_000
-  }).then(() => undefined);
-}
-
 async function createAuthorizationUrl(kcAction?: string): Promise<{ state: string; url: string }> {
   const state = `real-browser-${++requestSequence}`;
   const body = new URLSearchParams({
@@ -314,12 +298,14 @@ test("real Keycloak 26.7 login and AIA contracts", async ({ browser }) => {
 
     const state = await openAction(page, "webauthn-register-passwordless");
     await signIn(page);
-    const registrationNavigationSettled = waitForCallbackNavigation(page);
     await page.locator("#authenticateWebAuthnButton").click();
-    await Promise.all([
-      expectCallback(callbackReached, state, "success"),
-      registrationNavigationSettled
-    ]);
+    await expectCallback(callbackReached, state, "success");
+
+    // The callback request proves that Keycloak completed the AIA contract.
+    // Do not make this isolated integration test depend on the public Account
+    // Center host committing its navigation; stop the outbound load before
+    // reusing the same page and virtual authenticator for passwordless login.
+    await page.goto("about:blank", { waitUntil: "commit" });
 
     await context.clearCookies();
     // The registration submit deliberately uses the same Keycloak element id;

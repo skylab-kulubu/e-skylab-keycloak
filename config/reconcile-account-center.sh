@@ -582,10 +582,20 @@ kcadm update "client-scopes/$scope_uuid" -r "$TARGET_REALM" \
   -s 'attributes."include.in.token.scope"=false' \
   -s 'attributes."display.on.consent.screen"=false' >/dev/null
 
-prune_protocol_mappers "$scope_uuid" account-api-audience account-api-roles
+prune_protocol_mappers "$scope_uuid" \
+  account-api-audience \
+  account-api-manage-account \
+  account-api-view-profile \
+  account-api-roles
 
 ensure_protocol_mapper "$scope_uuid" account-api-audience \
   '{"name":"account-api-audience","protocol":"openid-connect","protocolMapper":"oidc-audience-mapper","consentRequired":false,"config":{"included.client.audience":"account","id.token.claim":"false","access.token.claim":"true","introspection.token.claim":"true"}}'
+
+ensure_protocol_mapper "$scope_uuid" account-api-manage-account \
+  '{"name":"account-api-manage-account","protocol":"openid-connect","protocolMapper":"oidc-hardcoded-role-mapper","consentRequired":false,"config":{"role":"account.manage-account"}}'
+
+ensure_protocol_mapper "$scope_uuid" account-api-view-profile \
+  '{"name":"account-api-view-profile","protocol":"openid-connect","protocolMapper":"oidc-hardcoded-role-mapper","consentRequired":false,"config":{"role":"account.view-profile"}}'
 
 ensure_protocol_mapper "$scope_uuid" account-api-roles \
   '{"name":"account-api-roles","protocol":"openid-connect","protocolMapper":"oidc-usermodel-client-role-mapper","consentRequired":false,"config":{"usermodel.clientRoleMapping.clientId":"account","claim.name":"resource_access.account.roles","jsonType.label":"String","multivalued":"true","id.token.claim":"false","access.token.claim":"true","userinfo.token.claim":"false","introspection.token.claim":"true"}}'

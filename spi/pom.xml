@@ -6,7 +6,7 @@
 
   <groupId>com.skylab</groupId>
   <artifactId>e-skylab-spi</artifactId>
-  <version>1.8.0</version>
+  <version>1.9.0</version>
   <name>SKY LAB Keycloak providers</name>
 
   <properties>
@@ -45,6 +45,14 @@
     <dependency>
       <groupId>org.keycloak</groupId>
       <artifactId>keycloak-services</artifactId>
+      <version>${keycloak.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <!-- JpaConnectionProvider: flush a username change so a concurrent duplicate surfaces
+           as ModelDuplicateException inside the request instead of at commit. -->
+      <groupId>org.keycloak</groupId>
+      <artifactId>keycloak-model-jpa</artifactId>
       <version>${keycloak.version}</version>
       <scope>provided</scope>
     </dependency>

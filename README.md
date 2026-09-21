@@ -40,7 +40,7 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.8.0`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.9.0`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.1.0`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
@@ -111,9 +111,48 @@ yoksa masaüstü girişini değiştirmez. Geçerli bir ipucunu yalnız bir kez k
 etkin kullanıcıyı `sub` ile seçer ve özgün `auth_time` değerini yeni tarayıcı
 oturumuna taşır. Başarısız veya yeniden oynatılmış köprü parola formuna düşmez.
 
+## sky-account API
+
+`sky-account` uzantısı (`/realms/{realm}/sky-account/v1`) Hesap Merkezi'nin
+kişi adına yaptığı kimlik ve kimlik bilgisi değişikliklerini Keycloak içinde
+uygular; tam sözleşme [`docs/sky-account-api.md`](docs/sky-account-api.md)
+belgesindedir.
+
+- Yalnız `account-center` kullanıcı token'ı kabul edilir (`azp=account-center`,
+  `aud ∋ account`, `manage-account` rolü, canlı oturum); her şey kişinin kendi
+  hesabıyla sınırlıdır, yönetim işlemi yoktur.
+- Uç noktalar: `GET identity`; `PATCH identity/name` (Doğrulanmış YTÜ hesabında
+  kilitli); `POST identity/username` (14 gün bekleme, teklik); `POST sudo/password`,
+  `POST sudo/totp`; `POST credentials/password` (`logoutOtherSessions` ile);
+  `POST credentials/totp/setup|confirm`; `DELETE credentials/{id}` (OTP ve passkey;
+  parola asla).
+- Sudo modu: parola ya da doğrulama kodu kanıtı, Keycloak'ın iç HMAC
+  anahtarıyla (`HS512`, Keycloak dışında doğrulanamaz) imzaladığı beş dakikalık,
+  `sub`+`sid` bağlı bir sudo token verir (`X-Sky-Sudo` başlığı; BFF için opak). Token tek kullanımlık değildir; başka oturumun
+  bearer'ıyla çalışmaz, süresi dolunca `sudo_expired` döner. Her başarılı
+  kanıt `CUSTOM_REQUIRED_ACTION` (`action=sky-sudo`, `method`) olayı bırakır.
+- Brute-force koruması realm'de açıksa her sudo denemesi Keycloak'ın kendi
+  koruyucusuna bildirilir (kapalıysa açılışta tek bir uyarı günlüğe düşer;
+  reconcile K2 açar); ayrıca kullanıcı başına atomik hız sınırları vardır
+  (sudo 10 / 15 dk, TOTP onayı 10 / 15 dk, değişiklikler 30 / 15 dk).
+- Realm User Profile'ı yönetilmeyen öznitelikleri kişiye açıyorsa
+  (`unmanagedAttributePolicy=ENABLED`) değişiklik uçları `503` ile kapanır,
+  okuma sürer.
+- Hatalar RFC 7807 (`application/problem+json`): İngilizce `code`, Türkçe
+  `detail`. Parola, kod, sır ve token günlüğe yazılmaz.
+- YTÜ Microsoft IdP alias'ı `SKY_ACCOUNT_YTU_IDP_ALIAS` ortam değişkeniyle
+  (varsayılan `OBS`) ayarlanır.
+
+Entegrasyon testi (`tests/sky-account-contract.sh`, `tests/run-integration.sh`
+tarafından çağrılır) gerçek Keycloak üzerinde bearer korumasını, YTÜ kilidini,
+brute-force sayımını ve kilidi, sudo oturum bağını, parola politikasını,
+diğer oturumların kapatılmasını, TOTP kurulum/onay/giriş/silme akışını,
+kullanıcı adı kurallarını, hız sınırını ve olay kayıtlarını doğrular.
+
 ## Yerel geliştirme ve doğrulama
 
-Gereksinimler: Docker, `bash`, `curl` ve `jq`.
+Gereksinimler: Docker, `bash`, `curl`, `jq`, `openssl` ve Node.js (sky-account
+sözleşmesindeki TOTP kodları `tests/totp-code.mjs` ile üretilir).
 
 ```bash
 docker build --platform linux/amd64 -t account-keycloak:test .
@@ -173,8 +212,8 @@ Doğrulama sırası şu şekildedir:
 2. Tema birim, Chromium ve ekran görüntüsü testlerinden geçirilip JAR olarak
    derlenir.
 3. Aday Keycloak imajı bir kez oluşturulur.
-4. PostgreSQL, RabbitMQ, OIDC, PAR/PKCE, oturum, AIA, tema ve olay yayını
-   sözleşmeleri gerçek servislerle sınanır.
+4. PostgreSQL, RabbitMQ, OIDC, PAR/PKCE, oturum, AIA, tema, sky-account API ve
+   olay yayını sözleşmeleri gerçek servislerle sınanır.
 5. Commit'e bağlı fiziksel WebAuthn kanıtı doğrulanır.
 6. Test edilen aynı imaj baytları paketlenir; yayın aşamasında yeniden derleme
    yapılmaz.

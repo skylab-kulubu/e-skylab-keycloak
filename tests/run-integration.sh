@@ -187,6 +187,26 @@ kcadm() {
 CURRENT_STAGE='scoped reconciler bootstrap'
 "${COMPOSE[@]}" run --rm --no-deps keycloak-bootstrap >/dev/null
 
+# Production uses a realm-level custom browser flow. Account Center must copy
+# the active realm flow rather than silently falling back to Keycloak's built-in
+# `browser` flow. The disabled custom execution keeps this fixture behaviorally
+# inert while making the source graph observably different.
+CURRENT_STAGE='active custom browser flow fixture'
+kcadm create authentication/flows/browser/copy \
+  -r e-skylab-test \
+  -s 'newName=browser plus passkey' >/dev/null
+kcadm create 'authentication/flows/browser%20plus%20passkey/executions/execution' \
+  -r e-skylab-test \
+  -b '{"provider":"passkey-offer-authenticator","priority":60}' >/dev/null
+kcadm update realms/e-skylab-test \
+  -s 'browserFlow=browser plus passkey' >/dev/null
+active_browser_flow=$(kcadm get realms/e-skylab-test -c | jq -r '.browserFlow')
+[[ $active_browser_flow == 'browser plus passkey' ]] \
+  || fail 'custom browser flow fixture is not active'
+active_browser_flow_before=$(kcadm get \
+  'authentication/flows/browser%20plus%20passkey/executions' \
+  -r e-skylab-test -c | jq -S -c '.')
+
 # Capture the immutable built-in scope inventory before reconciliation. This
 # catches accidental fallback to an arbitrary scope when exact lookup fails.
 built_in_scope_snapshot=$(kcadm get client-scopes -r e-skylab-test -c \
@@ -194,6 +214,18 @@ built_in_scope_snapshot=$(kcadm get client-scopes -r e-skylab-test -c \
 
 CURRENT_STAGE='first reconciliation'
 "${COMPOSE[@]}" run --rm --no-deps keycloak-config >/dev/null
+
+copied_custom_execution_count=$(kcadm get \
+  authentication/flows/account-center-browser/executions \
+  -r e-skylab-test -c \
+  | jq '[.[] | select(.providerId == "passkey-offer-authenticator" and .priority == 60)] | length')
+[[ $copied_custom_execution_count == 1 ]] \
+  || fail 'Account Center did not inherit the active custom browser flow'
+active_browser_flow_after=$(kcadm get \
+  'authentication/flows/browser%20plus%20passkey/executions' \
+  -r e-skylab-test -c | jq -S -c '.')
+[[ $active_browser_flow_after == "$active_browser_flow_before" ]] \
+  || fail 'Account Center reconciliation mutated the active realm browser flow'
 
 # Inject drift before the second pass. Reconciliation must repair the existing
 # realm, flow, scope and allowlists rather than merely treating names as success.
@@ -345,12 +377,33 @@ flow_uuid=$(jq -r '.authenticationFlowBindingOverrides.browser' <<<"$client")
 flow_count=$(kcadm get authentication/flows -r e-skylab-test -c \
   | jq '[.[] | select(.alias == "account-center-browser" and .id == $flow)] | length' --arg flow "$flow_uuid")
 [[ $flow_count == 1 ]] || fail "client-specific browser flow is missing or duplicated"
-flow_graph=$(kcadm get authentication/flows/account-center-browser/executions \
+source_flow_graph=$(kcadm get \
+  'authentication/flows/browser%20plus%20passkey/executions' \
   -r e-skylab-test -c \
-  | jq -r '.[] | [.level, .priority, .requirement, (if .authenticationFlow then "FLOW" else .providerId end), (if (.providerId == "conditional-credential" and (.authenticationConfig | type) == "string" and (.authenticationConfig | length) > 0) then "BUILTIN_PASSWORDLESS" elif ((.authenticationConfig | type) == "string" and (.authenticationConfig | length) > 0) then "CONFIGURED" else "NONE" end)] | join("|")')
-expected_flow_graph=$(<"$SCRIPT_DIR/../config/account-center-browser.graph")
-[[ $flow_graph == "$expected_flow_graph" ]] \
-  || fail "client-specific browser flow graph drift was not repaired"
+  | jq -c '[.[] | [.level, .priority, .requirement, (if .authenticationFlow then "FLOW" else .providerId end), (if (.providerId == "conditional-credential" and (.authenticationConfig | type) == "string" and (.authenticationConfig | length) > 0) then "BUILTIN_PASSWORDLESS" elif ((.authenticationConfig | type) == "string" and (.authenticationConfig | length) > 0) then "CONFIGURED" else "NONE" end)]]')
+account_center_flow=$(kcadm get \
+  authentication/flows/account-center-browser/executions \
+  -r e-skylab-test -c)
+account_center_source_graph=$(jq -c \
+  '[.[] | select(.displayName != "account-center-native-handoff" and .providerId != "sky-native-handoff") | [.level, .priority, .requirement, (if .authenticationFlow then "FLOW" else .providerId end), (if (.providerId == "conditional-credential" and (.authenticationConfig | type) == "string" and (.authenticationConfig | length) > 0) then "BUILTIN_PASSWORDLESS" elif ((.authenticationConfig | type) == "string" and (.authenticationConfig | length) > 0) then "CONFIGURED" else "NONE" end)]]' \
+  <<<"$account_center_flow")
+[[ $account_center_source_graph == "$source_flow_graph" ]] \
+  || fail "client-specific browser flow did not preserve or repair the active realm browser graph"
+native_handoff_flow_count=$(jq \
+  '[.[] | select(.level == 0 and .priority == 5 and .requirement == "ALTERNATIVE" and .authenticationFlow == true and .displayName == "account-center-native-handoff")] | length' \
+  <<<"$account_center_flow")
+[[ $native_handoff_flow_count == 1 ]] \
+  || fail "native handoff subflow is missing, duplicated or drifted"
+native_handoff_execution_count=$(jq \
+  '[.[] | select(.level == 1 and .priority == 10 and .requirement == "REQUIRED" and .providerId == "sky-native-handoff")] | length' \
+  <<<"$account_center_flow")
+[[ $native_handoff_execution_count == 1 ]] \
+  || fail "native handoff execution is missing, duplicated or drifted"
+active_browser_flow_after_repair=$(kcadm get \
+  'authentication/flows/browser%20plus%20passkey/executions' \
+  -r e-skylab-test -c | jq -S -c '.')
+[[ $active_browser_flow_after_repair == "$active_browser_flow_before" ]] \
+  || fail 'drift repair mutated the active realm browser flow'
 conditional_credential_config_uuid=$(kcadm get \
   authentication/flows/account-center-browser/executions \
   -r e-skylab-test -c \

@@ -47,7 +47,9 @@ below have recorded evidence and an owner.
   the candidate.
 - The `sky-native-handoff` authenticator, protected mTLS/HMAC redemption client,
   client-specific browser flow and `skyapp` audience mapper are included in the
-  candidate. Native application WebView coverage remains part of the deferred
+  candidate. The reconciler copies the realm's active browser flow, not the
+  built-in flow named `browser`, and treats that active flow as a read-only
+  source. Native application WebView coverage remains part of the deferred
   post-release compatibility scope.
 - `https://my.yildizskylab.com/api/auth/backchannel-logout` is the agreed
   Keycloak contract, but the Account Center route must exist and pass logout
@@ -207,7 +209,9 @@ data volume. Keycloak's durable state remains in its existing database.
    the shared PostgreSQL volume into the Keycloak deployment.
 3. Confirm `/health/ready` on the management port before routing traffic.
 4. Run `reconcile-account-center.sh` once, then inspect the client contract with
-   read-only admin calls. Save redacted evidence.
+   read-only admin calls. Confirm the realm's active browser flow alias and graph
+   did not change, and that the Account Center override contains the copied graph
+   plus exactly one native handoff branch. Save redacted evidence.
 5. Verify existing logins before exposing Account Center. Then perform desktop
    PAR/PKCE login, Account REST reads, AIA return and backchannel logout tests.
 6. Watch login error rate, database errors, provider exceptions, RabbitMQ

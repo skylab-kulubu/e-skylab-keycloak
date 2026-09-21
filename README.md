@@ -85,9 +85,11 @@ Uzlaştırıcı, gizli `account-center` istemcisini şu sözleşmeyle yönetir:
 - BFF'nin en küçük `openid` isteğine uygun biçimde isteğe bağlı kapsam yoktur.
 
 Realm oturumu, AIA, tema ve şifresiz WebAuthn ayarları
-`config/account-center-realm.json` içinde kaynak kontrolündedir. Tarayıcı akışı
-beklenen imzadan saparsa uzlaştırıcı akışı yeniden kurar; bilinmeyen mapper,
-rol ve kapsamlar izin listeleriyle temizlenir.
+`config/account-center-realm.json` içinde kaynak kontrolündedir. İstemciye özel
+tarayıcı akışı realm'in etkin tarayıcı akışından kopyalanır; böylece production'a
+özel parola, OTP ve passkey davranışı korunur. Uzlaştırıcı kaynak akışı salt
+okunur kabul eder, yalnız izole native handoff dalını ekler ve kopya saparsa onu
+yeniden kurar. Bilinmeyen mapper, rol ve kapsamlar izin listeleriyle temizlenir.
 
 Sürekli uzlaştırma yalnız servis amaçlı `account-center-config` istemcisiyle
 kimlik doğrular. Bu istemcinin oluşturulması veya gizli anahtarının döndürülmesi

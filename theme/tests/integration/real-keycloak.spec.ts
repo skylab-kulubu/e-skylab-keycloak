@@ -298,6 +298,11 @@ test("real Keycloak 26.7 login and AIA contracts", async ({ browser }) => {
 
     const state = await openAction(page, "webauthn-register-passwordless");
     await signIn(page);
+    const conditionalMediationAvailable = await page.evaluate(async () =>
+      typeof PublicKeyCredential !== "undefined" &&
+      typeof PublicKeyCredential.isConditionalMediationAvailable === "function" &&
+      (await PublicKeyCredential.isConditionalMediationAvailable())
+    );
     await page.locator("#authenticateWebAuthnButton").click();
     await expectCallback(callbackReached, state, "success");
 
@@ -321,11 +326,6 @@ test("real Keycloak 26.7 login and AIA contracts", async ({ browser }) => {
     const passwordlessCallbackReached = waitForCallbackRequest(page);
     await page.goto(passwordlessAuthorization.url);
 
-    const conditionalMediationAvailable = await page.evaluate(async () =>
-      typeof PublicKeyCredential !== "undefined" &&
-      typeof PublicKeyCredential.isConditionalMediationAvailable === "function" &&
-      (await PublicKeyCredential.isConditionalMediationAvailable())
-    );
     if (conditionalMediationAvailable) {
       // A supported browser must enter the conditional ceremony. If KC fails to
       // invoke credentials.get, fail instead of masking that regression with an

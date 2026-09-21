@@ -102,6 +102,43 @@ flow_id_by_alias() {
   return 1
 }
 
+realm_browser_flow_alias() {
+  local realm_csv browser_flow
+  if ! realm_csv=$(kcadm get "realms/$TARGET_REALM" \
+    --fields browserFlow \
+    --format csv \
+    --noquotes); then
+    printf 'Failed to read the active browser flow for realm %s\n' "$TARGET_REALM" >&2
+    return 2
+  fi
+  while IFS= read -r browser_flow; do
+    if [[ -n $browser_flow ]]; then
+      printf '%s\n' "$browser_flow"
+      return 0
+    fi
+  done <<<"$realm_csv"
+  printf 'Realm %s does not have an active browser flow\n' "$TARGET_REALM" >&2
+  return 1
+}
+
+urlencode_path_segment() {
+  local input=$1 output='' character encoded index
+  local LC_ALL=C
+  for ((index = 0; index < ${#input}; index++)); do
+    character=${input:index:1}
+    case $character in
+      [a-zA-Z0-9.~_-])
+        output+=$character
+        ;;
+      *)
+        printf -v encoded '%02X' "'$character"
+        output+="%$encoded"
+        ;;
+    esac
+  done
+  printf '%s\n' "$output"
+}
+
 client_scope_id_by_name() {
   local wanted=$1
   local scopes_csv id name
@@ -183,10 +220,11 @@ authentication_config_signature() {
 
 flow_graph_signature() {
   local alias=$1
-  local executions_csv
+  local executions_csv encoded_alias
   local level priority requirement provider_id authentication_flow authentication_config
   local kind config_state
-  if ! executions_csv=$(kcadm get "authentication/flows/$alias/executions" \
+  encoded_alias=$(urlencode_path_segment "$alias")
+  if ! executions_csv=$(kcadm get "authentication/flows/$encoded_alias/executions" \
     -r "$TARGET_REALM" \
     --fields level,priority,requirement,providerId,authenticationFlow,authenticationConfig \
     --format csv \
@@ -209,6 +247,58 @@ flow_graph_signature() {
     printf '%s|%s|%s|%s|%s\n' \
       "$level" "$priority" "$requirement" "$kind" "$config_state"
   done <<<"$executions_csv"
+}
+
+account_center_source_graph_signature() {
+  local alias=$1
+  local executions_csv encoded_alias
+  local level priority requirement display_name provider_id authentication_flow authentication_config
+  local kind config_state native_flow_count=0 native_execution_count=0
+  encoded_alias=$(urlencode_path_segment "$alias")
+  if ! executions_csv=$(kcadm get "authentication/flows/$encoded_alias/executions" \
+    -r "$TARGET_REALM" \
+    --fields level,priority,requirement,displayName,providerId,authenticationFlow,authenticationConfig \
+    --format csv \
+    --noquotes); then
+    printf 'Failed to read authentication flow executions for %s\n' "$alias" >&2
+    return 2
+  fi
+  while IFS=, read -r level priority requirement display_name provider_id authentication_flow authentication_config; do
+    [[ -n $level ]] || continue
+    if [[ $authentication_flow == true && $display_name == "$NATIVE_FLOW_ALIAS" ]]; then
+      native_flow_count=$((native_flow_count + 1))
+      if [[ $level != 0 || $priority != 5 || $requirement != ALTERNATIVE ]]; then
+        printf 'The %s subflow contract differs from desired state\n' "$NATIVE_FLOW_ALIAS" >&2
+        return 1
+      fi
+      continue
+    fi
+    if [[ $authentication_flow != true && $provider_id == sky-native-handoff ]]; then
+      native_execution_count=$((native_execution_count + 1))
+      if [[ $level != 1 || $priority != 10 || $requirement != REQUIRED ]]; then
+        printf 'The sky-native-handoff execution contract differs from desired state\n' >&2
+        return 1
+      fi
+      continue
+    fi
+    if [[ $authentication_flow == true ]]; then
+      kind=FLOW
+    else
+      kind=$provider_id
+    fi
+    if ! config_state=$(authentication_config_signature \
+      "$provider_id" "$authentication_config"); then
+      printf 'Failed to read authentication configuration for %s\n' "$provider_id" >&2
+      return 2
+    fi
+    printf '%s|%s|%s|%s|%s\n' \
+      "$level" "$priority" "$requirement" "$kind" "$config_state"
+  done <<<"$executions_csv"
+  if [[ $native_flow_count != 1 || $native_execution_count != 1 ]]; then
+    printf 'Expected exactly one native handoff subflow and execution; observed %s and %s\n' \
+      "$native_flow_count" "$native_execution_count" >&2
+    return 1
+  fi
 }
 
 add_native_handoff_execution() {
@@ -271,8 +361,23 @@ add_native_handoff_execution() {
 
 ensure_browser_flow() {
   local client_id=$1
-  local flow_id actual_graph expected_graph
-  expected_graph=$(<"$CONFIG_DIR/account-center-browser.graph")
+  local flow_id actual_graph source_alias source_graph current_source_graph encoded_source_alias graph_status
+  if source_alias=$(realm_browser_flow_alias); then
+    :
+  else
+    return $?
+  fi
+  if [[ $source_alias == "$FLOW_ALIAS" ]]; then
+    printf 'The realm browser flow cannot be the Account Center client flow\n' >&2
+    return 1
+  fi
+  if ! source_graph=$(flow_graph_signature "$source_alias"); then
+    return 2
+  fi
+  if [[ $source_graph == *'|sky-native-handoff|'* ]]; then
+    printf 'The active realm browser flow already contains the reserved sky-native-handoff provider\n' >&2
+    return 1
+  fi
   if flow_id=$(optional_lookup flow_id_by_alias "$FLOW_ALIAS"); then
     :
   else
@@ -280,10 +385,16 @@ ensure_browser_flow() {
   fi
 
   if [[ -n $flow_id ]]; then
-    if ! actual_graph=$(flow_graph_signature "$FLOW_ALIAS"); then
-      return 2
+    if actual_graph=$(account_center_source_graph_signature "$FLOW_ALIAS"); then
+      :
+    else
+      graph_status=$?
+      if [[ $graph_status == 2 ]]; then
+        return 2
+      fi
+      actual_graph=''
     fi
-    if [[ $actual_graph != "$expected_graph" ]]; then
+    if [[ $actual_graph != "$source_graph" ]]; then
       kcadm update "clients/$client_id" -r "$TARGET_REALM" \
         -s 'authenticationFlowBindingOverrides.browser=' >/dev/null
       kcadm delete "authentication/flows/$flow_id" -r "$TARGET_REALM" >/dev/null
@@ -292,7 +403,8 @@ ensure_browser_flow() {
   fi
 
   if [[ -z $flow_id ]]; then
-    kcadm create authentication/flows/browser/copy \
+    encoded_source_alias=$(urlencode_path_segment "$source_alias")
+    kcadm create "authentication/flows/$encoded_source_alias/copy" \
       -r "$TARGET_REALM" \
       -s "newName=$FLOW_ALIAS" >/dev/null
     if flow_id=$(flow_id_by_alias "$FLOW_ALIAS"); then
@@ -303,13 +415,23 @@ ensure_browser_flow() {
     add_native_handoff_execution "$FLOW_ALIAS"
   fi
 
-  if ! actual_graph=$(flow_graph_signature "$FLOW_ALIAS"); then
+  if ! current_source_graph=$(flow_graph_signature "$source_alias"); then
     return 2
   fi
-  if [[ $actual_graph != "$expected_graph" ]]; then
-    printf 'Expected %s graph:\n%s\nActual graph:\n%s\n' \
-      "$FLOW_ALIAS" "$expected_graph" "$actual_graph" >&2
-    printf 'The %s execution graph differs from desired state\n' "$FLOW_ALIAS" >&2
+  if [[ $current_source_graph != "$source_graph" ]]; then
+    printf 'The active realm browser flow changed during reconciliation; retry safely\n' >&2
+    return 1
+  fi
+  if actual_graph=$(account_center_source_graph_signature "$FLOW_ALIAS"); then
+    :
+  else
+    graph_status=$?
+    return "$graph_status"
+  fi
+  if [[ $actual_graph != "$source_graph" ]]; then
+    printf 'Expected %s to preserve active realm flow %s:\n%s\nActual source portion:\n%s\n' \
+      "$FLOW_ALIAS" "$source_alias" "$source_graph" "$actual_graph" >&2
+    printf 'The %s execution graph differs from the active realm browser flow\n' "$FLOW_ALIAS" >&2
     return 1
   fi
   printf '%s\n' "$flow_id"

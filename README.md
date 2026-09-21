@@ -80,7 +80,10 @@ Uzlaştırıcı, gizli `account-center` istemcisini şu sözleşmeyle yönetir:
   `sky_native_handoff` değerini HMAC doğrulamalı mTLS üzerinden tek seferlik
   olarak kullanır.
 - Özel varsayılan istemci kapsamı yalnız Account API audience değerini ve
-  `manage-account` / `view-profile` rollerini taşır.
+  `manage-account` / `view-profile` rollerini taşır. Roller yalnız bu izole
+  kapsamda sabitlenir; realm kullanıcılarına veya diğer istemcilere genel rol
+  verilmez. Böylece mevcut ve yeni kullanıcıların Account Center token'ları
+  gerekli öz-servis yetkisini taşırken yetki sınırı istemcide kalır.
 - Core claim kapsamı yalnız gerekli `sub` ve `auth_time` alanlarını üretir.
 - BFF'nin en küçük `openid` isteğine uygun biçimde isteğe bağlı kapsam yoktur.
 

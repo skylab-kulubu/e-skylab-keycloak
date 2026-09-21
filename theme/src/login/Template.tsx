@@ -1,13 +1,16 @@
-import { useEffect } from "react";
 import { kcSanitize } from "keycloakify/lib/kcSanitize";
 import type { TemplateProps } from "keycloakify/login/TemplateProps";
 import { useInitialize } from "keycloakify/login/Template.useInitialize";
-import { useSetClassName } from "keycloakify/tools/useSetClassName";
-import skyLabLogoUrl from "../assets/skylab-logo.png";
-import ytuLogoUrl from "../assets/ytu-logo.png";
 import type { KcContext } from "./KcContext";
 import type { I18n } from "./i18n";
+import LegacyFrame from "./LegacyFrame";
+import { getLegacyChromeProps, getLegacyPageDescription, reactNodeToText, useLegacyChrome } from "./legacyChrome";
 
+/**
+ * The chrome for every Keycloakify `DefaultPage`: the same animated SKY LAB
+ * logo, glass card, background and KVKK footer as the login page. Page bodies
+ * keep Keycloak's element ids and the `sl-*` class contract from `KcPage`.
+ */
 export default function Template(props: TemplateProps<KcContext, I18n>) {
   const {
     displayInfo = false,
@@ -17,42 +20,17 @@ export default function Template(props: TemplateProps<KcContext, I18n>) {
     socialProvidersNode = null,
     infoNode = null,
     documentTitle,
-    bodyClassName,
     kcContext,
     i18n,
     doUseDefaultCss,
     children
   } = props;
 
-  const { realm, auth, url, message, isAppInitiatedAction } = kcContext;
-  const { msg, msgStr, currentLanguage, enabledLanguages } = i18n;
-  const copy = currentLanguage.languageTag.toLowerCase().startsWith("tr")
-    ? {
-        skipToContent: "İçeriğe geç",
-        identityService: "SKY LAB kimlik hizmeti",
-        loginPage: "SKY LAB giriş sayfası",
-        account: "Hesap",
-        secureAccountAction: "Güvenli hesap işlemi",
-        additionalInformation: "Ek bilgi",
-        clubName: "Yıldız Teknik Üniversitesi SKY LAB Kulübü"
-      }
-    : {
-        skipToContent: "Skip to content",
-        identityService: "SKY LAB identity service",
-        loginPage: "SKY LAB sign-in page",
-        account: "Account",
-        secureAccountAction: "Secure account action",
-        additionalInformation: "Additional information",
-        clubName: "Yıldız Technical University SKY LAB Club"
-      };
+  const { auth, url, message, isAppInitiatedAction } = kcContext;
+  const { msg, msgStr } = i18n;
 
-  useEffect(() => {
-    document.title = documentTitle ?? msgStr("loginTitle", realm.displayName || realm.name);
-    document.documentElement.lang = currentLanguage.languageTag;
-  }, [currentLanguage.languageTag, documentTitle, msgStr, realm.displayName, realm.name]);
-
-  useSetClassName({ qualifiedName: "html", className: "sl-html" });
-  useSetClassName({ qualifiedName: "body", className: bodyClassName ?? "sl-body" });
+  // Keycloakify never passes documentTitle, so the browser tab shows the page heading.
+  useLegacyChrome(i18n, documentTitle ?? reactNodeToText(headerNode));
 
   const { isReadyToRender } = useInitialize({ kcContext, doUseDefaultCss });
 
@@ -67,118 +45,64 @@ export default function Template(props: TemplateProps<KcContext, I18n>) {
     (message.type !== "warning" || !isAppInitiatedAction);
 
   return (
-    <div className="sl-shell">
-      <a
-        className="sl-skip-link"
-        href="#sl-main-content"
-        onClick={event => {
-          event.preventDefault();
-          document.getElementById("sl-main-content")?.focus();
-        }}
-      >
-        {copy.skipToContent}
-      </a>
-
-      <div className="sl-atmosphere" aria-hidden="true">
-        <span className="sl-orbit sl-orbit--one" />
-        <span className="sl-orbit sl-orbit--two" />
-        <span className="sl-glow sl-glow--pink" />
-        <span className="sl-glow sl-glow--blue" />
-      </div>
-
-      <header className="sl-site-header" aria-label={copy.identityService}>
-        <a className="sl-brand" href={url.loginUrl} aria-label={copy.loginPage}>
-          <img className="sl-brand__mark" src={skyLabLogoUrl} alt="" />
-          <span className="sl-brand__copy">
-            <strong>SKY LAB</strong>
-            <span>{copy.account}</span>
-          </span>
-        </a>
-
-        {enabledLanguages.length > 1 && (
-          <details className="sl-language">
-            <summary aria-label={msgStr("languages")}>{currentLanguage.label}</summary>
-            <nav aria-label={msgStr("languages")}>
-              <ul>
-                {enabledLanguages.map(({ languageTag, label, href }) => (
-                  <li key={languageTag}>
-                    <a href={href} lang={languageTag} aria-current={languageTag === currentLanguage.languageTag ? "page" : undefined}>
-                      {label}
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </nav>
-          </details>
-        )}
-      </header>
-
-      <main id="sl-main-content" className="sl-main" tabIndex={-1}>
-        <section className="sl-card" aria-labelledby="kc-page-title">
-          <div className="sl-card__eyebrow">
-            <span aria-hidden="true">✦</span>
-            {copy.secureAccountAction}
-          </div>
-
-          <header className="sl-card__header">
-            {displayRequiredFields && (
-              <p className="sl-required-note">
-                <span aria-hidden="true">*</span> {msg("requiredFields")}
-              </p>
-            )}
-            <h1 id="kc-page-title">{headerNode}</h1>
-            {showAttemptedUsername && (
-              <div className="sl-attempted-user">
-                <span id="kc-attempted-username">{auth.attemptedUsername}</span>
-                <a id="reset-login" href={url.loginRestartFlowUrl}>
-                  {msg("restartLoginTooltip")}
-                </a>
-              </div>
-            )}
-          </header>
-
-          {messageIsVisible && (
-            <div
-              className={`sl-alert sl-alert--${message.type}`}
-              role={message.type === "error" ? "alert" : "status"}
-              aria-live={message.type === "error" ? "assertive" : "polite"}
-            >
-              <span className="sl-alert__icon" aria-hidden="true" />
-              <span dangerouslySetInnerHTML={{ __html: kcSanitize(message.summary) }} />
+    <LegacyFrame
+      {...getLegacyChromeProps(i18n, { kvkk: "action" })}
+      mainId="sl-main-content"
+      titleId="kc-page-title"
+      title={headerNode}
+      description={getLegacyPageDescription(i18n, kcContext.pageId)}
+      headerExtras={
+        <>
+          {showAttemptedUsername && (
+            <div className="sl-legacy-attempted-user">
+              <span className="sl-legacy-attempted-user__label">{msgStr("skylabAttemptedUserLabel")}</span>
+              <span id="kc-attempted-username">{auth.attemptedUsername}</span>
+              <a id="reset-login" href={url.loginRestartFlowUrl}>
+                {msg("restartLoginTooltip")}
+              </a>
             </div>
           )}
 
-          <div className="sl-card__content">
-            {children}
+          {displayRequiredFields && (
+            <p className="sl-legacy-required-note">
+              <span aria-hidden="true">*</span> {msg("requiredFields")}
+            </p>
+          )}
 
-            {auth?.showTryAnotherWayLink && (
-              <form id="kc-select-try-another-way-form" action={url.loginAction} method="post">
-                <input type="hidden" name="tryAnotherWay" value="on" />
-                <button
-                  className="sl-text-button"
-                  type="submit"
-                  id="try-another-way"
-                >
-                  {msg("doTryAnotherWay")}
-                </button>
-              </form>
-            )}
+          {messageIsVisible && (
+            <div
+              className={`sl-legacy-alert sl-legacy-alert--${message.type}`}
+              role={message.type === "error" ? "alert" : "status"}
+              aria-live={message.type === "error" ? "assertive" : "polite"}
+              dangerouslySetInnerHTML={{ __html: kcSanitize(message.summary) }}
+            />
+          )}
+        </>
+      }
+    >
+      <div className="sl-legacy-content">{children}</div>
 
-            {socialProvidersNode}
+      {auth?.showTryAnotherWayLink && (
+        <form
+          id="kc-select-try-another-way-form"
+          className="sl-legacy-try-another-way"
+          action={url.loginAction}
+          method="post"
+        >
+          <input type="hidden" name="tryAnotherWay" value="on" />
+          <button className="sl-text-button" type="submit" id="try-another-way">
+            {msg("doTryAnotherWay")}
+          </button>
+        </form>
+      )}
 
-            {displayInfo && infoNode !== null && (
-              <aside id="kc-info" className="sl-info" aria-label={copy.additionalInformation}>
-                {infoNode}
-              </aside>
-            )}
-          </div>
-        </section>
-      </main>
+      {socialProvidersNode}
 
-      <footer className="sl-site-footer">
-        <img src={ytuLogoUrl} alt="" aria-hidden="true" />
-        <span>{copy.clubName}</span>
-      </footer>
-    </div>
+      {displayInfo && infoNode !== null && (
+        <aside id="kc-info" className="sl-info" aria-label={msgStr("skylabInfoLabel")}>
+          {infoNode}
+        </aside>
+      )}
+    </LegacyFrame>
   );
 }

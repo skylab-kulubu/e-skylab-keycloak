@@ -1,21 +1,106 @@
-.sl-legacy-shell {
+/*
+ * SKY LAB login design system.
+ *
+ * One token set for every Keycloak page: the login page (Login.tsx), the
+ * passkey offer and every Keycloakify DefaultPage rendered through
+ * Template.tsx share this file. Sections:
+ *   1. tokens and base resets
+ *   2. LegacyFrame chrome (background, logo, card, footer)
+ *   3. login page controls (.sl-legacy-*)
+ *   4. DefaultPage-only structure (.sl-* names handed out by KcPage.tsx for
+ *      elements the login page does not have; its controls reuse section 3)
+ *   5. responsive, reduced-motion and forced-colors rules
+ */
+
+/* 1. Tokens and base ------------------------------------------------------ */
+
+:root {
+  color-scheme: dark;
   --sl-legacy-accent: #e0c8e5;
-  --sl-legacy-blue: #2993e4;
-  --sl-legacy-pink: #eb237a;
+  /* Submit palette: white text reads at 4.89:1 on the blue and 4.81:1 on the pink (WCAG AA). */
+  --sl-legacy-blue: #1a73c4;
+  --sl-legacy-pink: #d91f6d;
+  --sl-legacy-bg: #08070b;
+  --sl-legacy-ink: #fff;
+  --sl-legacy-text: #f4f4f5;
+  --sl-legacy-label: #d4d4d8;
+  --sl-legacy-muted: #a1a1aa;
+  --sl-legacy-subtle: #71717a;
+  --sl-legacy-link: #38a8f5;
+  --sl-legacy-link-hover: #7cc4ff;
+  --sl-legacy-info: #93c5fd;
+  --sl-legacy-focus: #7dd3fc;
+  --sl-legacy-danger: #fb7185;
+  --sl-legacy-success: #86efac;
+  --sl-legacy-warning: #fcd34d;
+  --sl-legacy-border: rgba(255, 255, 255, 0.1);
+  --sl-legacy-surface: rgba(24, 24, 27, 0.6);
+  --sl-legacy-surface-raised: rgba(255, 255, 255, 0.05);
+  --sl-legacy-surface-hover: rgba(255, 255, 255, 0.1);
+  --sl-legacy-surface-active: rgba(255, 255, 255, 0.15);
+  --sl-legacy-input-bg: rgba(39, 39, 42, 0.6);
+  --sl-legacy-font:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  font-family: var(--sl-legacy-font);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.sl-html,
+.sl-body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+.sl-body {
+  min-height: 100vh;
+  color: var(--sl-legacy-ink);
+  background: var(--sl-legacy-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+a {
+  color: var(--sl-legacy-link);
+  text-underline-offset: 0.18em;
+}
+
+a:hover {
+  color: var(--sl-legacy-link-hover);
+}
+
+:focus-visible {
+  outline: 3px solid var(--sl-legacy-focus);
+  outline-offset: 3px;
+}
+
+/* 2. LegacyFrame chrome --------------------------------------------------- */
+
+.sl-legacy-shell {
   position: relative;
   isolation: isolate;
   min-height: 100vh;
   overflow: hidden;
-  color: #fff;
+  color: var(--sl-legacy-ink);
   background: transparent;
 }
 
 .sl-legacy-shell,
 .sl-legacy-shell button,
-.sl-legacy-shell input {
-  font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
+.sl-legacy-shell input,
+.sl-legacy-shell select,
+.sl-legacy-shell textarea {
+  font-family: var(--sl-legacy-font);
 }
 
 .sl-legacy-background,
@@ -37,7 +122,7 @@
   background:
     radial-gradient(1200px 760px at 78% 10%, rgba(224, 200, 229, 0.1), transparent 60%),
     radial-gradient(900px 700px at 8% 80%, rgba(170, 140, 200, 0.055), transparent 60%),
-    #08070b;
+    var(--sl-legacy-bg);
   animation: sl-legacy-bloom 2.4s cubic-bezier(0.2, 0.7, 0.3, 1) 50ms forwards;
 }
 
@@ -100,8 +185,8 @@
   left: 0.75rem;
   padding: 0.7rem 1rem;
   border-radius: 0.6rem;
-  color: #08070b;
-  background: #fff;
+  color: var(--sl-legacy-bg);
+  background: var(--sl-legacy-ink);
   font-weight: 800;
   transform: translateY(-180%);
 }
@@ -167,8 +252,8 @@
 
 .sl-legacy-card,
 .sl-legacy-footer {
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(24, 24, 27, 0.6);
+  border: 1px solid var(--sl-legacy-border);
+  background: var(--sl-legacy-surface);
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.55);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
@@ -186,18 +271,97 @@
 
 .sl-legacy-intro h1 {
   margin: 0;
-  color: #fff;
+  color: var(--sl-legacy-ink);
   font-size: 1.5rem;
   font-weight: 700;
   line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.sl-legacy-intro h1 .sl-key-icon {
+  display: none;
 }
 
 .sl-legacy-intro p {
   margin: 0.5rem 0 0;
-  color: #a1a1aa;
+  color: var(--sl-legacy-muted);
   font-size: 0.875rem;
   line-height: 1.625;
 }
+
+.sl-legacy-footer {
+  padding: 1rem 1.25rem;
+  border-radius: 1.5rem;
+  text-align: center;
+}
+
+.sl-legacy-footer p {
+  margin: 0;
+  color: var(--sl-legacy-muted);
+  font-size: 0.75rem;
+  line-height: 1.625;
+}
+
+.sl-legacy-footer a {
+  color: var(--sl-legacy-link);
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.sl-legacy-footer > strong,
+.sl-legacy-credit {
+  display: block;
+}
+
+.sl-legacy-footer strong {
+  margin-top: 0.5rem;
+  color: var(--sl-legacy-label);
+  font-size: 0.875rem;
+}
+
+.sl-legacy-credit {
+  margin-top: 0.125rem;
+  color: var(--sl-legacy-subtle);
+  font-size: 0.75rem;
+}
+
+.sl-legacy-languages {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--sl-legacy-border);
+}
+
+.sl-legacy-languages ul {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.25rem 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sl-legacy-languages a {
+  display: inline-block;
+  padding: 0.25rem 0.625rem;
+  border-radius: 999px;
+  color: var(--sl-legacy-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.sl-legacy-languages a:hover {
+  color: var(--sl-legacy-ink);
+  background: var(--sl-legacy-surface-raised);
+}
+
+.sl-legacy-languages a[aria-current="page"] {
+  color: var(--sl-legacy-ink);
+  background: var(--sl-legacy-surface-hover);
+}
+
+/* 3. Login page controls -------------------------------------------------- */
 
 .sl-legacy-choices {
   display: flex;
@@ -205,17 +369,24 @@
   gap: 0.75rem;
 }
 
+/* Keycloakify's Error and Info pages render their "back to application" and
+   "proceed" links without any class, so the id chains below give those links
+   the login page's choice-button look. */
 .sl-legacy-choice,
-.sl-legacy-passkey {
+.sl-legacy-passkey,
+.sl-legacy-content #kc-error-message > p > a,
+.sl-legacy-content #kc-info-message > p > a {
   width: 100%;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #f4f4f5;
-  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--sl-legacy-border);
+  color: var(--sl-legacy-text);
+  background: var(--sl-legacy-surface-raised);
   text-decoration: none;
   transition: color 150ms ease, background 150ms ease, border-color 150ms ease, transform 150ms ease;
 }
 
-.sl-legacy-choice {
+.sl-legacy-choice,
+.sl-legacy-content #kc-error-message > p > a,
+.sl-legacy-content #kc-info-message > p > a {
   min-height: 3.25rem;
   display: flex;
   align-items: center;
@@ -237,32 +408,36 @@
 }
 
 .sl-legacy-choice svg {
-  color: #71717a;
+  color: var(--sl-legacy-subtle);
 }
 
 .sl-legacy-choice:hover,
-.sl-legacy-passkey:hover {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.1);
+.sl-legacy-passkey:hover,
+.sl-legacy-content #kc-error-message > p > a:hover,
+.sl-legacy-content #kc-info-message > p > a:hover {
+  color: var(--sl-legacy-ink);
+  background: var(--sl-legacy-surface-hover);
 }
 
 .sl-legacy-choice:active,
-.sl-legacy-passkey:active {
+.sl-legacy-passkey:active,
+.sl-legacy-content #kc-error-message > p > a:active,
+.sl-legacy-content #kc-info-message > p > a:active {
   transform: scale(0.99);
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--sl-legacy-surface-active);
 }
 
 .sl-legacy-passkey-wrap {
   margin-top: 1rem;
   padding-top: 1rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid var(--sl-legacy-border);
 }
 
 .sl-legacy-passkey {
   min-height: 2.5rem;
   padding: 0.5rem 0.75rem;
   border-radius: 0.5rem;
-  color: #a1a1aa;
+  color: var(--sl-legacy-muted);
   font-size: 0.875rem;
   font-weight: 500;
   cursor: pointer;
@@ -279,14 +454,14 @@
   margin: 0 0 1rem;
   padding: 0;
   border: 0;
-  color: #a1a1aa;
+  color: var(--sl-legacy-muted);
   background: transparent;
   font-size: 0.875rem;
   cursor: pointer;
 }
 
 .sl-legacy-back:hover {
-  color: #e4e4e7;
+  color: var(--sl-legacy-text);
 }
 
 .sl-legacy-back svg {
@@ -299,29 +474,53 @@
   padding: 0.75rem 1rem;
   border: 1px solid rgba(48, 128, 255, 0.2);
   border-radius: 0.75rem;
-  color: #93c5fd;
+  color: var(--sl-legacy-info);
   background: rgba(48, 128, 255, 0.1);
   font-size: 0.875rem;
   font-weight: 500;
+  line-height: 1.5;
 }
 
 .sl-legacy-alert--error {
   border-color: rgba(251, 44, 54, 0.2);
-  color: #fca5a5;
+  color: var(--sl-legacy-danger);
   background: rgba(251, 44, 54, 0.1);
+}
+
+.sl-legacy-alert--success {
+  border-color: rgba(52, 211, 153, 0.24);
+  color: var(--sl-legacy-success);
+  background: rgba(52, 211, 153, 0.1);
+}
+
+.sl-legacy-alert--warning {
+  border-color: rgba(251, 191, 36, 0.24);
+  color: var(--sl-legacy-warning);
+  background: rgba(251, 191, 36, 0.1);
 }
 
 .sl-legacy-field {
   margin-bottom: 1rem;
 }
 
+/* Keycloak nests its button group inside the last field group (logout-confirm) */
+.sl-legacy-field > .sl-legacy-field:last-child {
+  margin-bottom: 0;
+}
+
 .sl-legacy-field > label,
-.sl-legacy-field__heading label {
+.sl-legacy-field__heading label,
+.sl-legacy-label {
   display: block;
   margin-bottom: 0.25rem;
-  color: #d4d4d8;
+  color: var(--sl-legacy-label);
   font-size: 0.875rem;
   font-weight: 500;
+}
+
+/* DefaultPage places the required marker as a sibling of the label */
+.sl-legacy-label {
+  display: inline-block;
 }
 
 .sl-legacy-field__heading {
@@ -337,57 +536,84 @@
 }
 
 .sl-legacy-field__heading a {
-  color: #38a8f5;
+  color: var(--sl-legacy-link);
   font-size: 0.75rem;
 }
 
-.sl-legacy-field input:not([type="checkbox"]),
-.sl-legacy-password-input input {
+.sl-legacy-input,
+select.sl-legacy-input,
+textarea.sl-legacy-input {
   width: 100%;
   min-height: 2.75rem;
   padding: 0.625rem 1rem;
-  border: 2px solid rgba(255, 255, 255, 0.1);
+  border: 2px solid var(--sl-legacy-border);
   border-radius: 0.75rem;
   outline: none;
-  color: #fff;
-  background: rgba(39, 39, 42, 0.6);
+  color: var(--sl-legacy-ink);
+  background: var(--sl-legacy-input-bg);
   font-size: 0.875rem;
   transition: border-color 150ms ease, box-shadow 150ms ease;
 }
 
-.sl-legacy-field input:focus {
+.sl-legacy-input:focus {
   border-color: var(--sl-legacy-blue);
-  box-shadow: 0 0 0 3px rgba(41, 147, 228, 0.2);
+  box-shadow: 0 0 0 3px rgba(26, 115, 196, 0.25);
 }
 
-.sl-legacy-field input[aria-invalid="true"] {
+.sl-legacy-input[aria-invalid="true"] {
   border-color: rgba(255, 101, 104, 0.5);
+}
+
+.sl-legacy-input:disabled {
+  color: var(--sl-legacy-muted);
+  cursor: not-allowed;
+  opacity: 0.7;
 }
 
 .sl-legacy-password-input {
   position: relative;
 }
 
-.sl-legacy-password-input input {
+.sl-legacy-password-input .sl-legacy-input {
   padding-right: 2.75rem;
 }
 
-.sl-legacy-password-input button {
+.sl-legacy-password-toggle {
   position: absolute;
   top: 50%;
   right: 0.75rem;
   padding: 0.25rem;
   border: 0;
-  color: #71717a;
+  color: var(--sl-legacy-subtle);
   background: transparent;
   transform: translateY(-50%);
   cursor: pointer;
 }
 
+.sl-legacy-password-toggle:hover {
+  color: var(--sl-legacy-label);
+}
+
+.sl-eye::before {
+  content: "◉";
+  font-style: normal;
+}
+
+.sl-eye--hide::before {
+  content: "⊘";
+}
+
 .sl-legacy-field-error {
-  margin: -0.5rem 0 1rem;
-  color: #fb7185;
+  display: block;
+  margin: 0.375rem 0 0;
+  color: var(--sl-legacy-danger);
   font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+/* The login page renders its error after the whole field instead of inside the input wrapper */
+.sl-legacy-field-error--after-field {
+  margin: -0.5rem 0 1rem;
 }
 
 .sl-legacy-remember {
@@ -395,7 +621,7 @@
   align-items: center;
   gap: 0.5rem;
   margin: 0 0 1.25rem;
-  color: #d4d4d8;
+  color: var(--sl-legacy-label);
   font-size: 0.875rem;
   cursor: pointer;
 }
@@ -407,12 +633,13 @@
 }
 
 .sl-legacy-submit {
+  display: block;
   width: 100%;
   min-height: 3rem;
   padding: 0.75rem 1rem;
   border: 0;
   border-radius: 0.75rem;
-  color: #fff;
+  color: var(--sl-legacy-ink);
   background: var(--sl-legacy-blue);
   font-size: 1rem;
   font-weight: 700;
@@ -421,49 +648,36 @@
 }
 
 .sl-legacy-submit:hover {
+  color: var(--sl-legacy-ink);
   background: var(--sl-legacy-pink);
 }
 
 .sl-legacy-submit:active {
   transform: scale(0.98);
+  color: var(--sl-legacy-ink);
+  background: var(--sl-legacy-pink);
 }
 
-.sl-legacy-submit:disabled {
+.sl-legacy-submit:disabled,
+.sl-legacy-button:disabled {
   cursor: not-allowed;
   opacity: 0.6;
 }
 
-.sl-legacy-footer {
-  padding: 1rem 1.25rem;
-  border-radius: 1.5rem;
-  text-align: center;
-}
-
-.sl-legacy-footer p {
-  margin: 0;
-  color: #a1a1aa;
-  font-size: 0.75rem;
-  line-height: 1.625;
-}
-
-.sl-legacy-footer a {
-  color: #38a8f5;
-  font-weight: 700;
-  text-decoration: underline;
-}
-
-.sl-legacy-footer > strong,
-.sl-legacy-credit {
-  display: block;
+.sl-legacy-submit--link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
 }
 
 .sl-passkey-offer__privacy {
   margin: 0 0 1.25rem;
   padding: 0.875rem 1rem;
-  border: 1px solid rgba(41, 147, 228, 0.22);
+  border: 1px solid rgba(26, 115, 196, 0.3);
   border-radius: 0.75rem;
-  color: #cbd5e1;
-  background: rgba(41, 147, 228, 0.08);
+  color: var(--sl-legacy-label);
+  background: rgba(26, 115, 196, 0.1);
   font-size: 0.8125rem;
   line-height: 1.55;
 }
@@ -478,22 +692,569 @@
   font-size: 0.875rem;
 }
 
-.sl-legacy-footer strong {
-  margin-top: 0.5rem;
-  color: #d4d4d8;
+/* 4. DefaultPage class contract ------------------------------------------- */
+
+.sl-legacy-content {
+  min-width: 0;
+}
+
+.sl-legacy-content > :first-child {
+  margin-top: 0;
+}
+
+.sl-legacy-content > :last-child {
+  margin-bottom: 0;
+}
+
+.sl-legacy-attempted-user {
+  display: grid;
+  gap: 0.125rem;
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--sl-legacy-border);
+  border-radius: 0.75rem;
+  background: var(--sl-legacy-surface-raised);
+  text-align: center;
   font-size: 0.875rem;
 }
 
-.sl-legacy-credit {
-  margin-top: 0.125rem;
-  color: #71717a;
+.sl-legacy-attempted-user__label {
+  color: var(--sl-legacy-subtle);
   font-size: 0.75rem;
 }
 
-.sl-legacy-shell :focus-visible {
-  outline: 3px solid #7dd3fc;
+.sl-legacy-attempted-user #kc-attempted-username {
+  color: var(--sl-legacy-ink);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.sl-legacy-attempted-user a {
+  font-size: 0.75rem;
+}
+
+.sl-legacy-required-note {
+  margin: 0 0 1rem;
+  color: var(--sl-legacy-subtle);
+  font-size: 0.75rem;
+  text-align: center;
+}
+
+.sl-form,
+.sl-actions,
+.sl-options,
+.sl-settings,
+.sl-label-wrap,
+.sl-input-wrap {
+  min-width: 0;
+}
+
+.sl-legacy-content hr {
+  display: none;
+}
+
+/* Keycloakify separates the sign-in form from the passkey button with a bare <br> */
+.sl-legacy-content > br {
+  display: none;
+}
+
+.sl-helper-text {
+  margin: 0.375rem 0;
+  color: var(--sl-legacy-muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.sl-options,
+.sl-settings {
+  display: grid;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  color: var(--sl-legacy-label);
+  font-size: 0.875rem;
+}
+
+.sl-options:not(:has(input, a, label)),
+.sl-settings:not(:has(input, a, label)) {
+  display: none;
+}
+
+.sl-options .sl-options__item,
+.sl-settings .sl-options__item {
+  min-width: 0;
+}
+
+.sl-legacy-content .checkbox label,
+.sl-choice {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--sl-legacy-label);
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.sl-legacy-content .checkbox input[type="checkbox"],
+.sl-choice__input,
+.sl-choice input {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  flex: 0 0 auto;
+  accent-color: var(--sl-legacy-blue);
+}
+
+.sl-choice__label--disabled {
+  color: var(--sl-legacy-subtle);
+  cursor: not-allowed;
+}
+
+/* DefaultPage always renders an options row, even when it holds no control */
+.sl-legacy-content #kc-form-options:not(:has(input, a, label)) {
+  display: none;
+}
+
+.sl-legacy-content #kc-form-options {
+  margin-bottom: 1rem;
+  color: var(--sl-legacy-label);
+  font-size: 0.875rem;
+}
+
+.sl-legacy-content #kc-form-options .checkbox {
+  margin: 0;
+}
+
+.sl-legacy-content #kc-form-options a {
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+/* Keycloakify adds this base class to every button next to .sl-legacy-submit or .sl-legacy-choice */
+.sl-legacy-button {
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.sl-legacy-button--block {
+  width: 100%;
+}
+
+.sl-legacy-content #kc-form-buttons,
+.sl-legacy-content .form-actions,
+.sl-actions {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+.sl-legacy-content #kc-form-buttons > .sl-actions,
+.sl-actions .sl-actions {
+  margin-top: 0;
+}
+
+.sl-legacy-content .form-actions + .clearfix {
+  display: none;
+}
+
+.sl-legacy-content .sl-form + .sl-form,
+.sl-legacy-content .sl-legacy-button + .sl-form,
+.sl-legacy-content .sl-form + .sl-legacy-button,
+.sl-legacy-content .sl-legacy-button + .sl-legacy-button {
+  margin-top: 0.75rem;
+}
+
+.sl-text-button {
+  display: inline-block;
+  padding: 0;
+  border: 0;
+  color: var(--sl-legacy-link);
+  background: transparent;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+  cursor: pointer;
+}
+
+.sl-legacy-try-another-way {
+  margin-top: 1rem;
+  text-align: center;
+}
+
+.sl-info,
+.sl-social {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--sl-legacy-border);
+  color: var(--sl-legacy-muted);
+  font-size: 0.875rem;
+  line-height: 1.625;
+  text-align: center;
+}
+
+.sl-info p,
+.sl-social h2 {
+  margin: 0 0 0.5rem;
+}
+
+.sl-social h2 {
+  color: var(--sl-legacy-muted);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.sl-social hr {
+  display: none;
+}
+
+.sl-social__list,
+.sl-auth-list,
+.sl-recovery-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sl-social__list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.sl-social__list--grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.sl-social__name {
+  overflow-wrap: anywhere;
+}
+
+.sl-auth-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.sl-auth-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.875rem;
+  align-items: center;
+  width: 100%;
+  margin: 0;
+  padding: 0.875rem 1rem;
+  border: 1px solid var(--sl-legacy-border);
+  border-radius: 0.75rem;
+  color: var(--sl-legacy-text);
+  background: var(--sl-legacy-surface-raised);
+  font-size: 1rem;
+  text-align: left;
+}
+
+.sl-auth-item + .sl-auth-item {
+  margin-top: 0.75rem;
+}
+
+.sl-form:has(> .sl-auth-item) {
+  margin-bottom: 1rem;
+}
+
+button.sl-auth-item {
+  cursor: pointer;
+  transition: color 150ms ease, background 150ms ease, border-color 150ms ease, transform 150ms ease;
+}
+
+button.sl-auth-item:hover {
+  color: var(--sl-legacy-ink);
+  background: var(--sl-legacy-surface-hover);
+}
+
+button.sl-auth-item:active {
+  transform: scale(0.99);
+}
+
+/* WebauthnAuthenticate nests the label and descriptions in the "arrow" wrapper */
+div.sl-auth-item__arrow-mark {
+  min-width: 0;
+}
+
+.sl-auth-item__icon,
+.sl-otp-list__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.625rem;
+  color: var(--sl-legacy-accent);
+  background: rgba(224, 200, 229, 0.1);
+}
+
+.sl-auth-item__body {
+  min-width: 0;
+}
+
+.sl-auth-item__title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.sl-auth-item__description {
+  margin-top: 0.125rem;
+  color: var(--sl-legacy-muted);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.sl-auth-item__fill {
+  display: none;
+}
+
+.sl-auth-item__arrow {
+  color: var(--sl-legacy-subtle);
+}
+
+.sl-auth-list__title {
+  margin: 0 0 0.75rem;
+  color: var(--sl-legacy-muted);
+  font-size: 0.875rem;
+}
+
+.sl-authenticator-icon,
+.sl-key-icon,
+i.sl-auth-item__arrow-mark {
+  display: inline-block;
+  width: 1.375rem;
+  height: 1.375rem;
+  flex: 0 0 auto;
+  background: currentColor;
+  -webkit-mask: var(--sl-icon) center / contain no-repeat;
+  mask: var(--sl-icon) center / contain no-repeat;
+  font-style: normal;
+}
+
+.sl-authenticator-icon,
+.sl-key-icon {
+  --sl-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='8' cy='15' r='4'/%3E%3Cpath d='M10.85 12.15 19 4'/%3E%3Cpath d='m18 5 2 2'/%3E%3Cpath d='m15 8 2 2'/%3E%3C/svg%3E");
+}
+
+.sl-authenticator-icon--password {
+  --sl-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4' y='11' width='16' height='10' rx='2'/%3E%3Cpath d='M8 11V7a4 4 0 0 1 8 0v4'/%3E%3C/svg%3E");
+}
+
+.sl-authenticator-icon--otp {
+  --sl-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3 4 6v6c0 5 3.4 8.4 8 9 4.6-.6 8-4 8-9V6l-8-3Z'/%3E%3Cpath d='m9 12 2 2 4-4'/%3E%3C/svg%3E");
+}
+
+i.sl-auth-item__arrow-mark {
+  width: 1rem;
+  height: 1rem;
+  --sl-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m9 6 6 6-6 6'/%3E%3C/svg%3E");
+}
+
+/* login-otp: one card per registered authenticator, the radio stays keyboard reachable */
+.sl-otp-list__input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.sl-otp-list {
+  display: block;
+  margin-bottom: 0.75rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--sl-legacy-border);
+  border-radius: 0.75rem;
+  background: var(--sl-legacy-surface-raised);
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.sl-otp-list:hover {
+  background: var(--sl-legacy-surface-hover);
+}
+
+.sl-otp-list__input:checked + .sl-otp-list {
+  border-color: var(--sl-legacy-blue);
+  background: rgba(26, 115, 196, 0.16);
+}
+
+.sl-otp-list__input:focus-visible + .sl-otp-list {
+  outline: 3px solid var(--sl-legacy-focus);
   outline-offset: 3px;
 }
+
+.sl-otp-list__header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.sl-otp-list__title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.sl-section-title {
+  display: block;
+  margin: 1.25rem 0 0.5rem;
+  color: var(--sl-legacy-ink);
+  font-weight: 600;
+}
+
+.sl-content-grid {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.sl-recovery-warning {
+  margin-bottom: 1rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid rgba(251, 191, 36, 0.24);
+  border-radius: 0.75rem;
+  color: var(--sl-legacy-warning);
+  background: rgba(251, 191, 36, 0.1);
+  font-size: 0.875rem;
+}
+
+.sl-recovery-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin: 1rem 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.sl-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Prose that DefaultPage renders without classes (instructions, TOTP steps, links) */
+.sl-legacy-content .instruction,
+.sl-legacy-content #kc-error-message p,
+.sl-legacy-content #kc-info-message p,
+.sl-legacy-content #kc-terms-text,
+.sl-legacy-content #kc-delete-text {
+  margin: 0 0 1rem;
+  color: var(--sl-legacy-muted);
+  font-size: 0.875rem;
+  line-height: 1.625;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.sl-legacy-content #kc-terms-text {
+  max-height: 22rem;
+  overflow: auto;
+  text-align: left;
+}
+
+.sl-legacy-content #kc-error-message > p.instruction {
+  padding: 0.75rem 1rem;
+  border: 1px solid rgba(251, 44, 54, 0.2);
+  border-radius: 0.75rem;
+  color: var(--sl-legacy-danger);
+  background: rgba(251, 44, 54, 0.1);
+  font-weight: 500;
+}
+
+.sl-legacy-content #kc-error-message > p,
+.sl-legacy-content #kc-info-message > p {
+  margin-bottom: 0.75rem;
+}
+
+.sl-legacy-content #kc-error-message p a,
+.sl-legacy-content #kc-info-message p a,
+.sl-legacy-content .instruction a {
+  font-weight: 600;
+}
+
+.sl-legacy-content #kc-totp-settings {
+  margin: 0 0 1.25rem;
+  padding-left: 1.25rem;
+  color: var(--sl-legacy-muted);
+  font-size: 0.875rem;
+  line-height: 1.625;
+}
+
+.sl-legacy-content #kc-totp-settings > li {
+  margin-bottom: 0.875rem;
+  padding-left: 0.25rem;
+}
+
+.sl-legacy-content #kc-totp-settings > li::marker {
+  color: var(--sl-legacy-accent);
+  font-weight: 700;
+}
+
+.sl-legacy-content #kc-totp-settings p {
+  margin: 0 0 0.375rem;
+}
+
+.sl-legacy-content #kc-totp-settings ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1rem;
+  color: var(--sl-legacy-label);
+}
+
+.sl-legacy-content #kc-totp-secret-qr-code {
+  display: block;
+  width: 11rem;
+  height: 11rem;
+  margin: 0.75rem auto;
+  padding: 0.5rem;
+  border-radius: 0.75rem;
+  background: var(--sl-legacy-ink);
+  image-rendering: pixelated;
+}
+
+.sl-legacy-content #kc-totp-secret-key {
+  display: inline-block;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  color: var(--sl-legacy-ink);
+  background: rgba(255, 255, 255, 0.06);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8125rem;
+  letter-spacing: 0.08em;
+  overflow-wrap: anywhere;
+}
+
+.sl-legacy-content .required {
+  margin-left: 0.125rem;
+  color: var(--sl-legacy-accent);
+}
+
+.sl-loading,
+.sl-fallback {
+  width: min(100% - 2rem, 28rem);
+  margin: 20vh auto;
+  padding: 2rem;
+  border: 1px solid var(--sl-legacy-border);
+  border-radius: 1.5rem;
+  color: var(--sl-legacy-ink);
+  background: var(--sl-legacy-surface);
+  font-family: var(--sl-legacy-font);
+}
+
+.sl-legacy-shell :focus-visible {
+  outline: 3px solid var(--sl-legacy-focus);
+  outline-offset: 3px;
+}
+
+/* 5. Motion, viewport and forced-colors ----------------------------------- */
 
 @keyframes sl-legacy-bloom {
   to {
@@ -591,6 +1352,11 @@
     width: 1.25rem;
     height: 1.25rem;
   }
+
+  .sl-social__list--grid,
+  .sl-recovery-list {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -625,5 +1391,30 @@
     fill-opacity: 1;
     stroke-opacity: 0;
     stroke-dashoffset: 0;
+  }
+
+  .sl-legacy-shell *,
+  .sl-legacy-shell *::before,
+  .sl-legacy-shell *::after {
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .sl-legacy-card,
+  .sl-legacy-footer,
+  .sl-legacy-choice,
+  .sl-legacy-submit,
+  .sl-legacy-alert,
+  .sl-legacy-input,
+  .sl-auth-item,
+  .sl-otp-list {
+    border: 1px solid CanvasText;
+  }
+
+  .sl-authenticator-icon,
+  .sl-key-icon,
+  i.sl-auth-item__arrow-mark {
+    background: CanvasText;
   }
 }

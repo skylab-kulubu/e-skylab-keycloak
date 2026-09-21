@@ -1,0 +1,12 @@
+/* Applied only while the baselines are captured. The grain and star layers are
+   decorative noise, and Chromium dithers the radial background tints into
+   noise as well; both make every PNG roughly twice as large without adding
+   anything a regression check needs. The watermark, card and footer stay. */
+.sl-legacy-background__grain,
+.sl-legacy-background__stars {
+  display: none !important;
+}
+
+.sl-legacy-background__layers {
+  background: var(--sl-legacy-bg) !important;
+}

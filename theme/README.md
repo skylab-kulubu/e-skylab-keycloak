@@ -21,9 +21,24 @@ Only the two original brand image assets were carried forward.
   `cancel-aia` control. `delete-credential.ftl` is the only credential-delete
   surface; the built-in delete-account action is not an Account Center
   destination.
-- The custom template owns the semantic banner/main/content-info landmarks,
-  skip link, native keyboard-operable language menu, visible focus treatment,
-  WCAG AA button colors and `prefers-reduced-motion` behavior.
+- One design system: `src/login/legacy-login.css` is the only stylesheet and
+  the only token set (accent `#e0c8e5`, background `#08070b`, blue submit with
+  pink hover, Inter stack). `Template.tsx` renders every Keycloakify
+  `DefaultPage` inside the same `LegacyFrame` chrome as `Login.tsx` and
+  `PasskeyOffer.tsx`: animated SKY LAB logo, glass card, KVKK footer and the
+  language menu. The `sl-*` class contract handed out by `KcPage.tsx` is
+  styled with the login tokens; `login-page-expired.ftl` is the only custom
+  page body because Keycloak's markup cannot be phrased in Turkish.
+- Every visible string comes from `src/login/i18n.ts` (Turkish first, English
+  second); the Turkish keys that Keycloakify's default set lacks live there.
+- The custom template owns the semantic main/content-info landmarks, the skip
+  link, the plain-link language menu, the document title (page heading plus
+  " · SKY LAB"), visible focus treatment, WCAG AA contrast including the blue
+  and pink submit states (`themeContract.test.ts`) and `prefers-reduced-motion`
+  behavior.
+- `src/login/pageIds.ts` lists every themed page id; `src/devKcContext.ts`
+  serves realistic Turkish mock data for each of them at `?page=<id>.ftl`
+  (`&lang=en` switches locale).
 
 ## Account Center boundary
 
@@ -61,13 +76,29 @@ npm run build-keycloak-theme
 bash ../tests/check-theme-contract.sh
 ```
 
-Vitest covers the remember-me bridge and static accessibility invariants.
-The theme Chromium suite covers deterministic rendered-page contracts. The
-Keycloak integration runner additionally drives Chromium through a live
-Keycloak `26.7.4` instance for Turkish/English locale switching, password
-login, password/TOTP AIA cancel and completion, WebAuthn error retry and
-registration plus a cookie-cleared passwordless assertion with the same
-virtual authenticator.
+Vitest covers the remember-me bridge, the stylesheet contract and, through
+`Template.test.tsx`, that every page id renders the animated logo, the glass
+card, the KVKK footer and Keycloak's element ids. The theme Chromium suite
+covers deterministic rendered-page contracts. `tests/browser/visual.spec.ts`
+compares a desktop (1280×800) and mobile (390×844) screenshot of every page,
+Turkish locale, reduced motion, against the committed baselines in
+`tests/browser/visual.spec.ts-snapshots/` (at most 1% of pixels may differ).
+Baselines are rendered only inside `mcr.microsoft.com/playwright:v<pinned>-jammy`
+with the fonts pinned by `tests/browser/fonts.conf` and the screenshot-only
+`tests/browser/visual.css` (decorative noise layers hidden so the PNGs stay
+small); the CI and release `theme` jobs run in that same image. The spec runs
+only where `SL_VISUAL_BASELINE_ENV=1` is set (the image, the CI jobs and
+`scripts/update-visual-baselines.sh` set it); elsewhere `npm run test:browser`
+skips it. `SL_VISUAL_ANY_PLATFORM=1` forces the spec on any machine for a quick
+look, but its fonts differ from the baselines, so expect diffs there.
+`scripts/update-visual-baselines.sh --check` (Docker) compares in the image and
+`scripts/update-visual-baselines.sh` regenerates the baselines after an
+intentional design change; the committed PNGs are replaced only when every
+screenshot was captured. The Keycloak integration runner additionally drives
+Chromium through a live Keycloak `26.7.4` instance for Turkish/English locale
+switching, password login, password/TOTP AIA cancel and completion, WebAuthn
+error retry and registration plus a cookie-cleared passwordless assertion with
+the same virtual authenticator.
 
 CI browser automation cannot prove platform authenticator behavior on real
 Touch ID, Face ID, Android Credential Manager, Windows Hello or the supported

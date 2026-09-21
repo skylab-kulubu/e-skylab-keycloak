@@ -1,13 +1,12 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { kcSanitize } from "keycloakify/lib/kcSanitize";
 import type { PageProps } from "keycloakify/login/pages/PageProps";
 import { useScript } from "keycloakify/login/pages/Login.useScript";
-import { useSetClassName } from "keycloakify/tools/useSetClassName";
 import ytuLogoUrl from "../assets/ytu-logo.png";
 import type { KcContext } from "./KcContext";
 import type { I18n } from "./i18n";
 import LegacyFrame from "./LegacyFrame";
-import "./legacy-login.css";
+import { getLegacyChromeProps, useLegacyChrome } from "./legacyChrome";
 
 type LoginProps = PageProps<Extract<KcContext, { pageId: "login.ftl" }>, I18n>;
 
@@ -24,7 +23,7 @@ export default function Login(props: LoginProps) {
     url,
     usernameHidden
   } = kcContext;
-  const { currentLanguage, msg, msgStr } = i18n;
+  const { msg, msgStr } = i18n;
   const webAuthnButtonId = "authenticateWebAuthnButton";
   const hasPasskey =
     enableWebAuthnConditionalUI === true ||
@@ -37,24 +36,15 @@ export default function Login(props: LoginProps) {
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
 
   useScript({ webAuthnButtonId, kcContext, i18n });
-  useSetClassName({ qualifiedName: "html", className: "sl-html" });
-  useSetClassName({ qualifiedName: "body", className: "sl-body" });
-
-  useEffect(() => {
-    document.documentElement.lang = currentLanguage.languageTag;
-    document.title = msgStr("loginTitle", realm.displayName || realm.name);
-  }, [currentLanguage.languageTag, msgStr, realm.displayName, realm.name]);
+  useLegacyChrome(i18n, msgStr("loginTitle", realm.displayName || realm.name), { brandedTitle: true });
 
   return (
     <LegacyFrame
+      {...getLegacyChromeProps(i18n)}
       mainId="sl-legacy-main"
       titleId="sl-legacy-title"
       title={msgStr("skylabTitle")}
       description={msgStr("skylabDesc")}
-      skipToContent={msgStr("skipToContent")}
-      kvkkPrefix={msgStr("kvkkPrefix")}
-      kvkkLinkText={msgStr("kvkkLinkText")}
-      kvkkSuffix={msgStr("kvkkSuffix")}
     >
             {view === "choice" && (
               <>
@@ -142,6 +132,7 @@ export default function Login(props: LoginProps) {
                       </label>
                       <input
                         id="username"
+                        className="sl-legacy-input"
                         name="username"
                         type="text"
                         autoFocus
@@ -163,12 +154,14 @@ export default function Login(props: LoginProps) {
                       <div className="sl-legacy-password-input">
                         <input
                           id="password"
+                          className="sl-legacy-input"
                           name="password"
                           type={isPasswordVisible ? "text" : "password"}
                           autoComplete="current-password"
                           aria-invalid={messagesPerField.existsError("username", "password")}
                         />
                         <button
+                          className="sl-legacy-password-toggle"
                           type="button"
                           aria-label={msgStr(isPasswordVisible ? "hidePassword" : "showPassword")}
                           aria-controls="password"
@@ -183,7 +176,7 @@ export default function Login(props: LoginProps) {
                   {messagesPerField.existsError("username", "password") && (
                     <p
                       id="input-error"
-                      className="sl-legacy-field-error"
+                      className="sl-legacy-field-error sl-legacy-field-error--after-field"
                       aria-live="polite"
                       dangerouslySetInnerHTML={{
                         __html: kcSanitize(messagesPerField.getFirstError("username", "password"))

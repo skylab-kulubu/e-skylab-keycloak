@@ -910,6 +910,14 @@ kcadm set-password \
   --new-password fixture-password-change-me \
   --temporary=false >/dev/null
 
+# The sky-account SPI contract runs against the same realm: bearer guard, Verified
+# YTÜ lock, brute force, sudo binding, password/TOTP/username flows and events.
+CURRENT_STAGE='sky-account SPI contract'
+SKY_ACCOUNT_COMPOSE_FILE="$COMPOSE_FILE" \
+  SKY_ACCOUNT_ADMIN_CONFIG="$ADMIN_CONFIG" \
+  SKY_ACCOUNT_CLIENT_SECRET="$client_secret" \
+  "$SCRIPT_DIR/sky-account-contract.sh"
+
 # Provision the RabbitMQ topology expected by the provider, then use an admin
 # event to prove the rebuilt provider can publish on Keycloak 26.7.4.
 CURRENT_STAGE='RabbitMQ provider contract'

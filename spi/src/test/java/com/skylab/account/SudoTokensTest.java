@@ -63,6 +63,15 @@ class SudoTokensTest {
     }
 
     @Test
+    void aPasskeyProofRecordsAHardwareKeyAndUserPresenceInAmr() throws Exception {
+        SudoTokens.Issued issued = fixture.sudoTokens.issue(fixture.caller, SudoTokens.Method.PASSKEY);
+        SudoToken token = new JWSInput(issued.token()).readJsonContent(SudoToken.class);
+
+        assertEquals(List.of("hwk", "user"), token.getAuthenticationMethods());
+        assertEquals(token.getId(), fixture.sudoTokens.require(fixture.caller, issued.token()).getId());
+    }
+
+    @Test
     void refusesATokenFromAnotherSessionOrSubject() {
         String token = fixture.sudoTokens.issue(fixture.caller, SudoTokens.Method.PASSWORD).token();
 

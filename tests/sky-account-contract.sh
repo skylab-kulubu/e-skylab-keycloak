@@ -485,6 +485,48 @@ if [[ $passkeys_before -gt 0 ]]; then
     'REMOVE_CREDENTIAL event for the passkey is missing' --arg id "$passkey_id"
 fi
 
+# Passkey endpoint shape, sudo gating and error mapping. The cryptographic ceremony
+# (create/register/get with a real authenticator) runs in the Playwright stage; here
+# we prove options shaping, sudo gating, that the challenge is consumed atomically in
+# the real single-use store, and that verification failures map to codes.
+# Budget note: the contract runs inside one 15-minute window per user, so this block
+# must stay within the headroom the earlier stages leave: 4 of the 30 `mutation`
+# slots (options x2, register x2), none of the 10 `sudo` slots (it reuses sudo_totp and
+# passkey sudo has its own `sudo-passkey` budget), one `sudo-options` slot.
+CURRENT_STAGE='sky-account passkey endpoints'
+base64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+bogus_rawid=$(head -c 32 /dev/urandom | base64url)
+bogus_client=$(printf '{"type":"webauthn.create","challenge":"x","origin":"http://localhost:18081"}' | base64url)
+bogus_attestation=$(printf 'bogus-attestation-object' | base64url)
+register_body() {
+  jq -cn --arg id "$1" --arg cdj "$2" --arg att "$3" --arg label "$4" \
+    '{id:$id, rawId:$id, type:"public-key", label:$label, response:{clientDataJSON:$cdj, attestationObject:$att}}'
+}
+sky POST credentials/webauthn/options "$token_a" -
+expect 401 sudo_required 'passkey creation options require sudo'
+sky POST credentials/webauthn/options "$token_a" "$sudo_totp"
+expect 200 - 'creation options are returned with sudo'
+json_assert "$SKY_BODY" \
+  '(.rp.id | type) == "string" and (.rp.id | length) > 0 and .rp.name == "SKY LAB" and (.challenge | test("^[A-Za-z0-9_-]{43}$")) and (.user.id | test("^[A-Za-z0-9_-]+$")) and .user.name == "account-fixture" and (.user.displayName | length) > 0 and (.pubKeyCredParams | length) >= 1 and (.pubKeyCredParams[0].type) == "public-key" and (.pubKeyCredParams[0].alg | type) == "number" and .extensions.credProps == true and (.excludeCredentials | type) == "array" and .authenticatorSelection.userVerification == "required" and .authenticatorSelection.residentKey == "required"' \
+  'creation options shape differs from the passwordless policy'
+grep -Eiq '^cache-control:[[:space:]]*no-store' "$SKY_HEADERS" || fail 'creation options must not be cacheable'
+sky POST credentials/webauthn/register "$token_a" "$sudo_totp" "$(register_body "$bogus_rawid" "$bogus_client" "$bogus_attestation" 'MacBook')"
+expect 400 webauthn_invalid 'a bogus attestation must be refused and consume the challenge'
+sky POST credentials/webauthn/register "$token_a" "$sudo_totp" "$(register_body "$bogus_rawid" "$bogus_client" "$bogus_attestation" 'MacBook')"
+expect 400 webauthn_challenge_expired 'a second registration without fresh options finds no challenge'
+sky GET identity "$token_a" -
+json_assert "$SKY_BODY" '.credentials.passkeys == []' 'a refused registration must not create a passkey'
+json_assert "$(user_events UPDATE_CREDENTIAL_ERROR)" \
+  '[.[] | select(.clientId == "account-center" and .details.credential_type == "webauthn-passwordless" and .error == "invalid_registration")] | length >= 2' \
+  'UPDATE_CREDENTIAL_ERROR events for the refused passkey registrations are missing'
+sky POST sudo/webauthn/options "$token_a" -
+expect 400 passkey_not_registered 'assertion options need at least one passkey'
+sky POST sudo/webauthn/verify "$token_a" - '{"id":"AA","rawId":"AA","type":"public-key","response":{"clientDataJSON":"e30","authenticatorData":"AQID","signature":"BAUG","userHandle":"invalid base64!"}}'
+expect 400 invalid_request 'a malformed assertion must be refused'
+json_assert "$SKY_BODY" '.field == "response.userHandle"' 'invalid_request must name the nested field'
+sky POST sudo/webauthn/verify "$token_a" - "$(jq -cn --arg id "$bogus_rawid" '{id:$id, rawId:$id, type:"public-key", response:{clientDataJSON:"e30", authenticatorData:"AQID", signature:"BAUG"}}')"
+expect 400 passkey_not_registered 'a passkey assertion needs at least one passkey'
+
 CURRENT_STAGE='sky-account username'
 sky POST identity/username "$token_a" - "{\"username\":\"$CHANGED_USERNAME\"}"
 expect 401 sudo_required 'username change requires sudo'

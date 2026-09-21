@@ -247,7 +247,7 @@ public final class IdentityResource {
             if (Credentials.isTotp(credential.getType())) {
                 totp.add(Credentials.summary(credential));
             } else if (Credentials.isPasskey(credential.getType())) {
-                passkeys.add(Credentials.summary(credential));
+                passkeys.add(Credentials.passkeySummary(credential));
             }
         }
         return body;

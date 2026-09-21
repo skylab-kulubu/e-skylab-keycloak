@@ -123,18 +123,33 @@ belgesindedir.
   hesabıyla sınırlıdır, yönetim işlemi yoktur.
 - Uç noktalar: `GET identity`; `PATCH identity/name` (Doğrulanmış YTÜ hesabında
   kilitli); `POST identity/username` (14 gün bekleme, teklik); `POST sudo/password`,
-  `POST sudo/totp`; `POST credentials/password` (`logoutOtherSessions` ile);
-  `POST credentials/totp/setup|confirm`; `DELETE credentials/{id}` (OTP ve passkey;
-  parola asla).
-- Sudo modu: parola ya da doğrulama kodu kanıtı, Keycloak'ın iç HMAC
+  `POST sudo/totp`, `POST sudo/webauthn/options|verify` (passkey ile sudo);
+  `POST credentials/password` (`logoutOtherSessions` ile);
+  `POST credentials/totp/setup|confirm`; `POST credentials/webauthn/options|register`
+  (passkey kaydı); `DELETE credentials/{id}` (OTP ve passkey; parola asla).
+- Passkey (WebAuthn passwordless): ceremony `my.` tarayıcısında çalışır; SPI realm
+  passwordless politikasından `navigator.credentials.create/get` seçeneklerini üretir
+  ve sonucu Keycloak'ın kendi webauthn4j makinesiyle (`WebAuthnRegistrationManager`,
+  `WebAuthnPasswordlessCredentialProvider`) doğrular — `WebAuthnRegister` /
+  `WebAuthnAuthenticator` yollarının aynısı: origin + `extraOrigins`, RP ID,
+  challenge, kullanıcı doğrulaması (sudo'da politikadan bağımsız her zaman
+  zorunlu), imza ve sayaç. `GET identity` yalnız `webauthn-passwordless`
+  kimlik bilgilerini passkey sayar. `my.`'de kaydedilen passkey `e.` girişinde
+  de çalışır (RP ID her origin'de aynı).
+- Sudo modu: parola, doğrulama kodu ya da passkey kanıtı, Keycloak'ın iç HMAC
   anahtarıyla (`HS512`, Keycloak dışında doğrulanamaz) imzaladığı beş dakikalık,
   `sub`+`sid` bağlı bir sudo token verir (`X-Sky-Sudo` başlığı; BFF için opak). Token tek kullanımlık değildir; başka oturumun
   bearer'ıyla çalışmaz, süresi dolunca `sudo_expired` döner. Her başarılı
-  kanıt `CUSTOM_REQUIRED_ACTION` (`action=sky-sudo`, `method`) olayı bırakır.
-- Brute-force koruması realm'de açıksa her sudo denemesi Keycloak'ın kendi
-  koruyucusuna bildirilir (kapalıysa açılışta tek bir uyarı günlüğe düşer;
-  reconcile K2 açar); ayrıca kullanıcı başına atomik hız sınırları vardır
-  (sudo 10 / 15 dk, TOTP onayı 10 / 15 dk, değişiklikler 30 / 15 dk).
+  kanıt `CUSTOM_REQUIRED_ACTION` (`action=sky-sudo`, `method=password|totp|passkey`)
+  olayı bırakır.
+- Brute-force koruması realm'de açıksa her parola/TOTP sudo denemesi Keycloak'ın
+  kendi koruyucusuna bildirilir (kapalıysa açılışta tek bir uyarı günlüğe düşer;
+  reconcile K2 açar). Keycloak 26.7.4 passkey kategorisini saymaz: başarısız
+  passkey denemesi brute-force sayacını artırmaz, başarılısı temizlemez; mevcut
+  kilit yine passkey ile sudo'yu da engeller. Passkey denemelerinin kısıtı
+  kendi `sudo-passkey` bütçesidir. Kullanıcı başına atomik hız sınırları:
+  sudo 10 / 15 dk, passkey sudo 10 / 15 dk, TOTP onayı 10 / 15 dk,
+  değişiklikler 30 / 15 dk.
 - Realm User Profile'ı yönetilmeyen öznitelikleri kişiye açıyorsa
   (`unmanagedAttributePolicy=ENABLED`) değişiklik uçları `503` ile kapanır,
   okuma sürer.
@@ -147,7 +162,14 @@ Entegrasyon testi (`tests/sky-account-contract.sh`, `tests/run-integration.sh`
 tarafından çağrılır) gerçek Keycloak üzerinde bearer korumasını, YTÜ kilidini,
 brute-force sayımını ve kilidi, sudo oturum bağını, parola politikasını,
 diğer oturumların kapatılmasını, TOTP kurulum/onay/giriş/silme akışını,
-kullanıcı adı kurallarını, hız sınırını ve olay kayıtlarını doğrular.
+kullanıcı adı kurallarını, hız sınırını, passkey uçlarının şeklini ve sudo
+kapısını, ve olay kayıtlarını doğrular. Passkey ceremony'si ayrı bir Playwright
+adımıyla (`theme/tests/integration/webauthn-passkey.spec.ts`,
+`tests/webauthn-page.mjs` üzerinden `http://localhost:18081`) sanal authenticator
+ile uçtan uca sınanır: seçenek → oluştur → kaydet → `GET identity`'de görünür →
+Keycloak'ın kendi giriş sayfasında o passkey ile giriş (RP ID uyumu) → passkey
+assertion ile sudo → yeniden oynatılan challenge, izinsiz origin ve gerileyen
+sayaç reddedilir.
 
 ## Yerel geliştirme ve doğrulama
 

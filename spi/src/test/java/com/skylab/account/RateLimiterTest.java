@@ -97,6 +97,19 @@ class RateLimiterTest {
     }
 
     @Test
+    void passkeyProofsHaveTheirOwnBudgetNextToPasswordAndTotpProofs() {
+        for (int attempt = 0; attempt < RateLimiter.SUDO.maxAttempts(); attempt++) {
+            limiter.hit(RateLimiter.SUDO, "user-a");
+        }
+        assertThrows(ProblemException.class, () -> limiter.hit(RateLimiter.SUDO, "user-a"));
+
+        limiter.hit(RateLimiter.SUDO_PASSKEY, "user-a");
+        limiter.hit(RateLimiter.SUDO_OPTIONS, "user-a");
+        assertEquals(RateLimiter.SUDO.maxAttempts(), RateLimiter.SUDO_PASSKEY.maxAttempts());
+        assertEquals(RateLimiter.SUDO.windowSeconds(), RateLimiter.SUDO_PASSKEY.windowSeconds());
+    }
+
+    @Test
     void startsAFreshBudgetInTheNextWindow() {
         limiter.hit(LIMIT, "user-a");
         limiter.hit(LIMIT, "user-a");

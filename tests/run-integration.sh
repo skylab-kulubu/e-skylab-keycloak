@@ -918,6 +918,94 @@ SKY_ACCOUNT_COMPOSE_FILE="$COMPOSE_FILE" \
   SKY_ACCOUNT_CLIENT_SECRET="$client_secret" \
   "$SCRIPT_DIR/sky-account-contract.sh"
 
+# The passkey ceremony runs a Chromium virtual authenticator against the SPI: register a
+# passkey from an allowed my.-like origin, see it in GET identity, log in on Keycloak's own
+# login page with it (RP-ID compatibility), sudo by passkey, and prove the refusals. The
+# fixture passwordless policy is set to rpId=localhost and the served page origin as an extra
+# origin so the ceremony's clientData origin is allowed; the disallowed origin proves rejection.
+CURRENT_STAGE='sky-account passkey ceremony'
+webauthn_realm_before=$(kcadm get "realms/e-skylab-test" -c \
+  | jq -c '{webAuthnPolicyPasswordlessRpId, webAuthnPolicyPasswordlessExtraOrigins}')
+kcadm update realms/e-skylab-test \
+  -s 'webAuthnPolicyPasswordlessRpId=localhost' \
+  -s 'webAuthnPolicyPasswordlessExtraOrigins=["http://localhost:18081"]' >/dev/null
+# The ceremony gets its own person: sky-account rate limits are per user and per fixed
+# 15-minute window, and the contract stage above deliberately exhausts the fixture user's
+# sudo budget. A throwaway user keeps the ceremony independent of that and of leftover
+# credentials; it is removed (with its passkey) at the end of the stage.
+while IFS= read -r stale_passkey_user; do
+  [[ -n $stale_passkey_user ]] || continue
+  kcadm delete "users/$stale_passkey_user" -r e-skylab-test >/dev/null
+done < <(kcadm get users -r e-skylab-test -c -q username=passkey-fixture -q exact=true | jq -r '.[].id')
+passkey_user_password=$(openssl rand -base64 24 | tr -d '\n')
+passkey_user_uuid=$(kcadm create users -r e-skylab-test -i \
+  -s username=passkey-fixture -s enabled=true -s emailVerified=true \
+  -s firstName=Passkey -s lastName=Fixture -s email=passkey-fixture@example.invalid)
+kcadm set-password -r e-skylab-test --userid "$passkey_user_uuid" \
+  --new-password "$passkey_user_password" --temporary=false >/dev/null
+webauthn_page_log="$TEST_STATE_DIR/webauthn-page.log"
+WEBAUTHN_PAGE_PORT=18081 WEBAUTHN_PAGE_DISALLOWED_PORT=18082 \
+  node "$SCRIPT_DIR/webauthn-page.mjs" >"$webauthn_page_log" 2>&1 &
+webauthn_page_pid=$!
+# The page server is a plain background process; stop it explicitly on both paths rather than
+# installing an EXIT trap that would clobber the compose teardown registered at startup.
+webauthn_stop_page() {
+  if [[ -n ${webauthn_page_pid:-} ]]; then
+    kill "$webauthn_page_pid" >/dev/null 2>&1 || true
+    wait "$webauthn_page_pid" 2>/dev/null || true
+    webauthn_page_pid=''
+  fi
+}
+for _ in $(seq 1 30); do
+  if curl --fail --silent --show-error http://localhost:18081/ >/dev/null 2>&1 \
+    && curl --fail --silent --show-error http://localhost:18082/ >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.5
+done
+if ! curl --fail --silent --show-error http://localhost:18081/ >/dev/null 2>&1; then
+  webauthn_stop_page
+  fail 'the WebAuthn ceremony page did not become ready on http://localhost:18081'
+fi
+webauthn_config="$TEST_STATE_DIR/webauthn-integration.json"
+jq -n \
+  --arg baseUrl 'http://localhost:18080' \
+  --arg realm 'e-skylab-test' \
+  --arg callbackUrl 'https://my.yildizskylab.com/api/auth/callback' \
+  --arg clientId 'account-center' \
+  --arg clientSecret "$client_secret" \
+  --arg username 'passkey-fixture' \
+  --arg password "$passkey_user_password" \
+  --arg pageOrigin 'http://localhost:18081' \
+  --arg disallowedOrigin 'http://localhost:18082' \
+  --arg rpId 'localhost' \
+  --arg userId "$passkey_user_uuid" \
+  '{baseUrl:$baseUrl, realm:$realm, callbackUrl:$callbackUrl, clientId:$clientId, clientSecret:$clientSecret, username:$username, password:$password, pageOrigin:$pageOrigin, disallowedOrigin:$disallowedOrigin, rpId:$rpId, userId:$userId}' \
+  >"$webauthn_config"
+chmod 0600 "$webauthn_config"
+if ! (
+  cd "$SCRIPT_DIR/../theme"
+  WEBAUTHN_INTEGRATION_CONFIG="$webauthn_config" \
+    npx --no-install playwright test \
+      --config=playwright.integration.config.ts \
+      tests/integration/webauthn-passkey.spec.ts
+); then
+  webauthn_stop_page
+  fail 'the passkey ceremony Playwright test failed'
+fi
+webauthn_stop_page
+# The ceremony must have left exactly one passkey on the throwaway user (the disallowed-origin
+# registration was refused); then remove the user and restore the passwordless policy.
+passkey_credentials=$(kcadm get "users/$passkey_user_uuid/credentials" -r e-skylab-test -c)
+json_assert "$passkey_credentials" \
+  '[.[] | select(.type == "webauthn-passwordless")] | length == 1' \
+  'the passkey ceremony must leave exactly one passwordless credential on the throwaway user'
+kcadm delete "users/$passkey_user_uuid" -r e-skylab-test >/dev/null
+unset passkey_user_password
+kcadm update realms/e-skylab-test \
+  -s "webAuthnPolicyPasswordlessRpId=$(jq -r '.webAuthnPolicyPasswordlessRpId // ""' <<<"$webauthn_realm_before")" \
+  -s "webAuthnPolicyPasswordlessExtraOrigins=$(jq -c '.webAuthnPolicyPasswordlessExtraOrigins // []' <<<"$webauthn_realm_before")" >/dev/null
+
 # Provision the RabbitMQ topology expected by the provider, then use an admin
 # event to prove the rebuilt provider can publish on Keycloak 26.7.4.
 CURRENT_STAGE='RabbitMQ provider contract'

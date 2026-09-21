@@ -42,15 +42,17 @@ final class SudoTokens {
     record Issued(String token, long expiresAt) {
     }
 
-    /** How the person proved it is them: the audit name and the RFC 8176 {@code amr} value. */
+    /** How the person proved it is them: the audit name and the RFC 8176 {@code amr} values. */
     enum Method {
-        PASSWORD("password", "pwd"),
-        TOTP("totp", "otp");
+        PASSWORD("password", List.of("pwd")),
+        TOTP("totp", List.of("otp")),
+        /** A passkey assertion: a hardware-held key ({@code hwk}) after a user presence/verification test ({@code user}). */
+        PASSKEY("passkey", List.of("hwk", "user"));
 
         private final String auditName;
-        private final String amr;
+        private final List<String> amr;
 
-        Method(String auditName, String amr) {
+        Method(String auditName, List<String> amr) {
             this.auditName = auditName;
             this.amr = amr;
         }
@@ -59,7 +61,7 @@ final class SudoTokens {
             return auditName;
         }
 
-        String amr() {
+        List<String> amr() {
             return amr;
         }
     }
@@ -74,7 +76,7 @@ final class SudoTokens {
         token.audience(AUDIENCE);
         token.issuedNowWithTTL(TTL_SECONDS);
         token.setSessionId(caller.userSession().getId());
-        token.setAuthenticationMethods(List.of(method.amr()));
+        token.setAuthenticationMethods(method.amr());
         return new Issued(session.tokens().encode(token), token.getExp());
     }
 

@@ -30,9 +30,10 @@ sunucudan sunucuya çağırır. Her ret aynı `401 unauthorized` problemidir ve
 ## Sudo modu
 
 Hassas işlemler (`credentials/*`, `identity/username`) taze bir **sudo token**
-ister. Kişi parolasını ya da doğrulama uygulaması kodunu `POST sudo/password` /
-`POST sudo/totp` ile kanıtlar; yanıt bir sudo token verir. BFF bu token'ı sonraki
-isteklerde `X-Sky-Sudo: <sudoToken>` başlığıyla gönderir.
+ister. Kişi parolasını, doğrulama uygulaması kodunu ya da passkey'ini
+`POST sudo/password` / `POST sudo/totp` / `POST sudo/webauthn/verify` ile kanıtlar;
+yanıt bir sudo token verir. BFF bu token'ı sonraki isteklerde
+`X-Sky-Sudo: <sudoToken>` başlığıyla gönderir.
 
 Sudo token, Keycloak'ın **iç** token'ları gibi realm HMAC anahtarıyla
 imzalanmış bir JWT'dir (`HS512`, `kid` başlıkta; anahtar Keycloak dışına
@@ -47,7 +48,7 @@ opak bir dize olarak saklar ve geri gönderir; içeriğine güvenmez.
 | `sid` | kanıtı üreten Hesap Merkezi oturumu (bearer `sid`) |
 | `azp` | `account-center` |
 | `aud` | `sky-account` |
-| `amr` | `["pwd"]` veya `["otp"]` |
+| `amr` | `["pwd"]`, `["otp"]` veya passkey için `["hwk","user"]` |
 | `jti`, `iat`, `nbf`, `exp` | `exp = iat + 300` |
 
 Doğrulama (`SudoTokens.require`): imza (`session.tokens().decode`, yalnız
@@ -61,10 +62,13 @@ döner. BFF token'ı yalnız şifreli oturum kaydında tutar, tarayıcıya verme
 
 Her başarılı kanıt bir denetim olayı bırakır: `CUSTOM_REQUIRED_ACTION`
 (`client=account-center`, kişi, oturum) ve ayrıntılar
-`action=sky-sudo`, `method=password|totp`.
+`action=sky-sudo`, `method=password|totp|passkey` (passkey için ayrıca imzalayan
+kimlik bilgisinin `public_key_credential_id` değeri).
 
-Brute-force koruması realm'de açıksa (`bruteForceProtected`) her sudo denemesi
-Keycloak'ın `BruteForceProtector` servisine bir giriş denemesi olarak bildirilir:
+Brute-force koruması realm'de açıksa (`bruteForceProtected`) her parola ve TOTP
+sudo denemesi Keycloak'ın `BruteForceProtector` servisine bir giriş denemesi
+olarak bildirilir (passkey denemeleri de bildirilir ama Keycloak bu kategoriyi
+saymaz; bkz. Hız sınırları):
 kilitli hesap kanıt vermeden `401 user_temporarily_locked` / `401 user_disabled`
 alır, başarısız deneme `LOGIN_ERROR` (`error=invalid_user_credentials`,
 `auth_method=sky-account-sudo`) olayı üretir ve sayacı artırır, başarılı deneme
@@ -86,8 +90,20 @@ yuvasını tutar. Yuvalar pencere sonunda kendiliğinden düşer.
 | Bütçe | Uç noktalar | Sınır |
 | --- | --- | --- |
 | `sudo` | `sudo/password`, `sudo/totp` | 10 / 15 dk |
+| `sudo-passkey` | `sudo/webauthn/verify` | 10 / 15 dk |
+| `sudo-options` | `sudo/webauthn/options` | 30 / 15 dk |
 | `totp-confirm` | `credentials/totp/confirm` | 10 / 15 dk |
-| `mutation` | `identity/name`, `identity/username`, `credentials/password`, `credentials/totp/setup`, `DELETE credentials/{id}` | 30 / 15 dk |
+| `mutation` | `identity/name`, `identity/username`, `credentials/password`, `credentials/totp/setup`, `credentials/webauthn/options`, `credentials/webauthn/register`, `DELETE credentials/{id}` | 30 / 15 dk |
+
+`sudo/webauthn/options` (bearer'la, sudo'suz) kendi `sudo-options` bütçesinden
+sayılır. Passkey assertion'ı tahmin edilemez; bu yüzden `sudo/webauthn/verify`
+parola/TOTP'nin `sudo` bütçesini paylaşmaz, kendi `sudo-passkey` bütçesinden
+(aynı boyut) sayılır. Keycloak 26.7.4'ün brute-force koruyucusu yalnız
+`password`, `otp` ve kurtarma kodu kategorilerini sayar: başarısız bir passkey
+denemesi realm brute-force sayacını **artırmaz**, başarılı olanı da sayacı
+temizlemez. Passkey denemelerinin tek kısıtı `sudo-passkey` bütçesidir; kilitli
+bir hesabın (parola/TOTP denemelerinden) passkey ile de sudo alamaması ise
+sürer, çünkü kilit **kontrolü** her kanıttan önce yapılır.
 
 `GET identity` sınırlanmaz: kimliği doğrulanmış okuma ucuzdur ve her okumada
 küme önbelleğine yazmak gereksizdir. Kimlik bilgisi tahminine karşı asıl
@@ -124,6 +140,10 @@ temasındaki Türkçe mesaj paketinden üretilir.
 | 400 | `invalid_request` | `field?` | Gövde JSON değil, bilinmeyen alan, tip/uzunluk hatası, eksik alan |
 | 400 | `password_not_configured` | — | Hesapta parola yok (sudo/password) |
 | 400 | `totp_not_configured` | — | Hesapta OTP yok (sudo/totp) |
+| 400 | `passkey_not_registered` | — | Hesapta passkey yok (sudo/webauthn) |
+| 400 | `webauthn_challenge_expired` | — | Kayıtlı passkey challenge yok, kullanılmış ya da 5 dakikayı geçmiş |
+| 400/401 | `webauthn_invalid` | — | Attestation/assertion doğrulanamadı (kayıt 400, sudo 401) |
+| 400/401 | `webauthn_origin_not_allowed` | — | Ceremony izin verilmeyen bir origin'den (kayıt 400, sudo 401) |
 | 400 | `password_policy` | `policy`, `params` | Yeni parola realm politikasına uymuyor |
 | 400 | `password_rejected` | — | Keycloak parolayı reddetti (ör. geçmiş politikası) |
 | 400 | `totp_setup_expired` | — | Kurulum tanıtıcısı yok, kullanılmış ya da 10 dakikayı geçmiş |
@@ -132,11 +152,13 @@ temasındaki Türkçe mesaj paketinden üretilir.
 | 400 | `invalid_username` | `field` | `^[a-z0-9._]{3,30}$` desenine uymuyor |
 | 403 | `name_locked` | — | Doğrulanmış YTÜ hesabı adını değiştiremez |
 | 404 | `credential_not_found` | — | Kimlik bilgisi yok, kişiye ait değil ya da silinemez türde (parola) |
-| 409 | `duplicate_label` | — | Aynı adda OTP zaten var |
+| 409 | `duplicate_label` | — | Aynı adda OTP ya da passkey zaten var |
+| 409 | `passkey_already_registered` | — | Bu passkey (credential id) zaten hesabında kayıtlı |
 | 409 | `username_taken` | — | Kullanıcı adı başkasında |
 | 409 | `username_cooldown` | `retryAfter`, `availableAt` + `Retry-After` | 14 gün dolmadı |
 | 429 | `rate_limited` | `retryAfter` + `Retry-After` | Hız sınırı |
 | 503 | `unmanaged_attributes_enabled` | — | Realm User Profile'ı `unmanagedAttributePolicy=ENABLED`; değişiklikler kapalı (okuma açık) |
+| 503 | `webauthn_not_configured` | — | Keycloak passwordless WebAuthn sağlayıcısı yok (web-authn özelliği kapalı) |
 | 500 | `internal_error` | — | Beklenmeyen hata (işlem geri alınır) |
 
 `Content-Type: application/json` olmayan gövdeli istekler RESTEasy tarafından
@@ -144,8 +166,30 @@ temasındaki Türkçe mesaj paketinden üretilir.
 
 ## Uç noktalar
 
-Gövdeler UTF-8 JSON, en fazla 8 KB; bilinmeyen alanlar reddedilir. Başarılı
-yanıtlar `Cache-Control: no-store` taşır. Zamanlar ISO-8601 UTC.
+Gövdeler UTF-8 JSON, en fazla 8 KB (passkey ceremony uçları
+`credentials/webauthn/register`, `sudo/webauthn/verify` için 64 KB); bilinmeyen
+alanlar reddedilir. Başarılı yanıtlar `Cache-Control: no-store` taşır. Zamanlar
+ISO-8601 UTC.
+
+### Passkey ceremony akışı (tarayıcı tarafı)
+
+WebAuthn ceremony'si `my.` origin'inde tarayıcıda çalışır; SPI hiçbir zaman
+`navigator.credentials` çağırmaz, yalnız seçenekleri üretir ve sonucu doğrular:
+
+1. BFF (`my.`) sudo aldıktan sonra `POST credentials/webauthn/options` (kayıt) ya
+   da bearer'la `POST sudo/webauthn/options` (sudo) çağırır ve dönen JSON'u
+   tarayıcıya sunar.
+2. Tarayıcı JSON'un base64url alanlarını (`challenge`, `user.id`,
+   `excludeCredentials[].id` / `allowCredentials[].id`) `ArrayBuffer`'a çevirir,
+   `navigator.credentials.create({publicKey})` ya da `.get({publicKey})` çalıştırır.
+3. Tarayıcı sonucu (`PublicKeyCredential`) base64url alanlarla JSON'a çevirip
+   (örn. `PublicKeyCredential.toJSON()` ya da alanları elle) BFF'ye verir; BFF
+   olduğu gibi `POST credentials/webauthn/register` (etiket ekleyerek) ya da
+   `POST sudo/webauthn/verify`'e iletir.
+
+Tüm ikili alanlar **base64url** (RFC 4648 §5, padding'siz üretilir, padding'li de
+kabul edilir). `id` ile `rawId` eşit olmalıdır. SPI'nin CORS'u yoktur; seçenekleri
+tarayıcıya ve sonucu SPI'ye taşıyan BFF'dir.
 
 ### `GET identity`
 
@@ -166,7 +210,7 @@ yanıtlar `Cache-Control: no-store` taşır. Zamanlar ISO-8601 UTC.
   "credentials": {
     "password": true,
     "totp": [{ "id": "…", "type": "otp", "label": "Telefon", "createdAt": "2026-09-21T13:10:41.130Z" }],
-    "passkeys": [{ "id": "…", "type": "webauthn-passwordless", "label": "MacBook", "createdAt": "…" }]
+    "passkeys": [{ "id": "…", "type": "webauthn-passwordless", "label": "MacBook", "createdAt": "…", "transports": ["internal", "hybrid"] }]
   }
 }
 ```
@@ -180,9 +224,13 @@ yanıtlar `Cache-Control: no-store` taşır. Zamanlar ISO-8601 UTC.
 - `usernameChangeAvailableAt`: kullanıcı adı en son 14 günden kısa süre önce
   değiştiyse bir sonraki izinli an; değilse `null`.
 - `credentials.password`: Keycloak'ın `isConfiguredFor("password")` sonucu.
-  `totp`: `otp` türündeki, `passkeys`: `webauthn-passwordless` ve `webauthn`
-  türündeki saklı kimlik bilgileri (tek credential akışından süzülür; etiket
-  kullanıcı etiketi, `createdAt` Keycloak oluşturma zamanı).
+  `totp`: `otp` türündeki, `passkeys`: yalnız `webauthn-passwordless` türündeki
+  saklı kimlik bilgileri (tek credential akışından süzülür; etiket kullanıcı
+  etiketi, `createdAt` Keycloak oluşturma zamanı). Her passkey ayrıca, kayıt
+  sırasında tarayıcının bildirdiği taşıyıcıları (`transports`, sıralı;
+  bilinmiyorsa boş dizi) taşır. Eski iki-faktör `webauthn` kimlik bilgileri
+  passkey değildir: listelenmez, sudo'da ve `excludeCredentials`/`allowCredentials`
+  listelerinde kullanılmaz; yalnız `DELETE credentials/{id}` ile silinebilir.
 
 ### `PATCH identity/name` — sudo gerekmez
 
@@ -224,6 +272,51 @@ Brute-force kilidi kontrol edilir, ardından
 biri realm OTP politikasıyla kodu doğrularsa aynı yanıt döner. Keycloak'ın kod
 yeniden kullanım koruması geçerlidir: aynı kod pencere içinde ikinci kez kabul
 edilmez (`401 invalid_credentials`).
+
+### `POST sudo/webauthn/options`
+
+Gövde yok, sudo gerekmez (yalnız bearer; kendi `sudo-options` bütçesi). Kişinin
+passwordless passkey'leri yoksa `400 passkey_not_registered`. Yanıt, tarayıcının
+`navigator.credentials.get()` çağrısı için assertion seçenekleridir; `challenge`
+kişiye ve orduma bağlı olarak `SingleUseObjectProvider`'da 5 dakika tutulur:
+
+```json
+{
+  "challenge": "…",
+  "rpId": "yildizskylab.com",
+  "allowCredentials": [{ "type": "public-key", "id": "…", "transports": ["internal"] }],
+  "userVerification": "required",
+  "timeout": 90000
+}
+```
+
+`rpId` passwordless politikasının RP ID'sidir (boşsa istek host'una düşer);
+`allowCredentials` kişinin passkey'lerinin credential id'leri (base64url) ve
+saklıysa taşıyıcılarıdır; `userVerification` her zaman `required`'dır (sudo
+politikadan bağımsız UV ister, bkz. `sudo/webauthn/verify`); `timeout`
+politikanın `createTimeout` saniyesinin milisaniyesidir (`0` → alan yok).
+
+### `POST sudo/webauthn/verify`
+
+Tarayıcının `navigator.credentials.get()` döndürdüğü `PublicKeyCredential`
+JSON'u: `{"id","rawId","type":"public-key","response":{"clientDataJSON",
+"authenticatorData","signature","userHandle?"},"clientExtensionResults?"}`
+(base64url alanlar; `id == rawId`). Doğrulama Keycloak'ın passwordless
+`WebAuthnAuthenticationManager` yolundadır (`user.credentialManager().isValid`):
+origin realm origin'i + politikanın `extraOrigins`'i, RP ID, challenge (atomik
+tüketilir), **kullanıcı doğrulaması (UV) politikadan bağımsız olarak her zaman
+zorunlu** — sudo cihaza sahipliği değil kişiyi kanıtlamalıdır, politika
+`preferred` dese bile UV bayrağı olmayan assertion reddedilir —, imza ve **imza
+sayacı** (gerilerse reddedilir, ilerlerse güncellenir). Başarıda parola/TOTP ile
+aynı yanıt (`sudoToken`, `expiresAt`) döner; `amr` `["hwk","user"]`,
+`method=passkey`. Başarısız deneme `sudo-passkey` bütçesinden (10 / 15 dk,
+parola/TOTP'den ayrı) düşer ve `401 webauthn_invalid` (ya da başka origin için
+`401 webauthn_origin_not_allowed`) döner; realm brute-force sayacını
+**artırmaz** (Keycloak bu kategoriyi saymaz) ama mevcut bir kilit yine
+`401 user_temporarily_locked` / `401 user_disabled` verir. Kayıtlı challenge
+yoksa `400 webauthn_challenge_expired`. Doğrulama dışı bir hata (ör. sayaç
+güncellemesinde veritabanı hatası) `500 internal_error` ile işlemi geri alır,
+reddedilmiş assertion gibi görünmez.
 
 ### `POST credentials/password` — sudo gerekir
 
@@ -274,10 +367,77 @@ oluşturulur (onay kodu kullanılmış sayılır). Yanıt `201`:
 Olaylar: `UPDATE_CREDENTIAL` (`credential_type=otp`, `credential_user_label`) ve
 `UPDATE_TOTP`. Aynı adda OTP varsa `409 duplicate_label`.
 
+### `POST credentials/webauthn/options` — sudo gerekir
+
+Gövde yok. Yanıt, tarayıcının `navigator.credentials.create()` çağrısı için
+realm **passwordless** politikasından üretilen `PublicKeyCredentialCreationOptions`
+JSON'udur; `challenge` kişiye ve orduma bağlı 5 dakika `SingleUseObjectProvider`'da
+tutulur:
+
+```json
+{
+  "rp": { "id": "yildizskylab.com", "name": "SKY LAB" },
+  "user": { "id": "<base64url(userId)>", "name": "ada.lovelace", "displayName": "Ada Lovelace" },
+  "challenge": "<base64url(32 bayt)>",
+  "pubKeyCredParams": [{ "type": "public-key", "alg": -7 }, { "type": "public-key", "alg": -257 }],
+  "timeout": 90000,
+  "excludeCredentials": [{ "type": "public-key", "id": "…", "transports": ["internal"] }],
+  "authenticatorSelection": { "residentKey": "required", "requireResidentKey": true, "userVerification": "required" },
+  "attestation": "none",
+  "extensions": { "credProps": true }
+}
+```
+
+Alanlar Keycloak'ın `WebAuthnRegister` (passwordless) mantığını birebir izler:
+`rp.id` politikanın RP ID'si (boşsa istek host'una düşer), `rp.name` politikanın
+RP entity adı; `user.id` Keycloak'ın kullandığı kodlama (`base64url(userId bayt)`);
+`pubKeyCredParams` politikanın imza algoritmaları (COSE); `excludeCredentials`
+**her zaman** kişinin mevcut passwordless passkey'leridir (Keycloak bunu yalnız
+`avoidSameAuthenticatorRegister` açıkken yapar; aynı authenticator'ı ikinci kez
+kaydetmenin kişiye yararı olmadığından burada bayrağa bakılmaz — daha katı);
+`authenticatorSelection.residentKey` /
+`userVerification` politikadan (`authenticatorAttachment` yalnız politika
+belirlediyse); `attestation` politikadan (belirtilmemişse alan yok); `timeout`
+`createTimeout` saniyesinin milisaniyesi (`0` → alan yok); `extensions.credProps`
+her zaman `true`.
+
+### `POST credentials/webauthn/register` — sudo gerekir
+
+Tarayıcının `navigator.credentials.create()` döndürdüğü `PublicKeyCredential`
+JSON'u + zorunlu `label`: `{"id","rawId","type":"public-key","response":
+{"clientDataJSON","attestationObject","transports?"},"authenticatorAttachment?",
+"clientExtensionResults?","label"}` (base64url alanlar; `id == rawId`). `label`
+adlarla aynı normalizasyondan geçer (sıfır genişlikli/biçim karakterleri atılır,
+boşluklar tek boşluğa iner, kırpılır), boş olamaz, en fazla 64 karakter; aynı
+adda passkey varsa `409 duplicate_label`.
+
+Doğrulama Keycloak'ın `WebAuthnRegister` (passwordless) yolunu birebir izler:
+webauthn4j `WebAuthnRegistrationManager` (politikanın attestation formatı,
+Keycloak truststore'unun sertifika zinciri, politikada AAGUID yoksa self
+attestation), origin = realm origin'i + politikanın `extraOrigins`'i, RP ID,
+challenge (atomik tüketilir), kullanıcı doğrulaması (politika `required` ise),
+kabul edilen AAGUID'ler ve `authenticatorAttachment` uyumu; ayrıca zaten kayıtlı
+bir credential id `409 passkey_already_registered` ile reddedilir
+(`avoidSameAuthenticatorRegister` bayrağından bağımsız). Ardından passkey
+`WebAuthnCredentialModel.create(TYPE_PASSWORDLESS, …)` ile
+`WebAuthnPasswordlessCredentialProvider` üzerinden saklanır. Yanıt `201`:
+
+```json
+{ "id": "…", "type": "webauthn-passwordless", "label": "MacBook", "createdAt": "…", "transports": ["internal", "hybrid"] }
+```
+
+Olay: `UPDATE_CREDENTIAL` (`credential_type=webauthn-passwordless`,
+`credential_user_label`, `public_key_credential_id`, `public_key_credential_label`,
+`public_key_credential_aaguid`). Doğrulama başarısızsa `400 webauthn_invalid`,
+başka origin `400 webauthn_origin_not_allowed`, kayıtlı challenge yoksa
+`400 webauthn_challenge_expired`, aynı credential zaten varsa
+`409 passkey_already_registered`; hepsi `UPDATE_CREDENTIAL_ERROR`
+(`error=invalid_registration`) bırakır.
+
 ### `DELETE credentials/{id}` — sudo gerekir
 
-Yalnız kişinin kendi `otp`, `webauthn-passwordless` ve `webauthn` kimlik
-bilgileri; parola asla. Bulunamayan, başkasına ait ya da silinemez türdeki id
+Yalnız kişinin kendi `otp`, `webauthn-passwordless` ve (listelenmeyen, eski
+iki-faktör) `webauthn` kimlik bilgileri; parola asla. Bulunamayan, başkasına ait ya da silinemez türdeki id
 `404 credential_not_found`. Yanıt `204`. Olaylar: `REMOVE_CREDENTIAL`
 (`credential_type`, `selected_credential_id`, `credential_user_label`), OTP için
 ayrıca `REMOVE_TOTP`.
@@ -307,6 +467,20 @@ Alias `^[A-Za-z0-9._-]{1,64}$` desenine uymazsa Keycloak açılışta durur.
   Keycloak dışında doğrulanamaz (iç HMAC anahtarı).
 - Federasyon (LDAP vb.) yoktur; OTP doğrulaması yalnız Keycloak'ta saklı OTP
   kimlik bilgilerine bakar, federated OTP'ler `totp_not_configured` verir.
+- Passkey doğrulaması Keycloak'ın kendi webauthn4j makinesidir
+  (`WebAuthnRegistrationManager`, `WebAuthnPasswordlessCredentialProvider`,
+  passwordless `WebAuthnPolicy`); SPI kripto uygulamaz, yalnız Keycloak'ın
+  `WebAuthnRegister` / `WebAuthnAuthenticator` yollarını birebir yansıtır ve
+  kapalı-güvenli davranır (doğrulanamayan her şey reddedilir). Challenge'lar
+  `SingleUseObjectProvider`'da kişi+oturuma bağlı 5 dakikalıktır ve doğrulamadan
+  önce atomik olarak tüketilir, bu yüzden bir challenge yeniden oynatılamaz.
+  RP ID ve izinli origin'ler realm passwordless politikasından gelir; passkey'in
+  `e.` girişinde de çalışması RP ID'nin her SKY LAB origin'inde aynı olmasına
+  bağlıdır (reconcile **K2**: RP ID `yildizskylab.com`, extra origin
+  `https://my.yildizskylab.com`). Sınır: imza sayacı yalnız authenticator
+  bildirdiğinde koruma sağlar (Apple Secure Enclave gibi hep sıfır bildiren
+  authenticator'lar için klonlama tespiti Keycloak'ta olduğu gibi devre dışıdır);
+  `authenticatorAttachment` istemci bildirimidir, kriptografik değildir.
 - Keycloak'ta sudo'ya özel bir olay türü yoktur; başarılı kanıt genel
   `CUSTOM_REQUIRED_ACTION` olayıyla (`action=sky-sudo`, `method`) kaydedilir.
 - `usernameChangedAt`, `schoolEmail`, `personalEmail` model düzeyinde okunup

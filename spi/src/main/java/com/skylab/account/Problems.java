@@ -70,6 +70,38 @@ final class Problems {
                 "Bu hesapta doğrulama uygulaması tanımlı değil.");
     }
 
+    static Problem passkeyNotRegistered() {
+        return new Problem(400, "passkey_not_registered", "No passkey on this account",
+                "Bu hesapta kayıtlı bir passkey yok.");
+    }
+
+    static Problem webAuthnNotConfigured() {
+        return new Problem(503, "webauthn_not_configured", "Passkeys are unavailable",
+                "Passkey desteği bu sunucuda kapalı. Yönetimle iletişime geç.");
+    }
+
+    static Problem webAuthnChallengeExpired() {
+        return new Problem(400, "webauthn_challenge_expired", "Passkey ceremony expired",
+                "Passkey işleminin süresi doldu ya da işlem zaten kullanıldı. Yeniden başlat.");
+    }
+
+    /** The attestation or assertion did not verify; {@code status} is 400 on registration, 401 on sudo. */
+    static Problem webAuthnInvalid(int status) {
+        return new Problem(status, "webauthn_invalid", "Passkey verification failed",
+                "Passkey doğrulanamadı. Yeniden dene.");
+    }
+
+    /** The browser ran the ceremony on an origin the realm passwordless policy does not allow. */
+    static Problem webAuthnOriginNotAllowed(int status) {
+        return new Problem(status, "webauthn_origin_not_allowed", "Origin not allowed for passkeys",
+                "Passkey işlemi izin verilmeyen bir adresten başlatıldı.");
+    }
+
+    static Problem passkeyAlreadyRegistered() {
+        return new Problem(409, "passkey_already_registered", "Passkey already registered",
+                "Bu passkey zaten hesabında kayıtlı.");
+    }
+
     static Problem passwordPolicy(String policyMessageKey, List<Object> params, String localizedDetail) {
         return new Problem(400, "password_policy", "New password violates the password policy", localizedDetail)
                 .withExtension("policy", policyMessageKey)

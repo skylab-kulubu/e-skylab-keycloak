@@ -58,11 +58,26 @@ if grep -Fq '\${execution}' <<<"$bundle_text"; then
   fail 'WebAuthn retry still contains the historical literal execution defect'
 fi
 
-grep -Fq '@media (prefers-reduced-motion: reduce)' "$THEME_DIR/src/login/theme.css" \
+# One design system: the login stylesheet is the only stylesheet and the only token set.
+[[ ! -e "$THEME_DIR/src/login/theme.css" ]] \
+  || fail 'theme.css must stay deleted; every page uses legacy-login.css'
+[[ $(find "$THEME_DIR/src" -type f -name '*.css' | wc -l | tr -d ' ') == 1 ]] \
+  || fail 'the theme must ship exactly one stylesheet'
+[[ $(grep -c '^:root {' "$THEME_DIR/src/login/legacy-login.css") == 1 ]] \
+  || fail 'legacy-login.css must define exactly one :root token set'
+grep -Fq '@media (prefers-reduced-motion: reduce)' "$THEME_DIR/src/login/legacy-login.css" \
   || fail 'reduced-motion behavior is missing'
-grep -Fq '.sl-button--secondary' "$THEME_DIR/src/login/theme.css" \
+grep -Fq '.sl-legacy-choice' "$THEME_DIR/src/login/legacy-login.css" \
   || fail 'secondary button contrast contract is missing'
-grep -Fq 'id="sl-main-content"' "$THEME_DIR/src/login/Template.tsx" \
+grep -Fq 'import "./legacy-login.css"' "$THEME_DIR/src/login/KcPage.tsx" \
+  || fail 'the page router must import the single stylesheet'
+grep -Fq 'mainId="sl-main-content"' "$THEME_DIR/src/login/Template.tsx" \
   || fail 'semantic main landmark is missing'
+grep -Fq '<LegacyFrame' "$THEME_DIR/src/login/Template.tsx" \
+  || fail 'Template must render the LegacyFrame chrome'
+[[ $(find "$THEME_DIR/tests/browser/visual.spec.ts-snapshots" -maxdepth 1 -type f -name '*-desktop.png' | wc -l | tr -d ' ') -ge 25 ]] \
+  || fail 'desktop screenshot baselines are missing'
+[[ $(find "$THEME_DIR/tests/browser/visual.spec.ts-snapshots" -maxdepth 1 -type f -name '*-mobile.png' | wc -l | tr -d ' ') -ge 25 ]] \
+  || fail 'mobile screenshot baselines are missing'
 
 printf 'Keycloak theme source, artifact and WebAuthn contracts passed.\n'

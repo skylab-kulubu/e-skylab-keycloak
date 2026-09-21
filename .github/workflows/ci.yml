@@ -9,9 +9,52 @@ permissions:
   contents: read
 
 jobs:
+  theme:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # The visual baselines in theme/tests/browser/visual.spec.ts-snapshots are rendered in this
+    # exact image by theme/scripts/update-visual-baselines.sh; keep the tag and the
+    # @playwright/test pin in theme/package.json in step.
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-jammy
+    env:
+      # Marks the image the screenshot baselines were rendered in, so visual.spec.ts runs.
+      SL_VISUAL_BASELINE_ENV: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.22.1
+          cache: npm
+          cache-dependency-path: theme/package-lock.json
+
+      - name: Pin the screenshot fonts exactly as the baseline script does
+        run: |
+          mkdir -p "$HOME/.config/fontconfig"
+          cp theme/tests/browser/fonts.conf "$HOME/.config/fontconfig/fonts.conf"
+
+      - name: Unit, Chromium and screenshot baseline tests of the login theme
+        working-directory: theme
+        run: |
+          npm ci --ignore-scripts
+          npm audit --audit-level=high
+          npm test
+          npm run test:browser
+
+      - name: Keep screenshot diffs when the visual baselines drift
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: theme-visual-diffs
+          path: theme/test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    needs: theme
     env:
       KEYCLOAK_TEST_IMAGE: account-keycloak:ci
     steps:
@@ -28,14 +71,11 @@ jobs:
           cache: npm
           cache-dependency-path: theme/package-lock.json
 
-      - name: Test and build the source-controlled login theme
+      - name: Build the source-controlled login theme and check its contract
         working-directory: theme
         run: |
           npm ci --ignore-scripts
-          npm audit --audit-level=high
-          npm test
           npx playwright install --with-deps chromium
-          npm run test:browser
           npm run build-keycloak-theme
           bash ../tests/check-theme-contract.sh
 

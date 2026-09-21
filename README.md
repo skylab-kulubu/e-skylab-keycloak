@@ -59,7 +59,14 @@ realm ayarı bırakmamaktır.
 Giriş teması [`theme/`](theme/) içinden Keycloakify `11.16.0` ile yeniden
 derlenir. Birim, imaj, gerçek Keycloak ve Chromium testleri; WebAuthn alanlarını,
 yeniden denemeyi, “beni hatırla” aktarımını, AIA ekranlarını, klavye kullanımını,
-kontrastı ve azaltılmış hareket tercihlerini korur.
+kontrastı ve azaltılmış hareket tercihlerini korur. Giriş sayfası, erişim
+anahtarı teklifi ve Keycloak'ın diğer bütün sayfaları (parola yenileme, doğrulama
+uygulaması, erişim anahtarı kaydı, hata, bilgi, çıkış onayı, kimlik sağlayıcı bağlama…)
+tek bir tasarım sistemini paylaşır: `theme/src/login/legacy-login.css` tek
+stil dosyası ve tek token kümesidir, `Template.tsx` her sayfayı giriş
+sayfasının `LegacyFrame` çerçevesinde (animasyonlu SKY LAB logosu, cam kart,
+KVKK altbilgisi, dil seçimi) çizer ve bütün metinler `i18n.ts` içinden gelir
+(önce Türkçe, sonra İngilizce).
 
 İlk fiziksel doğrulama Touch ID üzerinde tamamlanmıştır. Face ID, Android
 Credential Manager, Windows Hello ve mobil WebView yüzeyleri sürüm sonrası
@@ -120,10 +127,51 @@ Compose tanımını kullanın:
 docker compose -f docker-compose.build.yml build
 ```
 
+### Tema sayfalarını önizleme ve ekran görüntüsü temel çizgileri
+
+Tema geliştirme sunucusu her Keycloak sayfasını gerçek Keycloak olmadan
+gösterir; `?page=<sayfa>.ftl` ve `&lang=en` sorgu parametreleri
+`theme/src/devKcContext.ts` içindeki sahte verilerle sayfayı açar:
+
+```bash
+cd theme
+npm ci --ignore-scripts
+npx vite            # http://localhost:5173/?page=login-config-totp.ftl
+```
+
+`theme/tests/browser/visual.spec.ts`, her sayfanın masaüstü (1280×800) ve
+mobil (390×844) ekran görüntüsünü Türkçe ve azaltılmış hareketle alır ve
+`theme/tests/browser/visual.spec.ts-snapshots/` altındaki temel çizgilerle
+karşılaştırır (izin verilen fark en fazla %1 piksel). Temel çizgiler yalnız
+Playwright'ın resmi Linux imajında (`mcr.microsoft.com/playwright:v<sürüm>-jammy`,
+`theme/tests/browser/fonts.conf` ile sabitlenmiş yazı tipleri) üretilir; CI ve
+yayın iş akışlarındaki `theme` işleri aynı imajda çalışır. Görsel test yalnız
+`SL_VISUAL_BASELINE_ENV=1` tanımlıyken (bu imajda) koşar; başka makinelerde
+`npm run test:browser` onu atlar. Yerelde karşılaştırmak ya da tasarım
+değişikliğinden sonra temel çizgileri yenilemek için Docker ile şu betiği
+kullanın:
+
+```bash
+# Karşılaştır (CI ile aynı): farklar theme/test-results/ altına yazılır
+bash theme/scripts/update-visual-baselines.sh --check
+
+# Bilinçli bir tasarım değişikliğinden sonra temel çizgileri yeniden üret
+bash theme/scripts/update-visual-baselines.sh
+```
+
+Betik `@playwright/test` sürümünü `theme/package.json` içinden okur, tema
+kaynaklarını salt okunur bağlar ve yalnız ekran görüntülerini geri yazar; bir
+görüntü bile alınamazsa mevcut temel çizgilere dokunmaz.
+Yenilenen PNG dosyaları incelenip değişiklikle birlikte commit edilmelidir; bir
+sayfanın tasarımı değişmeden temel çizgisi değişiyorsa bu bir gerilemedir.
+Apple Silicon üzerinde betik varsayılan olarak `linux/amd64` imajını
+öykünerek çalıştırır (`VISUAL_BASELINE_PLATFORM` ile değiştirilebilir).
+
 Doğrulama sırası şu şekildedir:
 
 1. Sürüm, sabit imajlar, Compose ve yayın sınırları denetlenir.
-2. Tema birim ve Chromium testlerinden geçirilip JAR olarak derlenir.
+2. Tema birim, Chromium ve ekran görüntüsü testlerinden geçirilip JAR olarak
+   derlenir.
 3. Aday Keycloak imajı bir kez oluşturulur.
 4. PostgreSQL, RabbitMQ, OIDC, PAR/PKCE, oturum, AIA, tema ve olay yayını
    sözleşmeleri gerçek servislerle sınanır.

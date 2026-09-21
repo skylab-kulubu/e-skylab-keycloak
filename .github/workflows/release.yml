@@ -8,8 +8,50 @@ on:
       - 'v*'
 
 jobs:
+  theme:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions: { contents: read }
+    # Same image as ci.yml and theme/scripts/update-visual-baselines.sh: the committed
+    # screenshot baselines are compared byte for byte here, not on the bare runner.
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-jammy
+    env:
+      SL_VISUAL_BASELINE_ENV: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.22.1
+          cache: npm
+          cache-dependency-path: theme/package-lock.json
+
+      - name: Pin the screenshot fonts exactly as the baseline script does
+        run: |
+          mkdir -p "$HOME/.config/fontconfig"
+          cp theme/tests/browser/fonts.conf "$HOME/.config/fontconfig/fonts.conf"
+
+      - name: Unit, Chromium and screenshot baseline tests of the login theme
+        working-directory: theme
+        run: |
+          npm ci --ignore-scripts
+          npm audit --audit-level=high
+          npm test
+          npm run test:browser
+
+      - name: Keep screenshot diffs when the visual baselines drift
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: theme-visual-diffs
+          path: theme/test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
   keycloak-build:
     runs-on: ubuntu-latest
+    needs: theme
     environment: keycloak-production
     permissions: { contents: read }
     outputs:
@@ -46,14 +88,11 @@ jobs:
           cache: npm
           cache-dependency-path: theme/package-lock.json
 
-      - name: Test and build the source-controlled login theme
+      - name: Build the source-controlled login theme and check its contract
         working-directory: theme
         run: |
           npm ci --ignore-scripts
-          npm audit --audit-level=high
-          npm test
           npx playwright install --with-deps chromium
-          npm run test:browser
           npm run build-keycloak-theme
           bash ../tests/check-theme-contract.sh
 

@@ -10,6 +10,7 @@ import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import org.keycloak.WebAuthnConstants;
 import org.keycloak.common.util.Base64Url;
 import org.keycloak.common.util.SecretGenerator;
 import org.keycloak.common.util.Time;
@@ -39,16 +40,21 @@ import org.keycloak.utils.CredentialHelper;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
-/** {@code v1/credentials}: password change, authenticator-app setup and credential removal (all under sudo). */
+/**
+ * {@code v1/credentials}: password change, authenticator-app setup, passkey registration and
+ * credential removal (all under sudo).
+ */
 public final class CredentialResource {
 
     static final int TOTP_SETUP_TTL_SECONDS = 600;
+    static final int MAX_LABEL_LENGTH = 64;
 
     private static final String TOTP_SETUP_KEY_PREFIX = "sky-account:totp-setup:";
     private static final String SECRET_NOTE = "secret";
@@ -215,6 +221,64 @@ public final class CredentialResource {
                             .put("label", label)
                             .putNull("createdAt");
             return AccountRequest.ok(201, summary);
+        });
+    }
+
+    /** Creation options for {@code navigator.credentials.create()} from the realm passwordless policy. */
+    @POST
+    @Path("webauthn/options")
+    @Produces({MediaType.APPLICATION_JSON, Problem.MEDIA_TYPE})
+    public Response passkeyOptions(@HeaderParam(SudoTokens.HEADER) String sudoToken) {
+        return request.execute(() -> {
+            Caller caller = request.authenticate();
+            request.beginMutation(caller, RateLimiter.MUTATION);
+            request.requireSudo(caller, sudoToken);
+            return AccountRequest.ok(200, request.passkeys().creationOptions(caller));
+        });
+    }
+
+    /**
+     * The {@code PublicKeyCredential} JSON the browser returned plus a label; verified and stored
+     * exactly like Keycloak's {@code webauthn-register-passwordless} required action.
+     */
+    @POST
+    @Path("webauthn/register")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces({MediaType.APPLICATION_JSON, Problem.MEDIA_TYPE})
+    public Response registerPasskey(@HeaderParam(SudoTokens.HEADER) String sudoToken, String body) {
+        return request.execute(() -> {
+            Caller caller = request.authenticate();
+            request.beginMutation(caller, RateLimiter.MUTATION);
+            request.requireSudo(caller, sudoToken);
+            Set<String> fields = new HashSet<>(Passkeys.CREDENTIAL_FIELDS);
+            fields.add("label");
+            RequestBody parsed = RequestBody.parse(body, fields, Passkeys.MAX_BODY_BYTES);
+            String label = IdentityResource.normalisePersonName(parsed.requireString("label", 1, 256));
+            if (label.isEmpty() || label.length() > MAX_LABEL_LENGTH) {
+                throw Problems.invalidRequest("label").exception();
+            }
+            Passkeys.Attestation attestation = Passkeys.parseAttestation(parsed);
+
+            EventBuilder event = request.event(caller)
+                    .event(EventType.UPDATE_CREDENTIAL)
+                    .detail(Details.CREDENTIAL_TYPE, Passkeys.CREDENTIAL_TYPE)
+                    .detail(Details.CREDENTIAL_USER_LABEL, label);
+            final Passkeys.Registered registered;
+            try {
+                registered = request.passkeys().register(caller, attestation, label);
+            } catch (ProblemException exception) {
+                if (exception.problem().status() < 500) {
+                    event.clone()
+                            .detail(WebAuthnConstants.REG_ERR_LABEL, exception.problem().code())
+                            .error(Errors.INVALID_REGISTRATION);
+                }
+                throw exception;
+            }
+            event.detail(WebAuthnConstants.PUBKEY_CRED_ID_ATTR, registered.credentialId())
+                    .detail(WebAuthnConstants.PUBKEY_CRED_LABEL_ATTR, label)
+                    .detail(WebAuthnConstants.PUBKEY_CRED_AAGUID_ATTR, registered.aaguid())
+                    .success();
+            return AccountRequest.ok(201, Credentials.passkeySummary(registered.credential()));
         });
     }
 

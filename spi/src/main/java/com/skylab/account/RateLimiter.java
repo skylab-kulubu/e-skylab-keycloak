@@ -20,6 +20,9 @@ final class RateLimiter {
     }
 
     static final Limit SUDO = new Limit("sudo", 10, 15 * 60);
+    /** Passkey assertions cannot be guessed, so they have their own budget instead of eating the password/TOTP one. */
+    static final Limit SUDO_PASSKEY = new Limit("sudo-passkey", 10, 15 * 60);
+    static final Limit SUDO_OPTIONS = new Limit("sudo-options", 30, 15 * 60);
     static final Limit TOTP_CONFIRM = new Limit("totp-confirm", 10, 15 * 60);
     static final Limit MUTATION = new Limit("mutation", 30, 15 * 60);
 

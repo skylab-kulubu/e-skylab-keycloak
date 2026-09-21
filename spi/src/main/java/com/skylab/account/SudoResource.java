@@ -7,6 +7,7 @@ import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import org.keycloak.WebAuthnConstants;
 import org.keycloak.authentication.authenticators.util.AuthenticatorUtils;
 import org.keycloak.credential.CredentialModel;
 import org.keycloak.events.Details;
@@ -21,11 +22,22 @@ import org.keycloak.models.credential.PasswordCredentialModel;
 import org.keycloak.services.managers.BruteForceProtector;
 import org.keycloak.util.JsonSerialization;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
-/** {@code v1/sudo}: the person proves a credential and receives a five-minute sudo token. */
+/**
+ * {@code v1/sudo}: the person proves a credential and receives a five-minute sudo token.
+ *
+ * <p>Every proof first honours an existing brute-force lockout. Failed and successful password
+ * and TOTP proofs are then reported to Keycloak's brute-force protector like a login. Passkey
+ * proofs are reported too, but Keycloak 26.7.4's protector only counts the {@code password},
+ * {@code otp} and recovery-code categories, so a failed passkey assertion does not advance the
+ * realm counter and a successful one clears nothing; the throttle for passkey proofs is the
+ * SPI's own {@code sudo-passkey} budget (10 per 15 minutes).
+ */
 public final class SudoResource {
 
     static final String AUDIT_ACTION = "sky-sudo";
@@ -46,7 +58,12 @@ public final class SudoResource {
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces({MediaType.APPLICATION_JSON, Problem.MEDIA_TYPE})
     public Response withPassword(String body) {
-        return prove(body, new Proof() {
+        return prove(body, new Proof<String>() {
+            @Override
+            public Set<String> fields() {
+                return Set.of("password");
+            }
+
             @Override
             public String read(RequestBody parsed) {
                 return parsed.requireString("password", 1, 1024);
@@ -63,23 +80,17 @@ public final class SudoResource {
             }
 
             @Override
-            public boolean configured(UserModel user) {
-                return user.credentialManager().isConfiguredFor(PasswordCredentialModel.TYPE);
+            public Problem notConfigured(UserModel user) {
+                return user.credentialManager().isConfiguredFor(PasswordCredentialModel.TYPE)
+                        ? null
+                        : Problems.passwordNotConfigured();
             }
 
             @Override
-            public boolean valid(UserModel user, String secret) {
-                return user.credentialManager().isValid(UserCredentialModel.password(secret));
-            }
-
-            @Override
-            public Problem notConfigured() {
-                return Problems.passwordNotConfigured();
-            }
-
-            @Override
-            public Problem invalid() {
-                return Problems.invalidPassword();
+            public Problem check(UserModel user, String secret) {
+                return user.credentialManager().isValid(UserCredentialModel.password(secret))
+                        ? null
+                        : Problems.invalidPassword();
             }
         });
     }
@@ -89,7 +100,12 @@ public final class SudoResource {
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces({MediaType.APPLICATION_JSON, Problem.MEDIA_TYPE})
     public Response withTotp(String body) {
-        return prove(body, new Proof() {
+        return prove(body, new Proof<String>() {
+            @Override
+            public Set<String> fields() {
+                return Set.of("code");
+            }
+
             @Override
             public String read(RequestBody parsed) {
                 String code = parsed.requireTrimmedString("code", 1, 16);
@@ -110,71 +126,155 @@ public final class SudoResource {
             }
 
             @Override
-            public boolean configured(UserModel user) {
-                return !otpCredentials(user).isEmpty();
+            public Problem notConfigured(UserModel user) {
+                return otpCredentials(user).isEmpty() ? Problems.totpNotConfigured() : null;
             }
 
             @Override
-            public boolean valid(UserModel user, String code) {
-                return otpCredentials(user).stream().anyMatch(credential -> user.credentialManager()
+            public Problem check(UserModel user, String code) {
+                boolean valid = otpCredentials(user).stream().anyMatch(credential -> user.credentialManager()
                         .isValid(new UserCredentialModel(credential.getId(), OTPCredentialModel.TYPE, code)));
+                return valid ? null : Problems.invalidTotp();
+            }
+        });
+    }
+
+    /** Assertion options for {@code navigator.credentials.get()} with the person's own passkeys. */
+    @POST
+    @Path("webauthn/options")
+    @Produces({MediaType.APPLICATION_JSON, Problem.MEDIA_TYPE})
+    public Response passkeyOptions() {
+        return request.execute(() -> {
+            Caller caller = request.authenticate();
+            request.limit(RateLimiter.SUDO_OPTIONS, caller);
+            return AccountRequest.ok(200, request.passkeys().assertionOptions(caller));
+        });
+    }
+
+    /** The {@code PublicKeyCredential} JSON the browser returned, verified like Keycloak's passkey login. */
+    @POST
+    @Path("webauthn/verify")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces({MediaType.APPLICATION_JSON, Problem.MEDIA_TYPE})
+    public Response withPasskey(String body) {
+        return prove(body, new Proof<Passkeys.Assertion>() {
+            private String credentialId;
+
+            @Override
+            public Set<String> fields() {
+                return Passkeys.CREDENTIAL_FIELDS;
             }
 
             @Override
-            public Problem notConfigured() {
-                return Problems.totpNotConfigured();
+            public RateLimiter.Limit limit() {
+                return RateLimiter.SUDO_PASSKEY;
             }
 
             @Override
-            public Problem invalid() {
-                return Problems.invalidTotp();
+            public int maxBodyBytes() {
+                return Passkeys.MAX_BODY_BYTES;
+            }
+
+            @Override
+            public Passkeys.Assertion read(RequestBody parsed) {
+                return Passkeys.parseAssertion(parsed);
+            }
+
+            @Override
+            public String credentialType() {
+                return Passkeys.CREDENTIAL_TYPE;
+            }
+
+            @Override
+            public SudoTokens.Method method() {
+                return SudoTokens.Method.PASSKEY;
+            }
+
+            @Override
+            public Problem notConfigured(UserModel user) {
+                return Passkeys.passkeysOf(user).isEmpty() ? Problems.passkeyNotRegistered() : null;
+            }
+
+            @Override
+            public Problem check(UserModel user, Passkeys.Assertion assertion) {
+                Passkeys.AssertionOutcome outcome = request.passkeys().verifyAssertion(caller(), assertion);
+                if (!outcome.isVerified()) {
+                    return outcome.refusal();
+                }
+                credentialId = outcome.credentialId();
+                return null;
+            }
+
+            @Override
+            public Map<String, String> auditDetails() {
+                return credentialId == null ? Map.of() : Map.of(WebAuthnConstants.PUBKEY_CRED_ID_ATTR, credentialId);
             }
         });
     }
 
     /** One way of proving it is the person: how to read, find, and check the credential. */
-    private interface Proof {
-        String read(RequestBody parsed);
+    private abstract class Proof<T> {
+        private Caller caller;
 
-        String credentialType();
+        abstract Set<String> fields();
 
-        SudoTokens.Method method();
+        RateLimiter.Limit limit() {
+            return RateLimiter.SUDO;
+        }
 
-        boolean configured(UserModel user);
+        int maxBodyBytes() {
+            return RequestBody.MAX_BYTES;
+        }
 
-        boolean valid(UserModel user, String secret);
+        abstract T read(RequestBody parsed);
 
-        Problem notConfigured();
+        abstract String credentialType();
 
-        Problem invalid();
+        abstract SudoTokens.Method method();
+
+        /** @return the problem when the person has no such credential, otherwise {@code null}. */
+        abstract Problem notConfigured(UserModel user);
+
+        /**
+         * @return {@code null} when the proof verified, otherwise the credential-failure problem;
+         * it is recorded as a failed login attempt before being returned to the caller.
+         */
+        abstract Problem check(UserModel user, T proof);
+
+        Map<String, String> auditDetails() {
+            return Map.of();
+        }
+
+        Caller caller() {
+            return caller;
+        }
     }
 
-    private Response prove(String body, Proof proof) {
+    private <T> Response prove(String body, Proof<T> proof) {
         return request.execute(() -> {
             Caller caller = request.authenticate();
-            request.limit(RateLimiter.SUDO, caller);
-            String secret = proof.read(RequestBody.parse(body, Set.of(bodyField(proof))));
+            proof.caller = caller;
+            request.limit(proof.limit(), caller);
+            T secret = proof.read(RequestBody.parse(body, proof.fields(), proof.maxBodyBytes()));
             UserModel user = caller.user();
-            if (!proof.configured(user)) {
-                throw proof.notConfigured().exception();
+            Problem notConfigured = proof.notConfigured(user);
+            if (notConfigured != null) {
+                throw notConfigured.exception();
             }
             requireNotLockedOut(caller, proof.credentialType());
-            if (!proof.valid(user, secret)) {
+            Problem failure = proof.check(user, secret);
+            if (failure != null) {
                 recordFailedAttempt(caller, proof.credentialType());
-                throw proof.invalid().exception();
+                throw failure.exception();
             }
             recordSuccessfulAttempt(caller, proof.credentialType());
             SudoTokens.Issued issued = request.issueSudo(caller, proof.method());
-            recordSudoSuccess(request.event(caller), proof.method());
+            recordSudoSuccess(request.event(caller), proof.method(), proof.auditDetails());
             ObjectNode response = JsonSerialization.mapper.createObjectNode();
             response.put("sudoToken", issued.token());
             response.put("expiresAt", AccountRequest.isoSeconds(issued.expiresAt()));
             return AccountRequest.ok(200, response);
         });
-    }
-
-    private static String bodyField(Proof proof) {
-        return proof.method() == SudoTokens.Method.PASSWORD ? "password" : "code";
     }
 
     private static List<CredentialModel> otpCredentials(UserModel user) {
@@ -186,10 +286,15 @@ public final class SudoResource {
      * generic {@code CUSTOM_REQUIRED_ACTION} carries {@code action=sky-sudo} and the method.
      */
     static void recordSudoSuccess(EventBuilder event, SudoTokens.Method method) {
+        recordSudoSuccess(event, method, Map.of());
+    }
+
+    static void recordSudoSuccess(EventBuilder event, SudoTokens.Method method, Map<String, String> details) {
         event.event(EventType.CUSTOM_REQUIRED_ACTION)
                 .detail(AUDIT_ACTION_DETAIL, AUDIT_ACTION)
-                .detail(AUDIT_METHOD_DETAIL, method.auditName())
-                .success();
+                .detail(AUDIT_METHOD_DETAIL, method.auditName());
+        new LinkedHashMap<>(details).forEach(event::detail);
+        event.success();
     }
 
     private void requireNotLockedOut(Caller caller, String credentialType) {

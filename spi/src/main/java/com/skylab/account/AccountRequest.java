@@ -99,6 +99,10 @@ final class AccountRequest {
         return new PolicyMessages(session);
     }
 
+    Passkeys passkeys() {
+        return new Passkeys(session);
+    }
+
     static Response ok(int status, ObjectNode body) {
         return Response.status(status)
                 .type(MediaType.APPLICATION_JSON_TYPE)

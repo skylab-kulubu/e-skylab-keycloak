@@ -491,8 +491,11 @@ fixture_sessions_after=$(session_ids "$FIXTURE_USER_UUID")
 json_assert "$fixture_sessions_after" '(index($old) == null) and length == ($before | fromjson | length)' \
   'a second handoff of the same person kept the older browser session' \
   --arg old "$replaced_sid" --arg before "$fixture_sessions_before"
-json_assert "$fixture_sessions_after" 'index($app) != null' 'a handoff ended the SkyApp session it came from' \
+skyapp_offline_sessions=$(kcadm get "users/$FIXTURE_USER_UUID/offline-sessions/$(client_uuid skyapp)" -r "$REALM" -c)
+json_assert "$skyapp_offline_sessions" '[.[].id] | index($app) != null' 'a handoff ended the SkyApp session it came from' \
   --arg app "$(jq -r .sid <<<"$app_payload")"
+app_token=$(app_refresh)
+[[ -n $app_token && $app_token != null ]] || fail 'SkyApp can no longer refresh its session after a handoff'
 silent_login "$shared_jar" same-person
 current_sid=$(jq -r .sid <<<"$ID_PAYLOAD")
 [[ $current_sid != "$replaced_sid" ]] || fail 'the WebView still uses the older browser session'

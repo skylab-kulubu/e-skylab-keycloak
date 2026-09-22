@@ -20,17 +20,30 @@ final class FailurePage {
     private FailurePage() {
     }
 
-    /** Every header of the page: never cached, never framed, no referrer, no active content. */
+    /**
+     * Every header of the page: never cached, never framed, no referrer, no active content, not
+     * indexed. They replace Keycloak's realm browser security headers for this response (which
+     * would allow same-origin framing), so the caller must switch those off.
+     */
     static final Map<String, String> HEADERS = Map.of(
             HttpHeaders.CACHE_CONTROL, "no-store",
             "X-Frame-Options", "DENY",
             "X-Content-Type-Options", "nosniff",
             "Referrer-Policy", "no-referrer",
+            "X-Robots-Tag", "none",
             "Content-Security-Policy", CONTENT_SECURITY_POLICY);
 
-    static Response render(FailureReason reason) {
+    /**
+     * @param strictTransportSecurity the realm's {@code Strict-Transport-Security} value, kept
+     *                                because Keycloak's own headers are switched off; {@code null}
+     *                                or empty to send none
+     */
+    static Response render(FailureReason reason, String strictTransportSecurity) {
         Response.ResponseBuilder builder = Response.ok(html(reason), MediaType.TEXT_HTML_TYPE.withCharset("UTF-8"));
         HEADERS.forEach(builder::header);
+        if (strictTransportSecurity != null && !strictTransportSecurity.isBlank()) {
+            builder.header("Strict-Transport-Security", strictTransportSecurity);
+        }
         return builder.build();
     }
 

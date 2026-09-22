@@ -56,6 +56,7 @@ class FailurePageTest {
         assertEquals("DENY", FailurePage.HEADERS.get("X-Frame-Options"));
         assertEquals("no-referrer", FailurePage.HEADERS.get("Referrer-Policy"));
         assertEquals("nosniff", FailurePage.HEADERS.get("X-Content-Type-Options"));
+        assertEquals("none", FailurePage.HEADERS.get("X-Robots-Tag"));
         String policy = FailurePage.HEADERS.get("Content-Security-Policy");
         assertTrue(policy.contains("default-src 'none'"));
         assertTrue(policy.contains("frame-ancestors 'none'"));

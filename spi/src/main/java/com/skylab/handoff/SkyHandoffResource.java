@@ -19,6 +19,8 @@ import org.keycloak.common.ClientConnection;
 import org.keycloak.events.Details;
 import org.keycloak.events.EventBuilder;
 import org.keycloak.events.EventType;
+import org.keycloak.headers.SecurityHeadersProvider;
+import org.keycloak.models.BrowserSecurityHeaders;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
@@ -178,7 +180,12 @@ public final class SkyHandoffResource {
     @Path("v1/failed")
     @Produces(MediaType.TEXT_HTML)
     public Response failed(@QueryParam("reason") String reason) {
-        return FailurePage.render(FailureReason.fromCode(reason));
+        // Keycloak's realm browser security headers would replace the page's stricter ones
+        // (same-origin framing, a looser CSP); the page sends its own and keeps the realm's HSTS.
+        session.getProvider(SecurityHeadersProvider.class).options().skipHeaders();
+        BrowserSecurityHeaders hsts = BrowserSecurityHeaders.STRICT_TRANSPORT_SECURITY;
+        return FailurePage.render(FailureReason.fromCode(reason),
+                realm.getBrowserSecurityHeaders().getOrDefault(hsts.getKey(), hsts.getDefaultValue()));
     }
 
     /**

@@ -203,7 +203,7 @@ her `reason` için ayrı ayrı doğrular.
    yeniden başlatma gerektirir.
 
 3. **Etkinleştirme.** `.env` içinde `SKY_MAIL_ENABLED=true` ve
-   `SKY_MAIL_BASE_URL=https://mail.yildizskylab.com` ayarlayıp `keycloak`
+   `SKY_MAIL_BASE_URL=https://api.yildizskylab.com/api/skymail` ayarlayıp `keycloak`
    servisini yeniden başlatın. Açılışta `sky_mail_enabled client=keycloak-mailer`
    satırını arayın; `sky_mail_disabled reason=…` görürseniz dosya bağlaması ya
    da izinleri eksiktir.
@@ -233,3 +233,10 @@ Entegrasyon koşumunda (`tests/run-integration.sh`, `skymail` fixture'ı) gerçe
 eşlenen şablon anahtarı ve altı değişkeniyle bir kez gönderilir, fixture'ın 404
 ve 500 döndüğü iki durumda geri düşüş tetiklenir ve posta fixture'ın SMTP
 havuzuna yine de ulaşır.
+
+> **`SKY_MAIL_BASE_URL` API'nin kökü olmalı, arayüzün değil.** `https://mail.yildizskylab.com`
+> SkyMail'in tek sayfalık uygulamasıdır ve her yola HTML döndürür; oraya yapılan
+> `POST /v1/mail_tasks/single` 200 + HTML alır. Gönderici yalnız 201'i gönderildi saydığı için
+> bu hatada her posta sessizce SMTP yedeğine düşer, SkyMail hiçbir şey görmez. Doğru değer
+> core'un `SKYMAIL_URL`'siyle aynı kök: `https://api.yildizskylab.com/api/skymail`
+> (kimliksiz istek 403 döner — API'nin orada olduğunu gösterir).

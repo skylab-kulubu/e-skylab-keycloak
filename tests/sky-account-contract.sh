@@ -975,7 +975,7 @@ sky GET email/pending "$token_t" -
 expect 200 - 'the replacement must be waiting'
 json_assert "$SKY_BODY" '.address == "email-third-new@example.invalid" and .attemptsLeft == 5' \
   'the waiting replacement must show its address and all five tries'
-third_code=$(confirmation_code_of "$(mailpit_message_id email-third-new@example.invalid)")
+third_code=$(personal_code_for email-third-new@example.invalid)
 sky POST email/confirm "$token_t" - "{\"code\":\"$third_code\"}"
 expect 200 - 'the replacement code must finish the change'
 json_assert "$SKY_BODY" \

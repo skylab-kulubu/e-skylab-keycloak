@@ -86,25 +86,113 @@ Uzlaştırıcı, gizli `account-center` istemcisini şu sözleşmeyle yönetir:
 - İstemciye özel tarayıcı akışının ilk alternatif adımı,
   `sky_native_handoff` değerini HMAC doğrulamalı mTLS üzerinden tek seferlik
   olarak kullanır.
-- Özel varsayılan istemci kapsamı yalnız Account API audience değerini ve
-  `manage-account` / `view-profile` rollerini taşır. Roller yalnız bu izole
-  kapsamda sabitlenir; realm kullanıcılarına veya diğer istemcilere genel rol
-  verilmez. Böylece mevcut ve yeni kullanıcıların Account Center token'ları
-  gerekli öz-servis yetkisini taşırken yetki sınırı istemcide kalır.
+- Özel varsayılan istemci kapsamı (`account-center-account-api`,
+  mapper'ları `config/account-center-account-api-mappers.json`) `account` ve
+  `core` audience değerlerini, sabit `manage-account` / `view-profile` /
+  `manage-account-links` rollerini (`resource_access.account.roles`) ve kişinin
+  uygulama (istemci) rollerini `sky_authorization.<istemci>.roles` altında
+  (yalnız access token ve introspection; ID token ve userinfo'da yok) taşır.
+  Audience-resolve mapper yoktur; `aud` tam olarak `["account","core"]` olur
+  ve token `core` rolü taşımaz (`resource_access` altında yalnız `account`
+  bulunur). Roller yalnız bu izole kapsamda sabitlenir; realm kullanıcılarına
+  veya diğer istemcilere genel rol verilmez.
+- `fullScopeAllowed` **kapalı kalır**: Keycloak Admin REST bir bearer token'ı
+  `AdminAuth.hasAppRole = user.hasRole(rol) && client.hasScope(rol)` ile
+  yetkilendirir ve tam kapsam açıkken `client.hasScope` her rol için doğrudur;
+  `realm-management` rolü taşıyan bir kişinin `my.` token'ı Admin REST'te
+  geçerli olurdu. Bu yüzden `sky_authorization` claim'ini Keycloak'ın kapsama
+  bağlı rol mapper'ı değil, SPI'daki `sky-authorization-mapper`
+  (`com.skylab.account.SkyAuthorizationMapper`) üretir: kişinin etkin rol
+  eşlemelerini (doğrudan, grup, bileşik) kendisi okur, yalnız istemci
+  rollerini alır, `realm-management`, `broker`, `account`, `account-console`,
+  `security-admin-console`, `admin-cli` ve `*-realm` istemcilerini dışarıda
+  bırakır, istemci ve rol adlarını sıralar, 64 istemci / istemci başına 256
+  rol sınırını aşanı tek bir `WARN` ile atar, rol yoksa claim'i hiç yazmaz.
+  Claim salt okunur bir yetki görünümüdür; token'ın yapabileceklerini
+  genişletmez. Entegrasyon testi `realm-management/view-users` sahibi bir
+  kişinin `account-center` token'ıyla `GET /admin/realms/{realm}/users`
+  isteğinin 403 aldığını (tam kapsamla 200 alırdı) ve claim'de
+  `realm-management` bulunmadığını doğrular. `manage-account-links` ayrıca
+  `account` istemcisinin scope mapping izin listesindedir; AIA `idp_link`
+  eylemi `client.hasScope` denetimi yapar.
 - Core claim kapsamı yalnız gerekli `sub` ve `auth_time` alanlarını üretir.
 - BFF'nin en küçük `openid` isteğine uygun biçimde isteğe bağlı kapsam yoktur.
 
-Realm oturumu, AIA, tema ve şifresiz WebAuthn ayarları
-`config/account-center-realm.json` içinde kaynak kontrolündedir. İstemciye özel
-tarayıcı akışı realm'in etkin tarayıcı akışından kopyalanır; böylece production'a
-özel parola, OTP ve passkey davranışı korunur. Uzlaştırıcı kaynak akışı salt
-okunur kabul eder, yalnız izole native handoff dalını ekler ve kopya saparsa onu
-yeniden kurar. Bilinmeyen mapper, rol ve kapsamlar izin listeleriyle temizlenir.
+Realm oturumu, giriş ayarları ve tema `config/account-center-realm.json`
+(`editUsernameAllowed=false`, `loginWithEmailAllowed=true`,
+`duplicateEmailsAllowed=false`), brute-force koruması ve parola politikası
+`config/account-center-realm-security.json` (10 deneme, 60 sn artan bekleme,
+en çok 15 dk, 12 saat sıfırlama, kalıcı kilit yok;
+`length(8) and notUsername and notEmail`), şifresiz passkey politikası
+`config/account-center-passkey-policy.json` içinde kaynak kontrolündedir.
+Keycloak passwordless politikayı her yazımda bütünüyle yeniden kurduğundan
+politika tek belgede eksiksiz tanımlanır; relying party id ve ek origin'ler
+ortamdan gelir (`KEYCLOAK_PASSKEY_RP_ID`, varsayılan `yildizskylab.com`;
+`KEYCLOAK_PASSKEY_EXTRA_ORIGINS`, virgülle ayrılmış, varsayılan
+`https://my.yildizskylab.com`). Üretim modunda
+(`ACCOUNT_CENTER_REQUIRE_PRODUCTION_HOST=true`) yalnız üretim değerleri kabul
+edilir; entegrasyon fixture'ı `localhost` ve `http://localhost:18080` kullanır.
+Relying party id gerçekten değiştiğinde uzlaştırıcı, politikayı yazmadan önce
+realm özniteliği `skylab.passkeyRpIdSwitchedAt` değerine o anı (ISO-8601 UTC)
+kaydeder; öznitelik haritası canlı halinin üstüne birleştirilerek yazılır
+(Keycloak, `attributes` taşıyan bir PUT'ta eksik bırakılan her realm
+özniteliğini siler). İki faktörlü WebAuthn politikası (`webAuthnPolicy*`)
+yönetilmez. `attributes` taşımayan realm PUT'larında Keycloak CIBA ve PAR
+sürelerini varsayılana sıfırlar (önceden de böyleydi; SKY LAB ikisini de
+varsayılan dışında kullanmaz).
+
+User Profile (`config/account-center-user-profile.json`) canlı yapısını
+koruyarak uzlaştırılır: `firstName`, `lastName`, `email` kişi için salt
+okunur olur, `username` izinlerine dokunulmaz, `schoolEmail`, `personalEmail`
+(`email` doğrulayıcısı), `skyNumber`, `department`, `university`, `skyMail`,
+`usernameChangedAt` (ISO-8601 UTC `pattern` doğrulayıcısı) öznitelikleri
+`view=[admin,user]`, `edit=[admin]` olarak eklenir, mevcut görünen adlar,
+gruplar, açıklamalar ve tanımlanmamış öznitelikler korunur,
+`unmanagedAttributePolicy=ADMIN_VIEW` olur (asla `ENABLED`; sky-account API
+`ENABLED` iken değişiklikleri kapatır).
+
+K5'in gizli `keycloak-mailer` service-account istemcisini (standard flow ve
+direct grant kapalı, `fullScopeAllowed=false`, `roles` varsayılan kapsamı,
+`skymail` istemcisinin `skymail:access` ve `skymail:mails:send` rolleri service
+account'ta ve scope mapping'de) operatör, imajdaki idempotent
+`config/create-mailer-client.sh` betiğiyle oluşturur (varsayılan kuru koşu,
+`--apply`; yönetici parolası kcadm'ın kendi prompt'una yazılır,
+`KEYCLOAK_MAILER_ADMIN_PASSWORD` yalnız `SKY_HARNESS=1` ile kabul edilir;
+`skymail` rolleri yoksa uyarır, asla oluşturmaz). Uzlaştırıcı kimliğine kullanıcı
+yetkisi verilmediği için uzlaştırıcı bu istemciyi yalnız doğrular: yoksa
+uyarı ve çalıştırılacak komut, bayraklar yanlışsa hata, service account
+rolleri okunamıyorsa uyarı. Gizli anahtarı Keycloak üretir; hiçbir betik
+yazdırmaz, ops `kcadm get clients/{id}/client-secret` ile okur (runbook §6).
+
+İstemciye özel tarayıcı akışı realm'in etkin tarayıcı akışından kopyalanır;
+böylece production'a özel parola, OTP ve passkey davranışı korunur.
+Uzlaştırıcı kaynak akışı salt okunur kabul eder, yalnız izole native handoff
+dalını ekler ve kopya saparsa onu yeniden kurar. Bilinmeyen mapper, rol ve
+kapsamlar izin listeleriyle temizlenir.
+
+Uzlaştırıcı her adımda önce canlı durumu okur, yalnız farklı olan alanları
+yazar ve `[reconcile] <adım>: unchanged|updated (...)` satırı basar;
+değişiklik gerektirmeyen koşu hiçbir admin olayı üretmez (entegrasyon testi
+üçüncü koşuda bunu doğrular). İmajda `jq` bulunmadığından JSON
+karşılaştırmaları imajdaki JDK ile çalışma anında derlenen
+`config/ReconcileJson.java` ile yapılır. Passkey relying party id geçişinden
+önce kayıtlı passkey'ler bir daha doğrulanamaz; `config/cleanup-legacy-passkeys.sh`
+(varsayılan kuru koşu, yalnız sayı basar) geçiş anından önce oluşturulmuş
+`webauthn-passwordless` kimlik bilgilerini `--apply` ile siler. Geçiş anını
+realm özniteliği `skylab.passkeyRpIdSwitchedAt` verir; `--cutover` yalnız bu
+andan önceki bir zaman olabilir (sonrası reddedilir, çünkü geçişten sonra
+kaydedilen passkey'ler geçerlidir), silme hataları sayılır ve özet
+basıldıktan sonra sıfır dışı çıkılır. Üretim sırası,
+ön kontrol SQL'i, duyuru metni ve temizlik adımı
+[`docs/v2-identity-reconcile-runbook.md`](docs/v2-identity-reconcile-runbook.md)
+belgesindedir.
 
 Sürekli uzlaştırma yalnız servis amaçlı `account-center-config` istemcisiyle
-kimlik doğrular. Bu istemcinin oluşturulması veya gizli anahtarının döndürülmesi
-ayrı ve denetlenebilir bir başlangıç adımıdır; ana yönetici bilgileri normal
-Compose yığınına girmez.
+kimlik doğrular (`realm-management` rolleri yalnız `manage-clients`,
+`view-clients`, `manage-realm`, `view-realm`; kullanıcı yetkisi yoktur). Bu
+istemcinin oluşturulması veya gizli anahtarının döndürülmesi ayrı ve
+denetlenebilir bir başlangıç adımıdır; ana yönetici bilgileri normal Compose
+yığınına girmez.
 
 `sky-native-handoff` yalnız Hesap Merkezi istemcisine bağlıdır. Köprü ipucu
 yoksa masaüstü girişini değiştirmez. Geçerli bir ipucunu yalnız bir kez kullanır,
@@ -144,12 +232,12 @@ belgesindedir.
   olayı bırakır.
 - Brute-force koruması realm'de açıksa her parola/TOTP sudo denemesi Keycloak'ın
   kendi koruyucusuna bildirilir (kapalıysa açılışta tek bir uyarı günlüğe düşer;
-  reconcile K2 açar). Keycloak 26.7.4 passkey kategorisini saymaz: başarısız
-  passkey denemesi brute-force sayacını artırmaz, başarılısı temizlemez; mevcut
-  kilit yine passkey ile sudo'yu da engeller. Passkey denemelerinin kısıtı
-  kendi `sudo-passkey` bütçesidir. Kullanıcı başına atomik hız sınırları:
-  sudo 10 / 15 dk, passkey sudo 10 / 15 dk, TOTP onayı 10 / 15 dk,
-  değişiklikler 30 / 15 dk.
+  uzlaştırıcı korumayı ve parola politikasını açar). Keycloak 26.7.4 passkey
+  kategorisini saymaz: başarısız passkey denemesi brute-force sayacını
+  artırmaz, başarılısı temizlemez; mevcut kilit yine passkey ile sudo'yu da
+  engeller. Passkey denemelerinin kısıtı kendi `sudo-passkey` bütçesidir.
+  Kullanıcı başına atomik hız sınırları: sudo 10 / 15 dk, passkey sudo 10 / 15
+  dk, TOTP onayı 10 / 15 dk, değişiklikler 30 / 15 dk.
 - Realm User Profile'ı yönetilmeyen öznitelikleri kişiye açıyorsa
   (`unmanagedAttributePolicy=ENABLED`) değişiklik uçları `503` ile kapanır,
   okuma sürer.
@@ -235,7 +323,12 @@ Doğrulama sırası şu şekildedir:
    derlenir.
 3. Aday Keycloak imajı bir kez oluşturulur.
 4. PostgreSQL, RabbitMQ, OIDC, PAR/PKCE, oturum, AIA, tema, sky-account API ve
-   olay yayını sözleşmeleri gerçek servislerle sınanır.
+   olay yayını sözleşmeleri gerçek servislerle sınanır; v2 kimlik adımları
+   (passkey RP ID, brute force, parola politikası, User Profile, token
+   `aud`/`sky_authorization`, Admin REST'in `account-center` token'ını
+   reddetmesi, `keycloak-mailer`, sapma onarımı, değişiklik üretmeyen üçüncü
+   koşu, relying party id geçişi etrafında passkey temizliği kuru koşusu ve
+   `--apply` uygulaması) aynı koşuda doğrulanır.
 5. Commit'e bağlı fiziksel WebAuthn kanıtı doğrulanır.
 6. Test edilen aynı imaj baytları paketlenir; yayın aşamasında yeniden derleme
    yapılmaz.

@@ -28,8 +28,46 @@
       "redirectUris": [
         "com.yildizskylab.skyapp:/oauth/callback"
       ]
+    },
+    {
+      "clientId": "core",
+      "name": "SKY LAB core API (fixture)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "bearerOnly": true
+    },
+    {
+      "clientId": "skymail",
+      "name": "SkyMail (fixture)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "redirectUris": [
+        "https://mail.yildizskylab.com/*"
+      ]
     }
   ],
+  "roles": {
+    "client": {
+      "core": [
+        {
+          "name": "url:create",
+          "description": "fixture client role carried by sky_authorization"
+        },
+        {
+          "name": "url:read",
+          "description": "fixture client role not granted to anyone"
+        }
+      ],
+      "skymail": [
+        {
+          "name": "skymail:access",
+          "description": "fixture SkyMail role; skymail:mails:send is created by the harness after the first reconciliation"
+        }
+      ]
+    }
+  },
   "users": [
     {
       "id": "11111111-1111-4111-8111-111111111111",
@@ -39,6 +77,11 @@
       "firstName": "Account",
       "lastName": "Fixture",
       "email": "account-fixture@example.invalid",
+      "clientRoles": {
+        "core": [
+          "url:create"
+        ]
+      },
       "credentials": [
         {
           "type": "password",

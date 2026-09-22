@@ -158,6 +158,735 @@ walk_authorization_redirects() {
   fail "authorization redirect chain exceeded its bounded length for $label"
 }
 
+# ---------------------------------------------------------------------------
+# v2 identity reconcile stages (passkey relying party id, realm login and brute
+# force settings, User Profile, account-center scope, keycloak-mailer client,
+# no-op proof and legacy passkey cleanup). Each stage is one function so the
+# assertions stay separable from the v1 contract above and below.
+# ---------------------------------------------------------------------------
+V2_REALM=e-skylab-test
+V2_FIXTURE_USER_UUID=11111111-1111-4111-8111-111111111111
+V2_SWITCH_ATTRIBUTE=skylab.passkeyRpIdSwitchedAt
+V2_ISO_UTC='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+V2_SWITCHED_AT_FIRST=''
+V2_ACCESS_TOKEN=''
+V2_ACCESS_PAYLOAD=''
+v2_cleanup_run_options=()
+
+v2_client_uuid() {
+  kcadm get clients -r "$V2_REALM" -q "clientId=$1" -c \
+    | jq -r --arg id "$1" '.[] | select(.clientId == $id) | .id'
+}
+
+v2_scope_uuid() {
+  kcadm get client-scopes -r "$V2_REALM" -c \
+    | jq -r --arg name "$1" '.[] | select(.name == $name) | .id'
+}
+
+v2_role_body() {
+  kcadm get "clients/$1/roles" -r "$V2_REALM" -c \
+    | jq -c --arg name "$2" '[.[] | select(.name == $name) | {id, name}]'
+}
+
+v2_switch_attribute() {
+  kcadm get "realms/$V2_REALM" -c | jq -r --arg key "$V2_SWITCH_ATTRIBUTE" '.attributes[$key] // ""'
+}
+
+v2_fixture_passkey_ids() {
+  kcadm get "users/$V2_FIXTURE_USER_UUID/credentials" -r "$V2_REALM" -c \
+    | jq -r '.[] | select(.type == "webauthn-passwordless") | .id' | sort
+}
+
+v2_jwt_payload() {
+  local segment
+  segment=$(cut -d. -f2 <<<"$1")
+  case $((${#segment} % 4)) in
+    2) segment="${segment}==" ;;
+    3) segment="${segment}=" ;;
+  esac
+  tr '_-' '/+' <<<"$segment" | base64 --decode
+}
+
+# PAR, Keycloak's own login form and the code exchange with curl, the way the browser stage
+# below does it; leaves the access token in V2_ACCESS_TOKEN and its payload in V2_ACCESS_PAYLOAD.
+v2_login_account_center() {
+  local label=$1 password=$2 client_secret=$3
+  local verifier challenge par request_uri_query page login_action status location code response
+  local cookies="$TEST_STATE_DIR/v2-login-$label.cookies" headers="$TEST_STATE_DIR/v2-login-$label.headers"
+  verifier="v2-$label-verifier-0123456789abcdefghijklmnopqrstuvwxyz"
+  challenge=$(printf '%s' "$verifier" | openssl dgst -binary -sha256 | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+  par=$(curl --fail --silent --show-error \
+    --user "account-center:$client_secret" \
+    --data-urlencode client_id=account-center \
+    --data-urlencode response_type=code \
+    --data-urlencode scope=openid \
+    --data-urlencode redirect_uri=https://my.yildizskylab.com/api/auth/callback \
+    --data-urlencode "code_challenge=$challenge" \
+    --data-urlencode code_challenge_method=S256 \
+    --data-urlencode "state=v2-$label" \
+    --data-urlencode "nonce=v2-$label-nonce" \
+    "http://localhost:18080/realms/$V2_REALM/protocol/openid-connect/ext/par/request")
+  request_uri_query=$(jq -r '.request_uri | @uri' <<<"$par")
+  page=$(curl --fail --silent --show-error --location \
+    --cookie-jar "$cookies" --cookie "$cookies" \
+    "http://localhost:18080/realms/$V2_REALM/protocol/openid-connect/auth?client_id=account-center&request_uri=$request_uri_query")
+  login_action=$(grep -Eo '"loginAction"[[:space:]]*:[[:space:]]*"[^"]*"' <<<"$page" \
+    | head -n 1 | sed -E 's/^"loginAction"[[:space:]]*:[[:space:]]*//' | jq -r . || true)
+  [[ -n $login_action ]] || fail "v2 login $label: the login page exposed no login action"
+  status=$(curl --silent --show-error \
+    --output /dev/null \
+    --dump-header "$headers" \
+    --write-out '%{http_code}' \
+    --cookie-jar "$cookies" --cookie "$cookies" \
+    --data-urlencode username=account-fixture \
+    --data-urlencode "password=$password" \
+    --data-urlencode credentialId= \
+    "$login_action")
+  [[ $status == 302 ]] || fail "v2 login $label: credential submission did not redirect (HTTP $status)"
+  location=$(awk '
+    tolower($1) == "location:" {
+      sub(/^[^:]*:[[:space:]]*/, "")
+      sub(/\r$/, "")
+      print
+    }
+  ' "$headers")
+  code=$(sed -n 's/.*[?&]code=\([^&]*\).*/\1/p' <<<"$location")
+  [[ -n $code ]] || fail "v2 login $label: the authorization redirect lacks a code"
+  response=$(curl --fail --silent --show-error \
+    --user "account-center:$client_secret" \
+    --data-urlencode grant_type=authorization_code \
+    --data-urlencode client_id=account-center \
+    --data-urlencode "code=$code" \
+    --data-urlencode redirect_uri=https://my.yildizskylab.com/api/auth/callback \
+    --data-urlencode "code_verifier=$verifier" \
+    "http://localhost:18080/realms/$V2_REALM/protocol/openid-connect/token")
+  V2_ACCESS_TOKEN=$(jq -r .access_token <<<"$response")
+  [[ -n $V2_ACCESS_TOKEN && $V2_ACCESS_TOKEN != null ]] || fail "v2 login $label: no access token was issued"
+  V2_ACCESS_PAYLOAD=$(v2_jwt_payload "$V2_ACCESS_TOKEN")
+}
+
+v2_admin_rest_status() {
+  curl --silent --show-error \
+    --output /dev/null \
+    --write-out '%{http_code}' \
+    -H "Authorization: Bearer $1" \
+    "http://localhost:18080/admin/realms/$V2_REALM/$2"
+}
+
+v2_reconcile_log_must_be_quiet() {
+  local log_file=$1
+  grep -Fq 'Account Center Keycloak configuration is reconciled.' "$log_file" \
+    || fail 'reconciliation did not report completion'
+  # The reconciler identity has no user permissions, so the keycloak-mailer service-account
+  # roles are never readable from a reconcile run; that warning is the expected steady state.
+  if grep -E '^\[reconcile\] ' "$log_file" \
+    | grep -Ev 'unchanged|asserted|verified|WARNING: service-account roles of keycloak-mailer are not readable' >/dev/null; then
+    grep -E '^\[reconcile\] ' "$log_file" \
+      | grep -Ev 'unchanged|asserted|verified|WARNING: service-account roles of keycloak-mailer are not readable' >&2 || true
+    fail 'a no-op reconciliation reported a change'
+  fi
+}
+
+# The operator-run mailer provisioning script, non-interactive here because the fixture
+# administrator password is known; the script accepts it only with SKY_HARNESS=1, in
+# production kcadm prompts for it.
+v2_create_mailer_client() {
+  "${COMPOSE[@]}" run --rm --no-deps \
+    -e KEYCLOAK_ADMIN_REALM=master \
+    -e KEYCLOAK_MAILER_ADMIN_USERNAME=admin \
+    -e KEYCLOAK_MAILER_ADMIN_PASSWORD=integration-admin-password \
+    -e SKY_HARNESS=1 \
+    --entrypoint /opt/keycloak/config/create-mailer-client.sh \
+    keycloak-config "$@" 2>&1
+}
+
+# The legacy passkey cleanup, with the same harness-only password path. Extra compose run
+# options (an injected kcadm, for example) come from v2_cleanup_run_options.
+v2_cleanup_legacy_passkeys() {
+  "${COMPOSE[@]}" run --rm --no-deps \
+    -e KEYCLOAK_ADMIN_REALM=master \
+    -e KEYCLOAK_CLEANUP_ADMIN_USERNAME=admin \
+    -e KEYCLOAK_CLEANUP_ADMIN_PASSWORD=integration-admin-password \
+    -e SKY_HARNESS=1 \
+    ${v2_cleanup_run_options[@]+"${v2_cleanup_run_options[@]}"} \
+    --entrypoint /opt/keycloak/config/cleanup-legacy-passkeys.sh \
+    keycloak-config "$@" 2>&1
+}
+
+# Runs after the first reconciliation. The reconciler must not create the
+# keycloak-mailer client (it has no user permissions to assign its roles); it
+# warns with the operator command instead. The harness then runs that script:
+# dry run first, then apply. The fixture SkyMail client lacks skymail:mails:send
+# (the role SkyMail creates in M1), which the script must report without creating
+# it; the harness creates the role afterwards so the second pass proves the
+# assignment.
+stage_v2_after_first_reconciliation() {
+  CURRENT_STAGE='v2 relying party id switch record and mailer client provisioning by the operator script'
+  local skymail_uuid mailer_uuid service_user roles output
+  # The fixture realm starts without a passwordless relying party id; the first run is the
+  # switch production will see and must record its moment for the legacy passkey cleanup.
+  grep -Fq "passkey relying party id switches from '(empty)' to 'localhost': realm attribute $V2_SWITCH_ATTRIBUTE=" \
+    "$TEST_STATE_DIR/reconcile-first.log" \
+    || fail 'first reconciliation did not report the relying party id switch'
+  V2_SWITCHED_AT_FIRST=$(v2_switch_attribute)
+  [[ $V2_SWITCHED_AT_FIRST =~ $V2_ISO_UTC ]] \
+    || fail "realm attribute $V2_SWITCH_ATTRIBUTE was not recorded as an ISO-8601 UTC timestamp: '$V2_SWITCHED_AT_FIRST'"
+  grep -Fq 'WARNING: client keycloak-mailer does not exist; run: docker compose -f docker-compose.yml run --rm --no-deps -it --entrypoint /opt/keycloak/config/create-mailer-client.sh keycloak-config --admin-user <admin> --apply' \
+    "$TEST_STATE_DIR/reconcile-first.log" \
+    || fail 'reconciler did not point at create-mailer-client.sh for the missing mailer client'
+  [[ -z $(v2_client_uuid keycloak-mailer) ]] \
+    || fail 'reconciler created the keycloak-mailer client on its own'
+  # Outside the harness the administrator password never travels through the environment
+  # (kcadm would receive it in argv); the script must refuse it without SKY_HARNESS=1.
+  if "${COMPOSE[@]}" run --rm --no-deps \
+    -e KEYCLOAK_ADMIN_REALM=master \
+    -e KEYCLOAK_MAILER_ADMIN_USERNAME=admin \
+    -e KEYCLOAK_MAILER_ADMIN_PASSWORD=integration-admin-password \
+    --entrypoint /opt/keycloak/config/create-mailer-client.sh \
+    keycloak-config >"$TEST_STATE_DIR/create-mailer-refused.log" 2>&1; then
+    cat "$TEST_STATE_DIR/create-mailer-refused.log" >&2
+    fail 'create-mailer-client.sh accepted an environment password without SKY_HARNESS=1'
+  fi
+  grep -Fq 'KEYCLOAK_MAILER_ADMIN_PASSWORD is accepted only by the test harness (SKY_HARNESS=1)' \
+    "$TEST_STATE_DIR/create-mailer-refused.log" \
+    || { cat "$TEST_STATE_DIR/create-mailer-refused.log" >&2; fail 'create-mailer-client.sh did not explain the refused environment password'; }
+  [[ -z $(v2_client_uuid keycloak-mailer) ]] \
+    || fail 'the refused mailer run created the client'
+  # The dry run of a missing client plans the whole provisioning: client, roles scope, the
+  # existing skymail:access assignment and scope mapping; skymail:mails:send is reported.
+  output=$(v2_create_mailer_client)
+  grep -Fq 'would create confidential service-account client keycloak-mailer' <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'mailer dry run did not plan the client creation'; }
+  grep -Fq 'would attach the roles default scope to keycloak-mailer' <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'mailer dry run did not plan the roles default scope'; }
+  grep -Fq 'would assign role skymail:access to the keycloak-mailer service account' <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'mailer dry run did not plan the skymail:access assignment'; }
+  grep -Fq 'would add scope mapping skymail:access to keycloak-mailer' <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'mailer dry run did not plan the skymail:access scope mapping'; }
+  grep -Fq 'WARNING: client skymail lacks the roles skymail:mails:send' <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'mailer dry run did not report the missing skymail:mails:send role'; }
+  grep -Fq 'dry run: 4 change(s) pending' <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'mailer dry run did not count the client, scope and role steps'; }
+  [[ -z $(v2_client_uuid keycloak-mailer) ]] \
+    || fail 'mailer dry run created the client'
+  output=$(v2_create_mailer_client --apply)
+  printf '%s\n' "$output" >"$TEST_STATE_DIR/create-mailer-apply-1.log"
+  grep -Fq 'client keycloak-mailer: created' <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'mailer script did not create the client'; }
+  grep -Fq 'WARNING: client skymail lacks the roles skymail:mails:send' <<<"$output" \
+    || fail 'mailer script did not warn about the missing skymail:mails:send role'
+  skymail_uuid=$(v2_client_uuid skymail)
+  [[ $(kcadm get "clients/$skymail_uuid/roles" -r "$V2_REALM" -c \
+    | jq '[.[] | select(.name == "skymail:mails:send")] | length') == 0 ]] \
+    || fail 'mailer script created a SkyMail client role on its own'
+  mailer_uuid=$(v2_client_uuid keycloak-mailer)
+  [[ -n $mailer_uuid ]] || fail 'keycloak-mailer client was not created'
+  service_user=$(kcadm get "clients/$mailer_uuid/service-account-user" -r "$V2_REALM" -c | jq -r .id)
+  roles=$(kcadm get "users/$service_user/role-mappings/clients/$skymail_uuid" -r "$V2_REALM" -c)
+  json_assert "$roles" '[.[].name] == ["skymail:access"]' \
+    'keycloak-mailer service account did not receive the existing skymail:access role'
+  output=$(v2_create_mailer_client)
+  grep -Fq 'dry run: 0 change(s) pending' <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'mailer script is not idempotent after apply'; }
+  kcadm create "clients/$skymail_uuid/roles" -r "$V2_REALM" -s name=skymail:mails:send >/dev/null
+}
+
+# Drift injected before the second reconciliation, covering every v2 resource.
+stage_v2_inject_drift() {
+  CURRENT_STAGE='v2 drift injection'
+  local scope_uuid core_mapper_uuid sky_mapper_uuid client_uuid account_uuid
+  local mailer_uuid skymail_uuid service_user
+  # A foreign realm attribute must survive the reconciler's own attribute write (Keycloak
+  # drops every attribute a PUT with "attributes" leaves out).
+  kcadm update "realms/$V2_REALM" \
+    -s webAuthnPolicyPasswordlessRpId=drift.invalid \
+    -s 'webAuthnPolicyPasswordlessExtraOrigins=["https://drift.invalid"]' \
+    -s 'attributes."harness.keep"=kept' \
+    -s bruteForceProtected=false \
+    -s failureFactor=30 \
+    -s permanentLockout=true \
+    -s 'passwordPolicy=length(4)' >/dev/null
+  kcadm get users/profile -r "$V2_REALM" -c \
+    | jq '.unmanagedAttributePolicy = "ENABLED"
+      | .attributes |= map(
+          if .name == "email" then .permissions.edit = ["admin", "user"]
+          elif .name == "schoolEmail" then .displayName = "Okul e-postası (özel)"
+          elif .name == "lastName" then .permissions.edit = ["admin", "user"]
+          else . end)
+      | .attributes |= map(select(.name != "personalEmail"))
+      | .attributes += [{"name": "legacyExtra", "displayName": "Legacy extra", "permissions": {"view": ["admin"], "edit": ["admin"]}, "multivalued": false}]' \
+    | kcadm update users/profile -r "$V2_REALM" -n -f - >/dev/null
+  scope_uuid=$(v2_scope_uuid account-center-account-api)
+  core_mapper_uuid=$(kcadm get "client-scopes/$scope_uuid/protocol-mappers/models" -r "$V2_REALM" -c \
+    | jq -r '.[] | select(.name == "account-api-core-audience") | .id')
+  sky_mapper_uuid=$(kcadm get "client-scopes/$scope_uuid/protocol-mappers/models" -r "$V2_REALM" -c \
+    | jq -r '.[] | select(.name == "account-api-sky-authorization") | .id')
+  kcadm update "client-scopes/$scope_uuid/protocol-mappers/models/$core_mapper_uuid" \
+    -r "$V2_REALM" -s 'config."included.client.audience"=drift-audience' >/dev/null
+  kcadm delete "client-scopes/$scope_uuid/protocol-mappers/models/$sky_mapper_uuid" \
+    -r "$V2_REALM" >/dev/null
+  client_uuid=$(v2_client_uuid account-center)
+  account_uuid=$(v2_client_uuid account)
+  kcadm delete "clients/$client_uuid/scope-mappings/clients/$account_uuid" \
+    -r "$V2_REALM" -b "$(v2_role_body "$account_uuid" manage-account-links)" >/dev/null
+  kcadm update "clients/$client_uuid" -r "$V2_REALM" -s fullScopeAllowed=true >/dev/null
+  # Mailer drift is repaired by the operator script (the reconciler only verifies);
+  # the second reconciliation then has to report the repaired client as verified.
+  mailer_uuid=$(v2_client_uuid keycloak-mailer)
+  kcadm update "clients/$mailer_uuid" -r "$V2_REALM" \
+    -s standardFlowEnabled=true -s directAccessGrantsEnabled=true -s fullScopeAllowed=true >/dev/null
+  skymail_uuid=$(v2_client_uuid skymail)
+  service_user=$(kcadm get "clients/$mailer_uuid/service-account-user" -r "$V2_REALM" -c | jq -r .id)
+  kcadm delete "users/$service_user/role-mappings/clients/$skymail_uuid" \
+    -r "$V2_REALM" -b "$(v2_role_body "$skymail_uuid" skymail:access)" >/dev/null
+  local output
+  output=$(v2_create_mailer_client --apply)
+  printf '%s\n' "$output" >"$TEST_STATE_DIR/create-mailer-apply-2.log"
+  grep -Fq 'update client keycloak-mailer flags' <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'mailer script did not repair the drifted flags'; }
+  grep -Fq 'assign role skymail:access' <<<"$output" \
+    || fail 'mailer script did not re-assign skymail:access'
+  grep -Fq 'assign role skymail:mails:send' <<<"$output" \
+    || fail 'mailer script did not assign the newly created skymail:mails:send'
+  if grep -Fq 'WARNING: client skymail lacks' <<<"$output"; then
+    fail 'mailer script still warns about SkyMail roles after they were created'
+  fi
+}
+
+stage_v2_assert_realm_identity() {
+  CURRENT_STAGE='v2 passkey policy, login settings, brute force and password policy'
+  local realm
+  realm=$(kcadm get "realms/$V2_REALM" -c)
+  json_assert "$realm" \
+    '.webAuthnPolicyPasswordlessRpId == "localhost" and .webAuthnPolicyPasswordlessExtraOrigins == ["http://localhost:18080"]' \
+    'passwordless relying party id or extra origins differ from the harness values'
+  json_assert "$realm" \
+    '.webAuthnPolicyPasswordlessRpEntityName == "SKY LAB" and (.webAuthnPolicyPasswordlessSignatureAlgorithms | sort) == ["ES256", "RS256"] and .webAuthnPolicyPasswordlessResidentKey == "required" and .webAuthnPolicyPasswordlessUserVerificationRequirement == "required" and .webAuthnPolicyPasswordlessPasskeysEnabled == true and .webAuthnPolicyPasswordlessMediation == "conditional" and .webAuthnPolicyPasswordlessAttestationConveyancePreference == "not specified" and .webAuthnPolicyPasswordlessAuthenticatorAttachment == "not specified" and .webAuthnPolicyPasswordlessCreateTimeout == 0 and .webAuthnPolicyPasswordlessAvoidSameAuthenticatorRegister == false and .webAuthnPolicyPasswordlessAcceptableAaguids == []' \
+    'the rest of the passwordless policy was not preserved next to the relying party id'
+  json_assert "$realm" \
+    '.loginWithEmailAllowed == true and .duplicateEmailsAllowed == false and .editUsernameAllowed == false' \
+    'realm login settings differ'
+  json_assert "$realm" \
+    '.bruteForceProtected == true and .permanentLockout == false and .failureFactor == 10 and .waitIncrementSeconds == 60 and .maxFailureWaitSeconds == 900 and .maxDeltaTimeSeconds == 43200 and .quickLoginCheckMilliSeconds == 1000 and .minimumQuickLoginWaitSeconds == 60' \
+    'brute force protection differs'
+  json_assert "$realm" '.passwordPolicy == "length(8) and notUsername and notEmail"' \
+    'password policy differs'
+  # Repairing the drifted relying party id is a switch: recorded again, later than the first
+  # one, next to the foreign attribute that must not be dropped.
+  json_assert "$realm" \
+    '(.attributes[$key] | test($iso)) and .attributes["harness.keep"] == "kept"' \
+    "realm attribute $V2_SWITCH_ATTRIBUTE is missing or the foreign realm attribute was dropped" \
+    --arg key "$V2_SWITCH_ATTRIBUTE" --arg iso "$V2_ISO_UTC"
+  [[ $(jq -r --arg key "$V2_SWITCH_ATTRIBUTE" '.attributes[$key]' <<<"$realm") > "$V2_SWITCHED_AT_FIRST" ]] \
+    || fail "repairing the drifted relying party id did not advance $V2_SWITCH_ATTRIBUTE"
+  grep -Fq "passkey relying party id switches from 'drift.invalid' to 'localhost'" \
+    "$TEST_STATE_DIR/reconcile-second.log" \
+    || fail 'second reconciliation did not report the relying party id repair as a switch'
+}
+
+stage_v2_assert_user_profile() {
+  CURRENT_STAGE='v2 User Profile configuration'
+  local profile attribute
+  profile=$(kcadm get users/profile -r "$V2_REALM" -c)
+  json_assert "$profile" '.unmanagedAttributePolicy == "ADMIN_VIEW"' \
+    'unmanagedAttributePolicy is not ADMIN_VIEW'
+  for attribute in firstName lastName email; do
+    json_assert "$profile" \
+      '[.attributes[] | select(.name == $name and (.permissions.edit | sort) == ["admin"] and (.permissions.view | sort) == ["admin", "user"])] | length == 1' \
+      "$attribute is not user:view-only" --arg name "$attribute"
+  done
+  json_assert "$profile" \
+    '[.attributes[] | select(.name == "username" and (.permissions.edit | sort) == ["admin", "user"])] | length == 1' \
+    'username permissions were changed'
+  for attribute in schoolEmail personalEmail skyNumber department university skyMail usernameChangedAt; do
+    json_assert "$profile" \
+      '[.attributes[] | select(.name == $name and (.permissions.view | sort) == ["admin", "user"] and (.permissions.edit | sort) == ["admin"] and (.displayName | length) > 0 and .group == "user-metadata")] | length == 1' \
+      "SKY LAB attribute $attribute is missing or has wrong permissions" --arg name "$attribute"
+  done
+  json_assert "$profile" \
+    '([.attributes[] | select((.name == "schoolEmail" or .name == "personalEmail") and (.validations | has("email")))] | length) == 2 and ([.attributes[] | select(.name == "usernameChangedAt" and (.validations.pattern.pattern | length) > 0)] | length) == 1' \
+    'e-mail or timestamp validators are missing'
+  json_assert "$profile" \
+    '[.attributes[] | select(.name == "schoolEmail" and .displayName == "Okul e-postası (özel)")] | length == 1' \
+    'an existing display name was overwritten instead of preserved'
+  json_assert "$profile" \
+    '([.attributes[] | select(.name == "legacyExtra")] | length) == 1 and ([.groups[] | select(.name == "user-metadata")] | length) == 1' \
+    'an attribute or group outside the specification was dropped'
+  json_assert "$profile" \
+    '[.attributes[] | select(.name == "personalEmail" and .displayName == "Kişisel e-posta")] | length == 1' \
+    'a missing attribute was not recreated with its Turkish display name'
+}
+
+stage_v2_assert_account_api_scope() {
+  CURRENT_STAGE='v2 account-center-account-api scope and scope mappings'
+  local scope_uuid mappers client client_uuid account_uuid account_roles
+  scope_uuid=$(v2_scope_uuid account-center-account-api)
+  mappers=$(kcadm get "client-scopes/$scope_uuid/protocol-mappers/models" -r "$V2_REALM" -c)
+  json_assert "$mappers" \
+    '[.[] | select(.name == "account-api-core-audience" and .protocolMapper == "oidc-audience-mapper" and .config["included.client.audience"] == "core" and .config["access.token.claim"] == "true" and .config["id.token.claim"] == "false")] | length == 1' \
+    'core audience mapper differs'
+  json_assert "$mappers" \
+    '[.[] | select(.name == "account-api-manage-account-links" and .protocolMapper == "oidc-hardcoded-role-mapper" and .config.role == "account.manage-account-links")] | length == 1' \
+    'manage-account-links role mapper differs'
+  json_assert "$mappers" \
+    '[.[] | select(.name == "account-api-sky-authorization" and .protocolMapper == "sky-authorization-mapper" and .config["access.token.claim"] == "true" and .config["id.token.claim"] == "false" and .config["userinfo.token.claim"] == "false" and .config["introspection.token.claim"] == "true")] | length == 1' \
+    'sky_authorization SPI mapper differs'
+  json_assert "$mappers" \
+    '[.[] | select(.protocolMapper == "oidc-usermodel-client-role-mapper" and .name != "account-api-roles")] | length == 0' \
+    'a client role mapper other than account-api-roles remains (it would need full scope)'
+  json_assert "$mappers" \
+    '[.[] | select(.protocolMapper == "oidc-audience-resolve-mapper")] | length == 0' \
+    'an audience-resolve mapper was added'
+  client_uuid=$(v2_client_uuid account-center)
+  client=$(kcadm get "clients/$client_uuid" -r "$V2_REALM" -c)
+  json_assert "$client" '.fullScopeAllowed == false' \
+    'account-center must not have full scope: Admin REST would accept its tokens for realm-management role holders'
+  account_uuid=$(v2_client_uuid account)
+  account_roles=$(kcadm get "clients/$client_uuid/scope-mappings/clients/$account_uuid" -r "$V2_REALM" -c)
+  json_assert "$account_roles" \
+    '([.[].name] | sort) == ["manage-account", "manage-account-links", "view-profile"]' \
+    'account client scope mappings differ from the allowlist'
+}
+
+stage_v2_assert_mailer_client() {
+  CURRENT_STAGE='v2 keycloak-mailer service account'
+  local mailer_uuid mailer skymail_uuid service_user roles scope_roles secret token payload
+  mailer_uuid=$(v2_client_uuid keycloak-mailer)
+  mailer=$(kcadm get "clients/$mailer_uuid" -r "$V2_REALM" -c)
+  json_assert "$mailer" \
+    '.publicClient == false and .serviceAccountsEnabled == true and .standardFlowEnabled == false and .directAccessGrantsEnabled == false and .implicitFlowEnabled == false and .fullScopeAllowed == false and .clientAuthenticatorType == "client-secret"' \
+    'keycloak-mailer client contract differs'
+  skymail_uuid=$(v2_client_uuid skymail)
+  service_user=$(kcadm get "clients/$mailer_uuid/service-account-user" -r "$V2_REALM" -c | jq -r .id)
+  [[ -n $service_user && $service_user != null ]] || fail 'keycloak-mailer service-account user is missing'
+  roles=$(kcadm get "users/$service_user/role-mappings/clients/$skymail_uuid" -r "$V2_REALM" -c)
+  json_assert "$roles" '([.[].name] | sort) == ["skymail:access", "skymail:mails:send"]' \
+    'keycloak-mailer service account roles differ'
+  scope_roles=$(kcadm get "clients/$mailer_uuid/scope-mappings/clients/$skymail_uuid" -r "$V2_REALM" -c)
+  json_assert "$scope_roles" '([.[].name] | sort) == ["skymail:access", "skymail:mails:send"]' \
+    'keycloak-mailer scope mappings differ'
+  grep -Fq 'client keycloak-mailer: verified' "$TEST_STATE_DIR/reconcile-second.log" \
+    || fail 'reconciler did not verify the provisioned mailer client'
+  if grep -Fq 'scope mappings of keycloak-mailer are' "$TEST_STATE_DIR/reconcile-second.log"; then
+    fail 'reconciler reports drifted mailer scope mappings after the operator script ran'
+  fi
+  grep -Fq 'WARNING: service-account roles of keycloak-mailer are not readable with the reconciler identity' \
+    "$TEST_STATE_DIR/reconcile-second.log" \
+    || fail 'reconciler identity unexpectedly reads user role mappings'
+  secret=$(kcadm get "clients/$mailer_uuid/client-secret" -r "$V2_REALM" -c | jq -r .value)
+  [[ -n $secret && $secret != null ]] || fail 'keycloak-mailer secret was not generated'
+  for log_file in "$TEST_STATE_DIR"/reconcile-*.log "$TEST_STATE_DIR"/create-mailer-*.log; do
+    [[ $(cat "$log_file") != *"$secret"* ]] || fail 'keycloak-mailer secret leaked into a log'
+  done
+  token=$(curl --fail --silent --show-error \
+    --user "keycloak-mailer:$secret" \
+    --data-urlencode grant_type=client_credentials \
+    "http://localhost:18080/realms/$V2_REALM/protocol/openid-connect/token" | jq -r .access_token)
+  [[ -n $token && $token != null ]] || fail 'keycloak-mailer client credentials grant failed'
+  payload=$(cut -d. -f2 <<<"$token")
+  case $((${#payload} % 4)) in
+    2) payload="${payload}==" ;;
+    3) payload="${payload}=" ;;
+  esac
+  payload=$(tr '_-' '/+' <<<"$payload" | base64 --decode)
+  json_assert "$payload" \
+    '.azp == "keycloak-mailer" and (.resource_access.skymail.roles | sort) == ["skymail:access", "skymail:mails:send"] and (.resource_access | keys) == ["skymail"]' \
+    'keycloak-mailer token does not carry exactly the SkyMail roles'
+}
+
+# Wrong mailer flags are a security drift the reconciler cannot repair itself; it must
+# fail and name the operator command, and the operator script must repair it.
+stage_v2_mailer_drift_is_reported() {
+  CURRENT_STAGE='v2 mailer flag drift detection'
+  local mailer_uuid output
+  mailer_uuid=$(v2_client_uuid keycloak-mailer)
+  kcadm update "clients/$mailer_uuid" -r "$V2_REALM" -s directAccessGrantsEnabled=true >/dev/null
+  if "${COMPOSE[@]}" run --rm --no-deps keycloak-config >"$TEST_STATE_DIR/reconcile-mailer-drift.log" 2>&1; then
+    fail 'reconciliation succeeded although the mailer client allows direct grants'
+  fi
+  grep -Fq 'Client keycloak-mailer drifted' "$TEST_STATE_DIR/reconcile-mailer-drift.log" \
+    || fail 'reconciler did not name the drifted mailer client'
+  grep -Fq 'create-mailer-client.sh keycloak-config --admin-user <admin> --apply' \
+    "$TEST_STATE_DIR/reconcile-mailer-drift.log" \
+    || fail 'reconciler did not name the operator command for the mailer drift'
+  output=$(v2_create_mailer_client --apply)
+  printf '%s\n' "$output" >"$TEST_STATE_DIR/create-mailer-apply-3.log"
+  grep -Fq 'applied 1 change(s)' <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'mailer script did not repair exactly the drifted flag'; }
+}
+
+# A further reconciliation of an already reconciled realm must write nothing:
+# no admin event, no "updated" log line, identical state.
+stage_v2_reconcile_noop() {
+  CURRENT_STAGE='v2 no-op reconciliation'
+  local newest_before snapshot_before snapshot_after new_events
+  newest_before=$(kcadm get admin-events -r "$V2_REALM" -q max=1 -c | jq -r '.[0].time // 0')
+  snapshot_before=$(v2_state_snapshot)
+  "${COMPOSE[@]}" run --rm --no-deps keycloak-config >"$TEST_STATE_DIR/reconcile-noop.log" 2>&1
+  v2_reconcile_log_must_be_quiet "$TEST_STATE_DIR/reconcile-noop.log"
+  snapshot_after=$(v2_state_snapshot)
+  [[ $snapshot_after == "$snapshot_before" ]] \
+    || fail 'a no-op reconciliation changed the realm state'
+  new_events=$(kcadm get admin-events -r "$V2_REALM" -q max=200 -c \
+    | jq --argjson since "$newest_before" '[.[] | select(.time > $since)] | length')
+  [[ $new_events == 0 ]] \
+    || fail "a no-op reconciliation produced $new_events admin event(s)"
+}
+
+v2_state_snapshot() {
+  local client_uuid mailer_uuid account_uuid skymail_uuid service_user scope_uuid
+  client_uuid=$(v2_client_uuid account-center)
+  mailer_uuid=$(v2_client_uuid keycloak-mailer)
+  account_uuid=$(v2_client_uuid account)
+  skymail_uuid=$(v2_client_uuid skymail)
+  service_user=$(kcadm get "clients/$mailer_uuid/service-account-user" -r "$V2_REALM" -c | jq -r .id)
+  {
+    kcadm get "realms/$V2_REALM" -c
+    kcadm get users/profile -r "$V2_REALM" -c
+    kcadm get authentication/required-actions -r "$V2_REALM" -c
+    kcadm get "clients/$client_uuid" -r "$V2_REALM" -c
+    kcadm get "clients/$mailer_uuid" -r "$V2_REALM" -c
+    kcadm get "clients/$client_uuid/default-client-scopes" -r "$V2_REALM" -c
+    kcadm get "clients/$client_uuid/scope-mappings/clients/$account_uuid" -r "$V2_REALM" -c
+    kcadm get "users/$service_user/role-mappings/clients/$skymail_uuid" -r "$V2_REALM" -c
+    kcadm get "clients/$mailer_uuid/scope-mappings/clients/$skymail_uuid" -r "$V2_REALM" -c
+    for scope_uuid in $(v2_scope_uuid account-center-account-api) $(v2_scope_uuid account-center-core-claims) $(v2_scope_uuid skyapp-account-center-audience); do
+      kcadm get "client-scopes/$scope_uuid" -r "$V2_REALM" -c
+      kcadm get "client-scopes/$scope_uuid/protocol-mappers/models" -r "$V2_REALM" -c
+    done
+    kcadm get authentication/flows/account-center-browser/executions -r "$V2_REALM" -c
+  } | jq -S -c '.'
+}
+
+stage_v2_assert_token_contract() {
+  CURRENT_STAGE='v2 access token audience and sky_authorization contract'
+  local payload=$1
+  json_assert "$payload" \
+    '((.aud | if type == "array" then . else [.] end) | sort) == ["account", "core"]' \
+    'access token audience is not exactly account and core'
+  json_assert "$payload" \
+    '.sky_authorization.core.roles == ["url:create"]' \
+    'sky_authorization does not carry the fixture client role'
+  json_assert "$payload" \
+    '(.resource_access.core == null) and ((.resource_access | keys) == ["account"]) and (.realm_access == null)' \
+    'access token leaks core roles or realm roles'
+  json_assert "$payload" \
+    '((.resource_access.account.roles | index("manage-account")) != null) and ((.resource_access.account.roles | index("view-profile")) != null) and ((.resource_access.account.roles | index("manage-account-links")) != null)' \
+    'access token lacks the account roles'
+}
+
+# fullScopeAllowed=false is what keeps a my. token out of Keycloak Admin REST: AdminAuth
+# authorizes with user.hasRole(role) && client.hasScope(role), and client.hasScope is true
+# for every role once full scope is on. The fixture person receives view-users; the positive
+# control shows that a full-scope token would open Admin REST, the reconciled client's token
+# is refused and its sky_authorization view still names no management client.
+stage_v2_admin_rest_is_not_reachable_with_account_center_tokens() {
+  CURRENT_STAGE='v2 Admin REST refuses account-center tokens of a realm-management role holder'
+  local client_secret=$1
+  local client_uuid realm_management_uuid role_body status
+  client_uuid=$(v2_client_uuid account-center)
+  realm_management_uuid=$(v2_client_uuid realm-management)
+  role_body=$(v2_role_body "$realm_management_uuid" view-users)
+  [[ $(jq length <<<"$role_body") == 1 ]] || fail 'realm-management view-users role is missing'
+  kcadm create "users/$V2_FIXTURE_USER_UUID/role-mappings/clients/$realm_management_uuid" \
+    -r "$V2_REALM" -b "$role_body" >/dev/null
+
+  kcadm update "clients/$client_uuid" -r "$V2_REALM" -s fullScopeAllowed=true >/dev/null
+  v2_login_account_center full-scope fixture-password-change-me "$client_secret"
+  status=$(v2_admin_rest_status "$V2_ACCESS_TOKEN" 'users?max=1')
+  kcadm update "clients/$client_uuid" -r "$V2_REALM" -s fullScopeAllowed=false >/dev/null
+  [[ $status == 200 ]] \
+    || fail "positive control: a full-scope account-center token did not open Admin REST (HTTP $status)"
+
+  v2_login_account_center reconciled fixture-password-change-me "$client_secret"
+  status=$(v2_admin_rest_status "$V2_ACCESS_TOKEN" 'users?max=1')
+  [[ $status == 403 ]] \
+    || fail "Admin REST accepted an account-center token of a view-users holder (HTTP $status)"
+  status=$(v2_admin_rest_status "$V2_ACCESS_TOKEN" 'users/count')
+  [[ $status == 403 ]] \
+    || fail "Admin REST user count accepted an account-center token of a view-users holder (HTTP $status)"
+  json_assert "$V2_ACCESS_PAYLOAD" \
+    '.sky_authorization == {"core": {"roles": ["url:create"]}} and (.sky_authorization | has("realm-management") | not)' \
+    'sky_authorization must list the core roles and never the realm-management client'
+  json_assert "$V2_ACCESS_PAYLOAD" \
+    '((.aud | if type == "array" then . else [.] end) | sort) == ["account", "core"] and (.resource_access | keys) == ["account"] and .realm_access == null' \
+    'the view-users holder token widened its audience or roles'
+  kcadm delete "users/$V2_FIXTURE_USER_UUID/role-mappings/clients/$realm_management_uuid" \
+    -r "$V2_REALM" -b "$role_body" >/dev/null
+  [[ $(kcadm get "users/$V2_FIXTURE_USER_UUID/role-mappings/clients/$realm_management_uuid" \
+    -r "$V2_REALM" -c | jq length) == 0 ]] \
+    || fail 'view-users was not removed from the fixture person'
+}
+
+# sky_authorization is an access token claim: absent from the ID token and userinfo, present
+# in the introspection response the resource servers read. Keycloak 26.7 answers introspection
+# only to a client in the token audience, so the core resource server introspects with its own
+# secret; account-center itself (not an audience) must keep getting active=false.
+stage_v2_assert_claim_surfaces() {
+  CURRENT_STAGE='v2 sky_authorization claim surfaces'
+  local access_token=$1 id_payload=$2 client_secret=$3 userinfo introspection core_uuid core_secret
+  json_assert "$id_payload" '.sky_authorization == null' 'sky_authorization leaked into the ID token'
+  userinfo=$(curl --fail --silent --show-error \
+    -H "Authorization: Bearer $access_token" \
+    "http://localhost:18080/realms/$V2_REALM/protocol/openid-connect/userinfo")
+  json_assert "$userinfo" '.sub == $sub and .sky_authorization == null' \
+    'sky_authorization leaked into userinfo' --arg sub "$V2_FIXTURE_USER_UUID"
+  core_uuid=$(v2_client_uuid core)
+  kcadm create "clients/$core_uuid/client-secret" -r "$V2_REALM" >/dev/null 2>&1
+  core_secret=$(kcadm get "clients/$core_uuid/client-secret" -r "$V2_REALM" -c | jq -r .value)
+  [[ -n $core_secret && $core_secret != null ]] || fail 'the core fixture client has no secret to introspect with'
+  introspection=$(curl --fail --silent --show-error \
+    --user "core:$core_secret" \
+    --data-urlencode "token=$access_token" \
+    "http://localhost:18080/realms/$V2_REALM/protocol/openid-connect/token/introspect")
+  json_assert "$introspection" \
+    '.active == true and .sky_authorization == {"core": {"roles": ["url:create"]}}' \
+    'introspection by the core resource server does not carry sky_authorization'
+  introspection=$(curl --fail --silent --show-error \
+    --user "account-center:$client_secret" \
+    --data-urlencode "token=$access_token" \
+    "http://localhost:18080/realms/$V2_REALM/protocol/openid-connect/token/introspect")
+  json_assert "$introspection" '.active == false and .sky_authorization == null' \
+    'introspection answered a client outside the token audience'
+}
+
+# One passkey registered through Keycloak's own login page with a Chromium virtual
+# authenticator, after the relying party id switched back to the harness value.
+v2_register_passkey_after_switch() {
+  local client_secret=$1 config_file="$TEST_STATE_DIR/passkey-register.json"
+  jq -n \
+    --arg baseUrl 'http://localhost:18080' \
+    --arg realm "$V2_REALM" \
+    --arg callbackUrl 'https://my.yildizskylab.com/api/auth/callback' \
+    --arg clientId 'account-center' \
+    --arg clientSecret "$client_secret" \
+    --arg username 'account-fixture' \
+    --arg password 'fixture-password-change-me' \
+    '{baseUrl: $baseUrl, realm: $realm, callbackUrl: $callbackUrl, clientId: $clientId, clientSecret: $clientSecret, username: $username, password: $password}' \
+    >"$config_file"
+  chmod 0600 "$config_file"
+  (
+    cd "$SCRIPT_DIR/../theme"
+    PASSKEY_REGISTER_CONFIG="$config_file" \
+      npx --no-install playwright test \
+        --config=playwright.integration.config.ts \
+        tests/integration/passkey-register.spec.ts
+  )
+}
+
+# The Chromium stage registered a passkey under the current relying party id. The realm then
+# switches its relying party id away and back through the reconciler (each switch is recorded,
+# the latest wins), a second passkey is registered after the last switch, and the cleanup must
+# delete exactly the passkeys registered before that switch: never with a later cutover, never
+# silently when a deletion fails.
+stage_v2_passkey_cleanup() {
+  CURRENT_STAGE='v2 legacy passkey cleanup around a relying party id switch'
+  local client_secret=$1
+  local legacy_ids legacy_count switched_before switched_away switched_back output all_ids survivor_ids
+  legacy_ids=$(v2_fixture_passkey_ids)
+  legacy_count=$(grep -c . <<<"$legacy_ids" || true)
+  [[ $legacy_count -ge 1 ]] || fail 'the Chromium stage left no passwordless credential to clean up'
+  switched_before=$(v2_switch_attribute)
+  [[ $switched_before =~ $V2_ISO_UTC ]] \
+    || fail "realm attribute $V2_SWITCH_ATTRIBUTE is missing or malformed: '$switched_before'"
+
+  # A cutover later than the recorded switch would delete valid passkeys: refused, even dry.
+  sleep 2
+  if v2_cleanup_legacy_passkeys --cutover "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$TEST_STATE_DIR/cleanup-late-cutover.log"; then
+    cat "$TEST_STATE_DIR/cleanup-late-cutover.log" >&2
+    fail 'cleanup accepted a --cutover later than the recorded relying party id switch'
+  fi
+  grep -Fq "is later than the recorded relying party id switch $switched_before (realm attribute $V2_SWITCH_ATTRIBUTE)" \
+    "$TEST_STATE_DIR/cleanup-late-cutover.log" \
+    || { cat "$TEST_STATE_DIR/cleanup-late-cutover.log" >&2; fail 'cleanup did not explain the refused late cutover'; }
+
+  "${COMPOSE[@]}" run --rm --no-deps \
+    -e KEYCLOAK_PASSKEY_RP_ID=switch.invalid \
+    -e KEYCLOAK_PASSKEY_EXTRA_ORIGINS=http://switch.invalid \
+    keycloak-config >"$TEST_STATE_DIR/reconcile-switch-away.log" 2>&1
+  grep -Fq "passkey relying party id switches from 'localhost' to 'switch.invalid'" \
+    "$TEST_STATE_DIR/reconcile-switch-away.log" \
+    || fail 'reconciler did not report the relying party id switch away from localhost'
+  switched_away=$(v2_switch_attribute)
+  [[ $switched_away =~ $V2_ISO_UTC && $switched_away > $switched_before ]] \
+    || fail "the switch away did not advance $V2_SWITCH_ATTRIBUTE ($switched_before -> $switched_away)"
+  sleep 2
+  "${COMPOSE[@]}" run --rm --no-deps keycloak-config >"$TEST_STATE_DIR/reconcile-switch-back.log" 2>&1
+  grep -Fq "passkey relying party id switches from 'switch.invalid' to 'localhost'" \
+    "$TEST_STATE_DIR/reconcile-switch-back.log" \
+    || fail 'reconciler did not report the relying party id switch back to localhost'
+  switched_back=$(v2_switch_attribute)
+  [[ $switched_back =~ $V2_ISO_UTC && $switched_back > $switched_away ]] \
+    || fail "the switch back did not advance $V2_SWITCH_ATTRIBUTE ($switched_away -> $switched_back)"
+  json_assert "$(kcadm get "realms/$V2_REALM" -c)" \
+    '.webAuthnPolicyPasswordlessRpId == "localhost" and .webAuthnPolicyPasswordlessExtraOrigins == ["http://localhost:18080"] and .attributes["harness.keep"] == "kept"' \
+    'the switch back did not restore the harness passkey policy or dropped a foreign attribute'
+
+  # Dry run with the recorded cutover: every pre-switch passkey is counted, nothing is deleted.
+  output=$(v2_cleanup_legacy_passkeys)
+  grep -Fq "cutover=$switched_back cutoverSource=realmAttribute mode=dry-run" <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'cleanup dry run did not take the recorded switch as its cutover'; }
+  grep -Fq "passkeysBeforeCutover=$legacy_count passkeysDeleted=0 passkeysDeleteFailed=0" <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'cleanup dry run did not count the pre-switch passkeys without deleting them'; }
+  grep -Fq 'Dry run: nothing was deleted.' <<<"$output" \
+    || fail 'cleanup dry run did not announce itself'
+  [[ $output != *account-fixture* && $output != *"$V2_FIXTURE_USER_UUID"* ]] \
+    || fail 'cleanup output must not print user identifiers'
+  [[ $(v2_fixture_passkey_ids) == "$legacy_ids" ]] || fail 'cleanup dry run changed the credentials'
+
+  v2_register_passkey_after_switch "$client_secret"
+  all_ids=$(v2_fixture_passkey_ids)
+  [[ $(grep -c . <<<"$all_ids") == $((legacy_count + 1)) ]] \
+    || fail 'the post-switch registration did not add exactly one passkey'
+  survivor_ids=$(comm -13 <(printf '%s\n' "$legacy_ids") <(printf '%s\n' "$all_ids"))
+  [[ $(grep -c . <<<"$survivor_ids") == 1 ]] || fail 'the post-switch passkey could not be told apart'
+
+  # Failed deletions are counted, the summary still prints and the exit status is non-zero.
+  v2_cleanup_run_options=(
+    -e KCADM_BIN=/tmp/kcadm-delete-failure.sh
+    -v "$SCRIPT_DIR/kcadm-delete-failure.sh:/tmp/kcadm-delete-failure.sh:ro"
+  )
+  if v2_cleanup_legacy_passkeys --apply >"$TEST_STATE_DIR/cleanup-delete-failure.log"; then
+    v2_cleanup_run_options=()
+    cat "$TEST_STATE_DIR/cleanup-delete-failure.log" >&2
+    fail 'cleanup exited zero although every deletion failed'
+  fi
+  v2_cleanup_run_options=()
+  output=$(cat "$TEST_STATE_DIR/cleanup-delete-failure.log")
+  grep -Fq "passkeysBeforeCutover=$legacy_count passkeysDeleted=0 passkeysDeleteFailed=$legacy_count" <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'cleanup did not count the failed deletions in its summary'; }
+  grep -Fq "Legacy passkey cleanup is incomplete: $legacy_count deletion(s) failed" <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'cleanup did not report the failed deletions'; }
+  [[ $output != *account-fixture* && $output != *"$V2_FIXTURE_USER_UUID"* && $output != *"$(head -n 1 <<<"$legacy_ids")"* ]] \
+    || fail 'cleanup failure output must not print user or credential identifiers'
+  [[ $(v2_fixture_passkey_ids) == "$all_ids" ]] || fail 'a failed apply run changed the credentials'
+
+  output=$(v2_cleanup_legacy_passkeys --apply)
+  grep -Fq "cutover=$switched_back cutoverSource=realmAttribute mode=apply" <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'cleanup apply did not take the recorded switch as its cutover'; }
+  grep -Fq "passkeysBeforeCutover=$legacy_count passkeysDeleted=$legacy_count passkeysDeleteFailed=0" <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'cleanup apply did not delete exactly the pre-switch passkeys'; }
+  grep -Fq 'Legacy passkey cleanup applied.' <<<"$output" || fail 'cleanup apply did not announce itself'
+  [[ $(v2_fixture_passkey_ids) == "$survivor_ids" ]] \
+    || fail 'the passkey registered after the switch did not survive the cleanup, or a pre-switch one did'
+
+  # Idempotent; an earlier explicit cutover is accepted; later and future cutovers are refused.
+  output=$(v2_cleanup_legacy_passkeys --apply)
+  grep -Fq 'passkeysBeforeCutover=0 passkeysDeleted=0 passkeysDeleteFailed=0' <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'a second cleanup apply found passkeys to delete'; }
+  output=$(v2_cleanup_legacy_passkeys --cutover "$switched_before")
+  grep -Fq "cutover=$switched_before cutoverSource=argument mode=dry-run" <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'cleanup refused an explicit cutover earlier than the recorded switch'; }
+  sleep 2
+  if v2_cleanup_legacy_passkeys --cutover "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --apply >/dev/null; then
+    fail 'cleanup accepted a --cutover --apply later than the recorded relying party id switch'
+  fi
+  if v2_cleanup_legacy_passkeys --cutover 2099-01-01T00:00:00Z >/dev/null; then
+    fail 'cleanup accepted a cutover in the future'
+  fi
+  [[ $(v2_fixture_passkey_ids) == "$survivor_ids" ]] || fail 'a refused cleanup run changed the credentials'
+}
+
 "${COMPOSE[@]}" up -d postgres rabbitmq native-bridge keycloak
 CURRENT_STAGE='Keycloak readiness'
 wait_for_url http://localhost:19000/health/ready
@@ -238,7 +967,7 @@ built_in_scope_snapshot=$(kcadm get client-scopes -r e-skylab-test -c \
   | jq -c '[.[] | {id, name}] | sort_by(.id)')
 
 CURRENT_STAGE='first reconciliation'
-"${COMPOSE[@]}" run --rm --no-deps keycloak-config >/dev/null
+"${COMPOSE[@]}" run --rm --no-deps keycloak-config >"$TEST_STATE_DIR/reconcile-first.log" 2>&1
 
 copied_custom_execution_count=$(kcadm get \
   authentication/flows/account-center-browser/executions \
@@ -251,6 +980,8 @@ active_browser_flow_after=$(kcadm get \
   -r e-skylab-test -c | jq -S -c '.')
 [[ $active_browser_flow_after == "$active_browser_flow_before" ]] \
   || fail 'Account Center reconciliation mutated the active realm browser flow'
+
+stage_v2_after_first_reconciliation
 
 # Inject drift before the second pass. Reconciliation must repair the existing
 # realm, flow, scope and allowlists rather than merely treating names as success.
@@ -362,10 +1093,11 @@ kcadm update realms/e-skylab-test \
   -s webAuthnPolicyPasswordlessMediation=none >/dev/null
 kcadm update authentication/required-actions/UPDATE_PASSWORD \
   -r e-skylab-test -s enabled=false >/dev/null
+stage_v2_inject_drift
 
 # A second pass proves both idempotence and drift repair.
 CURRENT_STAGE='second reconciliation and drift repair'
-"${COMPOSE[@]}" run --rm --no-deps keycloak-config >/dev/null
+"${COMPOSE[@]}" run --rm --no-deps keycloak-config >"$TEST_STATE_DIR/reconcile-second.log" 2>&1
 
 [[ -n $client_uuid ]] || fail "account-center client was not created"
 
@@ -460,7 +1192,7 @@ while IFS= read -r built_in_scope_uuid; do
     "client-scopes/$built_in_scope_uuid/protocol-mappers/models" \
     -r e-skylab-test -c)
   json_assert "$built_in_mappers" \
-    '[.[] | select(.name == "account-api-audience" or .name == "account-api-manage-account" or .name == "account-api-view-profile" or .name == "account-api-roles" or .name == "account-center-audience")] | length == 0' \
+    '[.[] | select(.name == "account-api-audience" or .name == "account-api-core-audience" or .name == "account-api-manage-account" or .name == "account-api-view-profile" or .name == "account-api-manage-account-links" or .name == "account-api-roles" or .name == "account-api-sky-authorization" or .name == "account-center-audience")] | length == 0' \
     "an Account Center mapper was injected into built-in scope $built_in_scope_uuid"
 done < <(jq -r '.[].id' <<<"$built_in_scope_snapshot")
 
@@ -469,7 +1201,7 @@ scope_uuid=$(kcadm get client-scopes -r e-skylab-test -c \
 scope=$(kcadm get "client-scopes/$scope_uuid" -r e-skylab-test -c)
 json_assert "$scope" '.protocol == "openid-connect" and .attributes["include.in.token.scope"] == "false"' 'Account API scope drift was not repaired'
 mappers=$(kcadm get "client-scopes/$scope_uuid/protocol-mappers/models" -r e-skylab-test -c)
-json_assert "$mappers" 'length == 4' 'unexpected or duplicate Account API mappers remain'
+json_assert "$mappers" 'length == 7' 'unexpected or duplicate Account API mappers remain'
 json_assert "$mappers" '[.[] | select(.name == "account-api-audience" and .config["included.client.audience"] == "account")] | length == 1' 'Account API audience mapper differs'
 json_assert "$mappers" '[.[] | select(.name == "account-api-manage-account" and .protocolMapper == "oidc-hardcoded-role-mapper" and .config.role == "account.manage-account")] | length == 1' 'Account API manage-account role mapper differs'
 json_assert "$mappers" '[.[] | select(.name == "account-api-view-profile" and .protocolMapper == "oidc-hardcoded-role-mapper" and .config.role == "account.view-profile")] | length == 1' 'Account API view-profile role mapper differs'
@@ -527,7 +1259,7 @@ account_roles=$(kcadm get \
   "clients/$client_uuid/scope-mappings/clients/$account_client_uuid" \
   -r e-skylab-test -c)
 json_assert "$account_roles" \
-  '([.[].name] | sort) == ["manage-account", "view-profile"]' \
+  '([.[].name] | sort) == ["manage-account", "manage-account-links", "view-profile"]' \
   'unexpected Account API role mappings remain'
 default_account_roles=$(kcadm get \
   "roles-by-id/$default_role_uuid/composites/clients/$account_client_uuid" \
@@ -552,6 +1284,13 @@ config_roles=$(kcadm get \
 json_assert "$config_roles" \
   '([.[].name] | sort) == ["manage-clients", "manage-realm", "view-clients", "view-realm"]' \
   'configuration client realm-management roles exceed the allowlist'
+
+stage_v2_assert_realm_identity
+stage_v2_assert_user_profile
+stage_v2_assert_account_api_scope
+stage_v2_assert_mailer_client
+stage_v2_mailer_drift_is_reported
+stage_v2_reconcile_noop
 
 CURRENT_STAGE='minimal openid PAR contract'
 discovery=$(curl --fail --silent --show-error \
@@ -850,8 +1589,9 @@ case $((${#token_payload_segment} % 4)) in
 esac
 token_payload=$(tr '_-' '/+' <<<"$token_payload_segment" | base64 --decode)
 json_assert "$token_payload" \
-  '((.aud == "account") or (.aud == ["account"])) and .azp == "account-center" and .scope == "openid" and ((.resource_access.account.roles | index("manage-account")) != null) and ((.resource_access.account.roles | index("view-profile")) != null)' \
+  '((.aud | if type == "array" then . else [.] end) | sort) == ["account", "core"] and .azp == "account-center" and .scope == "openid" and ((.resource_access.account.roles | index("manage-account")) != null) and ((.resource_access.account.roles | index("view-profile")) != null)' \
   'issued token differs from the exact audience, authorized-party, scope or required-role contract'
+stage_v2_assert_token_contract "$token_payload"
 
 id_token=$(jq -r .id_token <<<"$token_response")
 [[ -n $id_token && $id_token != null ]] || fail "minimal openid request did not receive an ID token"
@@ -875,6 +1615,9 @@ account_profile=$(curl --fail --silent --show-error \
 json_assert "$account_profile" \
   '.username == "account-fixture" and .email == "account-fixture@example.invalid"' \
   'live Account REST profile contract failed'
+
+stage_v2_assert_claim_surfaces "$access_token" "$id_token_payload" "$client_secret"
+stage_v2_admin_rest_is_not_reachable_with_account_center_tokens "$client_secret"
 
 CURRENT_STAGE='real Chromium login and AIA contracts'
 real_browser_config="$TEST_STATE_DIR/real-keycloak-browser.json"
@@ -904,11 +1647,19 @@ chmod 0600 "$real_browser_config"
       --config=playwright.integration.config.ts \
       tests/integration/real-keycloak.spec.ts
 )
+# The Chromium stage changed the password and left a TOTP credential behind; the passkey
+# cleanup stage logs the fixture person in again, so restore a password-only account first.
 kcadm set-password \
   -r e-skylab-test \
   --userid "$fixture_user_uuid" \
   --new-password fixture-password-change-me \
   --temporary=false >/dev/null
+while IFS= read -r otp_credential_id; do
+  [[ -n $otp_credential_id ]] || continue
+  kcadm delete "users/$fixture_user_uuid/credentials/$otp_credential_id" -r e-skylab-test >/dev/null
+done < <(kcadm get "users/$fixture_user_uuid/credentials" -r e-skylab-test -c \
+  | jq -r '.[] | select(.type == "otp") | .id')
+stage_v2_passkey_cleanup "$client_secret"
 
 # The sky-account SPI contract runs against the same realm: bearer guard, Verified
 # YTÜ lock, brute force, sudo binding, password/TOTP/username flows and events.

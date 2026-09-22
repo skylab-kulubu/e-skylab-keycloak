@@ -27,6 +27,22 @@ Hepsi kişinin kendi hesabı içindir; yönetim işlemi yoktur. CORS yoktur: BFF
 sunucudan sunucuya çağırır. Her ret aynı `401 unauthorized` problemidir ve
 `WWW-Authenticate: Bearer realm="…", error="invalid_token"` başlığı taşır.
 
+Aynı token'daki `sky_authorization.<istemci>.roles` claim'ini (Hesap
+Merkezi'nin yetki görünümü) bu SPI'daki `sky-authorization-mapper`
+(`com.skylab.account.SkyAuthorizationMapper`) üretir; uzlaştırıcı onu
+`account-center-account-api` kapsamına bağlar. Mapper kişinin etkin rol
+eşlemelerini (doğrudan, grup, bileşik) kendisi okur, yalnız istemci rollerini
+alır, Keycloak'ın yönetim istemcilerini (`realm-management`, `broker`,
+`account`, `account-console`, `security-admin-console`, `admin-cli`, `*-realm`)
+dışarıda bırakır, yalnız access token ve introspection'a yazar (ID token ve
+userinfo'da yoktur), 64 istemci / istemci başına 256 rol sınırını aşanı tek
+bir `WARN` ile atar ve rol yoksa claim'i yazmaz. Bu yol, `account-center`
+istemcisinde `fullScopeAllowed` açmadan bütün uygulama rollerini listelemek
+içindir: Keycloak Admin REST bearer token'ı `user.hasRole && client.hasScope`
+ile yetkilendirir, tam kapsam açık olsaydı `realm-management` rolü olan bir
+kişinin `my.` token'ı Admin REST'te geçerli olurdu. Claim salt okunur bir
+görünümdür; sky-account API yetki kararlarında onu kullanmaz.
+
 ## Sudo modu
 
 Hassas işlemler (`credentials/*`, `identity/username`) taze bir **sudo token**
@@ -74,9 +90,12 @@ alır, başarısız deneme `LOGIN_ERROR` (`error=invalid_user_credentials`,
 `auth_method=sky-account-sudo`) olayı üretir ve sayacı artırır, başarılı deneme
 sayacı temizler. Realm'de koruma kapalıysa yalnız hız sınırı uygulanır; uzantı
 bu durumu açılışta (ve sonradan içe aktarılan realm'ler için ilk sudo
-denemesinde) tek bir `WARN` günlüğüyle bildirir. Canlı realm'de koruma bugün
-kapalıdır; reconcile bileti **K2** brute-force korumasını (ve asgari parola
-politikasını) açar, bu API o ayarları olduğu gibi kullanır.
+denemesinde) tek bir `WARN` günlüğüyle bildirir. Uzlaştırıcı
+(`config/reconcile-account-center.sh`, `config/account-center-realm-security.json`)
+brute-force korumasını (10 deneme, 60 sn artan bekleme, en çok 15 dk, 12 saat
+sıfırlama, kalıcı kilit yok) ve parola politikasını
+(`length(8) and notUsername and notEmail`) her koşuda açık tutar; bu API o
+ayarları olduğu gibi kullanır.
 
 ## Hız sınırları
 
@@ -476,8 +495,8 @@ Alias `^[A-Za-z0-9._-]{1,64}$` desenine uymazsa Keycloak açılışta durur.
   önce atomik olarak tüketilir, bu yüzden bir challenge yeniden oynatılamaz.
   RP ID ve izinli origin'ler realm passwordless politikasından gelir; passkey'in
   `e.` girişinde de çalışması RP ID'nin her SKY LAB origin'inde aynı olmasına
-  bağlıdır (reconcile **K2**: RP ID `yildizskylab.com`, extra origin
-  `https://my.yildizskylab.com`). Sınır: imza sayacı yalnız authenticator
+  bağlıdır (uzlaştırıcı, `config/account-center-passkey-policy.json`: RP ID
+  `yildizskylab.com`, extra origin `https://my.yildizskylab.com`). Sınır: imza sayacı yalnız authenticator
   bildirdiğinde koruma sağlar (Apple Secure Enclave gibi hep sıfır bildiren
   authenticator'lar için klonlama tespiti Keycloak'ta olduğu gibi devre dışıdır);
   `authenticatorAttachment` istemci bildirimidir, kriptografik değildir.
@@ -486,6 +505,7 @@ Alias `^[A-Za-z0-9._-]{1,64}$` desenine uymazsa Keycloak açılışta durur.
 - `usernameChangedAt`, `schoolEmail`, `personalEmail` model düzeyinde okunup
   yazılır; User Profile'da tanımlı olmadıkları realm'de Admin REST'ten görünmez
   (yönetilmeyen öznitelik politikası kapalıyken salt okunur kalır, silinmez).
-  Reconcile (K2) bu öznitelikleri User Profile'a `user: view, admin: edit`
-  olarak eklemelidir; `unmanagedAttributePolicy=ENABLED` yapılırsa API
+  Uzlaştırıcı (`config/account-center-user-profile.json`) bu öznitelikleri
+  User Profile'a `user: view, admin: edit` olarak ekler ve
+  `unmanagedAttributePolicy=ADMIN_VIEW` tutar; `ENABLED` yapılırsa API
   değişiklikleri `503` ile durdurur.

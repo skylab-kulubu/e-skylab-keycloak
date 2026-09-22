@@ -67,6 +67,17 @@ NATIVE_BRIDGE_CLIENT_SHA256=$(openssl x509 \
 export NATIVE_BRIDGE_AUTH_TIME
 NATIVE_BRIDGE_AUTH_TIME=$(( $(date -u +%s) - 3600 ))
 
+CURRENT_STAGE='SkyMail sender secret mount setup'
+# The sky-mail sender validates its secret file when Keycloak starts, but the
+# keycloak-mailer secret only exists once the operator script has run. The mount starts
+# with a placeholder and the K5 stage writes the real secret into it; the provider reads
+# the file on every token request, which is also how an operator rotates it.
+sky_mail_dir="$TEST_STATE_DIR/sky-mail"
+mkdir -p "$sky_mail_dir"
+chmod 0755 "$sky_mail_dir"
+printf 'placeholder-until-the-operator-script-runs\n' >"$sky_mail_dir/client.secret"
+chmod 0644 "$sky_mail_dir/client.secret"
+
 "$SCRIPT_DIR/check-version-consistency.sh"
 "$SCRIPT_DIR/check-fresh-runner.sh"
 "$SCRIPT_DIR/check-production-preflight.sh"
@@ -779,6 +790,140 @@ v2_register_passkey_after_switch() {
 # the latest wins), a second passkey is registered after the last switch, and the cleanup must
 # delete exactly the passkeys registered before that switch: never with a later cutover, never
 # silently when a deletion fails.
+# ---------------------------------------------------------------------------
+# K5 (ADR-0045): Keycloak's system mails are templated in SkyMail and sent by it,
+# with the realm's own SMTP as the fallback. The fixture `skymail` service is both
+# the SkyMail single-mail task API and the SMTP sink the fallback delivers to, so
+# one stage proves the whole path: the real keycloak-mailer service account obtains
+# a real client-credentials token against this Keycloak, the sender posts the mapped
+# template key with every variable, and a refused mail still reaches the recipient.
+# ---------------------------------------------------------------------------
+sky_mail_fixture_records() {
+  "${COMPOSE[@]}" logs --no-color --no-log-prefix skymail 2>/dev/null \
+    | sed -n 's/^SKYMAIL_FIXTURE //p'
+}
+
+# Prints the last fixture record of $1 for recipient $2, waiting for it to arrive.
+sky_mail_await_record() {
+  local event=$1 recipient=$2 attempt record
+  for attempt in $(seq 1 45); do
+    record=$(sky_mail_fixture_records \
+      | jq -c --arg event "$event" --arg recipient "$recipient" \
+        'select(.event == $event and ((.recipient_email // (.recipients // [])[0]) == $recipient))' \
+      | tail -n 1)
+    if [[ -n $record ]]; then
+      printf '%s\n' "$record"
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+sky_mail_send_verify_email() {
+  local user_uuid=$1
+  kcadm update "users/$user_uuid/send-verify-email" -r "$V2_REALM" -n -b '{}' >/dev/null
+}
+
+sky_mail_create_user() {
+  local username=$1 address=$2
+  kcadm create users -r "$V2_REALM" -i \
+    -s "username=$username" -s enabled=true -s emailVerified=false \
+    -s firstName=Sky -s lastName=Mail -s "email=$address"
+}
+
+stage_k5_system_mail_through_skymail() {
+  CURRENT_STAGE='K5 Keycloak system mail through SkyMail'
+  local mailer_uuid secret realm_display sent_uuid missing_uuid fallback_uuid
+  local task keycloak_log smtp_record posted user_uuid
+
+  mailer_uuid=$(v2_client_uuid keycloak-mailer)
+  secret=$(kcadm get "clients/$mailer_uuid/client-secret" -r "$V2_REALM" -c | jq -r .value)
+  [[ -n $secret && $secret != null ]] \
+    || fail 'keycloak-mailer secret is not readable for the SkyMail sender'
+  printf '%s\n' "$secret" >"$sky_mail_dir/client.secret"
+  chmod 0644 "$sky_mail_dir/client.secret"
+
+  realm_display=$(kcadm get "realms/$V2_REALM" -c | jq -r '.displayName // ""')
+  [[ -n $realm_display ]] || fail 'the fixture realm has no display name to send to SkyMail'
+  # The fallback must genuinely deliver, so the realm points at the fixture SMTP sink.
+  kcadm update "realms/$V2_REALM" \
+    -s smtpServer.host=skymail \
+    -s smtpServer.port=1025 \
+    -s smtpServer.from=noreply@yildizskylab.com \
+    -s 'smtpServer.fromDisplayName=SKY LAB' \
+    -s smtpServer.ssl=false \
+    -s smtpServer.starttls=false \
+    -s smtpServer.auth=false >/dev/null
+
+  # --- the mapped mail leaves through SkyMail -------------------------------------------
+  sent_uuid=$(sky_mail_create_user skymail-fixture skymail-fixture@example.invalid)
+  sky_mail_send_verify_email "$sent_uuid"
+  task=$(sky_mail_await_record mail_task skymail-fixture@example.invalid) \
+    || fail 'SkyMail fixture did not receive the verify-email mail task'
+  json_assert "$task" '.template_key == "keycloak.verify-email"' \
+    'the verify-email mail did not carry the mapped SkyMail template key'
+  json_assert "$task" '.recipient_full_name == "Sky Mail"' \
+    'the mail task did not name the recipient'
+  json_assert "$task" '.missing_variables == []' \
+    'SkyMail would render <no value>: a body variable was omitted'
+  json_assert "$task" \
+    '(.body_variables | keys | sort) == ["firstName","link","linkExpirationMinutes","realmDisplayName","subjectKey","username"]' \
+    'the mail task did not carry exactly the six agreed body variables'
+  json_assert "$task" \
+    '.body_variables.subjectKey == "emailVerificationSubject" and .body_variables.firstName == "Sky" and .body_variables.username == "skymail-fixture"' \
+    'the mail task body variables differ from the Keycloak mail'
+  json_assert "$task" '.body_variables.realmDisplayName == $display' \
+    'the mail task did not carry the realm display name' --arg display "$realm_display"
+  json_assert "$task" \
+    '(.body_variables.link | contains("/realms/e-skylab-test/login-actions/action-token")) and (.body_variables.linkExpirationMinutes | test("^[0-9]+$"))' \
+    'the mail task did not carry the action link and its expiration'
+  json_assert "$task" \
+    '.azp == "keycloak-mailer" and (.roles | sort) == ["skymail:access", "skymail:mails:send"]' \
+    'the mail task was not authorized by the keycloak-mailer service account'
+  posted=$(sky_mail_fixture_records | jq -c 'select(.event == "mail_task")' | wc -l | tr -d ' ')
+  [[ $posted == 1 ]] || fail "the verify-email mail reached SkyMail $posted times instead of once"
+  [[ -z $(sky_mail_fixture_records | jq -c 'select(.event == "smtp_message")') ]] \
+    || fail 'an accepted mail was also delivered over SMTP'
+
+  # --- an archived or unknown template key falls back, it does not vanish ---------------
+  missing_uuid=$(sky_mail_create_user skymail-missing-fixture skymail-missing@example.invalid)
+  sky_mail_send_verify_email "$missing_uuid"
+  sky_mail_await_record smtp_message skymail-missing@example.invalid >/dev/null \
+    || fail 'a mail SkyMail answered 404 for never reached the recipient'
+
+  # --- an unavailable SkyMail falls back ------------------------------------------------
+  fallback_uuid=$(sky_mail_create_user skymail-fallback-fixture skymail-fallback@example.invalid)
+  sky_mail_send_verify_email "$fallback_uuid"
+  smtp_record=$(sky_mail_await_record smtp_message skymail-fallback@example.invalid) \
+    || fail 'the SMTP fallback did not deliver the mail SkyMail refused'
+  json_assert "$smtp_record" '.bytes > 0' 'the fallback delivered an empty message'
+
+  keycloak_log=$("${COMPOSE[@]}" logs --no-color --no-log-prefix keycloak 2>/dev/null \
+    | grep -F 'sky_mail_' || true)
+  grep -Fq 'sky_mail_fallback reason=template_missing template=keycloak.verify-email' \
+    <<<"$keycloak_log" \
+    || { printf '%s\n' "$keycloak_log" >&2; fail 'the 404 fallback did not record its own reason'; }
+  grep -Fq 'sky_mail_fallback reason=unavailable template=keycloak.verify-email' \
+    <<<"$keycloak_log" \
+    || { printf '%s\n' "$keycloak_log" >&2; fail 'the 500 fallback did not record its own reason'; }
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    [[ $line != *"@example.invalid"* ]] || fail 'a sky_mail log line carried a recipient address'
+    [[ $line != *"login-actions/action-token"* ]] || fail 'a sky_mail log line carried an action link'
+    [[ $line != *"$secret"* ]] || fail 'a sky_mail log line carried the client secret'
+  done <<<"$keycloak_log"
+  [[ $(sky_mail_fixture_records | jq -c 'select(.event == "mail_task")' | wc -l | tr -d ' ') == 3 ]] \
+    || fail 'SkyMail did not receive exactly the three triggered mails'
+
+  # Leave the realm and its users exactly as this stage found them.
+  for user_uuid in "$sent_uuid" "$missing_uuid" "$fallback_uuid"; do
+    kcadm delete "users/$user_uuid" -r "$V2_REALM" >/dev/null
+  done
+  kcadm update "realms/$V2_REALM" -s 'smtpServer={}' >/dev/null
+  unset secret
+}
+
 stage_v2_passkey_cleanup() {
   CURRENT_STAGE='v2 legacy passkey cleanup around a relying party id switch'
   local client_secret=$1
@@ -1756,6 +1901,8 @@ unset passkey_user_password
 kcadm update realms/e-skylab-test \
   -s "webAuthnPolicyPasswordlessRpId=$(jq -r '.webAuthnPolicyPasswordlessRpId // ""' <<<"$webauthn_realm_before")" \
   -s "webAuthnPolicyPasswordlessExtraOrigins=$(jq -c '.webAuthnPolicyPasswordlessExtraOrigins // []' <<<"$webauthn_realm_before")" >/dev/null
+
+stage_k5_system_mail_through_skymail
 
 # Provision the RabbitMQ topology expected by the provider, then use an admin
 # event to prove the rebuilt provider can publish on Keycloak 26.7.4.

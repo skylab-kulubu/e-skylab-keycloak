@@ -47,6 +47,8 @@ realm ayarı bırakmamaktır.
   etkinleştirilir.
 - Realm ve istemci ayarları `config/reconcile-account-center.sh` ile sürekli
   uzlaştırılır; tek seferlik realm içe aktarımına güvenilmez.
+- Sistem e-postaları `sky-mail` sağlayıcılarıyla SkyMail üzerinden gönderilir;
+  SkyMail kapalı ya da ulaşılamazken realm'in kendi SMTP'si devreye girer.
 - Üretim yalnız
   `ghcr.io/skylab-kulubu/e-skylab-keycloak` deposundan imaj çeker ve doğrulanmış
   bir `KEYCLOAK_IMAGE_DIGEST` kabul eder. Çalışma zamanı, ön kontrol ve
@@ -303,6 +305,55 @@ ile uçtan uca sınanır: seçenek → oluştur → kaydet → `GET identity`'de
 Keycloak'ın kendi giriş sayfasında o passkey ile giriş (RP ID uyumu) → passkey
 assertion ile sudo → yeniden oynatılan challenge, izinsiz origin ve gerileyen
 sayaç reddedilir.
+
+## Sistem e-postaları (SkyMail)
+
+Keycloak'ın doğrulama, parola sıfırlama, e-posta değişikliği ve YTÜ bağlama
+postaları kulübün posta alanı SkyMail'in sistem şablonlarıyla yazılır ve SkyMail
+tarafından gönderilir (ADR-0045). SPI iki sağlayıcı kaydeder: `sky-mail` şablon
+sağlayıcısı stok `freemarker` sağlayıcısını sararak Keycloak'ın hangi şablonu
+istediğini ve bağlantı ile ömrünü oturum üzerinde kaydeder, üretimi olduğu gibi
+devreder; `sky-mail` göndericisi bu kaydı alıp
+`POST {SKY_MAIL_BASE_URL}/v1/mail_tasks/single` ile `template_key`, alıcı ve
+`body_variables` gönderir. İkisi de `order()` ile Keycloak'ın kendi
+sağlayıcılarının önüne geçer, derleme seçeneği gerekmez.
+
+Şablon eşlemesi `keycloak.verify-email`, `keycloak.reset-password`,
+`keycloak.update-email`, `keycloak.idp-link`, `keycloak.personal-email-confirm`
+ve eşlenmeyen her posta için `keycloak.generic`'tir. SkyMail Go `text/template`
+kullandığından eksik değişken `<no value>` basar; bu yüzden `link`,
+`linkExpirationMinutes`, `firstName`, `username`, `realmDisplayName` ve
+`subjectKey` her postada, bilinmiyorsa boş string olarak gönderilir. SMTP test
+postası realm'in kendi ayarlarını kanıtladığı için SkyMail'e hiç uğramaz.
+
+Yetki, `keycloak-mailer` gizli service account istemcisinin client credentials
+token'ıdır (`skymail:access` + `skymail:mails:send`); token süresi dolmadan
+30 saniye öncesine kadar bellekte önbelleklenir. Yalnız `201` gönderildi
+sayılır: 404 (şablon anahtarı yok ya da arşivlenmiş), başka 4xx, 5xx, zaman
+aşımı, token hatası ve kapalı sağlayıcı dahil her durum Keycloak'ın kendi SMTP
+göndericisine, üretilmiş stok gövdeyle devreder ve tek satır
+`sky_mail_fallback reason=<sabit sözcük> template=<anahtar>` günlüğü düşer;
+satır adres, bağlantı, token ya da gizli anahtar taşımaz.
+
+Yapılandırma ortamdan gelir: `SKY_MAIL_ENABLED` (varsayılan `false`),
+`SKY_MAIL_BASE_URL`, `SKY_MAIL_CLIENT_ID`, `SKY_MAIL_CLIENT_SECRET_FILE`
+(varsayılan `/run/secrets/sky-mail/client.secret`), `SKY_MAIL_TOKEN_URL`
+(varsayılan realm issuer'ından türetilir) ve `SKY_MAIL_TIMEOUT_MILLISECONDS`
+(varsayılan 5000 toplam, bağlantı bütçesi en çok 2000). Biçimi bozuk bir değer
+fabrikayı başarısız eder; gizli anahtar dosyası eksik ya da boşsa sağlayıcı
+kapalı tarafa düşer (tek `sky_mail_disabled reason=…` uyarısı) ve postalar
+SMTP'den çıkmaya devam eder.
+
+Operatör `keycloak-mailer` istemcisini `config/create-mailer-client.sh` ile
+oluşturur, Keycloak'ın ürettiği gizli anahtarı üretim sunucusunda
+`/opt/weblab/account-center-keycloak/credentials/mailer-client.secret`
+dosyasına (`root:1000`, `0640`; konteyner uid 1000 okuyabilmelidir) yazar ve
+Compose bu dosyayı salt okunur olarak `/run/secrets/sky-mail/client.secret`
+yoluna bağlar. Anahtar her token isteğinde okunur; döndürme dosyanın içeriğini
+yerinde güncellemekle yapılır. Eşleme tablosu, değişkenler, ortam, geri düşüş
+sözcükleri ve operatör adımları
+[`docs/keycloak-mail-via-skymail.md`](docs/keycloak-mail-via-skymail.md)
+belgesindedir.
 
 ## Yerel geliştirme ve doğrulama
 

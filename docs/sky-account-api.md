@@ -45,8 +45,10 @@ görünümdür; sky-account API yetki kararlarında onu kullanmaz.
 
 ## Sudo modu
 
-Hassas işlemler (`credentials/*`, `identity/username`) taze bir **sudo token**
-ister. Kişi parolasını, doğrulama uygulaması kodunu ya da passkey'ini
+Hassas işlemler (`credentials/*`, `identity/username`, `email/change-request`,
+`email/primary`, `DELETE email/personal`) taze bir **sudo token** ister.
+`email/confirm` sudo istemez: postadaki kod adresi, kişinin kendi oturumu da kişiyi
+kanıtlar (bkz. `POST email/confirm`). Kişi parolasını, doğrulama uygulaması kodunu ya da passkey'ini
 `POST sudo/password` / `POST sudo/totp` / `POST sudo/webauthn/verify` ile kanıtlar;
 yanıt bir sudo token verir. Bunların hiçbiri olmayan kişi (bugün çoğu YTÜ hesabı)
 Keycloak'ta yeniden giriş yapar (Microsoft) ve BFF, callback'te aldığı taze ID
@@ -115,7 +117,8 @@ yuvasını tutar. Yuvalar pencere sonunda kendiliğinden düşer.
 | `sudo-passkey` | `sudo/webauthn/verify` | 10 / 15 dk |
 | `sudo-options` | `sudo/webauthn/options` | 30 / 15 dk |
 | `totp-confirm` | `credentials/totp/confirm` | 10 / 15 dk |
-| `mutation` | `identity/name`, `identity/username`, `credentials/password`, `credentials/totp/setup`, `credentials/webauthn/options`, `credentials/webauthn/register`, `DELETE credentials/{id}` | 30 / 15 dk |
+| `email-change` | `email/change-request` (sudo kanıtından sonra) | 3 / 1 saat |
+| `mutation` | `identity/name`, `identity/username`, `credentials/password`, `credentials/totp/setup`, `credentials/webauthn/options`, `credentials/webauthn/register`, `DELETE credentials/{id}`, `email/change-request`, `email/confirm`, `email/primary`, `DELETE email/personal` | 30 / 15 dk |
 
 `sudo/webauthn/options` (bearer'la, sudo'suz) kendi `sudo-options` bütçesinden
 sayılır. Passkey assertion'ı tahmin edilemez; bu yüzden `sudo/webauthn/verify`
@@ -130,6 +133,13 @@ sürer, çünkü kilit **kontrolü** her kanıttan önce yapılır.
 `sudo/authentication` kimlik bilgisi sınamaz, bu yüzden brute-force koruyucusuna
 bildirilmez; denemeleri yalnız `sudo` bütçesinden düşer (ID token realm anahtarıyla
 imzalıdır, tahmin edilemez; bütçe kötüye kullanımı sınırlar).
+
+`email/change-request` kimsenin henüz kanıtlamadığı bir adrese posta gönderir; bu
+yüzden `mutation` bütçesinin yanında kendi çok daha dar `email-change` bütçesinden
+(kişi başına saatte 3) de sayılır. Dar bütçe **sudo doğrulandıktan sonra** düşülür:
+sudo'suz bir istek kişinin saatlik hakkını yakamaz, yalnız `mutation` yuvasını
+harcar. Sudo'lu bir istekte biçimi bozuk ya da başkasına ait bir adres de bir yuva
+harcar: bütçe, gönderilen posta sayısını değil denemeyi sınırlar.
 
 `GET identity` sınırlanmaz: kimliği doğrulanmış okuma ucuzdur ve her okumada
 küme önbelleğine yazmak gereksizdir. Kimlik bilgisi tahminine karşı asıl
@@ -179,13 +189,19 @@ temasındaki Türkçe mesaj paketinden üretilir.
 | 400 | `invalid_username` | `field` | `^[a-z0-9._]{3,30}$` desenine uymuyor |
 | 403 | `name_locked` | — | Doğrulanmış YTÜ hesabı adını değiştiremez |
 | 404 | `credential_not_found` | — | Kimlik bilgisi yok, kişiye ait değil ya da silinemez türde (parola) |
+| 400 | `invalid_email_code` | `attemptsLeft` | E-posta doğrulama kodu yanlış; `attemptsLeft` 0 ise kod öldü, yeni kod istenmeli |
+| 404 | `no_pending_email_change` | — | Kişinin bekleyen bir e-posta değişikliği yok: hiç istenmedi, kullanıldı, süresi doldu ya da deneme hakkı bitti |
 | 409 | `duplicate_label` | — | Aynı adda OTP ya da passkey zaten var |
 | 409 | `passkey_already_registered` | — | Bu passkey (credential id) zaten hesabında kayıtlı |
 | 409 | `username_taken` | — | Kullanıcı adı başkasında |
+| 409 | `email_taken` | — | E-posta adresi başka kişide (birincil, okul ya da kişisel) |
+| 409 | `email_not_verified` | — | Kişisel adres var ama doğrulanmadı; birincil yapılamaz |
+| 409 | `no_fallback_email` | — | Kişisel adres birincil ve geri düşülecek okul adresi yok |
 | 409 | `username_cooldown` | `retryAfter`, `availableAt` + `Retry-After` | 14 gün dolmadı |
 | 429 | `rate_limited` | `retryAfter` + `Retry-After` | Hız sınırı |
 | 503 | `unmanaged_attributes_enabled` | — | Realm User Profile'ı `unmanagedAttributePolicy=ENABLED`; değişiklikler kapalı (okuma açık) |
 | 503 | `webauthn_not_configured` | — | Keycloak passwordless WebAuthn sağlayıcısı yok (web-authn özelliği kapalı) |
+| 503 | `email_not_sent` | — | Doğrulama postası gönderilemedi (realm SMTP kapalı ya da erişilemiyor); bekleyen değişiklik silinir |
 | 500 | `internal_error` | — | Beklenmeyen hata (işlem geri alınır) |
 
 `Content-Type: application/json` olmayan gövdeli istekler RESTEasy tarafından
@@ -230,6 +246,7 @@ tarayıcıya ve sonucu SPI'ye taşıyan BFF'dir.
   "emailVerified": true,
   "schoolEmail": "ada@std.yildiz.edu.tr",
   "personalEmail": "ada@example.com",
+  "personalEmailVerified": true,
   "primary": "school",
   "verifiedYtu": true,
   "nameLocked": true,
@@ -244,6 +261,10 @@ tarayıcıya ve sonucu SPI'ye taşıyan BFF'dir.
 
 - `schoolEmail` / `personalEmail`: `schoolEmail` / `personalEmail` kullanıcı
   öznitelikleri (boşsa `null`).
+- `personalEmailVerified`: kişisel adres var **ve** bu uzantının yazdığı
+  `personalEmailVerifiedAt` (ISO-8601 UTC) damgası okunabiliyor. Özniteliğe doğrudan
+  (Admin REST, içe aktarma) yazılmış bir adres doğrulanmış sayılmaz ve birincil
+  yapılamaz.
 - `primary`: Keycloak `email` alanı okul adresine eşitse `school`, kişisel adrese
   eşitse `personal`, ikisine de eşit değilse `none` (büyük/küçük harf duyarsız).
 - `verifiedYtu`: YTÜ Microsoft IdP'sine (varsayılan alias `OBS`) federated identity
@@ -520,13 +541,163 @@ iki-faktör) `webauthn` kimlik bilgileri; parola asla. Bulunamayan, başkasına 
 (`credential_type`, `selected_credential_id`, `credential_user_label`), OTP için
 ayrıca `REMOVE_TOTP`.
 
+### Kişisel e-posta ve birincil adres (`email/*`)
+
+ADR-0044: kişinin **Okul e-postası** (`schoolEmail` özniteliği) YTÜ Microsoft
+bağlantısıyla gelir ve buradan hiç yazılmaz; **Kişisel e-posta** (`personalEmail`)
+kişinin eklediği ve postasına gelen kodu kendi oturumunda girerek kanıtladığı adrestir; **Birincil e-posta**
+ikisinden kişinin seçtiğidir ve Keycloak `email` alanının ta kendisidir. Birincili
+değiştirmek `email` alanını yazmak demektir, bu yüzden token'lar, core ve SkyMail
+bir sonraki token'da yeni adresi kendiliğinden görür.
+
+Doğrulanmışlık kaydı: onay anında bu uzantı `personalEmailVerifiedAt` özniteliğine
+ISO-8601 UTC damgayı yazar; `personalEmail` silindiğinde damga da silinir. Yalnız
+damgalı adres birincil olabilir (`GET identity` alanı `personalEmailVerified`).
+
+#### `POST email/change-request` — sudo gerekir
+
+İstek `{"address": "ada@example.com", "makePrimary": false}` (`makePrimary`
+isteğe bağlı, varsayılan `false`). Adres kırpılır ve `Locale.ROOT` ile küçük harfe
+çevrilir (Türkçe yerelin `I` → `ı` katlaması devreye girmez), Keycloak'ın kendi
+e-posta doğrulayıcısından (`EmailValidator`, realm SMTP ayarıyla birlikte) geçer.
+
+- Adres zaten kişinin kendi birincil, okul ya da kişisel adresiyse
+  `400 invalid_request` (`field: "address"`) — değiştirilecek bir şey yoktur.
+- Adres başka kişideyse `409 email_taken`. Denetim üç yerde yapılır: Keycloak'ın
+  kendi `getUserByEmail` araması (büyük/küçük harf duyarsız; realm
+  `duplicateEmailsAllowed=false` olduğu sürece belirleyici) ve `schoolEmail` ile
+  `personalEmail` özniteliklerinde birebir arama (uzantı her iki özniteliği de
+  küçük harfle yazar). Yanıt adresin kimde olduğunu söylemez.
+- Kişiye hiçbir şey yazılmaz. Bekleyen değişiklik **kişi başına bir tanedir**:
+  Keycloak'ın `SingleUseObjectProvider` deposunda kişinin kimliğiyle anahtarlanır ve
+  10 dakika tutulur; yeni bir istek öncekinin yerini alır (eski kod ölür). Değer
+  `{address, makePrimary, salt, codeHash, expiresAt, attemptsLeft}`. Kodun kendisi
+  depoda yoktur, yalnız tuzlu SHA-256 özeti vardır; kod yalnız postaya konur.
+- Doğrulama postası Keycloak'ın kendi `EmailTemplateProvider`'ıyla, bu uzantının
+  `theme-resources` içindeki `sky-personal-email-confirm.ftl` şablonuyla
+  (`text/` ve `html/`) ve `skyPersonalEmailConfirm*` mesaj anahtarlarıyla (Türkçe
+  ve İngilizce) gönderilir; tema değişikliği gerekmez. Posta **6 haneli kodu**,
+  geçerlilik süresini ve "bu kodu kimseyle paylaşma" uyarısını taşır; link yoktur.
+- Posta gönderilemezse bekleyen değişiklik hemen silinir (kod hiç çalışmaz) ve
+  yanıt `503 email_not_sent` olur; `UPDATE_EMAIL_ERROR` (`error=email_send_failed`)
+  üretilir (her `5xx` gibi işlem geri alınır, kayıt günlükte kalır).
+- Bütçe: her istek bir `mutation` yuvası, sudo doğrulandıktan sonra ayrıca bir
+  `email-change` yuvası (3 / 1 saat). Başarılı yanıt `202`:
+
+```json
+{ "expiresAt": "2026-09-21T13:45:18Z" }
+```
+
+Adres ve kod hiçbir günlük satırına yazılmaz.
+
+#### `POST email/confirm` — sudo gerekmez, bearer gerekir
+
+İstek `{"code": "123456"}`. Kod 6 rakamdır; kopyalanırken araya giren boşluklar
+atılır, başka her biçim `400 invalid_request` (`field: "code"`) alır ve **deneme
+hakkı yemez**.
+
+Sudo istenmez: kişi kendini `change-request` için zaten kanıtladı, kod da adresi
+kanıtlar. Güvenliği sağlayan bearer'dır: kod yalnız **çağıranın kendi** bekleyen
+değişikliğiyle karşılaştırılır. Kodu kim okursa okusun, adresi başka bir hesaba
+bağlayamaz; başka bir oturumdan denenen kod `404 no_pending_email_change` alır ve
+asıl sahibinin değişikliğine dokunmaz. (Link modeli bu yüzden bırakıldı: oturumsuz
+çalışan bir link, kendi hesabına kurbanın adresini ekleyen birinin, kurbana linke
+bastırarak adresi kendi hesabına bağlamasına izin veriyordu. ADR-0044 güncellemesi.)
+
+Her deneme kaydı depodan atomik olarak alır (`SingleUseObjectProvider.remove`):
+
+- kod doğruysa kayıt geri konmaz; kod en fazla bir kez iş görür, paralel iki istek
+  gelse de;
+- kod yanlışsa kayıt **bir deneme eksik ve yalnız kalan süresiyle** geri konur ve
+  yanıt `400 invalid_email_code` olur (`attemptsLeft` alanı kalan hakkı söyler);
+  yavaş tahmin etmek kaydın ömrünü uzatmaz. Beşinci yanlış denemede kayıt ölür
+  (`attemptsLeft: 0`), doğru kod bile artık `404` alır;
+- kayıt yoksa (hiç istenmedi, kullanıldı, süresi doldu, hak bitti)
+  `404 no_pending_email_change`.
+
+Süre iki yerden sınırlanır: deponun ömrü (10 dakika) ve kaydın içine yazılan bitiş
+anı. Depo kaydı daha uzun tutsa bile bitiş anı geçmiş bir kod çalışmaz; bitiş anı ya
+da kalan deneme sayısı taşımayan kayıt reddedilir.
+
+Doğru koddan sonra adres tekliği yeniden sınanır (10 dakika içinde başkası almış
+olabilir): alınmışsa `409 email_taken`. **Bu durumda kod yanmış olur**: kayıt
+denetimden önce depodan alındığı için kişi yeni bir kod ister. Bilinçli bir tercih:
+kaydı sona kadar depoda bırakmak, iki paralel onayın ikisinin de onu görmesi demek
+olurdu. Ardından:
+
+- `personalEmail` ve `personalEmailVerifiedAt` yazılır;
+- `makePrimary` istendiyse, kişinin henüz hiç `email` alanı yoksa, **ya da** yeni adres
+  birincil olan kişisel adresin yerini alıyorsa Keycloak `email` bu adres olur ve `emailVerified=true` yazılır (olay `UPDATE_EMAIL`,
+  `previous_email`/`updated_email`). İkinci durum kişinin yerine bir seçim yapmaz:
+  `email`'i boş bir hesabın giriş yapabileceği ve posta alabileceği başka bir adres
+  yoktur, az önce kanıtladığı adres tek adaydır. Üçüncüsü de bir seçim değil:
+  birincil olan kişisel adresi değiştiren kişinin `email`'i aksi halde artık sahip
+  olmadığı bir adreste kalırdı ve `primary` `none` okunurdu;
+- olay `UPDATE_PROFILE` (`context=ACCOUNT`).
+
+Yanıt `200` + güncel `identity`.
+
+#### `GET email/pending` — sudo gerekmez, bearer gerekir
+
+Kişinin kodunu bekleyen değişikliği, **tüketmeden** okur; posta ile kod arasında
+yenilenen sayfa kod kutusunu yeniden gösterebilsin, kişi saatte üç kodluk hakkından
+birini harcamasın diye. Yalnız çağıranın kendi değişikliği; kod ya da özeti asla
+dönmez.
+
+```json
+{ "address": "ada@example.com", "expiresAt": "2026-09-23T00:10:00Z", "attemptsLeft": 4 }
+```
+
+Bekleyen değişiklik yoksa (hiç istenmedi, onaylandı, süresi doldu, hak bitti)
+`404 no_pending_email_change`. Bütçe harcamaz (`GET identity` gibi).
+
+#### `POST email/primary` — sudo gerekir
+
+İstek `{"which": "school"}` ya da `{"which": "personal"}` (küçük harfe çevrilir).
+
+- `which` bu iki değerden biri değilse ya da kişinin **seçtiği** adres yoksa
+  `400 invalid_request` (`field: "which"`). Öteki adresin var olması gerekmez: okul
+  adresi olmayan biri kanıtlı kişisel adresini seçebilir.
+- Seçilen adres zaten birincilse ve Keycloak onu doğrulanmış sayıyorsa işlem yoktur
+  (`200`, olay yazılmaz). Bu, adresin burada kanıtlanıp kanıtlanamamasından
+  bağımsızdır; YTÜ bağlantısından önce okul adresi içe aktarılmış üyeler bu yüzden
+  değişmeyen bir seçim için reddedilmez.
+- Seçilen adres kanıtlı değilse `409 email_not_verified`:
+  - kişisel adres, doğrulama kodu girilmediyse (`personalEmailVerifiedAt` yoksa);
+  - okul adresi, hesabın YTÜ Microsoft bağlantısı yoksa. `schoolEmail` niteliğinin
+    var olması kanıt değildir (CONTEXT, Verified YTÜ account): içe aktarma ya da bir
+    yönetici de yazabilir.
+- Aksi halde Keycloak `email` seçilen adres olur ve `emailVerified=true` yazılır. Adres
+  zaten birincil ama `emailVerified=false` ise bu bir onarımdır: adres kanıtlı olduğu
+  için doğrulanmış işaretlenir ve olay yine yazılır. Olay `UPDATE_EMAIL`
+  (`previous_email`, `updated_email`, `context=ACCOUNT`). Yazma anında başkası aynı
+  adresi almışsa `409 email_taken` ve işlem geri alınır.
+
+Yanıt `200` + güncel `identity`.
+
+#### `DELETE email/personal` — sudo gerekir
+
+Kişisel adres yoksa işlem yoktur (`200` + `identity`). Varsa:
+
+- adres birincilse okul adresi devralır (`email`, `emailVerified=true`, olay
+  `UPDATE_EMAIL`). Devralma `email/primary` ile aynı kurala tabidir: okul adresi
+  yoksa **ya da hesabın YTÜ bağlantısı yoksa** `409 no_fallback_email` döner ve
+  **hiçbir şey değişmez** — kişinin giriş yapabildiği tek kanıtlı adres silinmez,
+  yerine kimsenin doğrulamadığı bir adres geçmez;
+- `personalEmail` ve `personalEmailVerifiedAt` silinir, olay `UPDATE_PROFILE`
+  (`context=ACCOUNT`).
+
+Yanıt `200` + güncel `identity`.
+
 ## Yapılandırma
 
 | Ayar | Kaynak | Varsayılan |
 | --- | --- | --- |
 | YTÜ IdP alias'ı | `--spi-realm-restapi-extension-sky-account-ytu-idp-alias` / `KC_SPI_REALM_RESTAPI_EXTENSION_SKY_ACCOUNT_YTU_IDP_ALIAS`, yoksa `SKY_ACCOUNT_YTU_IDP_ALIAS` ortam değişkeni | `OBS` |
 
-Alias `^[A-Za-z0-9._-]{1,64}$` desenine uymazsa Keycloak açılışta durur.
+Alias `^[A-Za-z0-9._-]{1,64}$` desenine uymazsa Keycloak açılışta durur. Kişisel e-posta doğrulama postası realm'in
+SMTP ayarına ihtiyaç duyar; SMTP tanımlı değilse `email/change-request`
+`503 email_not_sent` döner.
 
 ## Güvenlik notları ve sınırlar
 
@@ -567,7 +738,20 @@ Alias `^[A-Za-z0-9._-]{1,64}$` desenine uymazsa Keycloak açılışta durur.
   `authenticatorAttachment` istemci bildirimidir, kriptografik değildir.
 - Keycloak'ta sudo'ya özel bir olay türü yoktur; başarılı kanıt genel
   `CUSTOM_REQUIRED_ACTION` olayıyla (`action=sky-sudo`, `method`) kaydedilir.
-- `usernameChangedAt`, `schoolEmail`, `personalEmail` model düzeyinde okunup
+- Kişisel e-posta doğrulama kodu 6 rakamdır; tahmin edilebilir bir alan olduğu için
+  üç yerden sınırlanır: 10 dakika ömür, 5 yanlış deneme, saatte en fazla 3 kod. Bir
+  saatte en fazla 15 tahmin, milyonda 15 şans demektir. Depoda yalnız tuzlu SHA-256
+  özeti tutulur; her deneme `SingleUseObjectProvider.remove` ile atomiktir, bu yüzden
+  aynı hak iki kez harcanamaz ve doğru kod yeniden oynatılamaz. Kod yalnız sahibinin
+  oturumunda çalışır. Kod ve adres günlüğe
+  yazılmaz; SMTP hata ayrıntıları (alıcıyı içerebilir) yalnız `DEBUG` düzeyindedir.
+  Denetim izi Keycloak'ın kendi alışkanlığını izler: adres olay kaydına yalnız
+  birincil olduğunda (`UPDATE_EMAIL`, `previous_email`/`updated_email`) girer.
+- E-posta tekliği üretimde realm'in `duplicateEmailsAllowed=false` ayarına dayanır;
+  uzantı ayrıca `schoolEmail`/`personalEmail` özniteliklerinde arar. Öznitelik
+  araması birebirdir: uzantı her iki adresi de küçük harfle yazdığı için yeterlidir,
+  ama bir yöneticinin elle karışık harfle yazdığı öznitelik bu aramaya takılmaz.
+- `usernameChangedAt`, `schoolEmail`, `personalEmail`, `personalEmailVerifiedAt` model düzeyinde okunup
   yazılır; User Profile'da tanımlı olmadıkları realm'de Admin REST'ten görünmez
   (yönetilmeyen öznitelik politikası kapalıyken salt okunur kalır, silinmez).
   Uzlaştırıcı (`config/account-center-user-profile.json`) bu öznitelikleri

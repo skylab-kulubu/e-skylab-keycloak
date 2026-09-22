@@ -498,13 +498,13 @@ stage_v2_assert_user_profile() {
   json_assert "$profile" \
     '[.attributes[] | select(.name == "username" and (.permissions.edit | sort) == ["admin", "user"])] | length == 1' \
     'username permissions were changed'
-  for attribute in schoolEmail personalEmail skyNumber department university skyMail usernameChangedAt; do
+  for attribute in schoolEmail personalEmail personalEmailVerifiedAt skyNumber department university skyMail usernameChangedAt; do
     json_assert "$profile" \
       '[.attributes[] | select(.name == $name and (.permissions.view | sort) == ["admin", "user"] and (.permissions.edit | sort) == ["admin"] and (.displayName | length) > 0 and .group == "user-metadata")] | length == 1' \
       "SKY LAB attribute $attribute is missing or has wrong permissions" --arg name "$attribute"
   done
   json_assert "$profile" \
-    '([.attributes[] | select((.name == "schoolEmail" or .name == "personalEmail") and (.validations | has("email")))] | length) == 2 and ([.attributes[] | select(.name == "usernameChangedAt" and (.validations.pattern.pattern | length) > 0)] | length) == 1' \
+    '([.attributes[] | select((.name == "schoolEmail" or .name == "personalEmail") and (.validations | has("email")))] | length) == 2 and ([.attributes[] | select((.name == "usernameChangedAt" or .name == "personalEmailVerifiedAt") and (.validations.pattern.pattern | length) > 0)] | length) == 2' \
     'e-mail or timestamp validators are missing'
   json_assert "$profile" \
     '[.attributes[] | select(.name == "schoolEmail" and .displayName == "Okul e-postası (özel)")] | length == 1' \

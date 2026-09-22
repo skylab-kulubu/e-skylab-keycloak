@@ -30,4 +30,9 @@ public final class SkyAccountResource {
     public CredentialResource credentials() {
         return new CredentialResource(request);
     }
+
+    @Path("v1/email")
+    public EmailResource email() {
+        return new EmailResource(request);
+    }
 }

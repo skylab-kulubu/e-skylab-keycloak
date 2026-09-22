@@ -40,7 +40,7 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.9.0`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.10.0`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.1.0`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
@@ -216,7 +216,30 @@ belgesindedir.
   Microsoft ile yeniden girişin ID token'ıyla sudo);
   `POST credentials/password` (`logoutOtherSessions` ile);
   `POST credentials/totp/setup|confirm`; `POST credentials/webauthn/options|register`
-  (passkey kaydı); `DELETE credentials/{id}` (OTP ve passkey; parola asla).
+  (passkey kaydı); `DELETE credentials/{id}` (OTP ve passkey; parola asla);
+  `POST email/change-request|confirm|primary`, `DELETE email/personal`
+  (kişisel e-posta ve birincil adres).
+- Kişisel e-posta (ADR-0044): `POST email/change-request` adresi Keycloak'ın kendi
+  e-posta doğrulayıcısıyla sınar, küçük harfe çevirir, kişinin kendi adreslerini ve
+  başkasında olan adresleri reddeder (`409 email_taken`), kişiye hiçbir şey yazmadan
+  **6 haneli bir kod** üretir ve kişi başına tek bir bekleyen değişiklik olarak
+  Keycloak'ın single-use deposuna 10 dakikalığına koyar (yalnız tuzlu SHA-256 özeti;
+  yeni istek eskisinin yerini alır). Kodu Keycloak'ın kendi `EmailTemplateProvider`'ıyla,
+  bu uzantının `theme-resources` içindeki `sky-personal-email-confirm` şablonu ve
+  Türkçe/İngilizce mesaj anahtarlarıyla gönderir (tema değişikliği gerekmez; postada
+  link yoktur). Bütçe: her istek bir `mutation` yuvası, sudo doğrulandıktan sonra
+  ayrıca saatte 3 istekle sınırlı `email-change` yuvası. `POST email/confirm {code}`
+  sudo istemez ama bearer ister ve kodu **yalnız çağıranın kendi** bekleyen
+  değişikliğiyle karşılaştırır: kod başka bir hesaba adres bağlayamaz. Yanlış kod
+  `400 invalid_email_code` (`attemptsLeft`), beşinci yanlışta kod ölür; bekleyen
+  değişiklik yoksa `404 no_pending_email_change`. Onayda `personalEmail` +
+  `personalEmailVerifiedAt` yazılır, `makePrimary` (ya da hiç `email` yoksa) Keycloak
+  `email` alanını taşır. `POST email/primary` seçilen adres kanıtlıysa onu birincil
+  yapar (okul adresi için YTÜ bağlantısı şarttır, `409 email_not_verified`); öteki
+  adresin var olması gerekmez. `DELETE email/personal` adresi kaldırır ve birincilse
+  YTÜ bağlantılı okul adresine düşer (`409 no_fallback_email` yoksa). `GET identity`
+  `personalEmailVerified` alanını da verir. Posta realm SMTP ayarını kullanır (yoksa
+  `503 email_not_sent`).
 - Passkey (WebAuthn passwordless): ceremony `my.` tarayıcısında çalışır; SPI realm
   passwordless politikasından `navigator.credentials.create/get` seçeneklerini üretir
   ve sonucu Keycloak'ın kendi webauthn4j makinesiyle (`WebAuthnRegistrationManager`,
@@ -248,7 +271,8 @@ belgesindedir.
   artırmaz, başarılısı temizlemez; mevcut kilit yine passkey ile sudo'yu da
   engeller. Passkey denemelerinin kısıtı kendi `sudo-passkey` bütçesidir.
   Kullanıcı başına atomik hız sınırları: sudo 10 / 15 dk, passkey sudo 10 / 15
-  dk, TOTP onayı 10 / 15 dk, değişiklikler 30 / 15 dk.
+  dk, TOTP onayı 10 / 15 dk, değişiklikler 30 / 15 dk, e-posta değişiklik isteği
+  3 / 1 saat.
 - Realm User Profile'ı yönetilmeyen öznitelikleri kişiye açıyorsa
   (`unmanagedAttributePolicy=ENABLED`) değişiklik uçları `503` ile kapanır,
   okuma sürer.
@@ -264,7 +288,13 @@ token ile sudo → parola belirleme; başka oturumun/kişinin ID token'ı, bozuk
 ve access token reddedilir), parola politikasını,
 diğer oturumların kapatılmasını, TOTP kurulum/onay/giriş/silme akışını,
 kullanıcı adı kurallarını, hız sınırını, passkey uçlarının şeklini ve sudo
-kapısını, ve olay kayıtlarını doğrular. Passkey ceremony'si ayrı bir Playwright
+kapısını, ve olay kayıtlarını doğrular. Kişisel e-posta akışı uçtan uca sınanır:
+istek → postanın harness posta kutusunda (`mailpit` servisi, yalnız fixture ağında)
+yakalanması → postadaki kodla onay → `personalEmailVerified` → birincil seçimi →
+başka bir istemcinin taze token'ındaki `email` claim'i → kaldırmada YTÜ bağlantılı okul
+adresine düşüş; yanlış kod (kalan hak), kullanılmış kod, başka oturumdan denenen kod,
+YTÜ bağlantısız okul adresi, doğrulanmamış adres, başkasında olan adres, geri
+düşülecek adresin olmaması ve saatlik bütçe reddedilir. Passkey ceremony'si ayrı bir Playwright
 adımıyla (`theme/tests/integration/webauthn-passkey.spec.ts`,
 `tests/webauthn-page.mjs` üzerinden `http://localhost:18081`) sanal authenticator
 ile uçtan uca sınanır: seçenek → oluştur → kaydet → `GET identity`'de görünür →

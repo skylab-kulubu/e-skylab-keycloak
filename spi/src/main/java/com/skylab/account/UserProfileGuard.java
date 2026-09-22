@@ -8,8 +8,9 @@ import org.keycloak.userprofile.UserProfileProvider;
 /**
  * Fails closed when the realm's User Profile lets people edit unmanaged attributes: with
  * {@code unmanagedAttributePolicy=ENABLED} the person could rewrite {@code usernameChangedAt},
- * {@code schoolEmail} or {@code personalEmail} through Account REST and defeat the rules this
- * extension enforces. Reads stay available; mutations answer 503 until reconcile fixes the realm.
+ * {@code schoolEmail}, {@code personalEmail} or {@code personalEmailVerifiedAt} through
+ * Account REST and defeat the rules this extension enforces. Reads stay available; mutations
+ * answer 503 until reconcile fixes the realm.
  */
 final class UserProfileGuard {
 
@@ -27,7 +28,8 @@ final class UserProfileGuard {
         }
         if (config.getUnmanagedAttributePolicy() == UPConfig.UnmanagedAttributePolicy.ENABLED) {
             LOG.warn("sky-account refused a mutation: unmanagedAttributePolicy=ENABLED lets people edit "
-                    + "usernameChangedAt, schoolEmail and personalEmail through Account REST");
+                    + "usernameChangedAt, schoolEmail, personalEmail and personalEmailVerifiedAt "
+                    + "through Account REST");
             throw Problems.unmanagedAttributesEnabled().exception();
         }
     }

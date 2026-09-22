@@ -169,6 +169,42 @@ final class Problems {
                 .withHeader("Retry-After", String.valueOf(retryAfterSeconds));
     }
 
+    static Problem emailTaken() {
+        return new Problem(409, "email_taken", "E-mail address already in use",
+                "Bu e-posta adresi başka bir hesapta kayıtlı. Başka bir adres dene.");
+    }
+
+    /** The address exists but nobody proved it, so it cannot become the Primary e-mail. */
+    static Problem emailNotVerified() {
+        return new Problem(409, "email_not_verified", "E-mail address is not verified",
+                "Bu e-posta adresi doğrulanmadı. Önce adrese gönderilen bağlantıyla doğrula.");
+    }
+
+    /** The verification link is unknown, already used, expired or belongs to another person. */
+    static Problem invalidEmailCode(int attemptsLeft) {
+        return new Problem(400, "invalid_email_code", "Invalid verification code",
+                attemptsLeft > 0
+                        ? "Doğrulama kodu yanlış. " + attemptsLeft + " deneme hakkın kaldı."
+                        : "Doğrulama kodu yanlış ve deneme hakkın bitti. Yeni bir kod iste.")
+                .withExtension("attemptsLeft", attemptsLeft);
+    }
+
+    static Problem noPendingEmailChange() {
+        return new Problem(404, "no_pending_email_change", "No verification code is waiting",
+                "Bekleyen bir doğrulama kodu yok: süresi dolmuş ya da zaten kullanılmış olabilir. Yeni bir kod iste.");
+    }
+
+    static Problem noFallbackEmail() {
+        return new Problem(409, "no_fallback_email", "No address left to be primary",
+                "Kişisel e-posta şu anda birincil adresin ve hesabında okul e-postası yok; "
+                        + "kaldırılırsa giriş yapabileceğin bir adres kalmaz.");
+    }
+
+    static Problem emailNotSent() {
+        return new Problem(503, "email_not_sent", "Verification mail could not be sent",
+                "Doğrulama e-postası gönderilemedi. Lütfen daha sonra tekrar dene.");
+    }
+
     static Problem unmanagedAttributesEnabled() {
         return new Problem(503, "unmanaged_attributes_enabled", "Account changes are paused",
                 "Hesap değişiklikleri geçici olarak kapalı: realm yapılandırması yönetilmeyen özniteliklerin "

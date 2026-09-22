@@ -25,6 +25,11 @@ final class RateLimiter {
     static final Limit SUDO_OPTIONS = new Limit("sudo-options", 30, 15 * 60);
     static final Limit TOTP_CONFIRM = new Limit("totp-confirm", 10, 15 * 60);
     static final Limit MUTATION = new Limit("mutation", 30, 15 * 60);
+    /**
+     * A change request sends mail to an address nobody proved yet, so it gets a much tighter
+     * budget than the other mutations: three verification mails per person per hour.
+     */
+    static final Limit EMAIL_CHANGE = new Limit("email-change", 3, 60 * 60);
 
     private static final String KEY_PREFIX = "sky-account:rate:";
 

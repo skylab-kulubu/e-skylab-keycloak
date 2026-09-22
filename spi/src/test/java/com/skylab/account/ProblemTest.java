@@ -69,4 +69,23 @@ class ProblemTest {
             assertTrue(problem.body().contains("\"code\":\"" + problem.code() + "\""), problem.code());
         }
     }
+
+    @Test
+    void theProblemCatalogueOfTheEmailEndpointsIsStable() {
+        assertEquals(409, Problems.emailTaken().status());
+        assertEquals("email_taken", Problems.emailTaken().code());
+        assertEquals(409, Problems.emailNotVerified().status());
+        assertEquals("email_not_verified", Problems.emailNotVerified().code());
+        assertEquals(400, Problems.invalidEmailCode(3).status());
+        assertEquals("invalid_email_code", Problems.invalidEmailCode(3).code());
+        assertEquals(3, Problems.invalidEmailCode(3).extensions().get("attemptsLeft"));
+        assertTrue(Problems.invalidEmailCode(3).detail().contains("3 deneme"), "the person must see how many tries are left");
+        assertTrue(Problems.invalidEmailCode(0).detail().contains("Yeni bir kod iste"), "the last wrong try must say what to do next");
+        assertEquals(404, Problems.noPendingEmailChange().status());
+        assertEquals("no_pending_email_change", Problems.noPendingEmailChange().code());
+        assertEquals(409, Problems.noFallbackEmail().status());
+        assertEquals("no_fallback_email", Problems.noFallbackEmail().code());
+        assertEquals(503, Problems.emailNotSent().status());
+        assertEquals("email_not_sent", Problems.emailNotSent().code());
+    }
 }

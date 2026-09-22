@@ -1,0 +1,51 @@
+{
+  "unmanagedAttributePolicy": "ADMIN_VIEW",
+  "newAttributeGroup": "user-metadata",
+  "userViewOnly": [
+    "firstName",
+    "lastName",
+    "email"
+  ],
+  "attributes": [
+    {
+      "name": "schoolEmail",
+      "displayName": "Okul e-postası",
+      "validations": {
+        "email": {}
+      }
+    },
+    {
+      "name": "personalEmail",
+      "displayName": "Kişisel e-posta",
+      "validations": {
+        "email": {}
+      }
+    },
+    {
+      "name": "skyNumber",
+      "displayName": "SKY numarası"
+    },
+    {
+      "name": "department",
+      "displayName": "Bölüm"
+    },
+    {
+      "name": "university",
+      "displayName": "Üniversite"
+    },
+    {
+      "name": "skyMail",
+      "displayName": "SkyMail adresi (eski)"
+    },
+    {
+      "name": "usernameChangedAt",
+      "displayName": "Kullanıcı adının son değişiklik zamanı",
+      "validations": {
+        "pattern": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$",
+          "error-message": "ISO-8601 UTC zaman damgası olmalıdır (örnek: 2026-01-31T12:00:00Z)"
+        }
+      }
+    }
+  ]
+}

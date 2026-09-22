@@ -79,6 +79,19 @@ class HandoffStoreTest {
     }
 
     @Test
+    void theUsedTombstoneIsShortLivedAndThenTheCodeIsSimplyUnknown() {
+        HandoffStore.Minted minted = handoffs.mint(GRANT);
+        assertInstanceOf(HandoffStore.Redeemed.class, handoffs.redeem(minted.code(), minted.proof(), REALM_ID));
+
+        Time.setOffset(HandoffStore.TOMBSTONE_SECONDS - 1);
+        assertEquals(FailureReason.USED, reason(handoffs.redeem(minted.code(), minted.proof(), REALM_ID)));
+        Time.setOffset(HandoffStore.TOMBSTONE_SECONDS + 1);
+        assertEquals(FailureReason.INVALID, reason(handoffs.redeem(minted.code(), minted.proof(), REALM_ID)));
+        store.entries.values().forEach(entry -> assertTrue(entry.expiresAt() <= Time.currentTime() + HandoffStore.TOMBSTONE_SECONDS,
+                "every entry of the store has a finite lifespan"));
+    }
+
+    @Test
     void aMissingOrWrongProofIsInvalidAndDoesNotBurnTheCode() {
         HandoffStore.Minted minted = handoffs.mint(GRANT);
 
@@ -214,10 +227,10 @@ class HandoffStoreTest {
             return Map.copyOf(entry.notes());
         }
 
+        /** Infinispan's replace writes with the cache default metadata: the entry would never expire. */
         @Override
         public boolean replace(String key, Map<String, String> notes) {
-            Entry entry = live(key);
-            return entry != null && entries.replace(key, entry, new Entry(Map.copyOf(notes), entry.expiresAt()));
+            throw new UnsupportedOperationException("replace drops the lifespan in Infinispan; the store must use put");
         }
 
         @Override

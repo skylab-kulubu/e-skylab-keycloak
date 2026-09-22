@@ -7,17 +7,15 @@ import java.util.Optional;
 import java.util.regex.Pattern;
 
 /**
- * The validation rules of a Web handoff, shared by the mint, the redemption and the admin
- * endpoints so a target that is refused when it is saved is refused the same way when a code
- * for it is minted or redeemed.
+ * The validation rules of a Web handoff, shared by every step that reads or writes a Handoff
+ * target, so a target is judged the same way whenever a code for it is minted or redeemed.
  */
 final class HandoffRules {
 
-    /** Only SKY LAB's own origins may receive a browser session: {@code yildizskylab.com} and its subdomains. */
-    static final String ALLOWED_DOMAIN = "yildizskylab.com";
     static final int MAX_PATH_LENGTH = 512;
     static final int MAX_SIGN_IN_PATH_LENGTH = 128;
 
+    /** Only SKY LAB's own origins may receive a browser session: {@code yildizskylab.com} and its subdomains. */
     private static final Pattern HOST = Pattern.compile(
             "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)*yildizskylab\\.com$");
     private static final Pattern SIGN_IN_PATH = Pattern.compile("^/([A-Za-z0-9._~-]+(/[A-Za-z0-9._~-]+)*/?)?$");

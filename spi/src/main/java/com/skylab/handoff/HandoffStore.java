@@ -17,13 +17,15 @@ import java.util.regex.Pattern;
  *
  * <p>A code and its proof are 32 random bytes each (base64url, 43 characters). The store keeps
  * only SHA-256 hashes of both, so a dump of the store cannot be replayed. Next to the code a
- * longer-lived tombstone records who the code was for and when it expires, which is what lets a
+ * ten-minute tombstone records who the code was for and when it expires, which is what lets a
  * failed redemption say {@code used} or {@code expired} instead of a bare {@code invalid}.
  *
  * <p>Redemption checks the proof before it consumes the code: a link opened without its proof
  * (a leaked URL, a prefetch) is {@code invalid} and leaves the code for the WebView that holds
  * the proof. Consuming is {@link SingleUseObjectProvider#remove}, which the store guarantees to
- * succeed for exactly one caller, so concurrent opens redeem a code once.
+ * succeed for exactly one caller, so concurrent opens redeem a code once. Writes use
+ * {@link SingleUseObjectProvider#put} with a lifespan (applied when the request commits); never
+ * {@code replace}, which in Infinispan drops the lifespan and would keep a tombstone forever.
  */
 final class HandoffStore {
 
@@ -35,18 +37,11 @@ final class HandoffStore {
     private static final Pattern OPAQUE = Pattern.compile("^[A-Za-z0-9_-]{43}$");
     private static final String CODE_PREFIX = "sky-handoff:code:";
     private static final String TOMBSTONE_PREFIX = "sky-handoff:tombstone:";
-
-    private static final String REALM = "rid";
-    private static final String USER = "uid";
-    private static final String SOURCE_SESSION = "sid";
-    private static final String SOURCE_OFFLINE = "soff";
-    private static final String AUTH_TIME = "at";
-    private static final String CLIENT = "cid";
-    private static final String PATH = "path";
-    private static final String IP_ADDRESS = "ip";
-    private static final String PROOF_HASH = "ph";
-    private static final String EXPIRES_AT = "exp";
+    private static final String PROOF_HASH = "proofHash";
+    private static final String EXPIRES_AT = "expiresAt";
     private static final String USED = "used";
+    private static final String TOMBSTONE_USER_ID = "userId";
+    private static final String TOMBSTONE_CLIENT_ID = "clientId";
 
     private final SingleUseObjectProvider store;
 
@@ -78,22 +73,12 @@ final class HandoffStore {
         String proof = randomSecret();
         long expiresAt = (long) Time.currentTime() + TTL_SECONDS;
 
-        Map<String, String> notes = new HashMap<>();
-        notes.put(REALM, grant.realmId());
-        notes.put(USER, grant.userId());
-        notes.put(SOURCE_SESSION, grant.sourceSessionId());
-        notes.put(SOURCE_OFFLINE, Boolean.toString(grant.sourceOffline()));
-        notes.put(AUTH_TIME, Long.toString(grant.authTime()));
-        notes.put(CLIENT, grant.clientId());
-        notes.put(PATH, grant.path());
-        if (grant.ipAddress() != null) {
-            notes.put(IP_ADDRESS, grant.ipAddress());
-        }
+        Map<String, String> notes = grant.toNotes();
         notes.put(PROOF_HASH, sha256(proof));
         notes.put(EXPIRES_AT, Long.toString(expiresAt));
 
         String hash = sha256(code);
-        store.put(TOMBSTONE_PREFIX + hash, TOMBSTONE_SECONDS, tombstone(grant.userId(), grant.clientId(), expiresAt, false));
+        putTombstone(hash, grant.userId(), grant.clientId(), expiresAt, false);
         store.put(CODE_PREFIX + hash, TTL_SECONDS, notes);
         return new Minted(code, proof, TTL_SECONDS);
     }
@@ -108,40 +93,21 @@ final class HandoffStore {
         if (notes == null) {
             return fromTombstone(hash);
         }
-        String userId = notes.get(USER);
-        String clientId = notes.get(CLIENT);
-        if (!realmId.equals(notes.get(REALM))) {
+        HandoffGrant grant = HandoffGrant.fromNotes(notes);
+        if (grant == null || !realmId.equals(grant.realmId())) {
             return new Refused(FailureReason.INVALID, null, null);
         }
         if (isPast(notes.get(EXPIRES_AT))) {
             store.remove(key);
-            return new Refused(FailureReason.EXPIRED, userId, clientId);
+            return new Refused(FailureReason.EXPIRED, grant.userId(), grant.clientId());
         }
         if (!proofMatches(proof, notes.get(PROOF_HASH))) {
-            return new Refused(FailureReason.INVALID, userId, clientId);
+            return new Refused(FailureReason.INVALID, grant.userId(), grant.clientId());
         }
-        Map<String, String> consumed = store.remove(key);
-        if (consumed == null) {
+        if (store.remove(key) == null) {
             return fromTombstone(hash);
         }
-        markUsed(hash, userId, clientId, consumed.get(EXPIRES_AT));
-        final HandoffGrant grant;
-        try {
-            grant = new HandoffGrant(
-                    consumed.get(REALM),
-                    consumed.get(USER),
-                    consumed.get(SOURCE_SESSION),
-                    Boolean.parseBoolean(consumed.get(SOURCE_OFFLINE)),
-                    Long.parseLong(consumed.get(AUTH_TIME)),
-                    consumed.get(CLIENT),
-                    consumed.get(PATH),
-                    consumed.get(IP_ADDRESS));
-        } catch (RuntimeException exception) {
-            return new Refused(FailureReason.INVALID, userId, clientId);
-        }
-        if (grant.userId() == null || grant.sourceSessionId() == null || grant.clientId() == null || grant.path() == null) {
-            return new Refused(FailureReason.INVALID, userId, clientId);
-        }
+        putTombstone(hash, grant.userId(), grant.clientId(), parseOrZero(notes.get(EXPIRES_AT)), true);
         return new Redeemed(grant);
     }
 
@@ -150,8 +116,8 @@ final class HandoffStore {
         if (tombstone == null) {
             return new Refused(FailureReason.INVALID, null, null);
         }
-        String userId = tombstone.get(USER);
-        String clientId = tombstone.get(CLIENT);
+        String userId = tombstone.get(TOMBSTONE_USER_ID);
+        String clientId = tombstone.get(TOMBSTONE_CLIENT_ID);
         if ("true".equals(tombstone.get(USED))) {
             return new Refused(FailureReason.USED, userId, clientId);
         }
@@ -159,26 +125,17 @@ final class HandoffStore {
         return new Refused(isPast(tombstone.get(EXPIRES_AT)) ? FailureReason.EXPIRED : FailureReason.USED, userId, clientId);
     }
 
-    private void markUsed(String hash, String userId, String clientId, String expiresAt) {
-        long expiry = parseOrZero(expiresAt);
-        Map<String, String> used = tombstone(userId, clientId, expiry, true);
-        String key = TOMBSTONE_PREFIX + hash;
-        if (!store.replace(key, used)) {
-            store.put(key, TOMBSTONE_SECONDS, used);
-        }
-    }
-
-    private static Map<String, String> tombstone(String userId, String clientId, long expiresAt, boolean used) {
+    private void putTombstone(String hash, String userId, String clientId, long expiresAt, boolean used) {
         Map<String, String> notes = new HashMap<>();
         if (userId != null) {
-            notes.put(USER, userId);
+            notes.put(TOMBSTONE_USER_ID, userId);
         }
         if (clientId != null) {
-            notes.put(CLIENT, clientId);
+            notes.put(TOMBSTONE_CLIENT_ID, clientId);
         }
         notes.put(EXPIRES_AT, Long.toString(expiresAt));
         notes.put(USED, Boolean.toString(used));
-        return notes;
+        store.put(TOMBSTONE_PREFIX + hash, TOMBSTONE_SECONDS, notes);
     }
 
     private static boolean isPast(String expiresAt) {

@@ -15,6 +15,7 @@ REALM=${SKY_HANDOFF_REALM:-e-skylab-test}
 API="$BASE_URL/realms/$REALM/sky-handoff/v1"
 TOKEN_URL="$BASE_URL/realms/$REALM/protocol/openid-connect/token"
 CALLBACK=https://my.yildizskylab.com/api/auth/callback
+APP_CALLBACK=com.yildizskylab.skyapp:/oauth/callback
 ACCOUNT_CENTER_ENTRY='https://my.yildizskylab.com/api/auth/login?returnTo='
 FIXTURE_USER_UUID=11111111-1111-4111-8111-111111111111
 FIXTURE_USERNAME=account-fixture
@@ -83,18 +84,58 @@ skyapp_tokens() {
     "$TOKEN_URL"
 }
 
-# The original auth_time of a SkyApp session: the token claim, or the session start when the
-# direct grant wrote none (Keycloak's password grant does not set the AUTH_TIME note).
-app_auth_time() {
-  local payload=$1 user_uuid=$2 claim sid
-  claim=$(jq -r '.auth_time // empty' <<<"$payload")
-  if [[ -n $claim ]]; then
-    printf '%s\n' "$claim"
-    return 0
-  fi
-  sid=$(jq -r .sid <<<"$payload")
-  kcadm get "users/$user_uuid/sessions" -r "$REALM" -c \
-    | jq -r --arg sid "$sid" '.[] | select(.id == $sid) | (.start / 1000 | floor)'
+# skyapp_login <label> -> APP_TOKENS: SkyApp's real sign-in, an authorization code flow with PKCE
+# and offline_access on Keycloak's login page, so the offline session carries Keycloak's own
+# AUTH_TIME note (a direct grant writes none).
+skyapp_login() {
+  local label=$1 verifier challenge jar headers page literal action status location code
+  verifier="web-handoff-app-$label-verifier-0123456789abcdefghijklmnopqrstuvwxyz"
+  challenge=$(printf '%s' "$verifier" | openssl dgst -binary -sha256 | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+  jar="$STATE_DIR/web-handoff-app-$label.cookies"
+  headers="$STATE_DIR/web-handoff-app-$label.headers"
+  rm -f "$jar"
+  page=$(curl --fail --silent --show-error --location --get \
+    --cookie-jar "$jar" --cookie "$jar" \
+    --data-urlencode client_id=skyapp \
+    --data-urlencode response_type=code \
+    --data-urlencode 'scope=openid offline_access' \
+    --data-urlencode "redirect_uri=$APP_CALLBACK" \
+    --data-urlencode "code_challenge=$challenge" \
+    --data-urlencode code_challenge_method=S256 \
+    --data-urlencode "state=app-$label" \
+    "$BASE_URL/realms/$REALM/protocol/openid-connect/auth")
+  literal=$(grep -Eo '"loginAction"[[:space:]]*:[[:space:]]*"[^"]*"' <<<"$page" | head -n 1 \
+    | sed -E 's/^"loginAction"[[:space:]]*:[[:space:]]*//' || true)
+  [[ -n $literal ]] || fail "SkyApp login $label: the login page exposed no login action"
+  action=$(jq -r . <<<"$literal")
+  status=$(curl --silent --show-error --output /dev/null --dump-header "$headers" --write-out '%{http_code}' \
+    --cookie-jar "$jar" --cookie "$jar" \
+    --data-urlencode "username=$FIXTURE_USERNAME" \
+    --data-urlencode "password=$FIXTURE_PASSWORD" \
+    --data-urlencode credentialId= \
+    "$action")
+  [[ $status == 302 ]] || fail "SkyApp login $label: the credential submission answered HTTP $status"
+  location=$(header_value "$headers" location)
+  [[ $location == "$APP_CALLBACK"\?* ]] || fail "SkyApp login $label did not return to the app"
+  code=$(sed -n 's/.*[?&]code=\([^&]*\).*/\1/p' <<<"$location")
+  [[ -n $code ]] || fail "SkyApp login $label returned no authorization code"
+  APP_TOKENS=$(curl --fail --silent --show-error \
+    --data-urlencode grant_type=authorization_code \
+    --data-urlencode client_id=skyapp \
+    --data-urlencode "code=$code" \
+    --data-urlencode "redirect_uri=$APP_CALLBACK" \
+    --data-urlencode "code_verifier=$verifier" \
+    "$TOKEN_URL")
+}
+
+# app_refresh: a fresh access token of the fixture's SkyApp login, refreshed the way the app does
+# (access tokens live five minutes, this contract runs longer).
+app_refresh() {
+  curl --fail --silent --show-error \
+    --data-urlencode grant_type=refresh_token \
+    --data-urlencode client_id=skyapp \
+    --data-urlencode "refresh_token=$(jq -r .refresh_token <<<"$APP_TOKENS")" \
+    "$TOKEN_URL" | jq -r .access_token
 }
 
 # mint <bearer|-> <json body> -> MINT_STATUS, MINT_BODY, MINT_HEADERS; remembers issued secrets
@@ -257,11 +298,13 @@ kcadm set-password -r "$REALM" --userid "$other_uuid" --new-password "$other_pas
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='web handoff mint contract'
-app_tokens=$(skyapp_tokens "$FIXTURE_USERNAME" "$FIXTURE_PASSWORD")
-app_token=$(jq -r .access_token <<<"$app_tokens")
+skyapp_login fixture
+app_token=$(jq -r .access_token <<<"$APP_TOKENS")
 app_payload=$(jwt_payload "$app_token")
-app_auth_time=$(app_auth_time "$app_payload" "$FIXTURE_USER_UUID")
-[[ $app_auth_time =~ ^[0-9]+$ ]] || fail 'the SkyApp session has no readable authentication time'
+[[ $(jq -r .typ <<<"$(jwt_payload "$(jq -r .refresh_token <<<"$APP_TOKENS")")") == Offline ]] \
+  || fail 'the SkyApp login did not produce an offline session'
+app_auth_time=$(jq -r '.auth_time // empty' <<<"$app_payload")
+[[ $app_auth_time =~ ^[0-9]+$ ]] || fail 'the SkyApp token carries no auth_time'
 
 mint "$app_token" '{"target":"account-center","path":"/"}'
 [[ $MINT_STATUS == 201 ]] || fail "a SkyApp token could not mint an account-center handoff (HTTP $MINT_STATUS)"
@@ -270,8 +313,6 @@ grep -Eiq '^content-type:[[:space:]]*application/json' "$MINT_HEADERS" || fail '
 json_assert "$MINT_BODY" \
   '(.handoffUrl | test("^" + $api + "/open\\?code=[A-Za-z0-9_-]{43}$")) and (.proof | test("^[A-Za-z0-9_-]{43}$")) and .expiresIn == 45 and (keys | sort) == ["expiresIn", "handoffUrl", "proof"]' \
   'the mint response differs from {handoffUrl, proof, expiresIn: 45}' --arg api "$API"
-first_url=$(jq -r .handoffUrl <<<"$MINT_BODY")
-first_proof=$(jq -r .proof <<<"$MINT_BODY")
 
 mint - '{"target":"account-center","path":"/"}'
 expect_problem 401 invalid_token 'a request without a bearer token must be refused'
@@ -322,6 +363,10 @@ json_assert "$(kcadm get "clients/$account_center_uuid" -r "$REALM" -c)" \
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='web handoff open and silent login'
+app_token=$(app_refresh)
+mint_ok "$app_token" account-center /
+first_url=$HANDOFF_URL
+first_proof=$HANDOFF_PROOF
 jar="$STATE_DIR/web-handoff-webview.cookies"
 rm -f "$jar"
 open_handoff "$first_url" - "$jar"
@@ -364,6 +409,7 @@ expect_failure expired 'a code must not open after 45 seconds'
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='web handoff refusals at open'
+app_token=$(app_refresh)
 mint_ok "$app_token" account-center "$PATH_MARKER"
 set_target_attribute "$account_center_uuid" sky.handoff.enabled false
 open_handoff "$HANDOFF_URL" "$HANDOFF_PROOF" "$STATE_DIR/web-handoff-disabled-target.cookies"
@@ -411,6 +457,7 @@ other_sessions_with_webview=$(session_ids "$other_uuid")
 [[ $(jq length <<<"$other_sessions_with_webview") == $(( $(jq length <<<"$other_sessions_before") + 1 )) ]] \
   || fail 'the other person did not get a browser session'
 
+app_token=$(app_refresh)
 mint_ok "$app_token" account-center /
 open_handoff "$HANDOFF_URL" "$HANDOFF_PROOF" "$shared_jar"
 [[ $OPEN_LOCATION == "${ACCOUNT_CENTER_ENTRY}%2F" ]] || fail 'the handoff into a WebView of another person failed'
@@ -421,6 +468,32 @@ json_assert "$ID_PAYLOAD" '.sub == $sub' 'the WebView is still signed in as the 
 json_assert "$(kcadm get events -r "$REALM" -c -q "user=$other_uuid" -q type=LOGOUT -q max=20)" \
   '[.[] | select(.details.action == "sky-handoff" and .details.reason == "replaced_by_another_user")] | length >= 1' \
   "the other person's replaced session left no LOGOUT event"
+
+# The same person again in the same WebView: the older browser session is replaced, not kept
+# beside the new one, and SkyApp's own session is left alone.
+replaced_sid=$(jq -r .sid <<<"$ID_PAYLOAD")
+fixture_sessions_before=$(session_ids "$FIXTURE_USER_UUID")
+mint_ok "$app_token" account-center /
+open_handoff "$HANDOFF_URL" "$HANDOFF_PROOF" "$shared_jar"
+[[ $OPEN_LOCATION == "${ACCOUNT_CENTER_ENTRY}%2F" ]] || fail 'a second handoff of the same person failed'
+fixture_sessions_after=$(session_ids "$FIXTURE_USER_UUID")
+json_assert "$fixture_sessions_after" '(index($old) == null) and length == ($before | fromjson | length)' \
+  'a second handoff of the same person kept the older browser session' \
+  --arg old "$replaced_sid" --arg before "$fixture_sessions_before"
+json_assert "$fixture_sessions_after" 'index($app) != null' 'a handoff ended the SkyApp session it came from' \
+  --arg app "$(jq -r .sid <<<"$app_payload")"
+silent_login "$shared_jar" same-person
+current_sid=$(jq -r .sid <<<"$ID_PAYLOAD")
+[[ $current_sid != "$replaced_sid" ]] || fail 'the WebView still uses the older browser session'
+
+# A stale identity cookie (its session ended on the server) must not shadow the new cookies.
+kcadm delete "sessions/$current_sid" -r "$REALM" >/dev/null
+mint_ok "$app_token" account-center /
+open_handoff "$HANDOFF_URL" "$HANDOFF_PROOF" "$shared_jar"
+[[ $OPEN_LOCATION == "${ACCOUNT_CENTER_ENTRY}%2F" ]] || fail 'a handoff into a WebView with a stale cookie failed'
+silent_login "$shared_jar" stale-cookie
+json_assert "$ID_PAYLOAD" '.sub == $sub and .sid != $stale' 'a stale identity cookie shadowed the new browser session' \
+  --arg sub "$FIXTURE_USER_UUID" --arg stale "$current_sid"
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='web handoff rate limit'
@@ -437,6 +510,7 @@ done
 expect_problem 429 rate_limited 'the budget refusal must be rate_limited'
 retry_after=$(header_value "$MINT_HEADERS" retry-after)
 [[ $retry_after =~ ^[0-9]+$ && $retry_after -ge 1 && $retry_after -le 300 ]] || fail 'Retry-After must fit the 5 minute window'
+app_token=$(app_refresh)
 mint "$app_token" '{"target":"account-center","path":"/"}'
 [[ $MINT_STATUS == 201 ]] || fail 'the budget of one person must not limit another'
 

@@ -16,6 +16,7 @@ import jakarta.ws.rs.core.Response;
 import org.jboss.logging.Logger;
 import org.keycloak.authentication.authenticators.util.AuthenticatorUtils;
 import org.keycloak.common.ClientConnection;
+import org.keycloak.events.Details;
 import org.keycloak.events.EventBuilder;
 import org.keycloak.events.EventType;
 import org.keycloak.models.ClientModel;
@@ -42,7 +43,9 @@ import java.util.function.Supplier;
  * the per-code proof header; Keycloak sets up the browser session and sends the person to the
  * target's own sign-in entry, whose OIDC flow then completes silently from that session.
  *
- * <p>No response, log line or event ever carries a token, a code, a proof or a path.
+ * <p>No response body, Keycloak log line or event carries a token, a code, a proof or a path. The
+ * code itself travels in the {@code open} URL, where a reverse proxy may log it; it is useless
+ * there without the proof, which only ever travels in a request header.
  */
 public final class SkyHandoffResource {
 
@@ -53,6 +56,10 @@ public final class SkyHandoffResource {
     /** Per person: 30 codes per 5-minute window, far above tapping links in the app. */
     static final RateLimiter.Limit MINT_LIMIT = new RateLimiter.Limit("sky-handoff-mint", 30, 5 * 60);
     static final String AUDIT_ACTION = "sky-handoff";
+    static final String AUDIT_ACTION_DETAIL = "action";
+    static final String REPLACED_SESSION_DETAIL = "replaced_session";
+    static final String ADDRESS_CHANGED_DETAIL = "address_changed";
+    static final String REPLACED_BY_ANOTHER_USER = "replaced_by_another_user";
 
     private static final Logger LOG = Logger.getLogger(SkyHandoffResource.class);
 
@@ -135,27 +142,28 @@ public final class SkyHandoffResource {
                         userId, clientId);
             }
 
+            // The previous session goes first: ending it may expire the identity cookies, and the
+            // browser applies Set-Cookie headers in order, so the new cookies must come after.
+            ReplacedSession replaced = replacePreviousSession(user, grant.sourceSessionId());
             UserSessionModel userSession = new UserSessionManager(session).createUserSession(
                     realm, user, user.getUsername(), connection().getRemoteHost(),
                     OIDCLoginProtocol.LOGIN_PROTOCOL, false, null, null);
             userSession.setNote(AuthenticationManager.AUTH_TIME, Long.toString(grant.authTime()));
             userSession.setNote(EMBED_NOTE, EMBED_SKYAPP);
-            // The new cookies go out first: Keycloak keeps the first Set-Cookie per name, so the
-            // expiry a logout of the previous session writes afterwards cannot shadow them.
+            userSession.setState(UserSessionModel.State.LOGGED_IN);
             AuthenticationManager.createLoginCookie(session, realm, user, userSession,
                     session.getContext().getUri(), connection());
-            String replaced = replacePreviousSession(user, userSession);
             session.getContext().setUserSession(userSession);
 
             EventBuilder event = auditEvent()
                     .client(client)
                     .user(user)
                     .session(userSession);
-            if (replaced != null) {
-                event.detail("replaced_session", replaced);
+            if (replaced != ReplacedSession.NONE) {
+                event.detail(REPLACED_SESSION_DETAIL, replaced.detail());
             }
             if (addressChanged) {
-                event.detail("address_changed", "true");
+                event.detail(ADDRESS_CHANGED_DETAIL, "true");
             }
             event.success();
             return redirect(target.get().entry(grant.path()));
@@ -199,36 +207,53 @@ public final class SkyHandoffResource {
         return result;
     }
 
+    /** Which Keycloak session of this browser a handoff replaced, for the audit event. */
+    enum ReplacedSession {
+        NONE(null),
+        SAME_USER("same_user"),
+        OTHER_USER("other_user");
+
+        private final String detail;
+
+        ReplacedSession(String detail) {
+            this.detail = detail;
+        }
+
+        String detail() {
+            return detail;
+        }
+    }
+
     /**
-     * Ends the Keycloak session this browser held before, if any. Another person's session is
-     * logged out properly (its clients are told through back-channel logout) because that person
-     * must not stay signed in inside this WebView; an older session of the same person is removed
-     * the way Keycloak replaces it on a new login in the same browser.
-     *
-     * @return {@code other_user}, {@code same_user} or {@code null} when nothing was replaced
+     * Ends the Keycloak session this browser holds, if any, before the new one is created (the
+     * order Keycloak itself uses after a login). Another person's session is logged out properly
+     * (its clients are told through back-channel logout, a {@code LOGOUT} event names that person)
+     * because they must not stay signed in inside this WebView; an older session of the same
+     * person is removed the way Keycloak replaces it on a new login in the same browser. The
+     * SkyApp session the code was minted from is never touched.
      */
-    private String replacePreviousSession(UserModel user, UserSessionModel current) {
+    private ReplacedSession replacePreviousSession(UserModel user, String sourceSessionId) {
         AuthenticationManager.AuthResult previous = AuthenticationManager.authenticateIdentityCookie(session, realm, false);
-        if (previous == null || previous.session() == null || previous.session().getId().equals(current.getId())) {
-            return null;
+        if (previous == null || previous.session() == null || previous.session().getId().equals(sourceSessionId)) {
+            return ReplacedSession.NONE;
         }
         UserSessionModel previousSession = previous.session();
         if (previous.user() != null && user.getId().equals(previous.user().getId())) {
             session.sessions().removeUserSession(realm, previousSession);
-            return "same_user";
+            return ReplacedSession.SAME_USER;
         }
         String previousSessionId = previousSession.getId();
         UserModel previousUser = previous.user();
         AuthenticationManager.backchannelLogout(session, realm, previousSession, session.getContext().getUri(),
-                connection(), session.getContext().getRequestHeaders(), false);
+                connection(), session.getContext().getRequestHeaders(), true);
         new EventBuilder(realm, session, connection())
                 .event(EventType.LOGOUT)
                 .user(previousUser)
                 .session(previousSessionId)
-                .detail("action", AUDIT_ACTION)
-                .detail("reason", "replaced_by_another_user")
+                .detail(AUDIT_ACTION_DETAIL, AUDIT_ACTION)
+                .detail(Details.REASON, REPLACED_BY_ANOTHER_USER)
                 .success();
-        return "other_user";
+        return ReplacedSession.OTHER_USER;
     }
 
     private boolean isLockedOut(UserModel user) {
@@ -273,7 +298,7 @@ public final class SkyHandoffResource {
     private EventBuilder auditEvent() {
         return new EventBuilder(realm, session, connection())
                 .event(EventType.CUSTOM_REQUIRED_ACTION)
-                .detail("action", AUDIT_ACTION);
+                .detail(AUDIT_ACTION_DETAIL, AUDIT_ACTION);
     }
 
     private static Response redirect(String location) {

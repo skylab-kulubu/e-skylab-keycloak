@@ -3,6 +3,7 @@ package com.skylab.account;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.GET;
 import jakarta.ws.rs.HeaderParam;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
@@ -158,15 +159,51 @@ public final class EmailResource {
             EventBuilder event = request.event(caller)
                     .event(EventType.UPDATE_PROFILE)
                     .detail(Details.CONTEXT, PROFILE_CONTEXT);
+            String previousPersonal = normaliseAttribute(user, IdentityResource.PERSONAL_EMAIL_ATTRIBUTE);
             user.setSingleAttribute(IdentityResource.PERSONAL_EMAIL_ATTRIBUTE, address);
             user.setSingleAttribute(IdentityResource.PERSONAL_EMAIL_VERIFIED_AT_ATTRIBUTE,
                     AccountRequest.isoSeconds(Time.currentTime()));
-            if (outcome.change().makePrimary() || isBlank(user.getEmail())) {
+            if (confirmedBecomesPrimary(outcome.change().makePrimary(), previousPersonal, user.getEmail())) {
                 applyPrimary(caller, user, address);
             }
             event.success();
             return AccountRequest.ok(200, IdentityResource.identityOf(request, user));
         });
+    }
+
+    /**
+     * The change that is waiting for its code, so a page reloaded between the mail and the code
+     * can show the code box again. Only the caller's own; never the code.
+     */
+    @GET
+    @Path("pending")
+    @Produces({MediaType.APPLICATION_JSON, Problem.MEDIA_TYPE})
+    public Response pending() {
+        return request.execute(() -> {
+            Caller caller = request.authenticate();
+            PendingEmailChanges.Waiting waiting =
+                    new PendingEmailChanges(request.session().singleUseObjects()).peek(caller.user().getId());
+            if (waiting == null) {
+                throw Problems.noPendingEmailChange().exception();
+            }
+            ObjectNode body = JsonSerialization.mapper.createObjectNode();
+            body.put("address", waiting.address());
+            body.put("expiresAt", AccountRequest.isoSeconds(waiting.expiresAt()));
+            body.put("attemptsLeft", waiting.attemptsLeft());
+            return AccountRequest.ok(200, body);
+        });
+    }
+
+    /**
+     * Whether a just-proven personal address becomes the Primary e-mail: when the person asked for
+     * it, when there is no primary at all, or when it replaces the personal address that was the
+     * primary. Without the last case Keycloak email would keep an address the person no longer
+     * has, and the identity would report the primary as "none".
+     */
+    static boolean confirmedBecomesPrimary(boolean makePrimary, String previousPersonal, String currentEmail) {
+        return makePrimary
+                || isBlank(currentEmail)
+                || (previousPersonal != null && previousPersonal.equalsIgnoreCase(currentEmail));
     }
 
     /** Chooses which of the two proven addresses Keycloak, the tokens, core and SkyMail see. */

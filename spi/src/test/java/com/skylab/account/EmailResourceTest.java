@@ -77,6 +77,23 @@ class EmailResourceTest {
     }
 
     @Test
+    void aConfirmedAddressBecomesPrimaryWhenAskedOrWhenThereIsNoPrimaryYet() {
+        assertTrue(EmailResource.confirmedBecomesPrimary(true, null, "ada@std.yildiz.edu.tr"));
+        assertTrue(EmailResource.confirmedBecomesPrimary(false, null, ""));
+        assertTrue(EmailResource.confirmedBecomesPrimary(false, null, null));
+        assertFalse(EmailResource.confirmedBecomesPrimary(false, null, "ada@std.yildiz.edu.tr"));
+    }
+
+    // Replacing the personal address that is the primary must move the primary with it; otherwise
+    // Keycloak email keeps pointing at an address the person no longer has (primary "none").
+    @Test
+    void replacingThePersonalAddressThatIsPrimaryMovesThePrimaryWithIt() {
+        assertTrue(EmailResource.confirmedBecomesPrimary(false, "old@example.com", "OLD@example.com"));
+        assertFalse(EmailResource.confirmedBecomesPrimary(false, "old@example.com", "ada@std.yildiz.edu.tr"),
+                "replacing a personal address that is not primary leaves the primary alone");
+    }
+
+    @Test
     void anAddressBecomesPrimaryOnlyOnceItIsProven() {
         assertEquals(EmailResource.PrimaryChoice.APPLY,
                 EmailResource.choosePrimary("ada@example.com", true, "ada@std.yildiz.edu.tr", true));

@@ -626,14 +626,30 @@ kaydı sona kadar depoda bırakmak, iki paralel onayın ikisinin de onu görmesi
 olurdu. Ardından:
 
 - `personalEmail` ve `personalEmailVerifiedAt` yazılır;
-- `makePrimary` istendiyse **ya da** kişinin henüz hiç `email` alanı yoksa Keycloak
-  `email` bu adres olur ve `emailVerified=true` yazılır (olay `UPDATE_EMAIL`,
+- `makePrimary` istendiyse, kişinin henüz hiç `email` alanı yoksa, **ya da** yeni adres
+  birincil olan kişisel adresin yerini alıyorsa Keycloak `email` bu adres olur ve `emailVerified=true` yazılır (olay `UPDATE_EMAIL`,
   `previous_email`/`updated_email`). İkinci durum kişinin yerine bir seçim yapmaz:
   `email`'i boş bir hesabın giriş yapabileceği ve posta alabileceği başka bir adres
-  yoktur, az önce kanıtladığı adres tek adaydır;
+  yoktur, az önce kanıtladığı adres tek adaydır. Üçüncüsü de bir seçim değil:
+  birincil olan kişisel adresi değiştiren kişinin `email`'i aksi halde artık sahip
+  olmadığı bir adreste kalırdı ve `primary` `none` okunurdu;
 - olay `UPDATE_PROFILE` (`context=ACCOUNT`).
 
 Yanıt `200` + güncel `identity`.
+
+#### `GET email/pending` — sudo gerekmez, bearer gerekir
+
+Kişinin kodunu bekleyen değişikliği, **tüketmeden** okur; posta ile kod arasında
+yenilenen sayfa kod kutusunu yeniden gösterebilsin, kişi saatte üç kodluk hakkından
+birini harcamasın diye. Yalnız çağıranın kendi değişikliği; kod ya da özeti asla
+dönmez.
+
+```json
+{ "address": "ada@example.com", "expiresAt": "2026-09-23T00:10:00Z", "attemptsLeft": 4 }
+```
+
+Bekleyen değişiklik yoksa (hiç istenmedi, onaylandı, süresi doldu, hak bitti)
+`404 no_pending_email_change`. Bütçe harcamaz (`GET identity` gibi).
 
 #### `POST email/primary` — sudo gerekir
 

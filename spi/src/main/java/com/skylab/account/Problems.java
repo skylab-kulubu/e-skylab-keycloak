@@ -174,13 +174,17 @@ final class Problems {
                 "Bu e-posta adresi başka bir hesapta kayıtlı. Başka bir adres dene.");
     }
 
-    /** The address exists but nobody proved it, so it cannot become the Primary e-mail. */
+    /**
+     * The address exists but nobody proved it, so it cannot become the Primary e-mail: a personal
+     * address whose code was never entered, or a school address without the YTÜ link.
+     */
     static Problem emailNotVerified() {
         return new Problem(409, "email_not_verified", "E-mail address is not verified",
-                "Bu e-posta adresi doğrulanmadı. Önce adrese gönderilen bağlantıyla doğrula.");
+                "Bu adres henüz kanıtlanmadı. Kişisel adres için adrese gönderilen kodu gir; "
+                        + "okul adresi için YTÜ hesabını bağla.");
     }
 
-    /** The verification link is unknown, already used, expired or belongs to another person. */
+    /** The code does not match this person's pending change; {@code attemptsLeft} tries remain. */
     static Problem invalidEmailCode(int attemptsLeft) {
         return new Problem(400, "invalid_email_code", "Invalid verification code",
                 attemptsLeft > 0
@@ -196,8 +200,9 @@ final class Problems {
 
     static Problem noFallbackEmail() {
         return new Problem(409, "no_fallback_email", "No address left to be primary",
-                "Kişisel e-posta şu anda birincil adresin ve hesabında okul e-postası yok; "
-                        + "kaldırılırsa giriş yapabileceğin bir adres kalmaz.");
+                "Kişisel e-posta şu anda birincil adresin ve yerine geçebilecek, YTÜ hesabıyla "
+                        + "kanıtlanmış bir okul e-postan yok; kaldırılırsa giriş yapabileceğin bir adres "
+                        + "kalmaz. Önce YTÜ hesabını bağla ya da başka bir kişisel adres ekle.");
     }
 
     static Problem emailNotSent() {

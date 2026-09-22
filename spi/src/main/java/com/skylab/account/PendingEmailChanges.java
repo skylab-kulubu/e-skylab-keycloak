@@ -53,6 +53,10 @@ final class PendingEmailChanges {
     record Pending(String address, boolean makePrimary) {
     }
 
+    /** What is waiting for a code, as the page may show it: never the code or its hash. */
+    record Waiting(String address, int expiresAt, int attemptsLeft) {
+    }
+
     /** What an attempt with a code came to. */
     record Outcome(Status status, Pending change, int attemptsLeft) {
 
@@ -99,6 +103,29 @@ final class PendingEmailChanges {
                 EXPIRES_AT_NOTE, Integer.toString(Time.currentTime() + TTL_SECONDS),
                 ATTEMPTS_LEFT_NOTE, Integer.toString(MAX_ATTEMPTS)));
         return code;
+    }
+
+    /**
+     * What this person is waiting to prove, without consuming it, or {@code null}. Lets a page that
+     * was reloaded between the mail and the code show the code box again instead of making the
+     * person spend one of three codes an hour.
+     */
+    Waiting peek(String userId) {
+        if (userId == null) {
+            return null;
+        }
+        Map<String, String> notes = store.get(key(userId));
+        if (notes == null) {
+            return null;
+        }
+        String address = notes.get(ADDRESS_NOTE);
+        Integer expiresAt = integer(notes.get(EXPIRES_AT_NOTE));
+        Integer attemptsLeft = integer(notes.get(ATTEMPTS_LEFT_NOTE));
+        if (address == null || address.isBlank() || expiresAt == null || attemptsLeft == null
+                || expiresAt < Time.currentTime() || attemptsLeft <= 0) {
+            return null;
+        }
+        return new Waiting(address, expiresAt, attemptsLeft);
     }
 
     /** Drops a change whose mail could not be sent, so its code never works. */

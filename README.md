@@ -217,7 +217,7 @@ belgesindedir.
   `POST credentials/password` (`logoutOtherSessions` ile);
   `POST credentials/totp/setup|confirm`; `POST credentials/webauthn/options|register`
   (passkey kaydı); `DELETE credentials/{id}` (OTP ve passkey; parola asla);
-  `POST email/change-request|confirm|primary`, `DELETE email/personal`
+  `POST email/change-request|confirm|primary`, `GET email/pending`, `DELETE email/personal`
   (kişisel e-posta ve birincil adres).
 - Kişisel e-posta (ADR-0044): `POST email/change-request` adresi Keycloak'ın kendi
   e-posta doğrulayıcısıyla sınar, küçük harfe çevirir, kişinin kendi adreslerini ve
@@ -232,9 +232,11 @@ belgesindedir.
   sudo istemez ama bearer ister ve kodu **yalnız çağıranın kendi** bekleyen
   değişikliğiyle karşılaştırır: kod başka bir hesaba adres bağlayamaz. Yanlış kod
   `400 invalid_email_code` (`attemptsLeft`), beşinci yanlışta kod ölür; bekleyen
-  değişiklik yoksa `404 no_pending_email_change`. Onayda `personalEmail` +
-  `personalEmailVerifiedAt` yazılır, `makePrimary` (ya da hiç `email` yoksa) Keycloak
-  `email` alanını taşır. `POST email/primary` seçilen adres kanıtlıysa onu birincil
+  değişiklik yoksa `404 no_pending_email_change`. `GET email/pending` bekleyen
+  değişikliği tüketmeden okur (adres, bitiş, kalan hak; kod asla), sayfa yenilense de
+  kod kutusu geri gelsin diye. Onayda `personalEmail` + `personalEmailVerifiedAt`
+  yazılır; `makePrimary` istendiyse, hiç `email` yoksa ya da birincil kişisel adresin
+  yerini alıyorsa Keycloak `email` alanını taşır. `POST email/primary` seçilen adres kanıtlıysa onu birincil
   yapar (okul adresi için YTÜ bağlantısı şarttır, `409 email_not_verified`); öteki
   adresin var olması gerekmez. `DELETE email/personal` adresi kaldırır ve birincilse
   YTÜ bağlantılı okul adresine düşer (`409 no_fallback_email` yoksa). `GET identity`

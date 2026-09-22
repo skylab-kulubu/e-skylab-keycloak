@@ -81,6 +81,13 @@ class ProblemTest {
         assertEquals(3, Problems.invalidEmailCode(3).extensions().get("attemptsLeft"));
         assertTrue(Problems.invalidEmailCode(3).detail().contains("3 deneme"), "the person must see how many tries are left");
         assertTrue(Problems.invalidEmailCode(0).detail().contains("Yeni bir kod iste"), "the last wrong try must say what to do next");
+        assertTrue(Problems.emailNotVerified().detail().contains("kod"),
+                "the personal address is proven with a code, not a link");
+        assertTrue(!Problems.emailNotVerified().detail().contains("bağlantıyla"));
+        assertTrue(Problems.emailNotVerified().detail().contains("YTÜ"),
+                "a school address is proven by the YTÜ link");
+        assertTrue(Problems.noFallbackEmail().detail().contains("YTÜ"),
+                "the fallback also needs the YTÜ link, not only a school address");
         assertEquals(404, Problems.noPendingEmailChange().status());
         assertEquals("no_pending_email_change", Problems.noPendingEmailChange().code());
         assertEquals(409, Problems.noFallbackEmail().status());

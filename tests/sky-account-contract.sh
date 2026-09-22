@@ -812,6 +812,13 @@ wrong_e=$(a_code_other_than "$confirm_code")
 sky POST email/confirm "$token_e" - "{\"code\":\"$wrong_e\"}"
 expect 400 invalid_email_code 'a wrong code must be refused'
 json_assert "$SKY_BODY" '.attemptsLeft == 4' 'a wrong code must cost exactly one of five tries (a malformed one costs none)'
+# A page reloaded between the mail and the code reads what is waiting instead of asking for a new code.
+sky GET email/pending "$token_e" -
+expect 200 - 'the waiting change must be readable'
+json_assert "$SKY_BODY" \
+  '.address == $personal and .attemptsLeft == 4 and ((.expiresAt | fromdateiso8601) > $now) and (keys | sort) == ["address","attemptsLeft","expiresAt"]' \
+  'the waiting change must show address, deadline and tries, and never the code' \
+  --arg personal "$EMAIL_PERSONAL_ADDRESS" --argjson now "$(date -u +%s)"
 # The address-squatting attack the link allowed: this person's code typed into the other
 # person's session only ever meets the other person's own change.
 if [[ $confirm_code != "$foreign_code" ]]; then
@@ -844,6 +851,8 @@ json_assert "$SKY_BODY" \
   --arg personal "$EMAIL_PERSONAL_ADDRESS" --arg school "$EMAIL_SCHOOL_ADDRESS"
 sky POST email/confirm "$token_e" - "{\"code\":\"$confirm_code\"}"
 expect 404 no_pending_email_change 'a used code must not work a second time'
+sky GET email/pending "$token_e" -
+expect 404 no_pending_email_change 'nothing waits once the change is confirmed'
 kcadm get "users/$email_user_uuid" -r "$REALM" -c \
   | jq -e --arg personal "$EMAIL_PERSONAL_ADDRESS" --arg school "$EMAIL_SCHOOL_ADDRESS" \
     '.email == $school and .attributes.personalEmail == [$personal] and (.attributes.personalEmailVerifiedAt[0] | length) > 0' >/dev/null \
@@ -915,6 +924,36 @@ kcadm get "users/$email_user_uuid" -r "$REALM" -c \
   || fail 'the removed personal address is still stored in Keycloak'
 kcadm delete "users/$email_user_uuid/federated-identity/OBS" -r "$REALM" >/dev/null
 
+# Replacing the personal address that is the primary must move the primary with it: otherwise
+# Keycloak email keeps an address the person no longer has and the primary reads "none".
+email_person email-third email-third@std.yildiz.edu.tr email-third-old@example.invalid
+email_third_uuid=$EMAIL_USER_UUID
+email_third_password=$EMAIL_PASSWORD
+kcadm update "users/$email_third_uuid" -r "$REALM" \
+  -s 'attributes.personalEmail=["email-third-old@example.invalid"]' \
+  -s 'attributes.personalEmailVerifiedAt=["2026-09-01T12:00:00Z"]' >/dev/null
+browser_login email-3 "$email_third_password" '' email-third
+token_t=$LOGIN_ACCESS_TOKEN
+sky GET identity "$token_t" -
+json_assert "$SKY_BODY" '.primary == "personal" and .personalEmailVerified == true' \
+  'the third person must start with a proven personal primary'
+sky POST sudo/password "$token_t" - "{\"password\":\"$email_third_password\"}"
+expect 200 - 'the third e-mail person must obtain a sudo token'
+sudo_t=$(jq -r .sudoToken <<<"$SKY_BODY")
+sky POST email/change-request "$token_t" "$sudo_t" '{"address":"email-third-new@example.invalid","makePrimary":false}'
+expect 202 - 'a replacement personal address must be accepted'
+sky GET email/pending "$token_t" -
+expect 200 - 'the replacement must be waiting'
+json_assert "$SKY_BODY" '.address == "email-third-new@example.invalid" and .attemptsLeft == 5' \
+  'the waiting replacement must show its address and all five tries'
+third_code=$(confirmation_code_of "$(mailpit_message_id email-third-new@example.invalid)")
+sky POST email/confirm "$token_t" - "{\"code\":\"$third_code\"}"
+expect 200 - 'the replacement code must finish the change'
+json_assert "$SKY_BODY" \
+  '.personalEmail == "email-third-new@example.invalid" and .primary == "personal" and .email == "email-third-new@example.invalid" and .emailVerified == true' \
+  'replacing the personal primary must move the primary to the new address'
+kcadm delete "users/$email_third_uuid" -r "$REALM" >/dev/null
+
 CURRENT_STAGE='sky-account rate limit'
 rate_limited=''
 for attempt in $(seq 1 11); do
@@ -939,7 +978,7 @@ for secret_value in "$totp_secret" "$sudo_a" "$sudo_totp" "$sudo_reauth" "$sudo_
   [[ $keycloak_logs != *"$secret_value"* ]] || fail 'a secret, sudo token, password or e-mail token leaked into Keycloak logs'
 done
 # Six digits turn up in any log by chance, so the codes are looked for next to what would carry them.
-for code_value in "$confirm_code" "$foreign_code"; do
+for code_value in "$confirm_code" "$foreign_code" "$third_code"; do
   [[ $keycloak_logs != *"code\":\"$code_value"* && $keycloak_logs != *"code=$code_value"* && $keycloak_logs != *"code: $code_value"* ]] \
     || fail 'an e-mail verification code leaked into Keycloak logs'
 done

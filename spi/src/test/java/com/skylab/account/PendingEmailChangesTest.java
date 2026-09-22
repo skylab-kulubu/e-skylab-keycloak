@@ -194,6 +194,33 @@ class PendingEmailChangesTest {
         assertNotEquals(PendingEmailChanges.key("user-a"), PendingEmailChanges.key("user-b"));
     }
 
+    // A page reload must not cost the person a new code: the page reads what is waiting.
+    @Test
+    void peekingShowsWhatIsWaitingWithoutTheCodeAndWithoutSpendingIt() {
+        String code = pending.issue("user-a", "ada@example.com", true);
+
+        PendingEmailChanges.Waiting waiting = pending.peek("user-a");
+        assertEquals("ada@example.com", waiting.address());
+        assertEquals(PendingEmailChanges.MAX_ATTEMPTS, waiting.attemptsLeft());
+        assertTrue(waiting.expiresAt() > Time.currentTime(), "a waiting change has a deadline in the future");
+        assertTrue(!waiting.toString().contains(code), "peeking must never reveal the code");
+
+        pending.confirm("user-a", other(code));
+        assertEquals(PendingEmailChanges.MAX_ATTEMPTS - 1, pending.peek("user-a").attemptsLeft());
+        assertEquals(Outcome.confirmed(new Pending("ada@example.com", true)), pending.confirm("user-a", code),
+                "peeking must not consume the change");
+        assertNull(pending.peek("user-a"), "nothing waits once the change is confirmed");
+    }
+
+    @Test
+    void nothingWaitsForAnotherPersonOrAfterTheDeadline() {
+        pending.issue("user-a", "ada@example.com", false);
+
+        assertNull(pending.peek("user-b"));
+        Time.setOffset(PendingEmailChanges.TTL_SECONDS + 1);
+        assertNull(pending.peek("user-a"));
+    }
+
     /** A six-digit code that is certainly not {@code code}. */
     private static String other(String code) {
         return code.equals("000000") ? "000001" : "000000";

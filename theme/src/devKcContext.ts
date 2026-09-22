@@ -82,7 +82,8 @@ const { getKcContextMock } = createGetKcContextMock({
     properties: { ...kcEnvDefaults }
   } satisfies KcContextExtension,
   kcContextExtensionPerPage: {
-    "passkey-offer.ftl": {}
+    "passkey-offer.ftl": {},
+    "sky-handoff-failed.ftl": { skyHandoffReason: "expired" }
   } satisfies KcContextExtensionPerPage,
   overrides: {
     realm: {
@@ -287,7 +288,11 @@ const { getKcContextMock } = createGetKcContextMock({
       idpAlias: microsoftProvider.alias,
       brokerContext: { username: previewUser.email }
     },
-    "passkey-offer.ftl": {}
+    "passkey-offer.ftl": {},
+    // Rendered outside any login flow.
+    "sky-handoff-failed.ftl": {
+      isAppInitiatedAction: false
+    }
   }
 });
 
@@ -313,6 +318,14 @@ export function getDevKcContext(): KcContext {
   const requestedPage = searchParams.get("page");
   const pageId = requestedPage !== null && isThemedPageId(requestedPage) ? requestedPage : "login.ftl";
   const languageTag = searchParams.get("lang") === "en" ? "en" : "tr";
+  const kcContext = getDevKcContextForPage(pageId, languageTag);
 
-  return getDevKcContextForPage(pageId, languageTag);
+  // `?page=sky-handoff-failed.ftl&reason=used` previews one failure reason; the value is passed
+  // on unchecked, as the SPI would, so the page's own handling of unknown reasons is exercised.
+  const reason = searchParams.get("reason");
+  if (kcContext.pageId === "sky-handoff-failed.ftl" && reason !== null) {
+    kcContext.skyHandoffReason = reason;
+  }
+
+  return kcContext;
 }

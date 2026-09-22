@@ -6,6 +6,7 @@
 # Leaves account-center enabled as a Handoff target and removes the users it creates.
 set -Eeuo pipefail
 
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 COMPOSE_FILE=${SKY_HANDOFF_COMPOSE_FILE:?set SKY_HANDOFF_COMPOSE_FILE}
 ADMIN_CONFIG=${SKY_HANDOFF_ADMIN_CONFIG:?set SKY_HANDOFF_ADMIN_CONFIG}
 CLIENT_SECRET=${SKY_HANDOFF_CLIENT_SECRET:?set SKY_HANDOFF_CLIENT_SECRET}
@@ -224,22 +225,41 @@ open_handoff() {
 
 # expect_failure <reason> <message>: the open landed on the failure page of that reason
 expect_failure() {
-  local reason=$1 message=$2 page status
+  local reason=$1 message=$2
   [[ $OPEN_LOCATION == "$API/failed?reason=$reason" ]] \
     || fail "$message (landed on ${OPEN_LOCATION%%\?*} instead of the $reason failure page)"
+  expect_failure_page "$OPEN_LOCATION" "$reason" "$message"
+}
+
+# expect_failure_page <url> <reason> <message>: HTTP 200, the SKY LAB login theme's failure page
+# (Keycloakify renders it from the page context, so the context must name the reason), no form,
+# and the page's own headers: never cached, framed or referred, only its own inline script.
+expect_failure_page() {
+  local url=$1 reason=$2 message=$3 page headers status policy script_src
   page="$STATE_DIR/sky-handoff-failed.html"
-  status=$(curl --silent --show-error --output "$page" \
-    --dump-header "$STATE_DIR/sky-handoff-failed.headers" --write-out '%{http_code}' "$OPEN_LOCATION")
+  headers="$STATE_DIR/sky-handoff-failed.headers"
+  status=$(curl --silent --show-error --output "$page" --dump-header "$headers" --write-out '%{http_code}' "$url")
   [[ $status == 200 ]] || fail "$message (the $reason page answered HTTP $status)"
   if grep -Eqi '<form' "$page"; then
     fail "$message (the failure page must not offer a form)"
   fi
-  grep -Fq 'Uygulamaya dönüp tekrar dene.' "$page" || fail "$message (the failure page lacks the retry hint)"
-  grep -Fq "data-reason=\"$reason\"" "$page" || fail "$message (the failure page shows another reason)"
-  [[ $(header_value "$STATE_DIR/sky-handoff-failed.headers" cache-control) == no-store ]] \
+  grep -Fq 'kcContext.pageId = "sky-handoff-failed.ftl";' "$page" \
+    || fail "$message (the failure page was not rendered by the SKY LAB login theme)"
+  [[ $(grep -Ec '"skyHandoffReason"[[:space:]]*:' "$page" || true) == 1 ]] \
+    && grep -Eq "\"skyHandoffReason\"[[:space:]]*:[[:space:]]*\"$reason\"" "$page" \
+    || fail "$message (the failure page shows another reason than $reason)"
+  [[ $(header_value "$headers" cache-control) == no-store ]] \
     || fail "$message (the failure page must not be cached)"
-  [[ $(header_value "$STATE_DIR/sky-handoff-failed.headers" x-frame-options) == DENY ]] \
+  [[ $(header_value "$headers" x-frame-options) == DENY ]] \
     || fail "$message (the failure page must not be framed)"
+  [[ $(header_value "$headers" referrer-policy) == no-referrer ]] \
+    || fail "$message (the failure page must send no referrer)"
+  policy=$(header_value "$headers" content-security-policy)
+  [[ $policy == *"frame-ancestors 'none'"* && $policy == *"form-action 'none'"* && $policy == *"default-src 'none'"* ]] \
+    || fail "$message (the failure page policy lost its framing, form or default restriction: $policy)"
+  script_src=$(tr ';' '\n' <<<"$policy" | sed -n 's/^[[:space:]]*script-src //p')
+  [[ $script_src == "'self' 'sha256-"* && $script_src != *unsafe* ]] \
+    || fail "$message (the failure page must allow only its own inline script, by hash: $script_src)"
 }
 
 # start_login <label> -> LOGIN_URL, LOGIN_VERIFIER: a pushed account-center authorization request
@@ -794,6 +814,62 @@ json_assert "$admin_events" \
 json_assert "$admin_events" \
   '[.[] | select(.resourceType == "SKY_HANDOFF_TARGET" and .details.clientId == "outside-fixture")] | length == 0' \
   'a refused change must not leave an admin event'
+
+# ---------------------------------------------------------------------------------------------
+CURRENT_STAGE='web handoff failure pages'
+# Every reason lands on HTTP 200 with no form; anything else is the generic reason, never echoed.
+failure_pages_since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+for reason in expired used invalid target_disabled account_unavailable unavailable; do
+  expect_failure_page "$API/failed?reason=$reason" "$reason" "the $reason failure page"
+done
+expect_failure_page "$API/failed" unavailable 'a failure page without a reason must be the generic one'
+expect_failure_page "$API/failed?reason=EXPIRED" unavailable 'an unknown reason must be the generic one'
+expect_failure_page "$API/failed?reason=%3Cscript%3Ealert%28%27sky-reason-echo%27%29%3C%2Fscript%3E" unavailable \
+  'a hostile reason must be the generic one'
+if grep -Fq 'sky-reason-echo' "$STATE_DIR/sky-handoff-failed.html"; then
+  fail 'the failure page echoed its reason parameter'
+fi
+
+CURRENT_STAGE='web handoff failure page in Chromium'
+(
+  cd "$SCRIPT_DIR/../theme"
+  SKY_HANDOFF_FAILED_URL="$API/failed" \
+    npx --no-install playwright test \
+      --config=playwright.integration.config.ts \
+      tests/integration/sky-handoff-failed.spec.ts
+) || fail 'the failure page did not render every reason in Chromium'
+
+CURRENT_STAGE='web handoff failure page without the SKY LAB login theme'
+# A realm whose login theme lacks the page still gets the reason, from the built-in page.
+login_theme_before=$(kcadm get "realms/$REALM" -c | jq -r '.loginTheme // ""')
+kcadm update "realms/$REALM" -s loginTheme=keycloak.v2 >/dev/null
+fallback_page="$STATE_DIR/sky-handoff-failed-fallback.html"
+fallback_headers="$STATE_DIR/sky-handoff-failed-fallback.headers"
+# The login theme is restored before any assertion, whatever the request did.
+fallback_status=$(curl --silent --show-error --output "$fallback_page" --dump-header "$fallback_headers" \
+  --write-out '%{http_code}' "$API/failed?reason=used" || printf 'unreachable')
+kcadm update "realms/$REALM" -s "loginTheme=$login_theme_before" >/dev/null
+[[ $fallback_status == 200 ]] || fail "the built-in failure page answered HTTP $fallback_status"
+grep -Fq 'data-reason="used"' "$fallback_page" && grep -Fq 'Bu bağlantı zaten kullanıldı.' "$fallback_page" \
+  && grep -Fq 'Uygulamaya dönüp tekrar dene.' "$fallback_page" \
+  || fail 'the built-in failure page lost its reason or its sentences'
+if grep -Eqi '<form|<script|<a[[:space:]]' "$fallback_page"; then
+  fail 'the built-in failure page must offer no form, script or link'
+fi
+fallback_policy=$(header_value "$fallback_headers" content-security-policy)
+[[ $fallback_policy == *"default-src 'none'"* && $fallback_policy != *script-src* && $fallback_policy == *"frame-ancestors 'none'"* ]] \
+  || fail "the built-in failure page policy differs: $fallback_policy"
+[[ $(header_value "$fallback_headers" x-frame-options) == DENY && $(header_value "$fallback_headers" cache-control) == no-store ]] \
+  || fail 'the built-in failure page lost its framing or caching headers'
+expect_failure_page "$API/failed?reason=used" used 'the themed failure page must return with the SKY LAB login theme'
+
+failure_page_log=$("${COMPOSE[@]}" logs --no-color --since "$failure_pages_since" keycloak 2>&1 \
+  | sed -E 's/[A-Za-z0-9_-]{43}/[REDACTED-43]/g')
+# A failed render logs Keycloak's "Failed to process template" and the page's own fallback
+# warning; either means the themed page did not render.
+if grep -Ei 'failed to process template|sky-handoff: the login theme' <<<"$failure_page_log" >&2; then
+  fail 'the themed failure page failed to render and fell back'
+fi
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='web handoff audit events and secrecy'

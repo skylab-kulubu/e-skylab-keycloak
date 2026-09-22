@@ -6,8 +6,12 @@ import { themedPageIds, type ThemedPageId } from "./pageIds";
 
 const mainIdByPage: Partial<Record<ThemedPageId, string>> = {
   "login.ftl": "sl-legacy-main",
-  "passkey-offer.ftl": "sl-passkey-offer-main"
+  "passkey-offer.ftl": "sl-passkey-offer-main",
+  "sky-handoff-failed.ftl": "sl-handoff-failed-main"
 };
+
+// The Web handoff failure page offers nothing to do, not even a language switch (HandoffFailed.test.tsx).
+const pagesWithoutLanguageMenu: ThemedPageId[] = ["sky-handoff-failed.ftl"];
 
 async function renderPage(pageId: ThemedPageId, languageTag: "tr" | "en" = "tr") {
   const kcContext = getDevKcContextForPage(pageId, languageTag);
@@ -55,8 +59,12 @@ describe("every Keycloak page renders inside the login page chrome", () => {
     expect(footer).toHaveAttribute("role", "contentinfo");
     expect(footer?.querySelector('a[href="https://skyl.app/kvkk-metni"]')).toHaveTextContent("KVKK Metni");
     expect(footer).toHaveTextContent("e-skylab by WEBLAB");
-    expect(footer?.querySelectorAll("nav.sl-legacy-languages a")).toHaveLength(2);
-    expect(footer?.querySelector('nav.sl-legacy-languages a[aria-current="page"]')).toHaveAttribute("lang", "tr");
+    if (pagesWithoutLanguageMenu.includes(pageId)) {
+      expect(footer?.querySelector("nav.sl-legacy-languages")).toBeNull();
+    } else {
+      expect(footer?.querySelectorAll("nav.sl-legacy-languages a")).toHaveLength(2);
+      expect(footer?.querySelector('nav.sl-legacy-languages a[aria-current="page"]')).toHaveAttribute("lang", "tr");
+    }
 
     expect(document.documentElement).toHaveClass("sl-html");
     expect(document.body).toHaveClass("sl-body");

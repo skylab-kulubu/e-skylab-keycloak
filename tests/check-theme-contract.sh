@@ -30,6 +30,8 @@ theme_entries=$(unzip -Z1 "$THEME_JAR")
   || fail 'the e-skylab-theme login theme is missing or duplicated'
 [[ $(grep -c '^theme/e-skylab-theme/login/passkey-offer.ftl$' <<<"$theme_entries") == 1 ]] \
   || fail 'the branded passkey offer page is missing or duplicated'
+[[ $(grep -c '^theme/e-skylab-theme/login/sky-handoff-failed.ftl$' <<<"$theme_entries") == 1 ]] \
+  || fail 'the Web handoff failure page (sky-handoff v1/failed) is missing or duplicated'
 
 theme_metadata=$(unzip -p "$THEME_JAR" META-INF/keycloak-themes.json)
 jq -e '.themes == [{"name":"e-skylab-theme","types":["login"]}]' <<<"$theme_metadata" >/dev/null \
@@ -45,6 +47,8 @@ for required_token in \
   isSetRetry \
   rememberMe \
   '30 gün boyunca tekrar sorma' \
+  'Uygulamaya dönüp tekrar dene.' \
+  skyHandoffReason \
   data-skylab-logo-animation \
   mediation; do
   grep -Fq "$required_token" <<<"$bundle_text" \

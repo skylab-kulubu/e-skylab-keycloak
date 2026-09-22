@@ -39,6 +39,15 @@ export const translations = {
     passkeyOfferNow: "Şimdi ekle",
     passkeyOfferLater: "30 gün boyunca tekrar sorma",
 
+    // Web handoff failure page (SkyApp WebView, sky-handoff v1/failed): one sentence per reason
+    "skyHandoffFailed.expired": "Bağlantının süresi doldu.",
+    "skyHandoffFailed.used": "Bu bağlantı zaten kullanıldı.",
+    "skyHandoffFailed.invalid": "Bağlantı geçersiz.",
+    "skyHandoffFailed.target_disabled": "Bu siteye uygulamadan geçiş şu an kapalı.",
+    "skyHandoffFailed.account_unavailable": "Hesabın şu an kullanılamıyor.",
+    "skyHandoffFailed.unavailable": "Geçici bir sorun oluştu.",
+    skyHandoffFailedRetry: "Uygulamaya dönüp tekrar dene.",
+
     // Page descriptions rendered under the title of every Keycloak page
     "skylabPageDesc.login-username":
       "SKY LAB hesabına giriş yapmak için kullanıcı adını veya e-postanı yaz.",
@@ -225,6 +234,15 @@ export const translations = {
       "Your passkey stays protected on this device; SKY LAB never receives your biometric data.",
     passkeyOfferNow: "Add now",
     passkeyOfferLater: "Do not ask again for 30 days",
+
+    // Web handoff failure page (SkyApp WebView, sky-handoff v1/failed): one sentence per reason
+    "skyHandoffFailed.expired": "This link has expired.",
+    "skyHandoffFailed.used": "This link has already been used.",
+    "skyHandoffFailed.invalid": "This link is not valid.",
+    "skyHandoffFailed.target_disabled": "Opening this site from the app is turned off right now.",
+    "skyHandoffFailed.account_unavailable": "Your account is not available right now.",
+    "skyHandoffFailed.unavailable": "Something went wrong for a moment.",
+    skyHandoffFailedRetry: "Go back to the app and try again.",
 
     // Page descriptions rendered under the title of every Keycloak page
     "skylabPageDesc.login-username":

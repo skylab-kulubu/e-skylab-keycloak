@@ -26,7 +26,8 @@ export const themedPageIds = [
   "idp-review-user-profile.ftl",
   "login-idp-link-confirm.ftl",
   "login-idp-link-email.ftl",
-  "passkey-offer.ftl"
+  "passkey-offer.ftl",
+  "sky-handoff-failed.ftl"
 ] as const;
 
 export type ThemedPageId = (typeof themedPageIds)[number];

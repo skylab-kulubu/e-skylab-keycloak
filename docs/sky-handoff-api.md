@@ -86,13 +86,14 @@ WebView bu adresi `X-Sky-Handoff-Proof` başlığıyla açar. Sıra:
 4. Hedef yeniden denetlenir (hâlâ açık, istemci etkin, köken kuralı geçerli), kişi etkin ve
    brute-force kilidi altında değil, kodu alan SkyApp oturumu hâlâ canlı.
 5. Kodu alan IP ile açan IP farklıysa yalnız günlüğe ve olaya yazılır, engellenmez.
-6. Yeni bir Keycloak kullanıcı oturumu kurulur: `AUTH_TIME` notu kaynak oturumun özgün
-   değeridir (taze giriş isteyen işlemler yine giriş ister), `sky.embed=skyapp` notu düşülür,
-   `KEYCLOAK_IDENTITY`/`KEYCLOAK_SESSION` çerezleri yazılır.
-7. Bu tarayıcıda **başka bir kişinin** Keycloak oturumu varsa o oturum kapatılır (istemcilerine
+6. Bu tarayıcıda **başka bir kişinin** Keycloak oturumu varsa o oturum kapatılır (istemcilerine
    back-channel logout gider; o kişi için `LOGOUT` olayı, `details.action=sky-handoff`,
    `details.reason=replaced_by_another_user`). Aynı kişinin eski oturumu, Keycloak'ın aynı
-   tarayıcıda yeni girişte yaptığı gibi silinir.
+   tarayıcıda yeni girişte yaptığı gibi silinir. Kodu alan SkyApp oturumuna dokunulmaz. Bu
+   adım yeni çerezlerden önce gelir: tarayıcı `Set-Cookie` başlıklarını sırayla uygular.
+7. Yeni bir Keycloak kullanıcı oturumu kurulur: `AUTH_TIME` notu kaynak oturumun özgün
+   değeridir (taze giriş isteyen işlemler yine giriş ister), `sky.embed=skyapp` notu düşülür,
+   `KEYCLOAK_IDENTITY`/`KEYCLOAK_SESSION` çerezleri yazılır.
 8. `303` hedefin giriş kapısına; `Cache-Control: no-store`, `Referrer-Policy: no-referrer`.
 
 Hata nedenleri (`303 …/v1/failed?reason=<neden>`):

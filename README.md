@@ -376,6 +376,11 @@ SKY LAB sitesini WebView'inde oturum açık açmasını sağlar; tam sözleşme
   `v1/failed?reason=` sayfasına düşer.
 - Hedefler istemci öznitelikleridir (`sky.handoff.enabled`, `signInPath`,
   `returnParam`); köken her zaman `https://*.yildizskylab.com`.
+- `GET admin/targets` / `PUT admin/targets/{clientId}`: superadmin sayfasının
+  kullandığı dar yönetim uçları; yalnız süper yönetici rolü (varsayılan
+  `realm-management.realm-admin`, `KC_SPI_REALM_RESTAPI_EXTENSION__SKY_HANDOFF__ADMIN_ROLE`
+  ya da `SKY_HANDOFF_ADMIN_ROLE` ile değişir), yalnız üç öznitelik yazılır, her
+  değişiklik eski → yeni değerli bir yönetim olayı bırakır.
 
 Entegrasyon testi (`tests/sky-handoff-contract.sh`, `tests/run-integration.sh`
 tarafından native handoff aşamasının yanında çağrılır) kodu alma, kanıtsız/yanlış

@@ -332,6 +332,38 @@ session_ids() {
   kcadm get "users/$1/sessions" -r "$REALM" -c | jq -c '[.[].id] | sort'
 }
 
+# admin_call <GET|PUT> <path under v1/admin> <bearer|-> [json body] -> ADMIN_STATUS, ADMIN_BODY, ADMIN_HEADERS
+admin_call() {
+  local method=$1 path=$2 bearer=$3 body=${4:-}
+  local args=(--silent --show-error --request "$method"
+    --output "$STATE_DIR/sky-handoff-admin.body"
+    --dump-header "$STATE_DIR/sky-handoff-admin.headers"
+    --write-out '%{http_code}')
+  [[ $bearer != - ]] && args+=(--header "Authorization: Bearer $bearer")
+  if [[ -n $body ]]; then
+    args+=(--header 'Content-Type: application/json' --data-binary "$body")
+  fi
+  ADMIN_STATUS=$(curl "${args[@]}" "$API/admin/$path")
+  ADMIN_BODY=$(cat "$STATE_DIR/sky-handoff-admin.body")
+  ADMIN_HEADERS="$STATE_DIR/sky-handoff-admin.headers"
+}
+
+# expect_admin_problem <status> <code> <message>
+expect_admin_problem() {
+  local actual
+  actual=$(jq -r '.code // "-"' <<<"$ADMIN_BODY" 2>/dev/null || printf -- '-')
+  [[ $ADMIN_STATUS == "$1" && $actual == "$2" ]] || fail "$3 (expected HTTP $1 $2, got $ADMIN_STATUS $actual)"
+  grep -Eiq '^content-type:[[:space:]]*application/problem\+json' "$ADMIN_HEADERS" \
+    || fail "$3 (problems must be application/problem+json)"
+  json_assert "$ADMIN_BODY" '(.detail | length) > 0' "$3 (a Turkish detail is required)"
+}
+
+# client_without_handoff <client uuid>: the client representation minus the three handoff attributes
+client_without_handoff() {
+  kcadm get "clients/$1" -r "$REALM" -c \
+    | jq -S -c 'del(.attributes["sky.handoff.enabled"], .attributes["sky.handoff.signInPath"], .attributes["sky.handoff.returnParam"])'
+}
+
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='web handoff target fixture'
 account_center_uuid=$(client_uuid account-center)
@@ -591,6 +623,113 @@ mint "$app_token" '{"target":"account-center","path":"/"}'
 [[ $MINT_STATUS == 201 ]] || fail 'the budget of one person must not limit another'
 
 # ---------------------------------------------------------------------------------------------
+CURRENT_STAGE='web handoff admin endpoints'
+app_token=$(app_refresh)
+# The super admin is Keycloak's realm administrator (realm-management/realm-admin, the default
+# of the provider's admin-role setting); the token may come from any client.
+while IFS= read -r stale_user; do
+  [[ -n $stale_user ]] || continue
+  kcadm delete "users/$stale_user" -r "$REALM" >/dev/null
+done < <(kcadm get users -r "$REALM" -c -q username=handoff-admin -q exact=true | jq -r '.[].id')
+admin_password=$(openssl rand -base64 24 | tr -d '\n')
+admin_uuid=$(kcadm create users -r "$REALM" -i \
+  -s username=handoff-admin -s enabled=true -s emailVerified=true \
+  -s firstName=Handoff -s lastName=Admin -s email=handoff-admin@example.invalid)
+kcadm set-password -r "$REALM" --userid "$admin_uuid" --new-password "$admin_password" --temporary=false >/dev/null
+kcadm add-roles -r "$REALM" --uid "$admin_uuid" --cclientid realm-management --rolename realm-admin >/dev/null
+admin_token=$(curl --fail --silent --show-error \
+  --data-urlencode grant_type=password \
+  --data-urlencode client_id=admin-cli \
+  --data-urlencode username=handoff-admin \
+  --data-urlencode "password=$admin_password" \
+  "$TOKEN_URL" | jq -r .access_token)
+skyforms_uuid=$(client_uuid skyforms)
+outside_uuid=$(client_uuid outside-fixture)
+[[ -n $skyforms_uuid && -n $outside_uuid ]] || fail 'the skyforms and outside-fixture clients are missing'
+skyforms_before=$(client_without_handoff "$skyforms_uuid")
+outside_before=$(kcadm get "clients/$outside_uuid" -r "$REALM" -c | jq -S -c .)
+enable_forms='{"enabled":true,"signInPath":"/auth/signin","returnParam":"callbackUrl"}'
+disable_forms='{"enabled":false,"signInPath":"/auth/signin","returnParam":"callbackUrl"}'
+
+admin_call GET targets -
+expect_admin_problem 401 invalid_token 'the admin list must require a bearer token'
+admin_call GET targets "$app_token"
+expect_admin_problem 403 forbidden 'a person without the super-admin role must not list targets'
+forbidden_list_body=$ADMIN_BODY
+admin_call PUT targets/skyforms "$app_token" "$enable_forms"
+expect_admin_problem 403 forbidden 'a person without the super-admin role must not change targets'
+[[ $ADMIN_BODY == "$forbidden_list_body" ]] || fail 'every refused admin request must get the same 403 body'
+admin_call PUT targets/no-such-client "$app_token" "$enable_forms"
+[[ $ADMIN_STATUS == 403 && $ADMIN_BODY == "$forbidden_list_body" ]] \
+  || fail 'a non-admin must not learn which clients exist'
+# SkyApp's token above is bound to an offline session, which the guard refuses first; an online
+# token of the same person proves the role check itself.
+online_person_token=$(skyapp_tokens "$FIXTURE_USERNAME" "$FIXTURE_PASSWORD" | jq -r .access_token)
+admin_call GET targets "$online_person_token"
+[[ $ADMIN_STATUS == 403 && $ADMIN_BODY == "$forbidden_list_body" ]] \
+  || fail 'a person without the super-admin role on a live online session must not list targets'
+admin_call PUT targets/skyforms "$online_person_token" "$enable_forms"
+[[ $ADMIN_STATUS == 403 && $ADMIN_BODY == "$forbidden_list_body" ]] \
+  || fail 'a person without the super-admin role on a live online session must not change targets'
+
+admin_call GET targets "$admin_token"
+[[ $ADMIN_STATUS == 200 ]] || fail "the super admin could not list targets (HTTP $ADMIN_STATUS)"
+[[ $(header_value "$ADMIN_HEADERS" cache-control) == no-store ]] || fail 'the admin list must not be cached'
+json_assert "$ADMIN_BODY" \
+  '.targets | map(select(.clientId == "account-center"))[0] | .enabled == true and .signInPath == "/api/auth/login" and .returnParam == "returnTo" and .rootUrl == "https://my.yildizskylab.com" and .originAllowed == true and .clientEnabled == true' \
+  'the admin list does not show account-center as an enabled target'
+json_assert "$ADMIN_BODY" \
+  '(.targets | map(select(.clientId == "skyforms"))[0] | .enabled == false and .signInPath == "/auth/signin" and .returnParam == "callbackUrl" and .originAllowed == true) and (.targets | map(select(.clientId == "outside-fixture"))[0] | .originAllowed == false) and (.targets | map(.clientId) | . == sort)' \
+  'the admin list differs for skyforms or the outside client, or is not sorted'
+json_assert "$ADMIN_BODY" '[.targets[] | keys | sort] | unique == [["clientEnabled", "clientId", "enabled", "name", "originAllowed", "returnParam", "rootUrl", "signInPath"]]' \
+  'the admin list exposes more than the target fields'
+
+mint "$app_token" '{"target":"skyforms","path":"/forms/abc"}'
+expect_problem 400 invalid_target 'skyforms is not a target before the super admin enables it'
+admin_call PUT targets/skyforms "$admin_token" "$enable_forms"
+[[ $ADMIN_STATUS == 200 ]] || fail "the super admin could not enable skyforms (HTTP $ADMIN_STATUS)"
+json_assert "$ADMIN_BODY" '.clientId == "skyforms" and .enabled == true' 'the enable answer does not show the new state'
+mint_ok "$app_token" skyforms /forms/abc
+open_handoff "$HANDOFF_URL" "$HANDOFF_PROOF" "$STATE_DIR/web-handoff-forms.cookies"
+[[ $OPEN_LOCATION == 'https://forms.yildizskylab.com/auth/signin?callbackUrl=%2Fforms%2Fabc' ]] \
+  || fail 'an enabled skyforms target did not land on the Forms sign-in entry'
+admin_call PUT targets/skyforms "$admin_token" "$enable_forms"
+[[ $ADMIN_STATUS == 200 ]] || fail 'repeating the same settings must succeed'
+admin_call PUT targets/skyforms "$admin_token" "$disable_forms"
+[[ $ADMIN_STATUS == 200 ]] || fail "the super admin could not disable skyforms (HTTP $ADMIN_STATUS)"
+mint "$app_token" '{"target":"skyforms","path":"/forms/abc"}'
+expect_problem 400 invalid_target 'a disabled skyforms target must not mint'
+[[ $(client_without_handoff "$skyforms_uuid") == "$skyforms_before" ]] \
+  || fail 'the admin endpoint changed skyforms data other than the three handoff attributes'
+
+admin_call PUT targets/outside-fixture "$admin_token" '{"enabled":true,"signInPath":"/login","returnParam":"next"}'
+expect_admin_problem 400 origin_not_allowed 'a client outside yildizskylab.com must not become a target'
+[[ $(kcadm get "clients/$outside_uuid" -r "$REALM" -c | jq -S -c .) == "$outside_before" ]] \
+  || fail 'a refused enable changed the outside client'
+admin_call PUT targets/skyforms "$admin_token" '{"enabled":true,"signInPath":"//evil.example/","returnParam":"callbackUrl"}'
+expect_admin_problem 400 invalid_sign_in_path 'a sign-in path leaving the origin must be refused'
+admin_call PUT targets/skyforms "$admin_token" '{"enabled":true,"signInPath":"/auth/signin","returnParam":"call back"}'
+expect_admin_problem 400 invalid_return_param 'a malformed return parameter must be refused'
+admin_call PUT targets/skyforms "$admin_token" '{"enabled":true,"signInPath":"/auth/signin","returnParam":"callbackUrl","redirectUris":["https://evil.example/*"]}'
+expect_admin_problem 400 invalid_request 'fields other than the three settings must be refused'
+admin_call PUT targets/no-such-client "$admin_token" "$enable_forms"
+expect_admin_problem 404 client_not_found 'an unknown client is not found'
+[[ $(client_without_handoff "$skyforms_uuid") == "$skyforms_before" ]] \
+  || fail 'refused admin requests changed skyforms'
+
+admin_events=$(kcadm get admin-events -r "$REALM" -c -q max=200)
+json_assert "$admin_events" \
+  '[.[] | select(.resourceType == "SKY_HANDOFF_TARGET" and .operationType == "UPDATE" and .authDetails.userId == $admin and .resourcePath == ("clients/" + $client + "/sky-handoff") and .details.clientId == "skyforms" and (.details.before | fromjson | .enabled == false) and (.details.after | fromjson | .enabled == true and .signInPath == "/auth/signin" and .returnParam == "callbackUrl"))] | length == 1' \
+  'enabling skyforms left no admin event naming who changed it from what to what' \
+  --arg admin "$admin_uuid" --arg client "$skyforms_uuid"
+json_assert "$admin_events" \
+  '[.[] | select(.resourceType == "SKY_HANDOFF_TARGET" and .details.clientId == "skyforms")] | length == 2' \
+  'every change and only a change must leave an admin event (enable, disable; the repeat is not a change)'
+json_assert "$admin_events" \
+  '[.[] | select(.resourceType == "SKY_HANDOFF_TARGET" and .details.clientId == "outside-fixture")] | length == 0' \
+  'a refused change must not leave an admin event'
+
+# ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='web handoff audit events and secrecy'
 events=$(kcadm get events -r "$REALM" -c -q "user=$FIXTURE_USER_UUID" -q type=CUSTOM_REQUIRED_ACTION -q max=100)
 json_assert "$events" \
@@ -641,8 +780,9 @@ kcadm update "realms/$REALM" \
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='web handoff cleanup'
 kcadm delete "users/$other_uuid" -r "$REALM" >/dev/null
+kcadm delete "users/$admin_uuid" -r "$REALM" >/dev/null
 kcadm remove-roles -r "$REALM" --uid "$FIXTURE_USER_UUID" --rolename offline_access >/dev/null
-unset other_password
+unset other_password admin_password
 rm -f "$SECRETS_FILE"
 
 printf 'Web handoff contract passed.\n'

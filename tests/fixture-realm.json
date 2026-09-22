@@ -55,6 +55,36 @@
       "redirectUris": [
         "https://mail.yildizskylab.com/*"
       ]
+    },
+    {
+      "clientId": "skyforms",
+      "name": "SKY LAB Forms (fixture)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "rootUrl": "https://forms.yildizskylab.com",
+      "redirectUris": [
+        "https://forms.yildizskylab.com/api/auth/callback/keycloak"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://forms.yildizskylab.com/",
+        "sky.handoff.signInPath": "/auth/signin",
+        "sky.handoff.returnParam": "callbackUrl"
+      }
+    },
+    {
+      "clientId": "outside-fixture",
+      "name": "A site outside yildizskylab.com (fixture)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "rootUrl": "https://example.com",
+      "redirectUris": [
+        "https://example.com/callback"
+      ]
     }
   ],
   "roles": {

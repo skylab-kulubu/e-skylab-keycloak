@@ -82,6 +82,35 @@ record HandoffProblem(int status, String code, String title, String detail, Map<
                 .withHeader("Retry-After", String.valueOf(retryAfterSeconds));
     }
 
+    /** Every authenticated caller who is not a super admin gets exactly this body. */
+    static HandoffProblem forbidden() {
+        return new HandoffProblem(403, "forbidden", "Forbidden",
+                "Bu işlem için SKY LAB süper yönetici yetkisi gerekiyor.");
+    }
+
+    static HandoffProblem clientNotFound() {
+        return new HandoffProblem(404, "client_not_found", "Client not found",
+                "Bu istemci bulunamadı.");
+    }
+
+    static HandoffProblem invalidSignInPath() {
+        return new HandoffProblem(400, "invalid_sign_in_path", "Invalid sign-in path",
+                "Giriş kapısı yolu / ile başlamalı; //, \\, .., sorgu ve # içeremez; yalnız harf, rakam, . _ ~ - "
+                        + "ve / kullanılabilir. Açık bir hedef için zorunludur.");
+    }
+
+    static HandoffProblem invalidReturnParam() {
+        return new HandoffProblem(400, "invalid_return_param", "Invalid return parameter",
+                "Dönüş parametresi harfle başlamalı, yalnız harf, rakam ve _ içermeli ve en çok 32 karakter olmalı. "
+                        + "Açık bir hedef için zorunludur.");
+    }
+
+    static HandoffProblem originNotAllowed() {
+        return new HandoffProblem(400, "origin_not_allowed", "Origin not allowed",
+                "Bu istemcinin kök adresi https:// ile yildizskylab.com ya da bir alt alan adında olmalı; kullanıcı "
+                        + "bilgisi, port, yol, sorgu ve # içeremez. Bu haliyle uygulamadan geçişe açılamaz.");
+    }
+
     static HandoffProblem internalError() {
         return new HandoffProblem(500, "internal_error", "Internal error",
                 "Beklenmeyen bir hata oluştu. Lütfen daha sonra tekrar dene.");

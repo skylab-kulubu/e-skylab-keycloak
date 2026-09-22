@@ -1,1 +1,2 @@
 com.skylab.account.SkyAuthorizationMapper
+com.skylab.account.SkySessionLifetimeMapper

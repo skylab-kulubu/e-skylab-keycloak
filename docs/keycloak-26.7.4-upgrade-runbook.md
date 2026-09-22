@@ -54,6 +54,20 @@ below have recorded evidence and an owner.
 - `https://my.yildizskylab.com/api/auth/backchannel-logout` is the agreed
   Keycloak contract, but the Account Center route must exist and pass logout
   tests before production enablement.
+- The v2 identity reconcile moves the passwordless relying party id from the
+  request host (`e.yildizskylab.com`) to `yildizskylab.com` with
+  `https://my.yildizskylab.com` as an extra origin. Every passkey registered
+  before that switch is bound to the old relying party id and stops verifying;
+  holders must register a new passkey after the release and the dead
+  credentials are removed afterwards with `config/cleanup-legacy-passkeys.sh`.
+  The same reconcile turns on brute force protection and the password policy,
+  restricts the User Profile, widens the Account Center token to
+  `aud=["account","core"]` with the `sky_authorization` claim and creates the
+  `keycloak-mailer` service account. Order, read-only pre-check SQL,
+  announcement text and cleanup are in
+  [`docs/v2-identity-reconcile-runbook.md`](v2-identity-reconcile-runbook.md);
+  the Account Center image that accepts both audience sets must be deployed
+  before this reconcile runs.
 - A production-clone database upgrade and rollback have not been performed by
   repository tests. They require an operator and production-derived data.
 - The fixture proves minimal `openid` PAR acceptance, negative redirect and
@@ -89,7 +103,9 @@ below have recorded evidence and an owner.
    secrets or user attributes.
 3. Run the reconciler using the clone admin credential and the production base
    URL. Run it twice; the second run must make no duplicate client, flow, scope
-   or mapper.
+   or mapper and every `[reconcile]` line of the second run must read
+   `unchanged` or `asserted` (the harness proves a no-op run leaves no admin
+   event).
 4. Verify:
    - existing browser and brokered login;
    - password, OTP and passkey flows;
@@ -125,9 +141,11 @@ rotates its secret. Keycloak generates the initial value.
 
 Steady-state reconciliation uses the `account-center-config` service account in
 the `e-skylab` realm. It receives only `manage-clients`, `view-clients`,
-`manage-realm` and `view-realm` from `realm-management`. The production compose
-file never exposes a master/bootstrap administrator to Keycloak or the config
-job.
+`manage-realm` and `view-realm` from `realm-management`; it deliberately has no
+user permissions, which is why the `keycloak-mailer` service account is
+provisioned by the operator-run `config/create-mailer-client.sh` instead of the
+reconciler. The production compose file never exposes a master/bootstrap
+administrator to Keycloak or the config job.
 
 1. Generate `KEYCLOAK_CONFIG_CLIENT_SECRET` in the production secret store. Do
    not print it or put it in shell history.
@@ -211,7 +229,10 @@ data volume. Keycloak's durable state remains in its existing database.
 4. Run `reconcile-account-center.sh` once, then inspect the client contract with
    read-only admin calls. Confirm the realm's active browser flow alias and graph
    did not change, and that the Account Center override contains the copied graph
-   plus exactly one native handoff branch. Save redacted evidence.
+   plus exactly one native handoff branch. Save redacted evidence. For the v2
+   identity settings (relying party id, brute force, User Profile, token
+   audience, `keycloak-mailer`) follow
+   [`docs/v2-identity-reconcile-runbook.md`](v2-identity-reconcile-runbook.md).
 5. Verify existing logins before exposing Account Center. Then perform desktop
    PAR/PKCE login, Account REST reads, AIA return and backchannel logout tests.
 6. Watch login error rate, database errors, provider exceptions, RabbitMQ

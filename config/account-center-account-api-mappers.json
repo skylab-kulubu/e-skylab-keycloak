@@ -1,0 +1,83 @@
+[
+  {
+    "name": "account-api-audience",
+    "protocol": "openid-connect",
+    "protocolMapper": "oidc-audience-mapper",
+    "consentRequired": false,
+    "config": {
+      "included.client.audience": "account",
+      "id.token.claim": "false",
+      "access.token.claim": "true",
+      "introspection.token.claim": "true",
+      "userinfo.token.claim": "false"
+    }
+  },
+  {
+    "name": "account-api-core-audience",
+    "protocol": "openid-connect",
+    "protocolMapper": "oidc-audience-mapper",
+    "consentRequired": false,
+    "config": {
+      "included.client.audience": "core",
+      "id.token.claim": "false",
+      "access.token.claim": "true",
+      "introspection.token.claim": "true",
+      "userinfo.token.claim": "false"
+    }
+  },
+  {
+    "name": "account-api-manage-account",
+    "protocol": "openid-connect",
+    "protocolMapper": "oidc-hardcoded-role-mapper",
+    "consentRequired": false,
+    "config": {
+      "role": "account.manage-account"
+    }
+  },
+  {
+    "name": "account-api-view-profile",
+    "protocol": "openid-connect",
+    "protocolMapper": "oidc-hardcoded-role-mapper",
+    "consentRequired": false,
+    "config": {
+      "role": "account.view-profile"
+    }
+  },
+  {
+    "name": "account-api-manage-account-links",
+    "protocol": "openid-connect",
+    "protocolMapper": "oidc-hardcoded-role-mapper",
+    "consentRequired": false,
+    "config": {
+      "role": "account.manage-account-links"
+    }
+  },
+  {
+    "name": "account-api-roles",
+    "protocol": "openid-connect",
+    "protocolMapper": "oidc-usermodel-client-role-mapper",
+    "consentRequired": false,
+    "config": {
+      "usermodel.clientRoleMapping.clientId": "account",
+      "claim.name": "resource_access.account.roles",
+      "jsonType.label": "String",
+      "multivalued": "true",
+      "id.token.claim": "false",
+      "access.token.claim": "true",
+      "userinfo.token.claim": "false",
+      "introspection.token.claim": "true"
+    }
+  },
+  {
+    "name": "account-api-sky-authorization",
+    "protocol": "openid-connect",
+    "protocolMapper": "sky-authorization-mapper",
+    "consentRequired": false,
+    "config": {
+      "id.token.claim": "false",
+      "access.token.claim": "true",
+      "userinfo.token.claim": "false",
+      "introspection.token.claim": "true"
+    }
+  }
+]

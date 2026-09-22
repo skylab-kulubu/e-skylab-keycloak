@@ -21,6 +21,9 @@ FIXTURE_PASSWORD=fixture-password-change-me
 ROTATED_PASSWORD=fixture-password-rotated-by-sky-account
 TAKEN_USERNAME=taken.fixture
 CHANGED_USERNAME=sky.fixture
+REAUTH_USERNAME=reauth-fixture
+REAUTH_PASSWORD=reauth-password-change-me
+REAUTH_ROTATED_PASSWORD=reauth-password-set-after-authentication
 COMPOSE=(docker compose -f "$COMPOSE_FILE")
 CURRENT_STAGE='sky-account fixture'
 TOTP_USED_STEPS_FILE="$STATE_DIR/sky-account-totp-steps"
@@ -100,9 +103,10 @@ header_value() {
   ' "$SKY_HEADERS"
 }
 
-# browser_login <label> <password> [otp code] -> LOGIN_ACCESS_TOKEN, LOGIN_SESSION_ID
+# browser_login <label> <password> [otp code] [username]
+#   -> LOGIN_ACCESS_TOKEN, LOGIN_ID_TOKEN, LOGIN_SESSION_ID
 browser_login() {
-  local label=$1 password=$2 otp=${3:-}
+  local label=$1 password=$2 otp=${3:-} username=${4:-$FIXTURE_USERNAME}
   local verifier challenge par request_uri request_uri_query cookies page action headers redirect code tokens id_payload
   verifier="sky-account-$label-verifier-0123456789abcdefghijklmnopqrstuvwxyz"
   challenge=$(printf '%s' "$verifier" | openssl dgst -binary -sha256 | openssl base64 -A | tr '+/' '-_' | tr -d '=')
@@ -132,7 +136,7 @@ browser_login() {
     --dump-header "$headers" \
     --write-out '%{http_code}' \
     --cookie-jar "$cookies" --cookie "$cookies" \
-    --data-urlencode "username=$FIXTURE_USERNAME" \
+    --data-urlencode "username=$username" \
     --data-urlencode "password=$password" \
     --data-urlencode credentialId= \
     "$action")
@@ -164,7 +168,8 @@ browser_login() {
     --data-urlencode "code_verifier=$verifier" \
     "$TOKEN_URL")
   LOGIN_ACCESS_TOKEN=$(jq -r .access_token <<<"$tokens")
-  id_payload=$(decode_jwt_segment "$(jq -r .id_token <<<"$tokens")" 2)
+  LOGIN_ID_TOKEN=$(jq -r .id_token <<<"$tokens")
+  id_payload=$(decode_jwt_segment "$LOGIN_ID_TOKEN" 2)
   LOGIN_SESSION_ID=$(jq -r .sid <<<"$id_payload")
   [[ -n $LOGIN_ACCESS_TOKEN && $LOGIN_ACCESS_TOKEN != null && -n $LOGIN_SESSION_ID ]] \
     || fail "browser login $label did not yield an access token with a session id"
@@ -178,11 +183,12 @@ login_action_of() {
   jq -r . <<<"$literal"
 }
 
+# direct_grant_status <password> [username]
 direct_grant_status() {
   curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
     --data-urlencode grant_type=password \
     --data-urlencode client_id=skyapp \
-    --data-urlencode "username=$FIXTURE_USERNAME" \
+    --data-urlencode "username=${2:-$FIXTURE_USERNAME}" \
     --data-urlencode "password=$1" \
     --data-urlencode scope=openid \
     "$TOKEN_URL"
@@ -205,8 +211,9 @@ wait_for_failures() {
   fail "brute-force protector did not record $expected failure(s)"
 }
 
+# user_events <type> [user uuid]
 user_events() {
-  kcadm get events -r "$REALM" -c -q "user=$FIXTURE_USER_UUID" -q "type=$1" -q max=100
+  kcadm get events -r "$REALM" -c -q "user=${2:-$FIXTURE_USER_UUID}" -q "type=$1" -q max=100
 }
 
 # totp_code <base32 secret> <step offset> -> code for that 30-second step. Used steps are
@@ -288,6 +295,7 @@ expect 401 unauthorized 'garbage bearer must be refused'
 
 browser_login a "$FIXTURE_PASSWORD"
 token_a=$LOGIN_ACCESS_TOKEN
+id_token_a=$LOGIN_ID_TOKEN
 session_a=$LOGIN_SESSION_ID
 sky GET identity "$token_a" -
 expect 200 - 'identity must be readable with an Account Center session'
@@ -378,6 +386,71 @@ expect 200 - 'the second session must obtain its own sudo token'
 sudo_b=$(jq -r .sudoToken <<<"$SKY_BODY")
 sky POST credentials/password "$token_b" "$sudo_b" '{"newPassword":"short","logoutOtherSessions":false}'
 expect 400 password_policy 'a sudo token bound to its own session must be accepted'
+
+# The Microsoft fallback: a person without password, TOTP or passkey re-authenticates on
+# Keycloak and the BFF proves that with the ID token of its callback. Budget note: the
+# proof shares the `sudo` budget (10 / 15 min per person), which the stages above and the
+# rate-limit stage below spend on the fixture user, so this block gets its own throwaway
+# person. It logs in twice (two sessions) to prove the session binding.
+CURRENT_STAGE='sky-account sudo from a fresh authentication'
+while IFS= read -r stale_reauth_user_uuid; do
+  [[ -n $stale_reauth_user_uuid ]] || continue
+  kcadm delete "users/$stale_reauth_user_uuid" -r "$REALM" >/dev/null
+done < <(kcadm get users -r "$REALM" -c -q "username=$REAUTH_USERNAME" -q exact=true | jq -r '.[].id')
+reauth_user_uuid=$(kcadm create users -r "$REALM" -i \
+  -s "username=$REAUTH_USERNAME" -s enabled=true -s emailVerified=true \
+  -s firstName=Reauth -s lastName=Fixture -s email=reauth-fixture@example.invalid)
+kcadm set-password -r "$REALM" --userid "$reauth_user_uuid" \
+  --new-password "$REAUTH_PASSWORD" --temporary=false >/dev/null
+browser_login reauth-1 "$REAUTH_PASSWORD" '' "$REAUTH_USERNAME"
+reauth_token_1=$LOGIN_ACCESS_TOKEN
+reauth_id_token_1=$LOGIN_ID_TOKEN
+reauth_session_1=$LOGIN_SESSION_ID
+browser_login reauth-2 "$REAUTH_PASSWORD" '' "$REAUTH_USERNAME"
+reauth_token_2=$LOGIN_ACCESS_TOKEN
+reauth_id_token_2=$LOGIN_ID_TOKEN
+[[ $LOGIN_SESSION_ID != "$reauth_session_1" ]] || fail 'second reauth login reused the first session'
+reauth_auth_time=$(decode_jwt_segment "$reauth_id_token_1" 2 | jq -r '.auth_time // empty')
+[[ $reauth_auth_time =~ ^[0-9]+$ ]] || fail 'the ID token carries no integer auth_time'
+sky POST sudo/authentication "$reauth_token_1" - '{"idToken":""}'
+expect 400 invalid_request 'an empty ID token must be a client error'
+sky POST sudo/authentication "$reauth_token_1" - "{\"idToken\":\"$reauth_id_token_2\"}"
+expect 401 sudo_required 'the ID token of another session of the same person must be refused'
+sky POST sudo/authentication "$reauth_token_1" - "{\"idToken\":\"$id_token_a\"}"
+expect 401 sudo_required 'the ID token of another person must be refused'
+# Flip the first signature character (its bits are all significant, unlike the padding bits
+# of the last one), so the claims stay intact and only the signature is wrong.
+reauth_signature=${reauth_id_token_1##*.}
+if [[ ${reauth_signature:0:1} == A ]]; then flipped_char=B; else flipped_char=A; fi
+tampered_id_token="${reauth_id_token_1%.*}.${flipped_char}${reauth_signature:1}"
+sky POST sudo/authentication "$reauth_token_1" - "{\"idToken\":\"$tampered_id_token\"}"
+expect 401 sudo_required 'a tampered signature must be refused'
+sky POST sudo/authentication "$reauth_token_1" - "{\"idToken\":\"$reauth_token_1\"}"
+expect 401 sudo_required 'an access token is not a proof of authentication'
+sky POST sudo/authentication "$reauth_token_1" - "{\"idToken\":\"$reauth_id_token_1\"}"
+expect 200 - 'the ID token of the bearer session must issue a sudo token'
+sudo_reauth=$(jq -r .sudoToken <<<"$SKY_BODY")
+json_assert "$SKY_BODY" \
+  '(.sudoToken | type) == "string" and (.expiresAt | fromdateiso8601) == $auth_time + 300' \
+  'the sudo window must start at the authentication, not at the call' --argjson auth_time "$reauth_auth_time"
+json_assert "$(decode_jwt_segment "$sudo_reauth" 2)" \
+  '.typ == "sky-sudo" and .aud == "sky-account" and .azp == "account-center" and .amr == ["idp"] and .sub == $sub and .sid == $sid and .exp == $auth_time + 300' \
+  'authentication sudo token claims differ' --arg sub "$reauth_user_uuid" --arg sid "$reauth_session_1" --argjson auth_time "$reauth_auth_time"
+sky POST credentials/password "$reauth_token_2" "$sudo_reauth" "{\"newPassword\":\"$REAUTH_ROTATED_PASSWORD\",\"logoutOtherSessions\":false}"
+expect 401 sudo_required 'the authentication sudo token is bound to the session that authenticated'
+sky POST credentials/password "$reauth_token_1" "$sudo_reauth" "{\"newPassword\":\"$REAUTH_ROTATED_PASSWORD\",\"logoutOtherSessions\":false}"
+expect 204 - 'a password must be settable with the authentication sudo token'
+[[ $(direct_grant_status "$REAUTH_ROTATED_PASSWORD" "$REAUTH_USERNAME") == 200 ]] \
+  || fail 'the password set after the authentication proof does not sign in'
+json_assert "$(user_events CUSTOM_REQUIRED_ACTION "$reauth_user_uuid")" \
+  '[.[] | select(.clientId == "account-center" and .sessionId == $sid and .details.action == "sky-sudo" and .details.method == "authentication" and .details.auth_time == $auth_time)] | length == 1' \
+  'exactly one sky-sudo audit event must record the authentication proof' --arg sid "$reauth_session_1" --arg auth_time "$reauth_auth_time"
+json_assert "$(user_events UPDATE_PASSWORD "$reauth_user_uuid")" \
+  '[.[] | select(.clientId == "account-center" and .sessionId == $sid)] | length >= 1' \
+  'UPDATE_PASSWORD event for the authenticated person is missing' --arg sid "$reauth_session_1"
+json_assert "$(kcadm get "attack-detection/brute-force/users/$reauth_user_uuid" -r "$REALM" -c)" \
+  '.numFailures == 0 and .disabled == false' \
+  'refused authentication proofs must not count as failed logins'
 
 CURRENT_STAGE='sky-account password change'
 sky POST credentials/password "$token_a" "$sudo_a" '{"newPassword":"short","logoutOtherSessions":false}'
@@ -569,7 +642,7 @@ json_assert "$SKY_BODY" '.retryAfter == ($retry | tonumber)' 'retryAfter must ma
 
 CURRENT_STAGE='sky-account secrets in logs'
 keycloak_logs=$("${COMPOSE[@]}" logs --no-color keycloak 2>&1)
-for secret_value in "$totp_secret" "$sudo_a" "$sudo_totp" "$ROTATED_PASSWORD" "$setup_handle"; do
+for secret_value in "$totp_secret" "$sudo_a" "$sudo_totp" "$sudo_reauth" "$reauth_id_token_1" "$ROTATED_PASSWORD" "$REAUTH_ROTATED_PASSWORD" "$setup_handle"; do
   [[ $keycloak_logs != *"$secret_value"* ]] || fail 'a secret, sudo token or password leaked into Keycloak logs'
 done
 
@@ -586,6 +659,7 @@ printf '%s' "$realm_before" | kcadm update "realms/$REALM" -f - >/dev/null
 kcadm delete "attack-detection/brute-force/users/$FIXTURE_USER_UUID" -r "$REALM" >/dev/null
 kcadm delete identity-provider/instances/OBS -r "$REALM" >/dev/null
 kcadm delete "users/$taken_user_uuid" -r "$REALM" >/dev/null
+kcadm delete "users/$reauth_user_uuid" -r "$REALM" >/dev/null
 printf '%s' "$user_profile_before" | kcadm update users/profile -r "$REALM" -f - >/dev/null
 kcadm get "users/$FIXTURE_USER_UUID" -r "$REALM" -c \
   | jq -e '.username == "account-fixture" and .firstName == "Account"' >/dev/null \

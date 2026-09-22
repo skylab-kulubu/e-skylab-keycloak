@@ -33,8 +33,24 @@ class SudoResourceTest {
             inOrder.verify(event).success();
             verify(event, never()).error(anyString());
         }
-        assertEquals(List.of("password", "totp", "passkey"),
+        assertEquals(List.of("password", "totp", "passkey", "authentication"),
                 Arrays.stream(SudoTokens.Method.values()).map(SudoTokens.Method::auditName).toList());
+    }
+
+    @Test
+    void anAuthenticationProofAlsoRecordsWhenThePersonAuthenticated() {
+        EventBuilder event = mock(EventBuilder.class, RETURNS_SELF);
+
+        SudoResource.recordSudoSuccess(event, SudoTokens.Method.AUTHENTICATION,
+                Map.of(SudoResource.AUDIT_AUTH_TIME_DETAIL, "1790000000"));
+
+        InOrder inOrder = inOrder(event);
+        inOrder.verify(event).event(EventType.CUSTOM_REQUIRED_ACTION);
+        inOrder.verify(event).detail("action", "sky-sudo");
+        inOrder.verify(event).detail("method", "authentication");
+        inOrder.verify(event).detail("auth_time", "1790000000");
+        inOrder.verify(event).success();
+        verify(event, never()).error(anyString());
     }
 
     @Test

@@ -31,20 +31,28 @@ import java.util.regex.Pattern;
 /**
  * {@code v1/sudo}: the person proves a credential and receives a five-minute sudo token.
  *
- * <p>Every proof first honours an existing brute-force lockout. Failed and successful password
- * and TOTP proofs are then reported to Keycloak's brute-force protector like a login. Passkey
- * proofs are reported too, but Keycloak 26.7.4's protector only counts the {@code password},
- * {@code otp} and recovery-code categories, so a failed passkey assertion does not advance the
- * realm counter and a successful one clears nothing; the throttle for passkey proofs is the
- * SPI's own {@code sudo-passkey} budget (10 per 15 minutes).
+ * <p>Every credential proof first honours an existing brute-force lockout. Failed and successful
+ * password and TOTP proofs are then reported to Keycloak's brute-force protector like a login.
+ * Passkey proofs are reported too, but Keycloak 26.7.4's protector only counts the
+ * {@code password}, {@code otp} and recovery-code categories, so a failed passkey assertion does
+ * not advance the realm counter and a successful one clears nothing; the throttle for passkey
+ * proofs is the SPI's own {@code sudo-passkey} budget (10 per 15 minutes).
+ *
+ * <p>A person with none of these proves a fresh Keycloak authentication instead
+ * ({@code sudo/authentication}): the ID token the BFF received at its callback, verified against
+ * the realm keys and bound to the bearer session. No credential is checked there, so the
+ * brute-force protector is not involved; the {@code sudo} budget still counts every attempt.
  */
 public final class SudoResource {
 
     static final String AUDIT_ACTION = "sky-sudo";
     static final String AUDIT_ACTION_DETAIL = "action";
     static final String AUDIT_METHOD_DETAIL = "method";
+    /** For {@code method=authentication}: the verified {@code auth_time} (epoch seconds) of the ID token. */
+    static final String AUDIT_AUTH_TIME_DETAIL = "auth_time";
 
     private static final String AUTH_METHOD = "sky-account-sudo";
+    private static final String ID_TOKEN_FIELD = "idToken";
     private static final Pattern OTP_CODE = Pattern.compile("^[0-9]{4,10}$");
 
     private final AccountRequest request;
@@ -212,6 +220,30 @@ public final class SudoResource {
         });
     }
 
+    /**
+     * The fallback for a person without password, TOTP or passkey: the ID token of a Keycloak
+     * authentication completed within the last five minutes, presented with the bearer of the same
+     * session. The sudo token expires five minutes after that authentication, not after this call.
+     */
+    @POST
+    @Path("authentication")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces({MediaType.APPLICATION_JSON, Problem.MEDIA_TYPE})
+    public Response withAuthentication(String body) {
+        return request.execute(() -> {
+            Caller caller = request.authenticate();
+            request.limit(RateLimiter.SUDO, caller);
+            String idToken = RequestBody.parse(body, Set.of(ID_TOKEN_FIELD))
+                    .requireString(ID_TOKEN_FIELD, 1, RequestBody.MAX_BYTES);
+            AuthenticationProofs.Proof proof = request.authenticationProofs().verify(caller, idToken);
+            SudoTokens.Issued issued = request.issueSudo(
+                    caller, SudoTokens.Method.AUTHENTICATION, proof.expiresAt(), proof.amr());
+            recordSudoSuccess(request.event(caller), SudoTokens.Method.AUTHENTICATION,
+                    Map.of(AUDIT_AUTH_TIME_DETAIL, String.valueOf(proof.authTime())));
+            return issuedResponse(issued);
+        });
+    }
+
     /** One way of proving it is the person: how to read, find, and check the credential. */
     private abstract class Proof<T> {
         private Caller caller;
@@ -270,11 +302,15 @@ public final class SudoResource {
             recordSuccessfulAttempt(caller, proof.credentialType());
             SudoTokens.Issued issued = request.issueSudo(caller, proof.method());
             recordSudoSuccess(request.event(caller), proof.method(), proof.auditDetails());
-            ObjectNode response = JsonSerialization.mapper.createObjectNode();
-            response.put("sudoToken", issued.token());
-            response.put("expiresAt", AccountRequest.isoSeconds(issued.expiresAt()));
-            return AccountRequest.ok(200, response);
+            return issuedResponse(issued);
         });
+    }
+
+    private static Response issuedResponse(SudoTokens.Issued issued) {
+        ObjectNode response = JsonSerialization.mapper.createObjectNode();
+        response.put("sudoToken", issued.token());
+        response.put("expiresAt", AccountRequest.isoSeconds(issued.expiresAt()));
+        return AccountRequest.ok(200, response);
     }
 
     private static List<CredentialModel> otpCredentials(UserModel user) {

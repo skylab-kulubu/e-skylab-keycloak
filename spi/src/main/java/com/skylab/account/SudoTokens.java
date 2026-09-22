@@ -47,7 +47,13 @@ final class SudoTokens {
         PASSWORD("password", List.of("pwd")),
         TOTP("totp", List.of("otp")),
         /** A passkey assertion: a hardware-held key ({@code hwk}) after a user presence/verification test ({@code user}). */
-        PASSKEY("passkey", List.of("hwk", "user"));
+        PASSKEY("passkey", List.of("hwk", "user")),
+        /**
+         * A fresh Keycloak authentication proven by its ID token (the Microsoft fallback for a person
+         * without password, TOTP or passkey). {@code idp} is the default; an ID token that carries its
+         * own {@code amr} (Keycloak's AMR mapper) hands those values through instead.
+         */
+        AUTHENTICATION("authentication", List.of("idp"));
 
         private final String auditName;
         private final List<String> amr;
@@ -67,6 +73,17 @@ final class SudoTokens {
     }
 
     Issued issue(Caller caller, Method method) {
+        return issue(caller, method, Long.MAX_VALUE, method.amr());
+    }
+
+    /**
+     * Issues a token that expires at {@code expiresAt} (epoch seconds) when that is earlier than
+     * five minutes from now: a proof that was made earlier (a fresh authentication) must not
+     * outlive the window that started when it was made. The window never extends past
+     * {@code now + TTL_SECONDS}, whatever {@code expiresAt} says.
+     */
+    Issued issue(Caller caller, Method method, long expiresAt, List<String> amr) {
+        long now = Time.currentTime();
         SudoToken token = new SudoToken();
         token.id(SecretGenerator.getInstance().generateSecureID());
         token.type(TYPE);
@@ -74,9 +91,11 @@ final class SudoTokens {
         token.subject(caller.user().getId());
         token.issuedFor(AccessGuard.ACCOUNT_CENTER_CLIENT_ID);
         token.audience(AUDIENCE);
-        token.issuedNowWithTTL(TTL_SECONDS);
+        token.iat(now);
+        token.nbf(now);
+        token.exp(Math.min(expiresAt, now + TTL_SECONDS));
         token.setSessionId(caller.userSession().getId());
-        token.setAuthenticationMethods(method.amr());
+        token.setAuthenticationMethods(List.copyOf(amr));
         return new Issued(session.tokens().encode(token), token.getExp());
     }
 
@@ -136,9 +155,10 @@ final class SudoTokens {
 
     /**
      * The realm issuer exactly as Keycloak wrote it into the verified bearer token, so the sudo
-     * token is bound to the same issuer without recomputing URLs.
+     * token (and the ID token of an authentication proof) is bound to the same issuer without
+     * recomputing URLs.
      */
-    private static String issuer(Caller caller) {
+    static String issuer(Caller caller) {
         String issuer = caller.token().getIssuer();
         if (issuer == null || issuer.isBlank()) {
             throw reject("bearer without issuer");

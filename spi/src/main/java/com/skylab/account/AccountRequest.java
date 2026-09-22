@@ -11,6 +11,7 @@ import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.function.Supplier;
 
 /**
@@ -82,6 +83,15 @@ final class AccountRequest {
 
     SudoTokens.Issued issueSudo(Caller caller, SudoTokens.Method method) {
         return sudoTokens.issue(caller, method);
+    }
+
+    /** A sudo token for a proof made at an earlier moment: it expires with that proof's window. */
+    SudoTokens.Issued issueSudo(Caller caller, SudoTokens.Method method, long expiresAt, List<String> amr) {
+        return sudoTokens.issue(caller, method, expiresAt, amr);
+    }
+
+    AuthenticationProofs authenticationProofs() {
+        return new AuthenticationProofs(session);
     }
 
     EventBuilder event(Caller caller) {

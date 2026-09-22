@@ -27,6 +27,12 @@ final class Problems {
                 "Yeniden doğrulamanın süresi doldu. Lütfen tekrar doğrula.");
     }
 
+    /** The ID token verified, but the authentication behind it is older than the Sudo mode window. */
+    static Problem authenticationStale() {
+        return new Problem(401, "authentication_stale", "Authentication too old",
+                "Girişin üzerinden beş dakikadan fazla geçti. Kimliğini yeniden doğrula.");
+    }
+
     static Problem invalidPassword() {
         return new Problem(401, "invalid_credentials", "Invalid credentials",
                 "Parola yanlış.");

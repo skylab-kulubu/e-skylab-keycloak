@@ -26,6 +26,9 @@ record SkyMailMessage(String templateKey, String recipientFullName, Map<String, 
 
     static final String LINK = "link";
     static final String LINK_EXPIRATION_MINUTES = "linkExpirationMinutes";
+    /** The sky-account personal e-mail proof (K3c) is a code the person types, not a link. */
+    static final String CODE = "code";
+    static final String CODE_EXPIRATION_MINUTES = "codeExpirationMinutes";
     static final String FIRST_NAME = "firstName";
     static final String USERNAME = "username";
     static final String REALM_DISPLAY_NAME = "realmDisplayName";
@@ -33,12 +36,14 @@ record SkyMailMessage(String templateKey, String recipientFullName, Map<String, 
 
     /** Always sent, in this order, never omitted. */
     static final List<String> VARIABLE_NAMES = List.of(
-            LINK, LINK_EXPIRATION_MINUTES, FIRST_NAME, USERNAME, REALM_DISPLAY_NAME, SUBJECT_KEY);
+            LINK, LINK_EXPIRATION_MINUTES, CODE, CODE_EXPIRATION_MINUTES,
+            FIRST_NAME, USERNAME, REALM_DISPLAY_NAME, SUBJECT_KEY);
 
     SkyMailMessage {
         variables = Map.copyOf(variables);
     }
 
+    /** A mail whose action is a link (every Keycloak system mail). */
     static SkyMailMessage of(
             String templateKey,
             String subjectKey,
@@ -46,9 +51,34 @@ record SkyMailMessage(String templateKey, String recipientFullName, Map<String, 
             String linkExpirationMinutes,
             UserModel user,
             RealmModel realm) {
+        return of(templateKey, subjectKey, link, linkExpirationMinutes, "", "", user, realm);
+    }
+
+    /** A mail whose action is a code the person types (the sky-account personal e-mail proof). */
+    static SkyMailMessage ofCode(
+            String templateKey,
+            String subjectKey,
+            String code,
+            String codeExpirationMinutes,
+            UserModel user,
+            RealmModel realm) {
+        return of(templateKey, subjectKey, "", "", code, codeExpirationMinutes, user, realm);
+    }
+
+    static SkyMailMessage of(
+            String templateKey,
+            String subjectKey,
+            String link,
+            String linkExpirationMinutes,
+            String code,
+            String codeExpirationMinutes,
+            UserModel user,
+            RealmModel realm) {
         Map<String, String> variables = new LinkedHashMap<>();
         variables.put(LINK, text(link));
         variables.put(LINK_EXPIRATION_MINUTES, text(linkExpirationMinutes));
+        variables.put(CODE, text(code));
+        variables.put(CODE_EXPIRATION_MINUTES, text(codeExpirationMinutes));
         variables.put(FIRST_NAME, user == null ? "" : text(user.getFirstName()));
         variables.put(USERNAME, user == null ? "" : text(user.getUsername()));
         variables.put(REALM_DISPLAY_NAME, realmDisplayName(realm));
@@ -106,7 +136,7 @@ record SkyMailMessage(String templateKey, String recipientFullName, Map<String, 
         return expirationInMinutes <= 0 ? "" : String.valueOf(expirationInMinutes);
     }
 
-    /** {@code linkExpiration} as the freemarker attributes carry it: a number, or nothing. */
+    /** {@code linkExpiration} / {@code codeExpiration} as the freemarker attributes carry it: a number, or nothing. */
     static String minutes(Object attribute) {
         if (attribute instanceof Number number) {
             return minutes(number.longValue());

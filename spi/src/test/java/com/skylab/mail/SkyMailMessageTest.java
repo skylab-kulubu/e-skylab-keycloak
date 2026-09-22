@@ -71,9 +71,28 @@ class SkyMailMessageTest {
         }
         assertEquals("", variables.get("link").textValue());
         assertEquals("", variables.get("linkExpirationMinutes").textValue());
+        assertEquals("", variables.get("code").textValue());
+        assertEquals("", variables.get("codeExpirationMinutes").textValue());
         assertEquals("", variables.get("firstName").textValue());
         assertEquals("E-skylab", variables.get("realmDisplayName").textValue(),
                 "Keycloak capitalises the realm name when there is no display name");
+    }
+
+    @Test
+    void carriesACodeInsteadOfALinkWhenTheMailIsACode() throws Exception {
+        SkyMailMessage message = SkyMailMessage.ofCode(
+                SkyMailTemplates.PERSONAL_EMAIL_CONFIRM, "skyPersonalEmailConfirmSubject", "048213", "10",
+                user("Ada", "Yıldız", "ada", "ada@yildizskylab.com"), realm("e-skylab", "SKY LAB"));
+
+        JsonNode variables = JsonSerialization.mapper
+                .readTree(message.toRequestBody("kisisel@example.com"))
+                .get("body_variables");
+
+        assertEquals(SkyMailMessage.VARIABLE_NAMES.size(), variables.size());
+        assertEquals("048213", variables.get("code").textValue());
+        assertEquals("10", variables.get("codeExpirationMinutes").textValue());
+        assertEquals("", variables.get("link").textValue());
+        assertEquals("", variables.get("linkExpirationMinutes").textValue());
     }
 
     @Test

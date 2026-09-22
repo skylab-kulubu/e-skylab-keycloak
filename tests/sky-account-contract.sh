@@ -309,6 +309,35 @@ confirmation_code_of() {
   printf '%s' "$code"
 }
 
+# personal_code_for <address> -> the six-digit code mailed to <address>. With the SkyMail
+# sender (K5) the mail is a SkyMail task rendered by SkyMail's keycloak.personal-email-confirm
+# template, so the code is read from the task the fixture captured; without it Keycloak renders
+# this extension's FreeMarker template and the mail lands in Mailpit.
+personal_code_for() {
+  local address=$1 attempt task code
+  if ! "${COMPOSE[@]}" ps --services 2>/dev/null | grep -qx skymail; then
+    confirmation_code_of "$(mailpit_message_id "$address")"
+    return
+  fi
+  for attempt in $(seq 1 30); do
+    task=$("${COMPOSE[@]}" logs --no-color --no-log-prefix skymail 2>/dev/null \
+      | sed -n 's/^SKYMAIL_FIXTURE //p' \
+      | jq -c --arg to "$address" 'select(.event == "mail_task" and .recipient_email == $to)' \
+      | tail -n 1)
+    [[ -n $task ]] && break
+    sleep 1
+  done
+  [[ -n $task ]] || fail 'no personal e-mail code reached SkyMail'
+  jq -e '.template_key == "keycloak.personal-email-confirm"' <<<"$task" >/dev/null \
+    || fail 'the personal e-mail code did not go to SkyMail under keycloak.personal-email-confirm'
+  jq -e '.missing_variables == [] and .body_variables.link == "" and .body_variables.codeExpirationMinutes == "10"' \
+    <<<"$task" >/dev/null \
+    || fail 'the SkyMail task must carry every variable, no link and the ten-minute expiry'
+  code=$(jq -r '.body_variables.code' <<<"$task")
+  [[ $code =~ ^[0-9]{6}$ ]] || fail 'the SkyMail task carries no six-digit code'
+  printf '%s' "$code"
+}
+
 # a_code_other_than <code> -> a six-digit code that is certainly not <code>
 a_code_other_than() {
   if [[ $1 == 000000 ]]; then printf '000001'; else printf '000000'; fi
@@ -779,7 +808,7 @@ json_assert "$SKY_BODY" '(.expiresAt | fromdateiso8601) > ($now + 9 * 60) and (.
 sky GET identity "$token_e" -
 json_assert "$SKY_BODY" '.personalEmail == null and .email == $school' \
   'a change request must not touch the person before the address is proven' --arg school "$EMAIL_SCHOOL_ADDRESS"
-confirm_code=$(confirmation_code_of "$(mailpit_message_id "$EMAIL_PERSONAL_ADDRESS")")
+confirm_code=$(personal_code_for "$EMAIL_PERSONAL_ADDRESS")
 
 # 2 / 3 and 3 / 3, then the budget is spent.
 sky POST email/change-request "$token_e" "$sudo_e" '{"address":"not an address"}'
@@ -799,7 +828,7 @@ sky POST email/change-request "$token_o" "$sudo_o" "{\"address\":\"$EMAIL_TAKEN_
 expect 409 email_taken 'an address that is another person personal e-mail must be refused'
 sky POST email/change-request "$token_o" "$sudo_o" "{\"address\":\"$EMAIL_OTHER_PERSONAL_ADDRESS\",\"makePrimary\":true}"
 expect 202 - 'the second person must start its own change'
-foreign_code=$(confirmation_code_of "$(mailpit_message_id "$EMAIL_OTHER_PERSONAL_ADDRESS")")
+foreign_code=$(personal_code_for "$EMAIL_OTHER_PERSONAL_ADDRESS")
 
 # The code proves the mailbox and the session proves the person, so confirming needs no sudo;
 # a code is only ever compared with the pending change of the person whose session sends it.

@@ -148,7 +148,7 @@ class SkyMailClientTest {
         assertEquals("keycloak.verify-email", body.get("template_key").textValue());
         assertEquals("ada@yildizskylab.com", body.get("recipient_email").textValue());
         assertEquals("Ada Yıldız", body.get("recipient_full_name").textValue());
-        assertEquals(6, body.get("body_variables").size());
+        assertEquals(SkyMailMessage.VARIABLE_NAMES.size(), body.get("body_variables").size());
         assertEquals("access-1", mailAuthorizations.getFirst().replace("Bearer ", ""));
     }
 

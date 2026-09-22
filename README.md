@@ -40,7 +40,7 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.10.0`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.11.0`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.1.0`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
@@ -322,8 +322,10 @@ sağlayıcılarının önüne geçer, derleme seçeneği gerekmez.
 `keycloak.update-email`, `keycloak.idp-link`, `keycloak.personal-email-confirm`
 ve eşlenmeyen her posta için `keycloak.generic`'tir. SkyMail Go `text/template`
 kullandığından eksik değişken `<no value>` basar; bu yüzden `link`,
-`linkExpirationMinutes`, `firstName`, `username`, `realmDisplayName` ve
-`subjectKey` her postada, bilinmiyorsa boş string olarak gönderilir. SMTP test
+`linkExpirationMinutes`, `code`, `codeExpirationMinutes`, `firstName`, `username`,
+`realmDisplayName` ve `subjectKey` her postada, bilinmiyorsa boş string olarak
+gönderilir. Kişisel e-posta postası link değil kod taşır ve sky-account'un
+`EmailResource.TEMPLATE` sabitiyle eşlenir. SMTP test
 postası realm'in kendi ayarlarını kanıtladığı için SkyMail'e hiç uğramaz.
 
 Yetki, `keycloak-mailer` gizli service account istemcisinin client credentials

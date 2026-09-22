@@ -17,6 +17,8 @@ const requiredRoles = ["skymail:access", "skymail:mails:send"];
 const requiredVariables = [
   "link",
   "linkExpirationMinutes",
+  "code",
+  "codeExpirationMinutes",
   "firstName",
   "username",
   "realmDisplayName",

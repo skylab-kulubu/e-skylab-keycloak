@@ -42,9 +42,11 @@ public final class SkyMailEmailTemplateProvider implements EmailTemplateProvider
     // --- capture -------------------------------------------------------------------------
 
     private void record(String templateKey, String subjectKey, String link, String expirationMinutes) {
-        session.setAttribute(
-                SkyMailMessage.SESSION_ATTRIBUTE,
-                SkyMailMessage.of(templateKey, subjectKey, link, expirationMinutes, user, realm));
+        record(SkyMailMessage.of(templateKey, subjectKey, link, expirationMinutes, user, realm));
+    }
+
+    private void record(SkyMailMessage message) {
+        session.setAttribute(SkyMailMessage.SESSION_ATTRIBUTE, message);
     }
 
     private void clear() {
@@ -176,16 +178,22 @@ public final class SkyMailEmailTemplateProvider implements EmailTemplateProvider
 
     /**
      * A mail sent through the generic overloads is named by its freemarker body template. The
-     * Account Center personal e-mail confirmation (K3c) arrives this way.
+     * Account Center personal e-mail code (K3c) arrives this way, carrying {@code code} and
+     * {@code codeExpiration} instead of a link.
      */
     private void recordGeneric(String subjectFormatKey, String bodyTemplate,
             Map<String, Object> bodyAttributes) {
         Map<String, Object> attributes = bodyAttributes == null ? Map.of() : bodyAttributes;
         Object link = attributes.get(SkyMailMessage.LINK);
-        record(SkyMailTemplates.forBodyTemplate(bodyTemplate),
+        Object code = attributes.get(SkyMailMessage.CODE);
+        record(SkyMailMessage.of(SkyMailTemplates.forBodyTemplate(bodyTemplate),
                 subjectFormatKey,
                 link instanceof String text ? text : "",
-                SkyMailMessage.minutes(attributes.get("linkExpiration")));
+                SkyMailMessage.minutes(attributes.get("linkExpiration")),
+                code instanceof String text ? text : "",
+                SkyMailMessage.minutes(attributes.get("codeExpiration")),
+                user,
+                realm));
     }
 
     @Override

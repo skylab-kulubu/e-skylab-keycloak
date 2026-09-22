@@ -1,5 +1,6 @@
 package com.skylab.mail;
 
+import com.skylab.account.EmailResource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.keycloak.email.EmailException;
@@ -118,20 +119,22 @@ class SkyMailEmailTemplateProviderTest {
     }
 
     @Test
-    void mapsThePersonalEmailConfirmationSentThroughTheGenericOverloads() throws EmailException {
+    void carriesTheCodeOfTheSkyAccountPersonalEmailMail() throws EmailException {
+        // Exactly what EmailResource hands Keycloak's template provider.
         Map<String, Object> bodyAttributes = new HashMap<>();
-        bodyAttributes.put("link", "https://my.yildizskylab.com/email/confirm?token=abc");
-        bodyAttributes.put("linkExpiration", 30L);
+        bodyAttributes.put("code", "048213");
+        bodyAttributes.put("codeExpiration", 10);
+        bodyAttributes.put("newEmail", "kisisel@example.com");
 
-        provider.send("personalEmailConfirmSubject", List.of(), "personal-email-confirm.ftl",
+        provider.send("skyPersonalEmailConfirmSubject", List.of(), EmailResource.TEMPLATE,
                 bodyAttributes, "kisisel@example.com");
 
         SkyMailMessage message = recorded();
         assertEquals(SkyMailTemplates.PERSONAL_EMAIL_CONFIRM, message.templateKey());
-        assertEquals("https://my.yildizskylab.com/email/confirm?token=abc",
-                message.variables().get(SkyMailMessage.LINK));
-        assertEquals("30", message.variables().get(SkyMailMessage.LINK_EXPIRATION_MINUTES));
-        assertEquals("personalEmailConfirmSubject", message.variables().get(SkyMailMessage.SUBJECT_KEY));
+        assertEquals("048213", message.variables().get(SkyMailMessage.CODE));
+        assertEquals("10", message.variables().get(SkyMailMessage.CODE_EXPIRATION_MINUTES));
+        assertEquals("", message.variables().get(SkyMailMessage.LINK), "the code mail carries no link");
+        assertEquals("skyPersonalEmailConfirmSubject", message.variables().get(SkyMailMessage.SUBJECT_KEY));
     }
 
     @Test

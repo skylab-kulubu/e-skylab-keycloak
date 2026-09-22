@@ -1,5 +1,6 @@
 package com.skylab.mail;
 
+import com.skylab.account.EmailResource;
 import org.keycloak.events.EventType;
 
 import java.util.Locale;
@@ -37,7 +38,8 @@ final class SkyMailTemplates {
             "password-reset.ftl", RESET_PASSWORD,
             "email-update-confirmation.ftl", UPDATE_EMAIL,
             "identity-provider-link.ftl", IDP_LINK,
-            "personal-email-confirm.ftl", PERSONAL_EMAIL_CONFIRM);
+            // By the constant sky-account sends it with, so the two names cannot drift apart.
+            EmailResource.TEMPLATE.toLowerCase(Locale.ROOT), PERSONAL_EMAIL_CONFIRM);
 
     private SkyMailTemplates() {
     }

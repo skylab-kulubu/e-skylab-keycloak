@@ -43,7 +43,7 @@ postanın kapsamıdır, istekle birlikte atılır ve birim testinde sunucu
 | `sendPasswordReset` | `password-reset.ftl` | `keycloak.reset-password` | `passwordResetSubject` |
 | `sendEmailUpdateConfirmation` | `email-update-confirmation.ftl` | `keycloak.update-email` | `emailUpdateConfirmationSubject` |
 | `sendConfirmIdentityBrokerLink` | `identity-provider-link.ftl` | `keycloak.idp-link` | `identityProviderLinkSubject` |
-| `send(...)` | `personal-email-confirm.ftl` | `keycloak.personal-email-confirm` | çağıranın konu anahtarı |
+| `send(...)` | `sky-personal-email-confirm.ftl` (`EmailResource.TEMPLATE`) | `keycloak.personal-email-confirm` | çağıranın konu anahtarı (`skyPersonalEmailConfirmSubject`) |
 | `sendExecuteActions` | `executeActions.ftl` | `keycloak.generic` | `executeActionsSubject` |
 | `sendEvent`, `sendOrgInviteEmail`, `sendVerifiableCredentialOffer`, eşlenmemiş her `send(...)` | ilgili `.ftl` | `keycloak.generic` | Keycloak'ın konu anahtarı |
 | `sendSmtpTestEmail` | `email-test.ftl` | — (SkyMail'e gitmez) | — |
@@ -53,21 +53,25 @@ Keycloak konu anahtarını `subjectKey` değişkeninde taşıyarak gider. SMTP t
 postası realm'in kendi SMTP ayarlarını kanıtlamak içindir; SkyMail'e hiç
 uğramaz, bekleyen bir kayıt varsa da temizlenir.
 
-Hesap Merkezi'nin kişisel e-posta onayı (K3c) genel `send(...)` aşırı
-yüklemesinden geçer; gövde şablonunu `personal-email-confirm.ftl` adıyla
-çağırmalıdır. Ad eşlemesi tema dizinini (`html/`, `text/`), büyük-küçük harfi
-ve `.ftl` uzantısını yok sayar.
+Hesap Merkezi'nin kişisel e-posta kodu (K3c) genel `send(...)` aşırı
+yüklemesinden geçer. Eşleme, sky-account'un postayı gönderdiği sabitin kendisini
+(`EmailResource.TEMPLATE`) okur; iki ad ayrı ayrı yazıldığında bir kez ayrışmış ve
+posta kodsuz olarak `keycloak.generic`'e düşmüştü. Ad eşlemesi tema dizinini
+(`html/`, `text/`), büyük-küçük harfi ve `.ftl` uzantısını yok sayar. Bu posta
+link değil 6 haneli bir kod taşır: `code` ve `codeExpirationMinutes`.
 
 ## Gövde değişkenleri
 
 SkyMail konuyu ve gövdeyi Go `text/template` ile üretir; eksik bir değişken
-`<no value>` basar. Bu yüzden her posta altı değişkeni **her zaman** taşır,
+`<no value>` basar. Bu yüzden her posta sekiz değişkeni **her zaman** taşır,
 Keycloak bilmiyorsa boş string olarak:
 
 | Değişken | Kaynağı |
 | --- | --- |
 | `link` | Keycloak'ın eylem bağlantısı (olmayan postalarda boş) |
 | `linkExpirationMinutes` | Bağlantının dakika cinsinden ömrü (ondalık metin, yoksa boş) |
+| `code` | Kişisel e-posta doğrulama kodu, 6 rakam (yalnız `keycloak.personal-email-confirm`; diğerlerinde boş) |
+| `codeExpirationMinutes` | Kodun dakika cinsinden ömrü (`10`; kod taşımayan postalarda boş) |
 | `firstName` | `user.firstName` |
 | `username` | `user.username` |
 | `realmDisplayName` | Realm görünen adı, yoksa Keycloak'ın kuralıyla baş harfi büyütülmüş realm adı |
@@ -82,7 +86,8 @@ POST {SKY_MAIL_BASE_URL}/v1/mail_tasks/single
   "recipient_email": "...",
   "recipient_full_name": "...",
   "body_variables": {
-    "link": "...", "linkExpirationMinutes": "60", "firstName": "...",
+    "link": "...", "linkExpirationMinutes": "60", "code": "", "codeExpirationMinutes": "",
+    "firstName": "...",
     "username": "...", "realmDisplayName": "...", "subjectKey": "emailVerificationSubject"
   }
 }

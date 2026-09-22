@@ -61,7 +61,7 @@ class HandoffRulesTest {
         assertTrue(HandoffRules.isSignInPath("/login/"));
 
         for (String path : new String[] {
-                null, "", "auth/signin", "//auth", "/auth//signin", "/auth\\signin", "/../admin", "/auth/..",
+                null, "", "auth/signin", "//auth", "/auth//signin", "/auth\\signin", "/../admin", "/auth/..", "/a..b",
                 "/auth/./signin", "/auth?x=1", "/auth#x", "/auth signin", "/auth%2Fsignin", "/giriş",
                 "/" + "a".repeat(128),
         }) {

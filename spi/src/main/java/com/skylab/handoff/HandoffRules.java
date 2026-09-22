@@ -63,14 +63,14 @@ final class HandoffRules {
         return Optional.of("https://" + host);
     }
 
-    /** A sign-in entry path: absolute, plain segments, no {@code //}, {@code .}/{@code ..} segment, query or fragment. */
+    /** A sign-in entry path: absolute, plain segments, no {@code //}, {@code ..}, {@code .} segment, query or fragment. */
     static boolean isSignInPath(String signInPath) {
         if (signInPath == null || signInPath.length() > MAX_SIGN_IN_PATH_LENGTH
-                || !SIGN_IN_PATH.matcher(signInPath).matches()) {
+                || !SIGN_IN_PATH.matcher(signInPath).matches() || signInPath.contains("..")) {
             return false;
         }
         for (String segment : signInPath.split("/")) {
-            if (segment.equals(".") || segment.equals("..")) {
+            if (segment.equals(".")) {
                 return false;
             }
         }

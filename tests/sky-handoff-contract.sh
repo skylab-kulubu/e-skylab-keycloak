@@ -28,13 +28,18 @@ SECRETS_FILE="$STATE_DIR/sky-handoff-secrets"
 chmod 0600 "$SECRETS_FILE"
 CURRENT_STAGE='web handoff fixture'
 
-fail() {
-  printf 'web handoff contract failure during %s: %s\n' "$CURRENT_STAGE" "$1" >&2
+# The Keycloak log tail for a failure, with every 43-character value (codes, proofs) redacted.
+keycloak_log_tail() {
   "${COMPOSE[@]}" logs --no-color --tail=60 keycloak 2>&1 \
     | sed -E 's/[A-Za-z0-9_-]{43}/[REDACTED-43]/g' >&2 || true
+}
+
+fail() {
+  printf 'web handoff contract failure during %s: %s\n' "$CURRENT_STAGE" "$1" >&2
+  keycloak_log_tail
   exit 1
 }
-trap 'status=$?; printf "web handoff command failed during %s (line %s)\n" "$CURRENT_STAGE" "$LINENO" >&2; exit "$status"' ERR
+trap 'status=$?; printf "web handoff command failed during %s (line %s)\n" "$CURRENT_STAGE" "$LINENO" >&2; keycloak_log_tail; exit "$status"' ERR
 
 kcadm() {
   local command=$1
@@ -119,13 +124,15 @@ skyapp_login() {
   [[ $location == "$APP_CALLBACK"\?* ]] || fail "SkyApp login $label did not return to the app"
   code=$(sed -n 's/.*[?&]code=\([^&]*\).*/\1/p' <<<"$location")
   [[ -n $code ]] || fail "SkyApp login $label returned no authorization code"
-  APP_TOKENS=$(curl --fail --silent --show-error \
+  APP_TOKENS=$(curl --silent --show-error \
     --data-urlencode grant_type=authorization_code \
     --data-urlencode client_id=skyapp \
     --data-urlencode "code=$code" \
     --data-urlencode "redirect_uri=$APP_CALLBACK" \
     --data-urlencode "code_verifier=$verifier" \
     "$TOKEN_URL")
+  jq -e '.access_token and .refresh_token' <<<"$APP_TOKENS" >/dev/null 2>&1 \
+    || fail "SkyApp login $label: the code exchange failed ($(jq -r '"\(.error // "-"): \(.error_description // "-")"' <<<"$APP_TOKENS" 2>/dev/null || true))"
 }
 
 # app_refresh: a fresh access token of the fixture's SkyApp login, refreshed the way the app does
@@ -290,6 +297,10 @@ while IFS= read -r stale_user; do
   [[ -n $stale_user ]] || continue
   kcadm delete "users/$stale_user" -r "$REALM" >/dev/null
 done < <(kcadm get users -r "$REALM" -c -q "username=$OTHER_USERNAME" -q exact=true | jq -r '.[].id')
+# Imported users do not receive the realm default roles; SkyApp's offline_access login needs
+# the offline_access role every real account holds through them. Removed again at cleanup.
+kcadm add-roles -r "$REALM" --uid "$FIXTURE_USER_UUID" --rolename offline_access >/dev/null
+
 other_password=$(openssl rand -base64 24 | tr -d '\n')
 other_uuid=$(kcadm create users -r "$REALM" -i \
   -s "username=$OTHER_USERNAME" -s enabled=true -s emailVerified=true \
@@ -543,6 +554,7 @@ done <"$SECRETS_FILE"
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='web handoff cleanup'
 kcadm delete "users/$other_uuid" -r "$REALM" >/dev/null
+kcadm remove-roles -r "$REALM" --uid "$FIXTURE_USER_UUID" --rolename offline_access >/dev/null
 unset other_password
 rm -f "$SECRETS_FILE"
 

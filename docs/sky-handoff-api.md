@@ -132,7 +132,7 @@ uzlaştırma yeniden yazımından sonra korunduklarını doğrular):
   Kural hem kod alınırken hem açılırken uygulanır. Giriş kapısı yönlendirme URI'lerinden
   türetilmez, bu yüzden joker yönlendirme URI'si gerekmez.
 - `signInPath`: `/` ile başlar, en çok 128 karakter, yalnız `A-Z a-z 0-9 . _ ~ -` ve `/`;
-  `//`, `.`/`..` parçası, sorgu ve parça olamaz.
+  `//`, `..`, `.` parçası, sorgu ve parça olamaz.
 - `returnParam`: `^[A-Za-z][A-Za-z0-9_]{0,31}$`.
 
 ## Olaylar ve gizlilik

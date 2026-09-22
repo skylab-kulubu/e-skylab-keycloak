@@ -2,30 +2,23 @@ package com.skylab.account;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
-import org.keycloak.Token;
-import org.keycloak.TokenCategory;
 import org.keycloak.common.util.Time;
-import org.keycloak.jose.JOSE;
 import org.keycloak.jose.jws.JWSBuilder;
 import org.keycloak.jose.jws.JWSInput;
-import org.keycloak.jose.jws.crypto.HMACProvider;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.KeycloakSession;
-import org.keycloak.models.TokenManager;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.UserSessionModel;
 import org.keycloak.representations.AccessToken;
-import org.keycloak.representations.LogoutToken;
-import org.keycloak.models.AuthenticatedClientSessionModel;
 
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.SecureRandom;
 import java.util.List;
-import java.util.function.BiConsumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -69,6 +62,35 @@ class SudoTokensTest {
 
         assertEquals(List.of("hwk", "user"), token.getAuthenticationMethods());
         assertEquals(token.getId(), fixture.sudoTokens.require(fixture.caller, issued.token()).getId());
+    }
+
+    @Test
+    void aTokenForAnEarlierProofExpiresWithThatProofAndNeverLaterThanFiveMinutes() throws Exception {
+        long now = Time.currentTime();
+        long authenticatedAt = now - 120;
+
+        SudoTokens.Issued issued = fixture.sudoTokens.issue(
+                fixture.caller, SudoTokens.Method.AUTHENTICATION, authenticatedAt + SudoTokens.TTL_SECONDS, List.of("idp"));
+        SudoToken token = new JWSInput(issued.token()).readJsonContent(SudoToken.class);
+
+        assertEquals(authenticatedAt + SudoTokens.TTL_SECONDS, issued.expiresAt(), "the window starts at the authentication");
+        assertEquals(issued.expiresAt(), token.getExp());
+        assertTrue(Math.abs(token.getIat() - now) <= 1, "issued now");
+        assertEquals(token.getIat(), token.getNbf());
+        assertEquals(List.of("idp"), token.getAuthenticationMethods());
+        assertEquals(SudoTokens.TYPE, token.getType());
+        assertEquals(SESSION_ID, token.getSessionId());
+        assertEquals(token.getId(), fixture.sudoTokens.require(fixture.caller, issued.token()).getId());
+
+        Time.setOffset(SudoTokens.TTL_SECONDS - 120 + 1);
+        assertEquals("sudo_expired", requireFailure(fixture.caller, issued.token()));
+        Time.setOffset(0);
+
+        SudoTokens.Issued capped = fixture.sudoTokens.issue(
+                fixture.caller, SudoTokens.Method.AUTHENTICATION, now + 3600, List.of("pwd", "mfa"));
+        SudoToken cappedToken = new JWSInput(capped.token()).readJsonContent(SudoToken.class);
+        assertEquals(cappedToken.getIat() + SudoTokens.TTL_SECONDS, capped.expiresAt(), "never later than now + TTL");
+        assertEquals(List.of("pwd", "mfa"), cappedToken.getAuthenticationMethods(), "the ID token's own amr is kept");
     }
 
     @Test
@@ -204,65 +226,6 @@ class SudoTokensTest {
 
         private String sign(SudoToken token) {
             return new JWSBuilder().kid("realm-hmac").type("JWT").jsonContent(token).hmac512(key);
-        }
-    }
-
-    /** Stands in for Keycloak's DefaultTokenManager: internal tokens are HS512 with the realm HMAC key. */
-    private static final class InternalKeyTokenManager implements TokenManager {
-        private final byte[] key;
-
-        private InternalKeyTokenManager(byte[] key) {
-            this.key = key;
-        }
-
-        @Override
-        public String encode(Token token) {
-            assertEquals(TokenCategory.INTERNAL, token.getCategory());
-            return new JWSBuilder().kid("realm-hmac").type("JWT").jsonContent(token).hmac512(key);
-        }
-
-        @Override
-        public <T extends Token> T decode(String token, Class<T> clazz) {
-            try {
-                JWSInput input = new JWSInput(token);
-                if (input.getHeader().getAlgorithm() == null || !"HS512".equals(input.getHeader().getAlgorithm().name())) {
-                    return null;
-                }
-                return HMACProvider.verify(input, key) ? input.readJsonContent(clazz) : null;
-            } catch (Exception exception) {
-                return null;
-            }
-        }
-
-        @Override
-        public String signatureAlgorithm(TokenCategory category) {
-            return category == TokenCategory.INTERNAL ? "HS512" : "RS256";
-        }
-
-        @Override
-        public <T> T decodeClientJWT(String token, ClientModel client, BiConsumer<JOSE, ClientModel> jwtValidator,
-                Class<T> clazz, boolean allowAlgorithmNone) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public String encodeAndEncrypt(Token token) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public String cekManagementAlgorithm(TokenCategory category) {
-            return null;
-        }
-
-        @Override
-        public String encryptAlgorithm(TokenCategory category) {
-            return null;
-        }
-
-        @Override
-        public LogoutToken initLogoutToken(ClientModel client, UserModel user, AuthenticatedClientSessionModel clientSessionModel) {
-            throw new UnsupportedOperationException();
         }
     }
 }

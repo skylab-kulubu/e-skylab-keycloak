@@ -48,8 +48,10 @@ görünümdür; sky-account API yetki kararlarında onu kullanmaz.
 Hassas işlemler (`credentials/*`, `identity/username`) taze bir **sudo token**
 ister. Kişi parolasını, doğrulama uygulaması kodunu ya da passkey'ini
 `POST sudo/password` / `POST sudo/totp` / `POST sudo/webauthn/verify` ile kanıtlar;
-yanıt bir sudo token verir. BFF bu token'ı sonraki isteklerde
-`X-Sky-Sudo: <sudoToken>` başlığıyla gönderir.
+yanıt bir sudo token verir. Bunların hiçbiri olmayan kişi (bugün çoğu YTÜ hesabı)
+Keycloak'ta yeniden giriş yapar (Microsoft) ve BFF, callback'te aldığı taze ID
+token'ı `POST sudo/authentication` ile kanıt olarak sunar. BFF sudo token'ı
+sonraki isteklerde `X-Sky-Sudo: <sudoToken>` başlığıyla gönderir.
 
 Sudo token, Keycloak'ın **iç** token'ları gibi realm HMAC anahtarıyla
 imzalanmış bir JWT'dir (`HS512`, `kid` başlıkta; anahtar Keycloak dışına
@@ -64,8 +66,8 @@ opak bir dize olarak saklar ve geri gönderir; içeriğine güvenmez.
 | `sid` | kanıtı üreten Hesap Merkezi oturumu (bearer `sid`) |
 | `azp` | `account-center` |
 | `aud` | `sky-account` |
-| `amr` | `["pwd"]`, `["otp"]` veya passkey için `["hwk","user"]` |
-| `jti`, `iat`, `nbf`, `exp` | `exp = iat + 300` |
+| `amr` | `["pwd"]`, `["otp"]`, passkey için `["hwk","user"]`, taze giriş kanıtı için `["idp"]` (ID token kendi `amr` claim'ini taşıyorsa o değerler) |
+| `jti`, `iat`, `nbf`, `exp` | `exp = iat + 300`; taze giriş kanıtında `exp = auth_time + 300` (hiçbir zaman `iat + 300`'den geç değil) |
 
 Doğrulama (`SudoTokens.require`): imza (`session.tokens().decode`, yalnız
 Keycloak'ın iç algoritması `HS512`), `typ`, `iss`, `aud`, `azp`, `jti`, `sub` ve
@@ -78,8 +80,9 @@ döner. BFF token'ı yalnız şifreli oturum kaydında tutar, tarayıcıya verme
 
 Her başarılı kanıt bir denetim olayı bırakır: `CUSTOM_REQUIRED_ACTION`
 (`client=account-center`, kişi, oturum) ve ayrıntılar
-`action=sky-sudo`, `method=password|totp|passkey` (passkey için ayrıca imzalayan
-kimlik bilgisinin `public_key_credential_id` değeri).
+`action=sky-sudo`, `method=password|totp|passkey|authentication` (passkey için
+ayrıca imzalayan kimlik bilgisinin `public_key_credential_id` değeri; taze giriş
+kanıtı için doğrulanan ID token'ın `auth_time` değeri).
 
 Brute-force koruması realm'de açıksa (`bruteForceProtected`) her parola ve TOTP
 sudo denemesi Keycloak'ın `BruteForceProtector` servisine bir giriş denemesi
@@ -108,7 +111,7 @@ yuvasını tutar. Yuvalar pencere sonunda kendiliğinden düşer.
 
 | Bütçe | Uç noktalar | Sınır |
 | --- | --- | --- |
-| `sudo` | `sudo/password`, `sudo/totp` | 10 / 15 dk |
+| `sudo` | `sudo/password`, `sudo/totp`, `sudo/authentication` | 10 / 15 dk |
 | `sudo-passkey` | `sudo/webauthn/verify` | 10 / 15 dk |
 | `sudo-options` | `sudo/webauthn/options` | 30 / 15 dk |
 | `totp-confirm` | `credentials/totp/confirm` | 10 / 15 dk |
@@ -123,6 +126,10 @@ denemesi realm brute-force sayacını **artırmaz**, başarılı olanı da sayac
 temizlemez. Passkey denemelerinin tek kısıtı `sudo-passkey` bütçesidir; kilitli
 bir hesabın (parola/TOTP denemelerinden) passkey ile de sudo alamaması ise
 sürer, çünkü kilit **kontrolü** her kanıttan önce yapılır.
+
+`sudo/authentication` kimlik bilgisi sınamaz, bu yüzden brute-force koruyucusuna
+bildirilmez; denemeleri yalnız `sudo` bütçesinden düşer (ID token realm anahtarıyla
+imzalıdır, tahmin edilemez; bütçe kötüye kullanımı sınırlar).
 
 `GET identity` sınırlanmaz: kimliği doğrulanmış okuma ucuzdur ve her okumada
 küme önbelleğine yazmak gereksizdir. Kimlik bilgisi tahminine karşı asıl
@@ -153,6 +160,7 @@ temasındaki Türkçe mesaj paketinden üretilir.
 | 401 | `unauthorized` | — | Bearer yok, geçersiz, başka istemciye ait, oturum yok |
 | 401 | `sudo_required` | — | Sudo token yok, geçersiz, başka oturuma ait |
 | 401 | `sudo_expired` | — | Sudo token'ın süresi doldu |
+| 401 | `authentication_stale` | — | ID token doğrulandı ama girişin (`auth_time`) üzerinden 300 saniyeden fazla geçti (sudo/authentication) |
 | 401 | `invalid_credentials` | — | Parola veya doğrulama kodu yanlış |
 | 401 | `user_temporarily_locked` | — | Brute-force geçici kilidi |
 | 401 | `user_disabled` | — | Kalıcı kilit / devre dışı hesap |
@@ -242,6 +250,9 @@ tarayıcıya ve sonucu SPI'ye taşıyan BFF'dir.
   bağlantısı var. `nameLocked == verifiedYtu`.
 - `usernameChangeAvailableAt`: kullanıcı adı en son 14 günden kısa süre önce
   değiştiyse bir sonraki izinli an; değilse `null`.
+- Üçü de boşsa (`password == false`, `totp == []`, `passkeys == []`) kişi
+  `my.` içinde kanıt veremez; BFF Microsoft ile yeniden girişe yönlendirir ve
+  callback'ten sonra `POST sudo/authentication` ile sudo token alır.
 - `credentials.password`: Keycloak'ın `isConfiguredFor("password")` sonucu.
   `totp`: `otp` türündeki, `passkeys`: yalnız `webauthn-passwordless` türündeki
   saklı kimlik bilgileri (tek credential akışından süzülür; etiket kullanıcı
@@ -336,6 +347,54 @@ parola/TOTP'den ayrı) düşer ve `401 webauthn_invalid` (ya da başka origin i�
 yoksa `400 webauthn_challenge_expired`. Doğrulama dışı bir hata (ör. sayaç
 güncellemesinde veritabanı hatası) `500 internal_error` ile işlemi geri alır,
 reddedilmiş assertion gibi görünmez.
+
+### `POST sudo/authentication`
+
+Parolası, doğrulama uygulaması ve passkey'i olmayan kişinin yolu. İstek
+`{"idToken": "<jwt>"}`: BFF'nin, kişiyi Keycloak'ta yeniden giriş yaptırdığı
+(`prompt=login`, Microsoft) OIDC callback'inde aldığı ID token; bearer aynı
+oturumun access token'ıdır. Kimlik bilgisi sınanmaz, brute-force koruyucusu
+devreye girmez; deneme `sudo` bütçesinden düşer.
+
+Doğrulama (`AuthenticationProofs.verify`), Keycloak'ın kendi token doğrulaması
+(`TokenVerifier`) ile:
+
+- başlık `alg` realm'in `account-center` ID token'ları için kullandığı imza
+  algoritması (`session.tokens().signatureAlgorithm(ID)`; `none`, HMAC ya da
+  başka bir algoritma reddedilir), `kid` zorunlu; imza o `kid`'li etkin ya da
+  pasif realm imza anahtarıyla (`SignatureProvider.verifier(kid)`) doğrulanır,
+  devre dışı ya da bilinmeyen anahtar reddedilir;
+- `typ == "ID"`, `iss` bearer'ın `iss` değeri, `aud` **yalnız** `account-center`
+  (dize ya da tek elemanlı dizi), `azp == "account-center"`, `sub` var;
+- realm, istemci ve kişi "not-before" (push revocation) değerleri `iat`'i
+  geçmemiş; `exp`/`nbf` Keycloak'ın `isActive` kuralıyla;
+- `sub` bearer'ın `sub`'ı, `sid` bearer'ın oturumu (ID token başka bir oturumdan
+  ya da başka bir kişiden olamaz);
+- `iat` en fazla 30 sn ileride, `exp` var ve geçmemiş, `auth_time` var ve en
+  fazla 30 sn ileride; `nonce` yok sayılır;
+- son olarak `now - auth_time ≤ 300`; aşıldıysa `401 authentication_stale`.
+
+Diğer her ret `401 sudo_required`'dır ve hangi claim'in tutmadığını söylemez;
+`authentication_stale` yalnız geri kalan her şeyi geçen bir token için döner,
+böylece doğrulanmayan bir token hakkında bilgi sızdırmaz. Gövde hatası
+`400 invalid_request`. JWE (şifreli) ID token desteklenmez (`account-center`
+istemcisi ID token'ı şifrelemez).
+
+Başarıda parola/TOTP/passkey ile aynı yanıt (`sudoToken`, `expiresAt`), ama
+pencere girişten başlar: `expiresAt = auth_time + 300` (hiçbir zaman
+`now + 300`'den geç değil), `amr = ["idp"]` (ID token kendi `amr` claim'ini
+taşıyorsa o değerler), `method=authentication`, olay ayrıntısı `auth_time`.
+Kişinin ayrıca parolası/TOTP'si/passkey'i olması bu ucu kapatmaz: taze bir
+Keycloak girişi en az onlar kadar güçlü bir kanıttır; "yalnız hiçbiri olmayanlar
+Microsoft ile yeniden doğrular" kuralı ürün kararıdır ve BFF'de uygulanır.
+
+Hesap Merkezi akışı: `GET identity` üç kimlik bilgisini de boş gösterir → BFF
+`prompt=login&max_age=0` ile Keycloak'a yönlendirir (oturum `sid` korunur,
+`auth_time` yenilenir) → callback `auth_time`, `sid`, `sub` bağını doğrular ve
+yeni token'ları saklar → BFF `POST sudo/authentication {idToken}` çağırır →
+dönen sudo token oturum kaydına `method=reauth` ile yazılır ve sonraki
+`credentials/*`, `identity/username`, `email/*` isteklerinde `X-Sky-Sudo` ile
+gönderilir. Token'sız `reauth` kanıtı yalnız geçiş dönemi için bir yedektir.
 
 ### `POST credentials/password` — sudo gerekir
 
@@ -484,6 +543,12 @@ Alias `^[A-Za-z0-9._-]{1,64}$` desenine uymazsa Keycloak açılışta durur.
   Yapılandırma okunamıyorsa da aynı yanıt verilir.
 - Sudo token tek kullanımlık değildir (5 dakikalık pencere, `sid` bağlı) ve
   Keycloak dışında doğrulanamaz (iç HMAC anahtarı).
+- Taze giriş kanıtı (`sudo/authentication`) ID token'ı Keycloak'ın kendi
+  `TokenVerifier` yolu ve realm anahtarlarıyla doğrular; yalnız bearer
+  oturumunun (`sid`) ve kişisinin (`sub`) `account-center`'a verilmiş ID token'ı
+  kabul edilir, pencere girişin `auth_time` değerinden başlar. ID token günlüğe
+  yazılmaz; ret gerekçesi yalnız `DEBUG` düzeyinde ve token içeriği olmadan
+  yazılır.
 - Federasyon (LDAP vb.) yoktur; OTP doğrulaması yalnız Keycloak'ta saklı OTP
   kimlik bilgilerine bakar, federated OTP'ler `totp_not_configured` verir.
 - Passkey doğrulaması Keycloak'ın kendi webauthn4j makinesidir

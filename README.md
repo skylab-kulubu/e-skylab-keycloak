@@ -212,6 +212,8 @@ belgesindedir.
 - Uç noktalar: `GET identity`; `PATCH identity/name` (Doğrulanmış YTÜ hesabında
   kilitli); `POST identity/username` (14 gün bekleme, teklik); `POST sudo/password`,
   `POST sudo/totp`, `POST sudo/webauthn/options|verify` (passkey ile sudo);
+  `POST sudo/authentication` (parolası, TOTP'si ve passkey'i olmayan kişi için
+  Microsoft ile yeniden girişin ID token'ıyla sudo);
   `POST credentials/password` (`logoutOtherSessions` ile);
   `POST credentials/totp/setup|confirm`; `POST credentials/webauthn/options|register`
   (passkey kaydı); `DELETE credentials/{id}` (OTP ve passkey; parola asla).
@@ -228,8 +230,17 @@ belgesindedir.
   anahtarıyla (`HS512`, Keycloak dışında doğrulanamaz) imzaladığı beş dakikalık,
   `sub`+`sid` bağlı bir sudo token verir (`X-Sky-Sudo` başlığı; BFF için opak). Token tek kullanımlık değildir; başka oturumun
   bearer'ıyla çalışmaz, süresi dolunca `sudo_expired` döner. Her başarılı
-  kanıt `CUSTOM_REQUIRED_ACTION` (`action=sky-sudo`, `method=password|totp|passkey`)
-  olayı bırakır.
+  kanıt `CUSTOM_REQUIRED_ACTION` (`action=sky-sudo`,
+  `method=password|totp|passkey|authentication`) olayı bırakır.
+- Taze giriş kanıtı: üç kimlik bilgisinden hiçbiri olmayan kişi Keycloak'ta
+  (Microsoft) yeniden giriş yapar; BFF callback'te aldığı ID token'ı
+  `POST sudo/authentication` ile sunar. SPI token'ı Keycloak'ın `TokenVerifier`
+  yolu ve realm anahtarlarıyla doğrular (`typ=ID`, `iss`, `aud`/`azp` yalnız
+  `account-center`, bearer'ın `sub` ve `sid` değerleri, `iat`/`exp`,
+  not-before) ve `auth_time` 300 saniyeden eskiyse `401 authentication_stale`,
+  diğer her rette `401 sudo_required` döner. Sudo token'ın penceresi girişten
+  başlar (`exp = auth_time + 300`), `amr=["idp"]`, olay `method=authentication`.
+  Brute-force koruyucusu devreye girmez; denemeler `sudo` bütçesinden düşer.
 - Brute-force koruması realm'de açıksa her parola/TOTP sudo denemesi Keycloak'ın
   kendi koruyucusuna bildirilir (kapalıysa açılışta tek bir uyarı günlüğe düşer;
   uzlaştırıcı korumayı ve parola politikasını açar). Keycloak 26.7.4 passkey
@@ -248,7 +259,9 @@ belgesindedir.
 
 Entegrasyon testi (`tests/sky-account-contract.sh`, `tests/run-integration.sh`
 tarafından çağrılır) gerçek Keycloak üzerinde bearer korumasını, YTÜ kilidini,
-brute-force sayımını ve kilidi, sudo oturum bağını, parola politikasını,
+brute-force sayımını ve kilidi, sudo oturum bağını, taze giriş kanıtını (ID
+token ile sudo → parola belirleme; başka oturumun/kişinin ID token'ı, bozuk imza
+ve access token reddedilir), parola politikasını,
 diğer oturumların kapatılmasını, TOTP kurulum/onay/giriş/silme akışını,
 kullanıcı adı kurallarını, hız sınırını, passkey uçlarının şeklini ve sudo
 kapısını, ve olay kayıtlarını doğrular. Passkey ceremony'si ayrı bir Playwright

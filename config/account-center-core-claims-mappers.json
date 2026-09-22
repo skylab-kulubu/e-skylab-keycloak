@@ -1,0 +1,26 @@
+[
+  {
+    "name": "sub",
+    "protocol": "openid-connect",
+    "protocolMapper": "oidc-sub-mapper",
+    "consentRequired": false,
+    "config": {
+      "introspection.token.claim": "true",
+      "access.token.claim": "true"
+    }
+  },
+  {
+    "name": "auth_time",
+    "protocol": "openid-connect",
+    "protocolMapper": "oidc-usersessionmodel-note-mapper",
+    "consentRequired": false,
+    "config": {
+      "user.session.note": "AUTH_TIME",
+      "id.token.claim": "true",
+      "introspection.token.claim": "true",
+      "access.token.claim": "true",
+      "claim.name": "auth_time",
+      "jsonType.label": "long"
+    }
+  }
+]

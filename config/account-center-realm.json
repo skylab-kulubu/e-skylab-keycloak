@@ -16,14 +16,5 @@
     "en"
   ],
   "defaultLocale": "tr",
-  "loginTheme": "e-skylab-theme",
-  "webAuthnPolicyPasswordlessRpEntityName": "SKY LAB",
-  "webAuthnPolicyPasswordlessSignatureAlgorithms": [
-    "ES256",
-    "RS256"
-  ],
-  "webAuthnPolicyPasswordlessResidentKey": "required",
-  "webAuthnPolicyPasswordlessUserVerificationRequirement": "required",
-  "webAuthnPolicyPasswordlessPasskeysEnabled": true,
-  "webAuthnPolicyPasswordlessMediation": "conditional"
+  "loginTheme": "e-skylab-theme"
 }

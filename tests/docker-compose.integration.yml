@@ -95,6 +95,10 @@ services:
       KEYCLOAK_CONFIG_CLIENT_ID: account-center-config
       KEYCLOAK_CONFIG_CLIENT_SECRET: integration-config-client-secret
       ACCOUNT_CENTER_BASE_URL: https://my.yildizskylab.com
+      # The fixture is served from http://localhost:18080, so the passkey relying party id
+      # and extra origin follow the harness origin instead of the production defaults.
+      KEYCLOAK_PASSKEY_RP_ID: localhost
+      KEYCLOAK_PASSKEY_EXTRA_ORIGINS: http://localhost:18080
     depends_on:
       keycloak:
         condition: service_started

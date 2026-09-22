@@ -1808,6 +1808,13 @@ done < <(kcadm get "users/$fixture_user_uuid/credentials" -r e-skylab-test -c \
   | jq -r '.[] | select(.type == "otp") | .id')
 stage_v2_passkey_cleanup "$client_secret"
 
+# K5 runs before the sky-account contract on purpose: it writes the real keycloak-mailer
+# secret into the sender's mount. Afterwards the contract's personal e-mail code travels the
+# production path (a SkyMail task under keycloak.personal-email-confirm) and the contract reads
+# it there; run later, the sender still holds the placeholder, falls back to SMTP, and the
+# contract would only prove the fallback.
+stage_k5_system_mail_through_skymail
+
 # The sky-account SPI contract runs against the same realm: bearer guard, Verified
 # YTÜ lock, brute force, sudo binding, password/TOTP/username flows and events.
 CURRENT_STAGE='sky-account SPI contract'
@@ -1903,8 +1910,6 @@ unset passkey_user_password
 kcadm update realms/e-skylab-test \
   -s "webAuthnPolicyPasswordlessRpId=$(jq -r '.webAuthnPolicyPasswordlessRpId // ""' <<<"$webauthn_realm_before")" \
   -s "webAuthnPolicyPasswordlessExtraOrigins=$(jq -c '.webAuthnPolicyPasswordlessExtraOrigins // []' <<<"$webauthn_realm_before")" >/dev/null
-
-stage_k5_system_mail_through_skymail
 
 # Provision the RabbitMQ topology expected by the provider, then use an admin
 # event to prove the rebuilt provider can publish on Keycloak 26.7.4.

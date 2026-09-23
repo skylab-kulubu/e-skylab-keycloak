@@ -85,9 +85,10 @@ Uzlaştırıcı, gizli `account-center` istemcisini şu sözleşmeyle yönetir:
   tanımlanmaz.
 - S256 PKCE ve Pushed Authorization Requests zorunludur.
 - Backchannel logout ve çıkış sonrası dönüş adresleri birebir sabitlenir.
-- İstemciye özel tarayıcı akışının ilk alternatif adımı,
-  `sky_native_handoff` değerini HMAC doğrulamalı mTLS üzerinden tek seferlik
-  olarak kullanır.
+- İstemciye özel tarayıcı akışı yoktur: `account-center` realm'in etkin
+  tarayıcı akışıyla giriş yapar. SkyApp'ten oturum açık geçiş `sky-handoff`
+  ile olur (ADR-0048); eski native handoff köprüsü (`sky-native-handoff`,
+  mTLS/HMAC redeem istemcisi) kaldırıldı.
 - Özel varsayılan istemci kapsamı (`account-center-account-api`,
   mapper'ları `config/account-center-account-api-mappers.json`) `account` ve
   `core` audience değerlerini, sabit `manage-account` / `view-profile` /
@@ -170,11 +171,13 @@ uyarı ve çalıştırılacak komut, bayraklar yanlışsa hata, service account
 rolleri okunamıyorsa uyarı. Gizli anahtarı Keycloak üretir; hiçbir betik
 yazdırmaz, ops `kcadm get clients/{id}/client-secret` ile okur (runbook §6).
 
-İstemciye özel tarayıcı akışı realm'in etkin tarayıcı akışından kopyalanır;
-böylece production'a özel parola, OTP ve passkey davranışı korunur.
-Uzlaştırıcı kaynak akışı salt okunur kabul eder, yalnız izole native handoff
-dalını ekler ve kopya saparsa onu yeniden kurar. Bilinmeyen mapper, rol ve
-kapsamlar izin listeleriyle temizlenir.
+`account-center` realm'in etkin tarayıcı akışını kullanır; böylece
+production'a özel parola, OTP ve passkey davranışı olduğu gibi geçerlidir ve
+uzlaştırıcı o akışa hiç yazmaz. Native handoff döneminden kalan kurulumda
+uzlaştırıcı istemcinin `browser` akış bağlamasını kaldırır ve eski
+`account-center-browser` akışını alt akışıyla birlikte siler; ikisi de yoksa
+hiçbir şey yazmaz (`unchanged`). Bilinmeyen mapper, rol ve kapsamlar izin
+listeleriyle temizlenir.
 
 Uzlaştırıcı her adımda önce canlı durumu okur, yalnız farklı olan alanları
 yazar ve `[reconcile] <adım>: unchanged|updated (...)` satırı basar;
@@ -199,11 +202,6 @@ kimlik doğrular (`realm-management` rolleri yalnız `manage-clients`,
 istemcinin oluşturulması veya gizli anahtarının döndürülmesi ayrı ve
 denetlenebilir bir başlangıç adımıdır; ana yönetici bilgileri normal Compose
 yığınına girmez.
-
-`sky-native-handoff` yalnız Hesap Merkezi istemcisine bağlıdır. Köprü ipucu
-yoksa masaüstü girişini değiştirmez. Geçerli bir ipucunu yalnız bir kez kullanır,
-etkin kullanıcıyı `sub` ile seçer ve özgün `auth_time` değerini yeni tarayıcı
-oturumuna taşır. Başarısız veya yeniden oynatılmış köprü parola formuna düşmez.
 
 ## sky-account API
 
@@ -394,7 +392,7 @@ SKY LAB sitesini WebView'inde oturum açık açmasını sağlar; tam sözleşme
   öznitelik yazılır, her değişiklik eski → yeni değerli bir yönetim olayı bırakır.
 
 Entegrasyon testi (`tests/sky-handoff-contract.sh`, `tests/run-integration.sh`
-tarafından native handoff aşamasının yanında çağrılır) kodu alma, kanıtsız/yanlış
+tarafından çağrılır) kodu alma, kanıtsız/yanlış
 kanıtlı açılış, sayfasız `account-center` girişi ve özgün `auth_time`, tekrar
 (`used`), 45 saniye (`expired`), kapatılan hedef, devre dışı kişi, iptal edilen
 offline oturum, başka kişinin oturumunun değiştirilmesi, hız sınırı, olaylar ve

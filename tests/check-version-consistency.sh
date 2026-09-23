@@ -59,7 +59,7 @@ grep -Fqx "FROM $MAVEN_IMAGE AS providers" "$KEYCLOAK_DIR/Dockerfile" \
 grep -Fqx "ARG NODE_IMAGE=$NODE_IMAGE" "$KEYCLOAK_DIR/Dockerfile" \
   || fail 'Node builder image is not the approved atomic tag and digest'
 grep -Fq "image: $NODE_IMAGE" "$SCRIPT_DIR/docker-compose.integration.yml" \
-  || fail 'integration native bridge image is not digest-pinned'
+  || fail 'integration SkyMail fixture image is not digest-pinned'
 grep -Fqx 'COPY --from=providers --chown=keycloak:keycloak --chmod=0644 /build/spi/target/e-skylab-spi-1.12.1.jar /opt/keycloak/providers/e-skylab-spi-1.12.1.jar' "$KEYCLOAK_DIR/Dockerfile" \
   || fail 'optimized image does not install the pinned SKY LAB SPI version'
 grep -Fqx 'COPY --from=theme --chown=keycloak:keycloak --chmod=0644 /build/theme/dist_keycloak/e-skylab-theme-2.0.1.jar /opt/keycloak/providers/e-skylab-theme-2.0.1.jar' "$KEYCLOAK_DIR/Dockerfile" \

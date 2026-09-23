@@ -114,7 +114,7 @@ Hepsi fabrika ilklendirmesinde bir kez okunur ve doğrulanır.
 | Değişken | Varsayılan | Anlamı |
 | --- | --- | --- |
 | `SKY_MAIL_ENABLED` | `false` | `true` olmadıkça hiçbir şey doğrulanmaz, her posta SMTP'den çıkar |
-| `SKY_MAIL_BASE_URL` | — (etkinken zorunlu) | SkyMail kökü; HTTPS, yol/sorgu/parça ve kimlik bilgisi taşımaz. Uç nokta `/v1/mail_tasks/single` eklenerek kurulur |
+| `SKY_MAIL_BASE_URL` | — (etkinken zorunlu) | SkyMail API kökü; HTTPS, sorgu/parça ve kimlik bilgisi taşımaz. Paylaşılan bir API host'unda düz bir yol taşıyabilir (`/api/skymail`); nokta segmenti, kodlanmış karakter, boş segment ve sondaki `/v1` reddedilir. Uç nokta köke `/v1/mail_tasks/single` eklenerek kurulur |
 | `SKY_MAIL_CLIENT_ID` | `keycloak-mailer` (compose) | Gizli service account istemcisi |
 | `SKY_MAIL_CLIENT_SECRET_FILE` | `/run/secrets/sky-mail/client.secret` | Gizli anahtarın salt okunur bağlandığı mutlak dosya yolu |
 | `SKY_MAIL_CLIENT_SECRET` | — | Yalnız `SKY_HARNESS=1` ile (entegrasyon koşumu); başka yerde yok sayılır |
@@ -240,3 +240,7 @@ havuzuna yine de ulaşır.
 > bu hatada her posta sessizce SMTP yedeğine düşer, SkyMail hiçbir şey görmez. Doğru değer
 > core'un `SKYMAIL_URL`'siyle aynı kök: `https://api.yildizskylab.com/api/skymail`
 > (kimliksiz istek 403 döner — API'nin orada olduğunu gösterir).
+>
+> 2026-09-23'e kadar gönderici yol taşıyan bir kökü reddediyordu; bu değerle Keycloak
+> `SKY_MAIL_BASE_URL must carry no path.` diyerek açılmadı (Swarm eski görevi ayakta tuttu).
+> SPI artık düz bir yolu kabul ediyor.

@@ -136,6 +136,77 @@ uzlaştırma yeniden yazımından sonra korunduklarını doğrular):
   `//`, `..`, `.` parçası, sorgu ve parça olamaz.
 - `returnParam`: `^[A-Za-z][A-Za-z0-9_]{0,31}$`.
 
+## Yönetim uçları (superadmin)
+
+Hedefleri yalnız SKY LAB yöneticileri değiştirir; superadmin'in "SkyApp'ten geçiş" sayfası bu
+uçları sunucu tarafından, oturum açmış yöneticinin kendi token'ıyla çağırır. Core'a yeni bir
+Keycloak yetkisi verilmez.
+
+- **Kim:** Keycloak'ın doğruladığı bir bearer token; `azp`'si superadmin'in istemcisi **`admin`**,
+  canlı ve **çevrimiçi** bir oturuma bağlı (`sid`), etkin bir kişi ve bu kişi Keycloak grubu
+  **`/ADMIN`**'in üyesi (superadmin ve core'un yönetici saydığı grup). Üyelik token claim'lerinden
+  değil kişinin grup eşlemelerinden okunur; `/ADMIN`'in herhangi bir alt grubunun üyeliği de sayılır
+  (Keycloak'ın `isMemberOf` anlamı). Başka istemcilerin (`my.`, SkyApp, `admin-cli` …) token'ları,
+  kişi `/ADMIN` üyesi olsa da reddedilir.
+- **Ayarlar** (sağlayıcı ayarı, yoksa düz ortam değişkeni, yoksa varsayılan):
+  - grup: `KC_SPI_REALM_RESTAPI_EXTENSION__SKY_HANDOFF__ADMIN_GROUP` (`admin-group`), sonra
+    `SKY_HANDOFF_ADMIN_GROUP`; varsayılan `/ADMIN`. Grup yoluyla yazılır (`/ADMIN`, `/ADMIN/web`);
+    baştaki `/` yoksa eklenir.
+  - istemci: `KC_SPI_REALM_RESTAPI_EXTENSION__SKY_HANDOFF__ADMIN_CLIENT` (`admin-client`), sonra
+    `SKY_HANDOFF_ADMIN_CLIENT`; varsayılan `admin`.
+  - Grup realm'de yoksa uçlar herkese kapalıdır (`403`) ve günlüğe bir kez uyarı düşer (grup
+    yeniden bulunup sonra yine kaybolursa yine bir kez).
+- **Ret:** token yok ya da geçersiz → `401 invalid_token`; doğrulanmış ama kabul edilmeyen her
+  çağıran (başka istemci, offline oturum, `sid` uyuşmazlığı, `/ADMIN` üyesi değil, grup yok) → hep
+  aynı gövdeyle `403 forbidden`.
+
+### `GET admin/targets`
+
+Realm'deki her istemci, `clientId`'ye göre sıralı:
+
+```json
+{"targets": [
+  {"clientId": "skyforms", "name": "SKY LAB Forms", "rootUrl": "https://forms.yildizskylab.com",
+   "originAllowed": true, "clientEnabled": true,
+   "enabled": false, "signInPath": "/auth/signin", "returnParam": "callbackUrl"}
+]}
+```
+
+`originAllowed`, `rootUrl`'in köken kuralına uyup uymadığını; `clientEnabled`, Keycloak istemcisinin
+kendisinin açık olup olmadığını söyler. Başka hiçbir istemci verisi (yönlendirme URI'leri, sırlar,
+diğer öznitelikler) dönmez.
+
+### `PUT admin/targets/{clientId}`
+
+```json
+{"enabled": true, "signInPath": "/auth/signin", "returnParam": "callbackUrl"}
+```
+
+- Gövde tam olarak bu üç alandır; `enabled` zorunlu boolean, diğer ikisi metin ya da `null`
+  (yoksa `null` sayılır). Açık bir hedef için ikisi de zorunludur; verilen her değer kapalıyken de
+  kurala uymalıdır. `null` özniteliği siler; "kapalı" `sky.handoff.enabled` özniteliğinin yokluğudur.
+- Açmak için istemcinin `rootUrl`'i köken kuralına uymalıdır.
+- Yalnız bu üç öznitelik yazılır; yönlendirme URI'leri, sırlar ve diğer öznitelikler hiç okunmaz ve
+  değişmez.
+- Cevap `200` ve güncel satır (yukarıdaki biçim). Değer değişmediyse hiçbir şey yazılmaz.
+- Her değişiklik bir Keycloak **yönetim olayı** bırakır: `resourceType=SKY_HANDOFF_TARGET`,
+  `operationType=UPDATE`, `resourcePath=clients/<uuid>/sky-handoff`, `authDetails` (kim, hangi
+  istemciden, hangi IP), `details.clientId`, `details.before` ve `details.after` (eski ve yeni üç
+  değerin JSON'u). Reddedilen istek olay bırakmaz. Yönetim olayları realm'de kapalıysa aynı
+  bilgi (kim, hangi istemci, eski → yeni) Keycloak günlüğüne `INFO` satırı olarak da düşer.
+
+Hatalar (RFC 7807, Türkçe `detail`):
+
+| HTTP | `code` | Ne zaman |
+|---|---|---|
+| 400 | `invalid_request` | Gövde JSON nesnesi değil, `enabled` boolean değil ya da sözleşme dışı alan var |
+| 400 | `invalid_sign_in_path` | Giriş kapısı yolu kurala uymuyor ya da açık hedefte eksik |
+| 400 | `invalid_return_param` | Dönüş parametresi kurala uymuyor ya da açık hedefte eksik |
+| 400 | `origin_not_allowed` | Açılmak istenen istemcinin `rootUrl`'i köken kuralına uymuyor |
+| 401 | `invalid_token` | Token yok ya da geçersiz |
+| 403 | `forbidden` | `/ADMIN` üyesi değil, token `admin` istemcisinin değil ya da oturum çevrimiçi değil |
+| 404 | `client_not_found` | Böyle bir `clientId` yok (yalnız yöneticiye döner) |
+
 ## `account-center` token claim'leri
 
 Uzlaştırıcı (`reconcile-account-center.sh`) iki eşleyiciyi `account-center`'ın varsayılan

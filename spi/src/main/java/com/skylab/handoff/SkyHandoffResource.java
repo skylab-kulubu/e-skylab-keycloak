@@ -1,5 +1,7 @@
 package com.skylab.handoff;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.skylab.account.RateLimiter;
 import jakarta.ws.rs.Consumes;
@@ -7,7 +9,9 @@ import jakarta.ws.rs.GET;
 import jakarta.ws.rs.HeaderParam;
 import jakarta.ws.rs.NotAuthorizedException;
 import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
 import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.HttpHeaders;
@@ -19,22 +23,28 @@ import org.keycloak.common.ClientConnection;
 import org.keycloak.events.Details;
 import org.keycloak.events.EventBuilder;
 import org.keycloak.events.EventType;
+import org.keycloak.events.admin.OperationType;
 import org.keycloak.headers.SecurityHeadersProvider;
 import org.keycloak.models.BrowserSecurityHeaders;
 import org.keycloak.models.ClientModel;
+import org.keycloak.models.GroupModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.UserSessionModel;
+import org.keycloak.models.utils.KeycloakModelUtils;
 import org.keycloak.protocol.oidc.OIDCLoginProtocol;
 import org.keycloak.services.Urls;
 import org.keycloak.services.managers.AppAuthManager;
 import org.keycloak.services.managers.AuthenticationManager;
 import org.keycloak.services.managers.BruteForceProtector;
 import org.keycloak.services.managers.UserSessionManager;
+import org.keycloak.services.resources.admin.AdminAuth;
+import org.keycloak.services.resources.admin.AdminEventBuilder;
 import org.keycloak.util.JsonSerialization;
 
 import java.net.URI;
+import java.util.Comparator;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -62,15 +72,20 @@ public final class SkyHandoffResource {
     static final String REPLACED_SESSION_DETAIL = "replaced_session";
     static final String ADDRESS_CHANGED_DETAIL = "address_changed";
     static final String REPLACED_BY_ANOTHER_USER = "replaced_by_another_user";
+    /** Admin events of target changes: resource type and the last segment of their resource path. */
+    static final String ADMIN_EVENT_RESOURCE = "SKY_HANDOFF_TARGET";
+    static final String PROVIDER_PATH = "sky-handoff";
 
     private static final Logger LOG = Logger.getLogger(SkyHandoffResource.class);
 
     private final KeycloakSession session;
     private final RealmModel realm;
+    private final AdminAccess adminAccess;
 
-    public SkyHandoffResource(KeycloakSession session) {
+    SkyHandoffResource(KeycloakSession session, AdminAccess adminAccess) {
         this.session = session;
         this.realm = session.getContext().getRealm();
+        this.adminAccess = adminAccess;
     }
 
     @POST
@@ -176,6 +191,61 @@ public final class SkyHandoffResource {
         }
     }
 
+    /** Every client of the realm with its root URL and Handoff target settings, for the superadmin page. */
+    @GET
+    @Path("v1/admin/targets")
+    @Produces({MediaType.APPLICATION_JSON, HandoffProblem.MEDIA_TYPE})
+    public Response listTargets() {
+        return execute(() -> {
+            authenticateAdmin();
+            ObjectNode response = JsonSerialization.mapper.createObjectNode();
+            ArrayNode targets = response.putArray("targets");
+            realm.getClientsStream()
+                    .sorted(Comparator.comparing(ClientModel::getClientId))
+                    .map(TargetSettings::describe)
+                    .forEach(targets::add);
+            return json(200, response);
+        });
+    }
+
+    /**
+     * Replaces the three Handoff target settings of one client. The origin rule is enforced here
+     * as well as at every mint and open; nothing but the three attributes is written, and every
+     * change is an admin event naming who changed which client from what to what.
+     */
+    @PUT
+    @Path("v1/admin/targets/{clientId}")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces({MediaType.APPLICATION_JSON, HandoffProblem.MEDIA_TYPE})
+    public Response updateTarget(@PathParam("clientId") String clientId, String body) {
+        return execute(() -> {
+            AuthenticationManager.AuthResult admin = authenticateAdmin();
+            ClientModel client = clientId == null ? null : realm.getClientByClientId(clientId);
+            if (client == null) {
+                throw HandoffProblem.clientNotFound().exception();
+            }
+            TargetSettings requested = TargetSettings.parse(body);
+            requested.requireAllowedFor(client);
+            TargetSettings current = TargetSettings.of(client);
+            if (!requested.equals(current)) {
+                requested.writeTo(client);
+                new AdminEventBuilder(realm, new AdminAuth(realm, admin.token(), admin.user(), admin.client()),
+                        session, connection())
+                        .resource(ADMIN_EVENT_RESOURCE)
+                        .operation(OperationType.UPDATE)
+                        .resourcePath("clients", client.getId(), PROVIDER_PATH)
+                        .detail("clientId", client.getClientId())
+                        .detail("before", current.toJson())
+                        .detail("after", requested.toJson())
+                        .representation(requested.toMap())
+                        .success();
+                LOG.infof("sky-handoff: user %s changed the Handoff target settings of client %s from %s to %s",
+                        admin.user().getId(), client.getClientId(), current.toJson(), requested.toJson());
+            }
+            return json(200, TargetSettings.describe(client));
+        });
+    }
+
     @GET
     @Path("v1/failed")
     @Produces(MediaType.TEXT_HTML)
@@ -193,6 +263,38 @@ public final class SkyHandoffResource {
      * the SkyApp contract. Every failure is the same 401 problem.
      */
     private AuthenticationManager.AuthResult authenticateSkyapp() {
+        AuthenticationManager.AuthResult result = verifyBearer();
+        String rejection = MintGuard.rejectionReason(result.token(), result.user(), result.session());
+        if (rejection != null) {
+            LOG.debugf("sky-handoff refused a bearer token: %s", rejection);
+            throw HandoffProblem.invalidToken(realm.getName()).exception();
+        }
+        return result;
+    }
+
+    /**
+     * A verified bearer issued to the admin client for a member of the admin group (directly or
+     * through a subgroup) on a live online session. An unverifiable token is 401; every verified
+     * caller who is not admitted gets the same 403 body. A missing admin group refuses everyone
+     * and is logged once.
+     */
+    private AuthenticationManager.AuthResult authenticateAdmin() {
+        AuthenticationManager.AuthResult result = verifyBearer();
+        GroupModel group = KeycloakModelUtils.findGroupByPath(session, realm, adminAccess.groupPath());
+        if (adminAccess.warnOfMissingGroup(realm.getId(), group != null)) {
+            LOG.warnf("sky-handoff: the admin group %s does not exist in realm %s; every admin request is refused",
+                    adminAccess.groupPath(), realm.getName());
+        }
+        String rejection = AdminGuard.rejectionReason(result.token(), result.user(), result.session(),
+                group, adminAccess.clientId());
+        if (rejection != null) {
+            LOG.debugf("sky-handoff refused an admin request: %s", rejection);
+            throw HandoffProblem.forbidden().exception();
+        }
+        return result;
+    }
+
+    private AuthenticationManager.AuthResult verifyBearer() {
         String authorization = session.getContext().getRequestHeaders().getHeaderString(HttpHeaders.AUTHORIZATION);
         if (authorization == null || authorization.isBlank()) {
             throw HandoffProblem.invalidToken(realm.getName()).exception();
@@ -204,11 +306,6 @@ public final class SkyHandoffResource {
             throw HandoffProblem.invalidToken(realm.getName()).exception();
         }
         if (result == null) {
-            throw HandoffProblem.invalidToken(realm.getName()).exception();
-        }
-        String rejection = MintGuard.rejectionReason(result.token(), result.user(), result.session());
-        if (rejection != null) {
-            LOG.debugf("sky-handoff refused a bearer token: %s", rejection);
             throw HandoffProblem.invalidToken(realm.getName()).exception();
         }
         return result;
@@ -306,6 +403,14 @@ public final class SkyHandoffResource {
         return new EventBuilder(realm, session, connection())
                 .event(EventType.CUSTOM_REQUIRED_ACTION)
                 .detail(AUDIT_ACTION_DETAIL, AUDIT_ACTION);
+    }
+
+    private static Response json(int status, JsonNode body) {
+        return Response.status(status)
+                .type(MediaType.APPLICATION_JSON_TYPE)
+                .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .entity(body.toString())
+                .build();
     }
 
     private static Response redirect(String location) {

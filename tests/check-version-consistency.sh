@@ -10,6 +10,7 @@ MAVEN_IMAGE='maven:3.9.11-eclipse-temurin-21@sha256:6fdc855a6ed81d288ca7ca37ac6f
 NODE_IMAGE='node:22.22.1-bookworm-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9ed5bfaf3d'
 POSTGRES_IMAGE='postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94'
 RABBITMQ_IMAGE='rabbitmq:4.2-management-alpine@sha256:643139a7e9b4d7e2c1d6a06295d0296c3c58e5de7666a09630b4564a15c951cd'
+MAILPIT_IMAGE='axllent/mailpit:v1.28@sha256:c6cf0b06eb516a0b80a8a5251f945c131e6beb8396112964404f62856487f5bd'
 KEYCLOAK_CI="$KEYCLOAK_DIR/.github/workflows/ci.yml"
 
 fail() {
@@ -59,7 +60,7 @@ grep -Fqx "ARG NODE_IMAGE=$NODE_IMAGE" "$KEYCLOAK_DIR/Dockerfile" \
   || fail 'Node builder image is not the approved atomic tag and digest'
 grep -Fq "image: $NODE_IMAGE" "$SCRIPT_DIR/docker-compose.integration.yml" \
   || fail 'integration native bridge image is not digest-pinned'
-grep -Fqx 'COPY --from=providers --chown=keycloak:keycloak --chmod=0644 /build/spi/target/e-skylab-spi-1.9.0.jar /opt/keycloak/providers/e-skylab-spi-1.9.0.jar' "$KEYCLOAK_DIR/Dockerfile" \
+grep -Fqx 'COPY --from=providers --chown=keycloak:keycloak --chmod=0644 /build/spi/target/e-skylab-spi-1.10.0.jar /opt/keycloak/providers/e-skylab-spi-1.10.0.jar' "$KEYCLOAK_DIR/Dockerfile" \
   || fail 'optimized image does not install the pinned SKY LAB SPI version'
 grep -Fqx 'COPY --from=theme --chown=keycloak:keycloak --chmod=0644 /build/theme/dist_keycloak/e-skylab-theme-2.0.1.jar /opt/keycloak/providers/e-skylab-theme-2.0.1.jar' "$KEYCLOAK_DIR/Dockerfile" \
   || fail 'optimized image does not install the one source-built SKY LAB theme'
@@ -76,6 +77,9 @@ fi
 
 grep -Fq "image: $RABBITMQ_IMAGE" "$SCRIPT_DIR/docker-compose.integration.yml" \
   || fail 'integration RabbitMQ image is not digest-pinned'
+
+grep -Fq "image: $MAILPIT_IMAGE" "$SCRIPT_DIR/docker-compose.integration.yml" \
+  || fail 'integration mail sink image is not digest-pinned'
 
 grep -Fq 'pull_request:' "$KEYCLOAK_CI" \
   || fail 'Keycloak CI must run on pull requests'

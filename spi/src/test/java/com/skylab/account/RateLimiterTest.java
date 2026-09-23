@@ -170,4 +170,11 @@ class RateLimiterTest {
             // no-op
         }
     }
+
+    @Test
+    void theChangeRequestBudgetIsThreeMailsPerHour() {
+        assertEquals("email-change", RateLimiter.EMAIL_CHANGE.name());
+        assertEquals(3, RateLimiter.EMAIL_CHANGE.maxAttempts());
+        assertEquals(3600, RateLimiter.EMAIL_CHANGE.windowSeconds());
+    }
 }

@@ -110,6 +110,18 @@ class RateLimiterTest {
     }
 
     @Test
+    void claimReportsTheWaitUntilTheWindowEndsInsteadOfThrowing() {
+        Time.setOffset(-(Time.currentTime() % 600)); // align to the start of a window
+        assertEquals(0, limiter.claim(LIMIT, "user-c"));
+        assertEquals(0, limiter.claim(LIMIT, "user-c"));
+        assertEquals(0, limiter.claim(LIMIT, "user-c"));
+
+        int retryAfter = limiter.claim(LIMIT, "user-c");
+        assertTrue(retryAfter >= 598 && retryAfter <= 600, "the wait points at the end of the window");
+        assertThrows(ProblemException.class, () -> limiter.hit(LIMIT, "user-c"), "hit and claim share one budget");
+    }
+
+    @Test
     void startsAFreshBudgetInTheNextWindow() {
         limiter.hit(LIMIT, "user-a");
         limiter.hit(LIMIT, "user-a");

@@ -1649,6 +1649,15 @@ for secret_bridge_code in \
     || fail 'native bridge code leaked into Keycloak or bridge fixture logs'
 done
 
+# The Web handoff (sky-handoff provider, ADR-0048) that replaces the native handoff above:
+# SkyApp mints a code, the WebView opens it with its proof and account-center signs in
+# silently from the browser session. Its stages are named 'web handoff ...'.
+CURRENT_STAGE='web handoff contract'
+SKY_HANDOFF_COMPOSE_FILE="$COMPOSE_FILE" \
+  SKY_HANDOFF_ADMIN_CONFIG="$ADMIN_CONFIG" \
+  SKY_HANDOFF_CLIENT_SECRET="$client_secret" \
+  "$SCRIPT_DIR/sky-handoff-contract.sh"
+
 CURRENT_STAGE='real browser authorization-code login'
 code_verifier=account-center-integration-code-verifier-0123456789abcdefghijklmnop
 code_challenge=$(printf '%s' "$code_verifier" \

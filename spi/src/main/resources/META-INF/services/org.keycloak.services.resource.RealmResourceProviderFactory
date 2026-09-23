@@ -1,1 +1,2 @@
 com.skylab.account.SkyAccountResourceProviderFactory
+com.skylab.handoff.SkyHandoffResourceProviderFactory

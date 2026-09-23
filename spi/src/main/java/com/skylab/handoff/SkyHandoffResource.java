@@ -27,9 +27,9 @@ import org.keycloak.events.admin.OperationType;
 import org.keycloak.headers.SecurityHeadersProvider;
 import org.keycloak.models.BrowserSecurityHeaders;
 import org.keycloak.models.ClientModel;
+import org.keycloak.models.GroupModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
-import org.keycloak.models.RoleModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.UserSessionModel;
 import org.keycloak.models.utils.KeycloakModelUtils;
@@ -80,12 +80,12 @@ public final class SkyHandoffResource {
 
     private final KeycloakSession session;
     private final RealmModel realm;
-    private final String adminRole;
+    private final AdminAccess adminAccess;
 
-    public SkyHandoffResource(KeycloakSession session, String adminRole) {
+    SkyHandoffResource(KeycloakSession session, AdminAccess adminAccess) {
         this.session = session;
         this.realm = session.getContext().getRealm();
-        this.adminRole = adminRole;
+        this.adminAccess = adminAccess;
     }
 
     @POST
@@ -197,7 +197,7 @@ public final class SkyHandoffResource {
     @Produces({MediaType.APPLICATION_JSON, HandoffProblem.MEDIA_TYPE})
     public Response listTargets() {
         return execute(() -> {
-            authenticateSuperAdmin();
+            authenticateAdmin();
             ObjectNode response = JsonSerialization.mapper.createObjectNode();
             ArrayNode targets = response.putArray("targets");
             realm.getClientsStream()
@@ -219,7 +219,7 @@ public final class SkyHandoffResource {
     @Produces({MediaType.APPLICATION_JSON, HandoffProblem.MEDIA_TYPE})
     public Response updateTarget(@PathParam("clientId") String clientId, String body) {
         return execute(() -> {
-            AuthenticationManager.AuthResult admin = authenticateSuperAdmin();
+            AuthenticationManager.AuthResult admin = authenticateAdmin();
             ClientModel client = clientId == null ? null : realm.getClientByClientId(clientId);
             if (client == null) {
                 throw HandoffProblem.clientNotFound().exception();
@@ -273,19 +273,21 @@ public final class SkyHandoffResource {
     }
 
     /**
-     * A verified bearer of a person holding the configured super-admin role on a live online
-     * session. An unverifiable token is 401; every verified caller who is not a super admin gets
-     * the same 403 body.
+     * A verified bearer issued to the admin client for a member of the admin group (directly or
+     * through a subgroup) on a live online session. An unverifiable token is 401; every verified
+     * caller who is not admitted gets the same 403 body. A missing admin group refuses everyone
+     * and is logged once.
      */
-    private AuthenticationManager.AuthResult authenticateSuperAdmin() {
+    private AuthenticationManager.AuthResult authenticateAdmin() {
         AuthenticationManager.AuthResult result = verifyBearer();
-        RoleModel role = KeycloakModelUtils.getRoleFromString(session, realm, adminRole);
-        String rejection = AdminGuard.rejectionReason(result.token(), result.user(), result.session(), role);
+        GroupModel group = KeycloakModelUtils.findGroupByPath(session, realm, adminAccess.groupPath());
+        if (adminAccess.warnOfMissingGroup(realm.getId(), group != null)) {
+            LOG.warnf("sky-handoff: the admin group %s does not exist in realm %s; every admin request is refused",
+                    adminAccess.groupPath(), realm.getName());
+        }
+        String rejection = AdminGuard.rejectionReason(result.token(), result.user(), result.session(),
+                group, adminAccess.clientId());
         if (rejection != null) {
-            if (role == null) {
-                LOG.warnf("sky-handoff: the super-admin role %s does not exist in realm %s; target changes are refused",
-                        adminRole, realm.getName());
-            }
             LOG.debugf("sky-handoff refused an admin request: %s", rejection);
             throw HandoffProblem.forbidden().exception();
         }

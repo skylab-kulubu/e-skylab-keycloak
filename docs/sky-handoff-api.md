@@ -138,23 +138,27 @@ uzlaştırma yeniden yazımından sonra korunduklarını doğrular):
 
 ## Yönetim uçları (superadmin)
 
-Hedefleri yalnız realm süper yöneticisi değiştirir; superadmin'in "SkyApp'ten geçiş" sayfası bu
+Hedefleri yalnız SKY LAB yöneticileri değiştirir; superadmin'in "SkyApp'ten geçiş" sayfası bu
 uçları sunucu tarafından, oturum açmış yöneticinin kendi token'ıyla çağırır. Core'a yeni bir
 Keycloak yetkisi verilmez.
 
-- **Kim:** Keycloak'ın doğruladığı bir bearer token (hangi istemciden geldiği önemli değil), canlı
-  ve **çevrimiçi** bir oturuma bağlı (`sid`), etkin bir kişi ve bu kişinin etkin rol eşlemelerinde
-  (doğrudan, grup ya da bileşik) süper yönetici rolü. Rol token claim'lerinden değil kişinin
-  kendisinden okunur. Varsayılan rol Keycloak'ın realm yöneticisi `realm-management.realm-admin`'dir
-  (bu rolü tutan kişi zaten yönetim konsolundan her istemci özniteliğini değiştirebilir). Admin
-  REST'ten farkı: rol token'ın istemci kapsamında da aranmaz, yani bir realm yöneticisinin
-  herhangi bir istemciden (örneğin `my.` ya da SkyApp) aldığı çevrimiçi token da bu üç özniteliği
-  değiştirebilir. Başka bir rol sağlayıcı ayarıyla seçilir:
-  `KC_SPI_REALM_RESTAPI_EXTENSION__SKY_HANDOFF__ADMIN_ROLE` (ya da `SKY_HANDOFF_ADMIN_ROLE`);
-  realm rolü düz adıyla (`sky-super-admin`), istemci rolü `<clientId>.<rol>` biçiminde yazılır.
-  Rol realm'de yoksa uçlar herkese kapalıdır (günlüğe uyarı düşer).
-- **Ret:** token yok ya da geçersiz → `401 invalid_token`; doğrulanmış ama süper yönetici olmayan
-  her çağıran (offline oturum, `sid` uyuşmazlığı, rol yok) → hep aynı gövdeyle `403 forbidden`.
+- **Kim:** Keycloak'ın doğruladığı bir bearer token; `azp`'si superadmin'in istemcisi **`admin`**,
+  canlı ve **çevrimiçi** bir oturuma bağlı (`sid`), etkin bir kişi ve bu kişi Keycloak grubu
+  **`/ADMIN`**'in üyesi (superadmin ve core'un yönetici saydığı grup). Üyelik token claim'lerinden
+  değil kişinin grup eşlemelerinden okunur; `/ADMIN`'in herhangi bir alt grubunun üyeliği de sayılır
+  (Keycloak'ın `isMemberOf` anlamı). Başka istemcilerin (`my.`, SkyApp, `admin-cli` …) token'ları,
+  kişi `/ADMIN` üyesi olsa da reddedilir.
+- **Ayarlar** (sağlayıcı ayarı, yoksa düz ortam değişkeni, yoksa varsayılan):
+  - grup: `KC_SPI_REALM_RESTAPI_EXTENSION__SKY_HANDOFF__ADMIN_GROUP` (`admin-group`), sonra
+    `SKY_HANDOFF_ADMIN_GROUP`; varsayılan `/ADMIN`. Grup yoluyla yazılır (`/ADMIN`, `/ADMIN/web`);
+    baştaki `/` yoksa eklenir.
+  - istemci: `KC_SPI_REALM_RESTAPI_EXTENSION__SKY_HANDOFF__ADMIN_CLIENT` (`admin-client`), sonra
+    `SKY_HANDOFF_ADMIN_CLIENT`; varsayılan `admin`.
+  - Grup realm'de yoksa uçlar herkese kapalıdır (`403`) ve günlüğe bir kez uyarı düşer (grup
+    yeniden bulunup sonra yine kaybolursa yine bir kez).
+- **Ret:** token yok ya da geçersiz → `401 invalid_token`; doğrulanmış ama kabul edilmeyen her
+  çağıran (başka istemci, offline oturum, `sid` uyuşmazlığı, `/ADMIN` üyesi değil, grup yok) → hep
+  aynı gövdeyle `403 forbidden`.
 
 ### `GET admin/targets`
 
@@ -200,8 +204,8 @@ Hatalar (RFC 7807, Türkçe `detail`):
 | 400 | `invalid_return_param` | Dönüş parametresi kurala uymuyor ya da açık hedefte eksik |
 | 400 | `origin_not_allowed` | Açılmak istenen istemcinin `rootUrl`'i köken kuralına uymuyor |
 | 401 | `invalid_token` | Token yok ya da geçersiz |
-| 403 | `forbidden` | Süper yönetici değil |
-| 404 | `client_not_found` | Böyle bir `clientId` yok (yalnız süper yöneticiye döner) |
+| 403 | `forbidden` | `/ADMIN` üyesi değil, token `admin` istemcisinin değil ya da oturum çevrimiçi değil |
+| 404 | `client_not_found` | Böyle bir `clientId` yok (yalnız yöneticiye döner) |
 
 ## `account-center` token claim'leri
 

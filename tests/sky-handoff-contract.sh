@@ -21,6 +21,14 @@ FIXTURE_USER_UUID=11111111-1111-4111-8111-111111111111
 FIXTURE_USERNAME=account-fixture
 FIXTURE_PASSWORD=fixture-password-change-me
 OTHER_USERNAME=handoff-other
+# The admin endpoints' fixture (tests/fixture-realm.json): a member of /ADMIN, an empty subgroup
+# of /ADMIN and superadmin's client admin (public, direct grants; fixture only). The member's id
+# must not be 33333333-...: the native bridge fixture uses that id for a person who must not exist.
+ADMIN_FIXTURE_UUID=44444444-4444-4444-8444-444444444444
+ADMIN_USERNAME=handoff-admin-fixture
+ADMIN_PASSWORD=handoff-admin-password-change-me
+ADMIN_CLIENT=admin
+ADMIN_SUBGROUP=handoff-admin-subgroup-fixture
 PATH_MARKER=/web-handoff-path-marker-7f3a9c
 COMPOSE=(docker compose -f "$COMPOSE_FILE")
 SECRETS_FILE="$STATE_DIR/sky-handoff-secrets"
@@ -83,6 +91,18 @@ skyapp_tokens() {
   curl --fail --silent --show-error \
     --data-urlencode grant_type=password \
     --data-urlencode client_id=skyapp \
+    --data-urlencode "username=$1" \
+    --data-urlencode "password=$2" \
+    --data-urlencode "scope=${3:-openid}" \
+    "$TOKEN_URL"
+}
+
+# admin_tokens <username> <password> [scope] -> the token response of a direct grant of the
+# fixture's superadmin client
+admin_tokens() {
+  curl --fail --silent --show-error \
+    --data-urlencode grant_type=password \
+    --data-urlencode "client_id=$ADMIN_CLIENT" \
     --data-urlencode "username=$1" \
     --data-urlencode "password=$2" \
     --data-urlencode "scope=${3:-openid}" \
@@ -625,24 +645,18 @@ mint "$app_token" '{"target":"account-center","path":"/"}'
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='web handoff admin endpoints'
 app_token=$(app_refresh)
-# The super admin is Keycloak's realm administrator (realm-management/realm-admin, the default
-# of the provider's admin-role setting); the token may come from any client.
-while IFS= read -r stale_user; do
-  [[ -n $stale_user ]] || continue
-  kcadm delete "users/$stale_user" -r "$REALM" >/dev/null
-done < <(kcadm get users -r "$REALM" -c -q username=handoff-admin -q exact=true | jq -r '.[].id')
-admin_password=$(openssl rand -base64 24 | tr -d '\n')
-admin_uuid=$(kcadm create users -r "$REALM" -i \
-  -s username=handoff-admin -s enabled=true -s emailVerified=true \
-  -s firstName=Handoff -s lastName=Admin -s email=handoff-admin@example.invalid)
-kcadm set-password -r "$REALM" --userid "$admin_uuid" --new-password "$admin_password" --temporary=false >/dev/null
-kcadm add-roles -r "$REALM" --uid "$admin_uuid" --cclientid realm-management --rolename realm-admin >/dev/null
-admin_token=$(curl --fail --silent --show-error \
-  --data-urlencode grant_type=password \
-  --data-urlencode client_id=admin-cli \
-  --data-urlencode username=handoff-admin \
-  --data-urlencode "password=$admin_password" \
-  "$TOKEN_URL" | jq -r .access_token)
+# Admins are the members of the /ADMIN group (the group superadmin and core treat as admin; a
+# subgroup counts) calling with a token of superadmin's own client, admin: the provider's
+# defaults. Every other caller gets the same 403 body.
+admin_group_id=$(kcadm get group-by-path/ADMIN -r "$REALM" -c | jq -r .id)
+admin_subgroup_id=$(kcadm get "group-by-path/ADMIN/$ADMIN_SUBGROUP" -r "$REALM" -c | jq -r .id)
+[[ -n $admin_group_id && $admin_group_id != null && -n $admin_subgroup_id && $admin_subgroup_id != null ]] \
+  || fail 'the fixture /ADMIN group or its subgroup is missing'
+admin_client_uuid=$(client_uuid "$ADMIN_CLIENT")
+[[ -n $admin_client_uuid ]] || fail 'the fixture admin client is missing'
+admin_token=$(admin_tokens "$ADMIN_USERNAME" "$ADMIN_PASSWORD" | jq -r .access_token)
+json_assert "$(jwt_payload "$admin_token")" '.azp == "admin" and .sub == $sub and (.sid | length) > 0' \
+  'the fixture admin token is not an online admin-client token of the /ADMIN member' --arg sub "$ADMIN_FIXTURE_UUID"
 skyforms_uuid=$(client_uuid skyforms)
 outside_uuid=$(client_uuid outside-fixture)
 [[ -n $skyforms_uuid && -n $outside_uuid ]] || fail 'the skyforms and outside-fixture clients are missing'
@@ -651,29 +665,81 @@ outside_before=$(kcadm get "clients/$outside_uuid" -r "$REALM" -c | jq -S -c .)
 enable_forms='{"enabled":true,"signInPath":"/auth/signin","returnParam":"callbackUrl"}'
 disable_forms='{"enabled":false,"signInPath":"/auth/signin","returnParam":"callbackUrl"}'
 
+# expect_admin_refused <bearer> <who>: the list and a change are both refused with the one 403 body
+expect_admin_refused() {
+  admin_call GET targets "$1"
+  [[ $ADMIN_STATUS == 403 && $ADMIN_BODY == "$forbidden_list_body" ]] || fail "$2 must not list targets (HTTP $ADMIN_STATUS)"
+  admin_call PUT targets/skyforms "$1" "$enable_forms"
+  [[ $ADMIN_STATUS == 403 && $ADMIN_BODY == "$forbidden_list_body" ]] || fail "$2 must not change targets (HTTP $ADMIN_STATUS)"
+}
+
 admin_call GET targets -
 expect_admin_problem 401 invalid_token 'the admin list must require a bearer token'
+admin_call GET targets not-a-token
+expect_admin_problem 401 invalid_token 'the admin list must refuse a malformed bearer token'
 admin_call GET targets "$app_token"
-expect_admin_problem 403 forbidden 'a person without the super-admin role must not list targets'
+expect_admin_problem 403 forbidden 'a person outside /ADMIN must not list targets with a SkyApp token'
 forbidden_list_body=$ADMIN_BODY
 admin_call PUT targets/skyforms "$app_token" "$enable_forms"
-expect_admin_problem 403 forbidden 'a person without the super-admin role must not change targets'
+expect_admin_problem 403 forbidden 'a person outside /ADMIN must not change targets with a SkyApp token'
 [[ $ADMIN_BODY == "$forbidden_list_body" ]] || fail 'every refused admin request must get the same 403 body'
 admin_call PUT targets/no-such-client "$app_token" "$enable_forms"
 [[ $ADMIN_STATUS == 403 && $ADMIN_BODY == "$forbidden_list_body" ]] \
   || fail 'a non-admin must not learn which clients exist'
-# SkyApp's token above is bound to an offline session, which the guard refuses first; an online
-# token of the same person proves the role check itself.
-online_person_token=$(skyapp_tokens "$FIXTURE_USERNAME" "$FIXTURE_PASSWORD" | jq -r .access_token)
-admin_call GET targets "$online_person_token"
-[[ $ADMIN_STATUS == 403 && $ADMIN_BODY == "$forbidden_list_body" ]] \
-  || fail 'a person without the super-admin role on a live online session must not list targets'
-admin_call PUT targets/skyforms "$online_person_token" "$enable_forms"
-[[ $ADMIN_STATUS == 403 && $ADMIN_BODY == "$forbidden_list_body" ]] \
-  || fail 'a person without the super-admin role on a live online session must not change targets'
+
+# Not a member, right client.
+person_admin_token=$(admin_tokens "$FIXTURE_USERNAME" "$FIXTURE_PASSWORD" | jq -r .access_token)
+expect_admin_refused "$person_admin_token" 'a person outside /ADMIN with an admin-client token'
+# A member, any other client.
+member_skyapp_token=$(skyapp_tokens "$ADMIN_USERNAME" "$ADMIN_PASSWORD" | jq -r .access_token)
+[[ $(jwt_payload "$member_skyapp_token" | jq -r .azp) == skyapp ]] || fail 'the SkyApp token of the admin has another azp'
+expect_admin_refused "$member_skyapp_token" 'an /ADMIN member with a SkyApp token'
+member_cli_token=$(curl --fail --silent --show-error \
+  --data-urlencode grant_type=password \
+  --data-urlencode client_id=admin-cli \
+  --data-urlencode "username=$ADMIN_USERNAME" \
+  --data-urlencode "password=$ADMIN_PASSWORD" \
+  "$TOKEN_URL" | jq -r .access_token)
+expect_admin_refused "$member_cli_token" 'an /ADMIN member with an admin-cli token'
+# A member, right client, but an offline session: only a live online session is admitted.
+# (Imported users lack the realm default roles; the role is removed again at cleanup.)
+kcadm add-roles -r "$REALM" --uid "$ADMIN_FIXTURE_UUID" --rolename offline_access >/dev/null
+admin_offline_tokens=$(admin_tokens "$ADMIN_USERNAME" "$ADMIN_PASSWORD" 'openid offline_access')
+[[ $(jq -r .typ <<<"$(jwt_payload "$(jq -r .refresh_token <<<"$admin_offline_tokens")")") == Offline ]] \
+  || fail 'the fixture did not produce an offline admin-client session'
+admin_offline_token=$(jq -r .access_token <<<"$admin_offline_tokens")
+expect_admin_refused "$admin_offline_token" 'an /ADMIN member with an admin-client token of an offline session'
+
+# A member through a subgroup of /ADMIN is admitted, and only while a member.
+kcadm update "users/$other_uuid/groups/$admin_subgroup_id" -r "$REALM" \
+  -s "realm=$REALM" -s "userId=$other_uuid" -s "groupId=$admin_subgroup_id" -n >/dev/null
+subgroup_admin_token=$(admin_tokens "$OTHER_USERNAME" "$other_password" | jq -r .access_token)
+admin_call GET targets "$subgroup_admin_token"
+[[ $ADMIN_STATUS == 200 ]] || fail "a member of a subgroup of /ADMIN could not list targets (HTTP $ADMIN_STATUS)"
+kcadm delete "users/$other_uuid/groups/$admin_subgroup_id" -r "$REALM" >/dev/null
+expect_admin_refused "$subgroup_admin_token" 'a person who left the /ADMIN subgroup'
+
+# Without the /ADMIN group everyone is refused, and the missing group is logged once.
+missing_group_since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+kcadm update "groups/$admin_group_id" -r "$REALM" -s name=ADMIN-renamed-by-handoff-contract >/dev/null
+admin_call GET targets "$admin_token"
+missing_first_status=$ADMIN_STATUS
+missing_first_body=$ADMIN_BODY
+admin_call PUT targets/skyforms "$admin_token" "$enable_forms"
+missing_second_status=$ADMIN_STATUS
+missing_second_body=$ADMIN_BODY
+# The group name is restored before any assertion, whatever the requests did.
+kcadm update "groups/$admin_group_id" -r "$REALM" -s name=ADMIN >/dev/null
+[[ $missing_first_status == 403 && $missing_first_body == "$forbidden_list_body" \
+  && $missing_second_status == 403 && $missing_second_body == "$forbidden_list_body" ]] \
+  || fail "a missing /ADMIN group must refuse the admin (HTTP $missing_first_status, $missing_second_status)"
+missing_group_warnings=$("${COMPOSE[@]}" logs --no-color --since "$missing_group_since" keycloak 2>&1 \
+  | grep -Fc "sky-handoff: the admin group /ADMIN does not exist in realm $REALM" || true)
+[[ $missing_group_warnings == 1 ]] \
+  || fail "a missing /ADMIN group must be logged exactly once (logged $missing_group_warnings times)"
 
 admin_call GET targets "$admin_token"
-[[ $ADMIN_STATUS == 200 ]] || fail "the super admin could not list targets (HTTP $ADMIN_STATUS)"
+[[ $ADMIN_STATUS == 200 ]] || fail "the /ADMIN member could not list targets with an admin-client token (HTTP $ADMIN_STATUS)"
 [[ $(header_value "$ADMIN_HEADERS" cache-control) == no-store ]] || fail 'the admin list must not be cached'
 json_assert "$ADMIN_BODY" \
   '.targets | map(select(.clientId == "account-center"))[0] | .enabled == true and .signInPath == "/api/auth/login" and .returnParam == "returnTo" and .rootUrl == "https://my.yildizskylab.com" and .originAllowed == true and .clientEnabled == true' \
@@ -685,9 +751,9 @@ json_assert "$ADMIN_BODY" '[.targets[] | keys | sort] | unique == [["clientEnabl
   'the admin list exposes more than the target fields'
 
 mint "$app_token" '{"target":"skyforms","path":"/forms/abc"}'
-expect_problem 400 invalid_target 'skyforms is not a target before the super admin enables it'
+expect_problem 400 invalid_target 'skyforms is not a target before the admin enables it'
 admin_call PUT targets/skyforms "$admin_token" "$enable_forms"
-[[ $ADMIN_STATUS == 200 ]] || fail "the super admin could not enable skyforms (HTTP $ADMIN_STATUS)"
+[[ $ADMIN_STATUS == 200 ]] || fail "the admin could not enable skyforms (HTTP $ADMIN_STATUS)"
 json_assert "$ADMIN_BODY" '.clientId == "skyforms" and .enabled == true' 'the enable answer does not show the new state'
 mint_ok "$app_token" skyforms /forms/abc
 open_handoff "$HANDOFF_URL" "$HANDOFF_PROOF" "$STATE_DIR/web-handoff-forms.cookies"
@@ -696,7 +762,7 @@ open_handoff "$HANDOFF_URL" "$HANDOFF_PROOF" "$STATE_DIR/web-handoff-forms.cooki
 admin_call PUT targets/skyforms "$admin_token" "$enable_forms"
 [[ $ADMIN_STATUS == 200 ]] || fail 'repeating the same settings must succeed'
 admin_call PUT targets/skyforms "$admin_token" "$disable_forms"
-[[ $ADMIN_STATUS == 200 ]] || fail "the super admin could not disable skyforms (HTTP $ADMIN_STATUS)"
+[[ $ADMIN_STATUS == 200 ]] || fail "the admin could not disable skyforms (HTTP $ADMIN_STATUS)"
 mint "$app_token" '{"target":"skyforms","path":"/forms/abc"}'
 expect_problem 400 invalid_target 'a disabled skyforms target must not mint'
 [[ $(client_without_handoff "$skyforms_uuid") == "$skyforms_before" ]] \
@@ -719,9 +785,9 @@ expect_admin_problem 404 client_not_found 'an unknown client is not found'
 
 admin_events=$(kcadm get admin-events -r "$REALM" -c -q max=200)
 json_assert "$admin_events" \
-  '[.[] | select(.resourceType == "SKY_HANDOFF_TARGET" and .operationType == "UPDATE" and .authDetails.userId == $admin and .resourcePath == ("clients/" + $client + "/sky-handoff") and .details.clientId == "skyforms" and (.details.before | fromjson | .enabled == false) and (.details.after | fromjson | .enabled == true and .signInPath == "/auth/signin" and .returnParam == "callbackUrl"))] | length == 1' \
-  'enabling skyforms left no admin event naming who changed it from what to what' \
-  --arg admin "$admin_uuid" --arg client "$skyforms_uuid"
+  '[.[] | select(.resourceType == "SKY_HANDOFF_TARGET" and .operationType == "UPDATE" and .authDetails.userId == $admin and .authDetails.clientId == $admin_client and .resourcePath == ("clients/" + $client + "/sky-handoff") and .details.clientId == "skyforms" and (.details.before | fromjson | .enabled == false) and (.details.after | fromjson | .enabled == true and .signInPath == "/auth/signin" and .returnParam == "callbackUrl"))] | length == 1' \
+  'enabling skyforms left no admin event naming who changed it, through which client, from what to what' \
+  --arg admin "$ADMIN_FIXTURE_UUID" --arg admin_client "$admin_client_uuid" --arg client "$skyforms_uuid"
 json_assert "$admin_events" \
   '[.[] | select(.resourceType == "SKY_HANDOFF_TARGET" and .details.clientId == "skyforms")] | length == 2' \
   'every change and only a change must leave an admin event (enable, disable; the repeat is not a change)'
@@ -780,9 +846,9 @@ kcadm update "realms/$REALM" \
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='web handoff cleanup'
 kcadm delete "users/$other_uuid" -r "$REALM" >/dev/null
-kcadm delete "users/$admin_uuid" -r "$REALM" >/dev/null
 kcadm remove-roles -r "$REALM" --uid "$FIXTURE_USER_UUID" --rolename offline_access >/dev/null
-unset other_password admin_password
+kcadm remove-roles -r "$REALM" --uid "$ADMIN_FIXTURE_UUID" --rolename offline_access >/dev/null
+unset other_password
 rm -f "$SECRETS_FILE"
 
 printf 'Web handoff contract passed.\n'

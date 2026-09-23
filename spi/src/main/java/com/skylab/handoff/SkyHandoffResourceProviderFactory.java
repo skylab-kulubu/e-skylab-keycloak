@@ -3,6 +3,7 @@ package com.skylab.handoff;
 import org.keycloak.Config;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.KeycloakSessionFactory;
+import org.keycloak.models.utils.KeycloakModelUtils;
 import org.keycloak.services.resource.RealmResourceProvider;
 import org.keycloak.services.resource.RealmResourceProviderFactory;
 
@@ -14,28 +15,31 @@ import java.util.regex.Pattern;
  * site in its WebView already signed in (ADR-0048). Kept apart from {@code sky-account}, which
  * serves Account Center only.
  *
- * <p>The only setting is the realm super-admin role that may change Handoff targets through
- * {@code v1/admin/targets}. It is read from the provider config
- * ({@code --spi-realm-restapi-extension--sky-handoff--admin-role}, env
- * {@code KC_SPI_REALM_RESTAPI_EXTENSION__SKY_HANDOFF__ADMIN_ROLE}), then from the
- * {@code SKY_HANDOFF_ADMIN_ROLE} environment variable, and defaults to Keycloak's own realm
- * administrator role {@code realm-management.realm-admin}, whose holders can already edit every
- * client attribute through the admin console. Unlike Admin REST, the role is checked on the person
- * alone (not also on the token's client scope), so a realm administrator's token of any client may
- * change the three Handoff target attributes. A realm role is named plainly
- * ({@code sky-super-admin}), a client role as {@code <clientId>.<role>}, the way Keycloak's
- * hardcoded-role mapper names roles.
+ * <p>Two settings say who may change Handoff targets through {@code v1/admin/targets}: the
+ * Keycloak group whose members are admins ({@code admin-group}, default {@code /ADMIN}, the group
+ * superadmin and core treat as admin; membership through a subgroup counts) and the client their
+ * access token must be issued to ({@code admin-client}, default {@code admin}, superadmin's own
+ * client). Each is read from the provider config
+ * ({@code --spi-realm-restapi-extension--sky-handoff--admin-group}, env
+ * {@code KC_SPI_REALM_RESTAPI_EXTENSION__SKY_HANDOFF__ADMIN_GROUP}; likewise {@code admin-client}
+ * and {@code ..._ADMIN_CLIENT}), then from the plain environment variable
+ * {@code SKY_HANDOFF_ADMIN_GROUP} / {@code SKY_HANDOFF_ADMIN_CLIENT}, then the default. A group is
+ * named by its path ({@code /ADMIN}, {@code /ADMIN/web}); a missing leading slash is added.
  */
 public final class SkyHandoffResourceProviderFactory implements RealmResourceProviderFactory {
 
     public static final String PROVIDER_ID = "sky-handoff";
-    static final String ADMIN_ROLE_CONFIG = "admin-role";
-    static final String ADMIN_ROLE_ENV = "SKY_HANDOFF_ADMIN_ROLE";
-    static final String DEFAULT_ADMIN_ROLE = "realm-management.realm-admin";
+    static final String ADMIN_GROUP_CONFIG = "admin-group";
+    static final String ADMIN_GROUP_ENV = "SKY_HANDOFF_ADMIN_GROUP";
+    static final String DEFAULT_ADMIN_GROUP = "/ADMIN";
+    static final String ADMIN_CLIENT_CONFIG = "admin-client";
+    static final String ADMIN_CLIENT_ENV = "SKY_HANDOFF_ADMIN_CLIENT";
+    static final String DEFAULT_ADMIN_CLIENT = "admin";
 
-    private static final Pattern ROLE_NAME = Pattern.compile("^[^\\p{Cntrl}]{1,255}$");
+    private static final Pattern GROUP_PATH = Pattern.compile("^/[^\\p{Cntrl}]{1,1023}$");
+    private static final Pattern CLIENT_ID = Pattern.compile("^[^\\p{Cntrl}]{1,255}$");
 
-    private volatile String adminRole = DEFAULT_ADMIN_ROLE;
+    private volatile AdminAccess adminAccess = new AdminAccess(DEFAULT_ADMIN_GROUP, DEFAULT_ADMIN_CLIENT);
 
     @Override
     public String getId() {
@@ -44,27 +48,43 @@ public final class SkyHandoffResourceProviderFactory implements RealmResourcePro
 
     @Override
     public RealmResourceProvider create(KeycloakSession session) {
-        return new SkyHandoffResourceProvider(session, adminRole);
+        return new SkyHandoffResourceProvider(session, adminAccess);
     }
 
     @Override
     public void init(Config.Scope config) {
-        adminRole = resolveAdminRole(config == null ? null : config.get(ADMIN_ROLE_CONFIG), System.getenv());
+        adminAccess = new AdminAccess(
+                resolveAdminGroup(config == null ? null : config.get(ADMIN_GROUP_CONFIG), System.getenv()),
+                resolveAdminClient(config == null ? null : config.get(ADMIN_CLIENT_CONFIG), System.getenv()));
     }
 
-    static String resolveAdminRole(String configured, Map<String, String> environment) {
-        String candidate = configured;
-        if (candidate == null || candidate.isBlank()) {
-            candidate = environment.get(ADMIN_ROLE_ENV);
+    static String resolveAdminGroup(String configured, Map<String, String> environment) {
+        String path = KeycloakModelUtils.normalizeGroupPath(
+                setting(configured, environment.get(ADMIN_GROUP_ENV), DEFAULT_ADMIN_GROUP));
+        if (!GROUP_PATH.matcher(path).matches()) {
+            throw new IllegalStateException(
+                    "sky-handoff admin group must be a group path of 1-1024 characters without control characters");
         }
-        if (candidate == null || candidate.isBlank()) {
-            return DEFAULT_ADMIN_ROLE;
+        return path;
+    }
+
+    static String resolveAdminClient(String configured, Map<String, String> environment) {
+        String clientId = setting(configured, environment.get(ADMIN_CLIENT_ENV), DEFAULT_ADMIN_CLIENT);
+        if (!CLIENT_ID.matcher(clientId).matches()) {
+            throw new IllegalStateException("sky-handoff admin client must be 1-255 characters without control characters");
         }
-        String role = candidate.trim();
-        if (!ROLE_NAME.matcher(role).matches()) {
-            throw new IllegalStateException("sky-handoff admin role must be 1-255 characters without control characters");
+        return clientId;
+    }
+
+    /** The provider config, else the environment variable, else the default; trimmed. */
+    private static String setting(String configured, String environment, String fallback) {
+        if (configured != null && !configured.isBlank()) {
+            return configured.trim();
         }
-        return role;
+        if (environment != null && !environment.isBlank()) {
+            return environment.trim();
+        }
+        return fallback;
     }
 
     @Override

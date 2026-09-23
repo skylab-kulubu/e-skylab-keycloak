@@ -79,6 +79,33 @@ class SkyMailSettingsTest {
                 SkyMailSettings.mailTaskUrl("http://skymail:8080", true));
     }
 
+    // Production SkyMail answers under a path on the shared API host, the same root core uses
+    // (SKYMAIL_URL=https://api.yildizskylab.com/api/skymail). An origin-only rule made Keycloak
+    // refuse to start with that value on 2026-09-23.
+    @Test
+    void acceptsTheApiRootUnderAPathOnTheSharedApiHost() {
+        assertEquals(
+                URI.create("https://api.yildizskylab.com/api/skymail/v1/mail_tasks/single"),
+                SkyMailSettings.mailTaskUrl("https://api.yildizskylab.com/api/skymail", false));
+        assertEquals(
+                URI.create("https://api.yildizskylab.com/api/skymail/v1/mail_tasks/single"),
+                SkyMailSettings.mailTaskUrl("https://api.yildizskylab.com/api/skymail/", false));
+    }
+
+    @Test
+    void refusesABasePathThatIsNotAPlainRoot() {
+        for (String refused : new String[] {
+                "https://api.yildizskylab.com/api/skymail/v1",
+                "https://api.yildizskylab.com/api/skymail/v1/",
+                "https://api.yildizskylab.com/api/../admin",
+                "https://api.yildizskylab.com/api/./skymail",
+                "https://api.yildizskylab.com/api//skymail",
+                "https://api.yildizskylab.com/api/%2e%2e/admin",
+                "https://api.yildizskylab.com/api/sky mail"}) {
+            assertThrows(IllegalStateException.class, () -> SkyMailSettings.mailTaskUrl(refused, false), refused);
+        }
+    }
+
     @Test
     void derivesTheTokenEndpointFromTheRealmIssuerUnlessItIsPinned() throws IOException {
         SkyMailSettings derived = SkyMailSettings.fromEnvironment(environment(secretFile("s3cr3t")));

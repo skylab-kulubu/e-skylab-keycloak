@@ -126,13 +126,28 @@ record SkyMailSettings(
         throw new IllegalStateException(ENABLED_ENV + " must be true or false.");
     }
 
+    private static final Pattern BASE_PATH_SEGMENT = Pattern.compile("^[A-Za-z0-9._~-]+$");
+
     static URI mailTaskUrl(String value, boolean harness) {
         URI base = credentialFreeUrl(value, BASE_URL_ENV, harness);
-        String path = base.getPath();
-        if (path != null && !path.isEmpty() && !"/".equals(path)) {
-            throw new IllegalStateException(BASE_URL_ENV + " must carry no path.");
+        // SkyMail may answer under a path on a shared API host (production:
+        // https://api.yildizskylab.com/api/skymail, the same root core uses). The path must be a
+        // plain root: unreserved segments only, no dot segments, no encoding, and not the /v1 the
+        // task path already adds.
+        String rawPath = base.getRawPath() == null ? "" : base.getRawPath();
+        String root = rawPath.endsWith("/") ? rawPath.substring(0, rawPath.length() - 1) : rawPath;
+        if (!root.isEmpty()) {
+            for (String segment : root.substring(1).split("/", -1)) {
+                if (!BASE_PATH_SEGMENT.matcher(segment).matches() || ".".equals(segment) || "..".equals(segment)) {
+                    throw new IllegalStateException(BASE_URL_ENV + " must be the SkyMail API root: "
+                            + "a plain path without dot segments, encoding or empty segments.");
+                }
+            }
+            if (root.endsWith("/v1")) {
+                throw new IllegalStateException(BASE_URL_ENV + " must be the SkyMail API root without /v1.");
+            }
         }
-        return URI.create(base.getScheme() + "://" + base.getRawAuthority() + SINGLE_MAIL_TASK_PATH);
+        return URI.create(base.getScheme() + "://" + base.getRawAuthority() + root + SINGLE_MAIL_TASK_PATH);
     }
 
     static URI tokenUrl(String value, boolean harness) {

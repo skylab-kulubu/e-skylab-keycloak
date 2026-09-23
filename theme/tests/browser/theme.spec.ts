@@ -140,3 +140,36 @@ test("WebAuthn retry submits the actual execution and AIA screens expose cancel"
   await page.goto("/?page=login-update-password.ftl");
   await expect(page.locator('button[name="cancel-aia"]')).toBeVisible();
 });
+
+test("Web handoff failure page shows one sentence per reason in light and dark, and nothing to act on", async ({ page }) => {
+  const sentences = {
+    expired: "Bağlantının süresi doldu.",
+    used: "Bu bağlantı zaten kullanıldı.",
+    invalid: "Bağlantı geçersiz.",
+    target_disabled: "Bu siteye uygulamadan geçiş şu an kapalı.",
+    account_unavailable: "Hesabın şu an kullanılamıyor.",
+    unavailable: "Geçici bir sorun oluştu.",
+    "not-a-reason": "Geçici bir sorun oluştu."
+  };
+
+  for (const colorScheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme });
+    for (const [reason, sentence] of Object.entries(sentences)) {
+      await page.goto(`/?page=sky-handoff-failed.ftl&reason=${reason}`);
+      await expect(page.locator(".sl-legacy-shell")).toHaveAttribute("data-sl-translations", "ready");
+      await expect(page.getByRole("heading", { level: 1 })).toHaveText(sentence);
+      await expect(page.locator(".sl-legacy-intro p")).toHaveText("Uygulamaya dönüp tekrar dene.");
+      await expect(page.locator("form, input, button, select, textarea")).toHaveCount(0);
+      await expect(page.getByRole("navigation", { name: "Dil seçimi" })).toHaveCount(0);
+      await expect(page.locator("a")).toHaveCount(2);
+      await expect(page.getByRole("contentinfo").getByRole("link", { name: "KVKK Metni" })).toBeVisible();
+      await expect(page).toHaveTitle(`${sentence.replace(/\.$/, "")} · SKY LAB`);
+    }
+
+    // The LegacyFrame design is dark only: a phone in light mode gets the same page and contrast.
+    expect(await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme)).toBe("dark");
+    await expect(page.locator(".sl-legacy-intro h1")).toHaveCSS("color", "rgb(255, 255, 255)");
+    await expect(page.locator(".sl-legacy-intro p")).toHaveCSS("color", "rgb(161, 161, 170)");
+    await expect(page.locator(".sl-body")).toHaveCSS("background-color", "rgb(8, 7, 11)");
+  }
+});

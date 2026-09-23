@@ -109,12 +109,26 @@ Hata nedenleri (`303 …/v1/failed?reason=<neden>`):
 
 ## `GET failed?reason=<neden>`
 
-Her neden için ayrı Türkçe metin ve "Uygulamaya dönüp tekrar dene." yazan düz bir sayfa
-(temalı LegacyFrame sayfası ayrı iştir; yol ve neden kodları sabittir). Giriş formu ve `e.`
-giriş sayfasına bağlantı yoktur; bilinmeyen neden `unavailable` gösterir ve sorgu değeri
-sayfaya hiç basılmaz. `200`, `Cache-Control: no-store`, `X-Frame-Options: DENY`,
-`Content-Security-Policy: default-src 'none'; …; frame-ancestors 'none'`,
-`Referrer-Policy: no-referrer`.
+Realm'in giriş temasıyla çizilen sayfa: SKY LAB temasında LegacyFrame tasarımı (animasyonlu
+logo, cam kart, KVKK alt bilgisi), başlıkta nedenin cümlesi, altında "Uygulamaya dönüp tekrar
+dene." Metin kişinin diline göre gelir (Türkçe önce; realm İngilizce çözerse İngilizcesi). Giriş
+formu, `e.` giriş sayfasına bağlantı ve dil menüsü yoktur; tek bağlantı KVKK metnidir.
+Bilinmeyen ya da eksik neden `unavailable` gösterir ve sorgu değeri sayfaya hiç basılmaz (tema
+sayfasına yalnız sabit neden kodu `skyHandoffReason` özniteliği olarak gider). Yol ve neden
+kodları sabittir; uygulama bu yolu izleyebilir.
+
+- Tema: `sky-handoff-failed.ftl`, SKY LAB giriş temasının React sayfasından
+  (`theme/src/login/HandoffFailed.tsx`) üretilir.
+- Yedek: realm'in giriş temasında bu sayfa yoksa ya da tema sayfayı çizemezse aynı Türkçe
+  cümleleri LegacyFrame renkleriyle gösteren, script'siz yerleşik bir sayfa döner
+  (`data-reason` özniteliğiyle); hata hiçbir zaman Keycloak hata sayfasına dönmez.
+- Başlıklar: `200`, `Cache-Control: no-store`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, `X-Robots-Tag: none`,
+  realm'in HSTS değeri. Tema sayfasının `Content-Security-Policy`'si
+  `default-src 'none'; script-src 'self' 'sha256-<sayfanın kendi satır içi betiği>'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'; object-src 'none'`
+  (satır içi betik yalnız Keycloakify'ın sayfa bağlamıdır, özetini SPI her yanıtta hesaplar;
+  satır içi stil animasyonlu logonun `style` öznitelikleri içindir). Yerleşik sayfanınki
+  `default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`.
 
 ## Handoff target öznitelikleri
 

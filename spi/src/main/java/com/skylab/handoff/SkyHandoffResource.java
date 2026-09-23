@@ -246,6 +246,10 @@ public final class SkyHandoffResource {
         });
     }
 
+    /**
+     * The failure page, in the realm's login theme (the SKY LAB LegacyFrame design) or, when the
+     * theme cannot render it, as the built-in page. The reason is always one of the fixed codes.
+     */
     @GET
     @Path("v1/failed")
     @Produces(MediaType.TEXT_HTML)
@@ -254,7 +258,7 @@ public final class SkyHandoffResource {
         // (same-origin framing, a looser CSP); the page sends its own and keeps the realm's HSTS.
         session.getProvider(SecurityHeadersProvider.class).options().skipHeaders();
         BrowserSecurityHeaders hsts = BrowserSecurityHeaders.STRICT_TRANSPORT_SECURITY;
-        return FailurePage.render(FailureReason.fromCode(reason),
+        return FailurePage.render(session, FailureReason.fromCode(reason), URI.create(endpoint("v1/failed")),
                 realm.getBrowserSecurityHeaders().getOrDefault(hsts.getKey(), hsts.getDefaultValue()));
     }
 

@@ -373,7 +373,9 @@ SKY LAB sitesini WebView'inde oturum açık açmasını sağlar; tam sözleşme
 - `GET open?code=`: kanıtı denetler, kodu atomik tüketir, özgün `auth_time` ve
   `sky.embed=skyapp` notlu yeni bir tarayıcı oturumu kurar (başka kişinin oturumu
   varsa kapatır) ve hedefin giriş kapısına `303` ile gönderir; her hata
-  `v1/failed?reason=` sayfasına düşer.
+  `v1/failed?reason=` sayfasına düşer: giriş temasının LegacyFrame tasarımında,
+  neden başına bir cümle ve "Uygulamaya dönüp tekrar dene.", form ve giriş
+  bağlantısı yok (tema sayfayı çizemezse yerleşik düz sayfa).
 - Hedefler istemci öznitelikleridir (`sky.handoff.enabled`, `signInPath`,
   `returnParam`); köken her zaman `https://*.yildizskylab.com`.
 - `GET admin/targets` / `PUT admin/targets/{clientId}`: superadmin sayfasının

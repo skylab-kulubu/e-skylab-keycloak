@@ -144,6 +144,13 @@ describe("SKY LAB theme: one design system", () => {
     }
   });
 
+  it("keeps every page heading and its one-line description (the whole Web handoff failure page) at WCAG AA contrast", () => {
+    for (const selector of [".sl-legacy-intro h1", ".sl-legacy-intro p"]) {
+      const foreground = composite(parseColor(declaration(selector, "color")), cardSurface);
+      expect(contrastRatio(foreground, cardSurface), selector).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
   it("keeps the primary submit text at WCAG AA contrast in both states", () => {
     for (const selector of [".sl-legacy-submit", ".sl-legacy-submit:hover", ".sl-legacy-submit:active"]) {
       const background = composite(parseColor(declaration(selector, "background")), cardSurface);

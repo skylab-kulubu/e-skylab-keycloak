@@ -117,7 +117,11 @@ Uzlaştırıcı, gizli `account-center` istemcisini şu sözleşmeyle yönetir:
   `realm-management` bulunmadığını doğrular. `manage-account-links` ayrıca
   `account` istemcisinin scope mapping izin listesindedir; AIA `idp_link`
   eylemi `client.hasScope` denetimi yapar.
-- Core claim kapsamı yalnız gerekli `sub` ve `auth_time` alanlarını üretir.
+- Core claim kapsamı yalnız gerekli `sub` ve `auth_time` alanlarını, bir de
+  Hesap Merkezi'nin oturum sınırı ve gömülü görünümü için `sky_session_started`,
+  `sky_session_expires` (SPI'daki `sky-session-lifetime-mapper`) ve `sky_embed`
+  (yalnız Web handoff oturumunda `"skyapp"`) claim'lerini üretir; ayrıntı
+  [`docs/sky-handoff-api.md`](docs/sky-handoff-api.md).
 - BFF'nin en küçük `openid` isteğine uygun biçimde isteğe bağlı kapsam yoktur.
 
 Realm oturumu, giriş ayarları ve tema `config/account-center-realm.json`

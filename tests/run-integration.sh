@@ -1339,7 +1339,7 @@ while IFS= read -r built_in_scope_uuid; do
     "client-scopes/$built_in_scope_uuid/protocol-mappers/models" \
     -r e-skylab-test -c)
   json_assert "$built_in_mappers" \
-    '[.[] | select(.name == "account-api-audience" or .name == "account-api-core-audience" or .name == "account-api-manage-account" or .name == "account-api-view-profile" or .name == "account-api-manage-account-links" or .name == "account-api-roles" or .name == "account-api-sky-authorization" or .name == "account-center-audience")] | length == 0' \
+    '[.[] | select(.name == "account-api-audience" or .name == "account-api-core-audience" or .name == "account-api-manage-account" or .name == "account-api-view-profile" or .name == "account-api-manage-account-links" or .name == "account-api-roles" or .name == "account-api-sky-authorization" or .name == "account-center-audience" or .name == "sky_session_lifetime" or .name == "sky_embed")] | length == 0' \
     "an Account Center mapper was injected into built-in scope $built_in_scope_uuid"
 done < <(jq -r '.[].id' <<<"$built_in_scope_snapshot")
 
@@ -1364,8 +1364,14 @@ core_mappers=$(kcadm get \
   "client-scopes/$core_scope_uuid/protocol-mappers/models" \
   -r e-skylab-test -c)
 json_assert "$core_mappers" \
-  'length == 2 and ([.[].name] | sort) == ["auth_time", "sub"]' \
+  'length == 4 and ([.[].name] | sort) == ["auth_time", "sky_embed", "sky_session_lifetime", "sub"]' \
   'unexpected, profile or email mappers remain in the core-claims scope'
+json_assert "$core_mappers" \
+  '[.[] | select(.name == "sky_session_lifetime" and .protocolMapper == "sky-session-lifetime-mapper" and .config["id.token.claim"] == "true" and .config["access.token.claim"] == "true" and .config["introspection.token.claim"] == "true")] | length == 1' \
+  'source-controlled sky_session_lifetime mapper contract differs'
+json_assert "$core_mappers" \
+  '[.[] | select(.name == "sky_embed" and .protocolMapper == "oidc-usersessionmodel-note-mapper" and .config["user.session.note"] == "sky.embed" and .config["claim.name"] == "sky_embed" and .config["jsonType.label"] == "String" and .config["id.token.claim"] == "true" and .config["access.token.claim"] == "true" and .config["userinfo.token.claim"] == "false")] | length == 1' \
+  'source-controlled sky_embed mapper contract differs'
 json_assert "$core_mappers" \
   '[.[] | select(.name == "sub" and .protocolMapper == "oidc-sub-mapper" and .config["access.token.claim"] == "true" and .config["introspection.token.claim"] == "true")] | length == 1' \
   'source-controlled sub mapper contract differs'

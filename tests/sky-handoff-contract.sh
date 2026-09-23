@@ -222,12 +222,11 @@ expect_failure() {
     || fail "$message (the failure page must not be framed)"
 }
 
-# silent_login <cookie jar> <label> -> ID_PAYLOAD, ACCESS_PAYLOAD: account-center's own OIDC login
-# from the browser session alone. Any login page on the way is a failure.
-silent_login() {
-  local jar=$1 label=$2 verifier challenge par request_uri_query url attempt status location headers code tokens
-  verifier="web-handoff-$label-verifier-0123456789abcdefghijklmnopqrstuvwxyz"
-  challenge=$(printf '%s' "$verifier" | openssl dgst -binary -sha256 | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+# start_login <label> -> LOGIN_URL, LOGIN_VERIFIER: a pushed account-center authorization request
+start_login() {
+  local label=$1 challenge par
+  LOGIN_VERIFIER="web-handoff-$label-verifier-0123456789abcdefghijklmnopqrstuvwxyz"
+  challenge=$(printf '%s' "$LOGIN_VERIFIER" | openssl dgst -binary -sha256 | openssl base64 -A | tr '+/' '-_' | tr -d '=')
   par=$(curl --fail --silent --show-error \
     --user "account-center:$CLIENT_SECRET" \
     --data-urlencode client_id=account-center \
@@ -239,8 +238,56 @@ silent_login() {
     --data-urlencode "state=web-handoff-$label" \
     --data-urlencode "nonce=web-handoff-$label-nonce" \
     "$BASE_URL/realms/$REALM/protocol/openid-connect/ext/par/request")
-  request_uri_query=$(jq -r '.request_uri | @uri' <<<"$par")
-  url="$BASE_URL/realms/$REALM/protocol/openid-connect/auth?client_id=account-center&request_uri=$request_uri_query"
+  LOGIN_URL="$BASE_URL/realms/$REALM/protocol/openid-connect/auth?client_id=account-center&request_uri=$(jq -r '.request_uri | @uri' <<<"$par")"
+}
+
+# finish_login <label> <callback location> -> ID_PAYLOAD, ACCESS_PAYLOAD
+finish_login() {
+  local label=$1 location=$2 code tokens
+  [[ $location == "$CALLBACK"\?* ]] || fail "login $label never reached the callback"
+  [[ $location == *"state=web-handoff-$label"* ]] || fail "login $label lost its state"
+  code=$(sed -n 's/.*[?&]code=\([^&]*\).*/\1/p' <<<"$location")
+  [[ -n $code ]] || fail "login $label returned no authorization code"
+  tokens=$(curl --fail --silent --show-error \
+    --user "account-center:$CLIENT_SECRET" \
+    --data-urlencode grant_type=authorization_code \
+    --data-urlencode client_id=account-center \
+    --data-urlencode "code=$code" \
+    --data-urlencode "redirect_uri=$CALLBACK" \
+    --data-urlencode "code_verifier=$LOGIN_VERIFIER" \
+    "$TOKEN_URL")
+  ID_PAYLOAD=$(jwt_payload "$(jq -r .id_token <<<"$tokens")")
+  ACCESS_PAYLOAD=$(jwt_payload "$(jq -r .access_token <<<"$tokens")")
+}
+
+# password_login <label> <remember me: on|off> -> ID_PAYLOAD, ACCESS_PAYLOAD: an ordinary
+# account-center login of the fixture person on Keycloak's own login page, in a fresh browser.
+password_login() {
+  local label=$1 remember=$2 jar page literal action status headers
+  local form=(--data-urlencode "username=$FIXTURE_USERNAME" --data-urlencode "password=$FIXTURE_PASSWORD"
+    --data-urlencode credentialId=)
+  [[ $remember == on ]] && form+=(--data-urlencode rememberMe=on)
+  jar="$STATE_DIR/web-handoff-$label.cookies"
+  headers="$STATE_DIR/web-handoff-$label.headers"
+  rm -f "$jar"
+  start_login "$label"
+  page=$(curl --fail --silent --show-error --location --cookie-jar "$jar" --cookie "$jar" "$LOGIN_URL")
+  literal=$(grep -Eo '"loginAction"[[:space:]]*:[[:space:]]*"[^"]*"' <<<"$page" | head -n 1 \
+    | sed -E 's/^"loginAction"[[:space:]]*:[[:space:]]*//' || true)
+  [[ -n $literal ]] || fail "login $label: the login page exposed no login action"
+  action=$(jq -r . <<<"$literal")
+  status=$(curl --silent --show-error --output /dev/null --dump-header "$headers" --write-out '%{http_code}' \
+    --cookie-jar "$jar" --cookie "$jar" "${form[@]}" "$action")
+  [[ $status == 302 ]] || fail "login $label: the credential submission answered HTTP $status"
+  finish_login "$label" "$(header_value "$headers" location)"
+}
+
+# silent_login <cookie jar> <label> -> ID_PAYLOAD, ACCESS_PAYLOAD: account-center's own OIDC login
+# from the browser session alone. Any login page on the way is a failure.
+silent_login() {
+  local jar=$1 label=$2 url attempt status location headers
+  start_login "$label"
+  url=$LOGIN_URL
   headers="$STATE_DIR/web-handoff-$label.headers"
   location=''
   for attempt in $(seq 1 8); do
@@ -257,20 +304,24 @@ silent_login() {
     fi
     fail "silent login $label stopped at HTTP $status instead of the account-center callback (a login page?)"
   done
-  [[ $location == "$CALLBACK"\?* ]] || fail "silent login $label never reached the callback"
-  [[ $location == *"state=web-handoff-$label"* ]] || fail "silent login $label lost its state"
-  code=$(sed -n 's/.*[?&]code=\([^&]*\).*/\1/p' <<<"$location")
-  [[ -n $code ]] || fail "silent login $label returned no authorization code"
-  tokens=$(curl --fail --silent --show-error \
-    --user "account-center:$CLIENT_SECRET" \
-    --data-urlencode grant_type=authorization_code \
-    --data-urlencode client_id=account-center \
-    --data-urlencode "code=$code" \
-    --data-urlencode "redirect_uri=$CALLBACK" \
-    --data-urlencode "code_verifier=$verifier" \
-    "$TOKEN_URL")
-  ID_PAYLOAD=$(jwt_payload "$(jq -r .id_token <<<"$tokens")")
-  ACCESS_PAYLOAD=$(jwt_payload "$(jq -r .access_token <<<"$tokens")")
+  finish_login "$label" "$location"
+}
+
+# realm_max_lifespan <remember me: on|off>: the SSO session max Keycloak applies (its own defaults)
+realm_max_lifespan() {
+  local realm
+  realm=$(kcadm get "realms/$REALM" -c)
+  jq -r --arg remember "$1" '
+    (if .ssoSessionMaxLifespan > 0 then .ssoSessionMaxLifespan else 36000 end) as $max
+    | if $remember == "on" then ([$max, (.ssoSessionMaxLifespanRememberMe // 0)] | max) else $max end' <<<"$realm"
+}
+
+# expect_session_lifetime <payload> <remember me: on|off> <message>: sky_session_started is the
+# session start and sky_session_expires the instant Keycloak's SSO max ends it.
+expect_session_lifetime() {
+  json_assert "$1" \
+    '(.sky_session_started | type) == "number" and .sky_session_expires == .sky_session_started + ($max | tonumber)' \
+    "$3" --arg max "$(realm_max_lifespan "$2")"
 }
 
 set_target_attribute() {
@@ -408,6 +459,17 @@ open_handoff "$API/open?code=$(printf 'A%.0s' $(seq 1 43))" "$first_proof" "$STA
 expect_failure invalid 'an unknown code must be invalid'
 open_handoff "$API/open" - "$STATE_DIR/web-handoff-unknown.cookies"
 expect_failure invalid 'an open without a code must be invalid'
+
+CURRENT_STAGE='web handoff claims sky_embed and session lifetime'
+for payload in "$ID_PAYLOAD" "$ACCESS_PAYLOAD"; do
+  json_assert "$payload" '.sky_embed == "skyapp"' 'a handoff session must carry sky_embed=skyapp in ID and access tokens'
+  json_assert "$payload" \
+    '.sky_session_started >= ($opened | tonumber) - 5 and .sky_session_started <= ($opened | tonumber) + 1' \
+    'sky_session_started must be the moment of the open, not the SkyApp login' --arg opened "$opened_at"
+  json_assert "$payload" '.auth_time == ($auth_time | tonumber)' \
+    'auth_time must stay the original SkyApp authentication time' --arg auth_time "$app_auth_time"
+  expect_session_lifetime "$payload" off 'a handoff session must expire with the SSO session max'
+done
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='web handoff expiry'
@@ -553,6 +615,28 @@ while IFS= read -r secret_value; do
 done <"$SECRETS_FILE"
 [[ $keycloak_logs != *"$PATH_MARKER"* ]] || fail 'a handoff path leaked into the Keycloak log'
 [[ $all_events != *"$PATH_MARKER"* ]] || fail 'a handoff path leaked into an event'
+
+# ---------------------------------------------------------------------------------------------
+CURRENT_STAGE='web handoff claims on ordinary logins'
+# The realm keeps remember-me on in production (a 30-day SSO max next to the 8-hour one); the
+# fixture realm switches it on for this stage only.
+realm_session_before=$(kcadm get "realms/$REALM" -c | jq -c '{rememberMe, ssoSessionMaxLifespanRememberMe}')
+kcadm update "realms/$REALM" -s rememberMe=true -s ssoSessionMaxLifespanRememberMe=2592000 >/dev/null
+for remember in off on; do
+  password_login "ordinary-remember-$remember" "$remember"
+  for payload in "$ID_PAYLOAD" "$ACCESS_PAYLOAD"; do
+    json_assert "$payload" 'has("sky_embed") | not' "an ordinary login (remember me $remember) must not carry sky_embed"
+    json_assert "$payload" '(.sky_session_started - .auth_time) as $gap | $gap >= -2 and $gap <= 2' \
+      "an ordinary login (remember me $remember) starts its session when the person authenticates"
+    expect_session_lifetime "$payload" "$remember" \
+      "an ordinary login (remember me $remember) must expire with the matching SSO session max"
+  done
+done
+json_assert "$ACCESS_PAYLOAD" '.sky_session_expires - .sky_session_started == 2592000' \
+  'a remember-me session must carry the 30-day remember-me max'
+kcadm update "realms/$REALM" \
+  -s "rememberMe=$(jq -r '.rememberMe // false' <<<"$realm_session_before")" \
+  -s "ssoSessionMaxLifespanRememberMe=$(jq -r '.ssoSessionMaxLifespanRememberMe // 0' <<<"$realm_session_before")" >/dev/null
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='web handoff cleanup'

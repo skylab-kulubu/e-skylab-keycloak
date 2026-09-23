@@ -136,6 +136,24 @@ uzlaştırma yeniden yazımından sonra korunduklarını doğrular):
   `//`, `..`, `.` parçası, sorgu ve parça olamaz.
 - `returnParam`: `^[A-Za-z][A-Za-z0-9_]{0,31}$`.
 
+## `account-center` token claim'leri
+
+Uzlaştırıcı (`reconcile-account-center.sh`) iki eşleyiciyi `account-center`'ın varsayılan
+`account-center-core-claims` kapsamına ekler (`config/account-center-core-claims-mappers.json`,
+idempotent; istemcinin kendisinde başka bir şey değişmez). Üçü de ID ve access token'da ve
+introspection cevabında yer alır, userinfo'da yoktur.
+
+| Claim | Eşleyici | Değer |
+|---|---|---|
+| `sky_embed` | `sky_embed` (`oidc-usersessionmodel-note-mapper`, not `sky.embed`) | Web handoff ile kurulan oturumda `"skyapp"`; sıradan girişte hiç yok. Hesap Merkezi header'ı buna göre gizler. |
+| `sky_session_started` | `sky_session_lifetime` (`sky-session-lifetime-mapper`, `com.skylab.account.SkySessionLifetimeMapper`) | Keycloak kullanıcı oturumunun gerçek başlangıcı (epoch saniye). Web handoff'ta açılış anıdır; `auth_time` ise SkyApp'teki özgün giriştir. |
+| `sky_session_expires` | aynı eşleyici | Keycloak'ın bu oturumu en uzun ömürle bitireceği an (epoch saniye), Keycloak'ın kendi `SessionExpirationUtils` hesabıyla: realm SSO en uzun ömrü (varsayılan 10 saat), beni-hatırla oturumunda daha uzun olan beni-hatırla ömrü; istemcide `client.session.max.lifespan` ya da realm'de istemci oturumu en uzun ömrü varsa bu istemcinin oturum başlangıcından sayılan daha kısa değer. En uzun ömrü olmayan oturumda (en uzun ömrü kapalı offline oturum) yazılmaz. |
+
+Hesap Merkezi kendi oturum sınırını `sky_session_expires` (yoksa `sky_session_started`, o da
+yoksa `auth_time`) ile koyar; böylece beni-hatırla ile 30 günlük bir Keycloak oturumu sabit
+8 saatlik sınıra takılmaz ve SkyApp'ten gelen eski `auth_time` oturumu erken bitirmez. Değerler
+aynı oturumun her token'ında (yenilemeler dahil) aynıdır.
+
 ## Olaylar ve gizlilik
 
 Her açılış bir Keycloak kullanıcı olayı bırakır: başarı `CUSTOM_REQUIRED_ACTION`

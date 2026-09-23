@@ -65,8 +65,17 @@ services:
       SKY_NATIVE_BRIDGE_TLS_KEY_FILE: /run/secrets/native-bridge/keycloak.key
       SKY_NATIVE_BRIDGE_CA_CERT_FILE: /run/secrets/native-bridge/ca.crt
       SKY_NATIVE_BRIDGE_TIMEOUT_MILLISECONDS: ${SKY_NATIVE_BRIDGE_TIMEOUT_MILLISECONDS:-1500}
+
+      # System mail through SkyMail (ADR-0045). Disabled by default; Keycloak's own SMTP
+      # stays the fallback and keeps sending while SkyMail is off or unreachable.
+      SKY_MAIL_ENABLED: ${SKY_MAIL_ENABLED:-false}
+      SKY_MAIL_BASE_URL: ${SKY_MAIL_BASE_URL:-}
+      SKY_MAIL_CLIENT_ID: ${SKY_MAIL_CLIENT_ID:-keycloak-mailer}
+      SKY_MAIL_CLIENT_SECRET_FILE: /run/secrets/sky-mail/client.secret
+      SKY_MAIL_TIMEOUT_MILLISECONDS: ${SKY_MAIL_TIMEOUT_MILLISECONDS:-5000}
     volumes:
       - ${SKY_NATIVE_BRIDGE_SECRETS_DIR:?set the absolute native bridge secrets directory}:/run/secrets/native-bridge:ro
+      - ${SKY_MAIL_CLIENT_SECRET_HOST_FILE:-/opt/weblab/account-center-keycloak/credentials/mailer-client.secret}:/run/secrets/sky-mail/client.secret:ro
     depends_on:
       keycloak-preflight:
         condition: service_completed_successfully

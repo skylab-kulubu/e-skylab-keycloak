@@ -24,6 +24,15 @@ CHANGED_USERNAME=sky.fixture
 REAUTH_USERNAME=reauth-fixture
 REAUTH_PASSWORD=reauth-password-change-me
 REAUTH_ROTATED_PASSWORD=reauth-password-set-after-authentication
+EMAIL_USERNAME=email-fixture
+EMAIL_OTHER_USERNAME=email-other
+EMAIL_SCHOOL_ADDRESS=email-fixture@std.yildiz.edu.tr
+EMAIL_OTHER_SCHOOL_ADDRESS=email-other@std.yildiz.edu.tr
+EMAIL_OTHER_PRIMARY_ADDRESS=email-other@example.invalid
+EMAIL_PERSONAL_ADDRESS=email-fixture-personal@example.invalid
+EMAIL_OTHER_PERSONAL_ADDRESS=email-other-personal@example.invalid
+EMAIL_TAKEN_PERSONAL_ADDRESS=taken-personal@example.invalid
+MAILPIT_URL=${SKY_ACCOUNT_MAILPIT_URL:-http://localhost:18025}
 COMPOSE=(docker compose -f "$COMPOSE_FILE")
 CURRENT_STAGE='sky-account fixture'
 TOTP_USED_STEPS_FILE="$STATE_DIR/sky-account-totp-steps"
@@ -183,6 +192,23 @@ login_action_of() {
   jq -r . <<<"$literal"
 }
 
+# skyapp_access_token <username> <password> -> the decoded payload of a fresh skyapp access
+# token. The account-center client keeps only its own two default scopes, so the e-mail claim
+# every other service sees is read here instead.
+skyapp_access_token() {
+  local grant token
+  grant=$(curl --silent --show-error \
+    --data-urlencode grant_type=password \
+    --data-urlencode client_id=skyapp \
+    --data-urlencode "username=$1" \
+    --data-urlencode "password=$2" \
+    --data-urlencode scope=openid \
+    "$TOKEN_URL")
+  token=$(jq -r '.access_token // empty' <<<"$grant")
+  [[ -n $token ]] || fail 'a fresh skyapp token could not be obtained'
+  decode_jwt_segment "$token" 2
+}
+
 # direct_grant_status <password> [username]
 direct_grant_status() {
   curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
@@ -234,6 +260,74 @@ fresh_totp_offset() {
     sleep $(( 30 - now % 30 + 1 ))
   fi
   printf '1'
+}
+
+# The harness mail sink (tests/docker-compose.integration.yml service "mailpit"): every mail
+# the realm sends lands here instead of a real mailbox. Neither address nor code is printed.
+mailpit_reset() {
+  curl --fail --silent --show-error --request DELETE "$MAILPIT_URL/api/v1/messages" >/dev/null
+}
+
+# mailpit_message_id <address> -> the newest message delivered to that address
+mailpit_message_id() {
+  local address=$1 attempt messages id
+  for attempt in $(seq 1 30); do
+    messages=$(curl --fail --silent --show-error "$MAILPIT_URL/api/v1/messages?limit=50") || messages='{"messages":[]}'
+    id=$(jq -r --arg to "$address" \
+      'first(.messages[]? | select(any(.To[]?; .Address == $to)) | .ID) // empty' <<<"$messages")
+    if [[ -n $id ]]; then
+      printf '%s' "$id"
+      return 0
+    fi
+    sleep 1
+  done
+  fail 'no personal e-mail confirmation reached the mail sink'
+}
+
+# confirmation_code_of <message id> -> the six-digit code of the verification mail. The mail
+# must carry the code and no link: a link would work outside the requester's session (ADR-0044).
+confirmation_code_of() {
+  local message code
+  message=$(curl --fail --silent --show-error "$MAILPIT_URL/api/v1/message/$1")
+  jq -e '(.Subject == "Kişisel e-posta adresini doğrula") and (.HTML | length) > 0 and (.Text | length) > 0' \
+    <<<"$message" >/dev/null \
+    || fail 'the confirmation mail is not the SKY LAB template with a resolved Turkish subject'
+  # jq alone, no pipes: under pipefail an early-exiting grep -q can fail the pipeline by SIGPIPE.
+  jq -e '((.Text // "") + (.HTML // "")) | contains("email/confirm") | not' <<<"$message" >/dev/null \
+    || fail 'the confirmation mail must not carry a confirmation link'
+  jq -e '(.Text // "") | contains("kimseyle paylaşma")' <<<"$message" >/dev/null \
+    || fail 'the confirmation mail must tell the person never to share the code'
+  code=$(jq -r '[(.HTML // "") | scan(">\\s*([0-9]{6})\\s*</div>")][0][0] // empty' <<<"$message")
+  if [[ -z $code ]] || ! jq -e --arg code "$code" \
+      '(.Text // "") | test("(^|[^0-9])" + $code + "([^0-9]|$)")' <<<"$message" >/dev/null; then
+    # Digits masked: the shape of the mail is what explains a failure, not the code.
+    jq -r '"text: " + ((.Text // "") | gsub("[0-9]"; "#") | .[0:600]),
+           "html: " + ((.HTML // "") | gsub("[0-9]"; "#") | gsub("\\s+"; " ") | .[0:600])' \
+      <<<"$message" >&2
+    fail 'the confirmation mail must show one six-digit code, the same in the text and the HTML part'
+  fi
+  printf '%s' "$code"
+}
+
+# a_code_other_than <code> -> a six-digit code that is certainly not <code>
+a_code_other_than() {
+  if [[ $1 == 000000 ]]; then printf '000001'; else printf '000000'; fi
+}
+
+# email_person <username> <school address> <primary address> -> EMAIL_USER_UUID, EMAIL_PASSWORD
+email_person() {
+  local username=$1 school=$2 primary=$3 stale
+  while IFS= read -r stale; do
+    [[ -n $stale ]] || continue
+    kcadm delete "users/$stale" -r "$REALM" >/dev/null
+  done < <(kcadm get users -r "$REALM" -c -q "username=$username" -q exact=true | jq -r '.[].id')
+  EMAIL_USER_UUID=$(kcadm create users -r "$REALM" -i \
+    -s "username=$username" -s enabled=true -s emailVerified=true \
+    -s firstName=Email -s lastName=Fixture -s "email=$primary" \
+    -s "attributes.schoolEmail=[\"$school\"]")
+  EMAIL_PASSWORD=$(openssl rand -base64 24 | tr -d '\n')
+  kcadm set-password -r "$REALM" --userid "$EMAIL_USER_UUID" \
+    --new-password "$EMAIL_PASSWORD" --temporary=false >/dev/null
 }
 
 # ---------------------------------------------------------------------------------------
@@ -624,6 +718,242 @@ json_assert "$(user_events UPDATE_PROFILE)" \
   '[.[] | select(.clientId == "account-center" and .details.updated_username == $name and .details.previous_username == "account-fixture")] | length >= 1' \
   'UPDATE_PROFILE event for the username change is missing' --arg name "$CHANGED_USERNAME"
 
+# Personal e-mail: add → verification mail → confirm → Primary selection → removal (ADR-0044).
+# Budget note: change requests have their own tight budget (3 / hour per person) and the
+# fixture person's sudo budget is spent by the stages above, so this block gets two throwaway
+# people. The fixture person is left untouched here.
+CURRENT_STAGE='sky-account personal e-mail'
+mailpit_reset
+kcadm update "users/$taken_user_uuid" -r "$REALM" \
+  -s "attributes.personalEmail=[\"$EMAIL_TAKEN_PERSONAL_ADDRESS\"]" >/dev/null
+email_person "$EMAIL_USERNAME" "$EMAIL_SCHOOL_ADDRESS" "$EMAIL_SCHOOL_ADDRESS"
+email_user_uuid=$EMAIL_USER_UUID
+email_password=$EMAIL_PASSWORD
+email_person "$EMAIL_OTHER_USERNAME" "$EMAIL_OTHER_SCHOOL_ADDRESS" "$EMAIL_OTHER_PRIMARY_ADDRESS"
+email_other_uuid=$EMAIL_USER_UUID
+email_other_password=$EMAIL_PASSWORD
+
+browser_login email-1 "$email_password" '' "$EMAIL_USERNAME"
+token_e=$LOGIN_ACCESS_TOKEN
+sky POST sudo/password "$token_e" - "{\"password\":\"$email_password\"}"
+expect 200 - 'the e-mail fixture person must obtain a sudo token'
+sudo_e=$(jq -r .sudoToken <<<"$SKY_BODY")
+browser_login email-2 "$email_other_password" '' "$EMAIL_OTHER_USERNAME"
+token_o=$LOGIN_ACCESS_TOKEN
+sky POST sudo/password "$token_o" - "{\"password\":\"$email_other_password\"}"
+expect 200 - 'the second e-mail person must obtain a sudo token'
+sudo_o=$(jq -r .sudoToken <<<"$SKY_BODY")
+
+sky GET identity "$token_e" -
+expect 200 - 'the e-mail fixture identity must be readable'
+json_assert "$SKY_BODY" \
+  '.schoolEmail == $school and .personalEmail == null and .personalEmailVerified == false and .primary == "school" and .email == $school' \
+  'a person with only a school address must start with a school primary' --arg school "$EMAIL_SCHOOL_ADDRESS"
+
+# An address written straight into the attribute was proven by nobody, so it cannot be primary.
+kcadm update "users/$email_user_uuid" -r "$REALM" \
+  -s "attributes.personalEmail=[\"$EMAIL_PERSONAL_ADDRESS\"]" >/dev/null
+sky GET identity "$token_e" -
+json_assert "$SKY_BODY" '.personalEmail == $personal and .personalEmailVerified == false' \
+  'an unproven personal address must not be reported as verified' --arg personal "$EMAIL_PERSONAL_ADDRESS"
+sky POST email/primary "$token_e" "$sudo_e" '{"which":"personal"}'
+expect 409 email_not_verified 'an unproven personal address must not become the primary'
+sky DELETE email/personal "$token_e" "$sudo_e"
+expect 200 - 'a personal address that is not the primary must be removable'
+json_assert "$SKY_BODY" '.personalEmail == null and .primary == "school"' 'the removal is not reflected'
+sky DELETE email/personal "$token_e" "$sudo_e"
+expect 200 - 'removing a personal address nobody has is a no-op'
+json_assert "$SKY_BODY" '.personalEmail == null and .primary == "school"' 'the no-op removal changed the identity'
+sky POST email/primary "$token_e" "$sudo_e" '{"which":"personal"}'
+expect 400 invalid_request 'a personal address the person never added cannot be chosen'
+sky POST email/primary "$token_e" "$sudo_e" '{"which":"work"}'
+expect 400 invalid_request 'the primary can only be the school or the personal address'
+
+# 1 / 3 of the change budget: the address that carries the flow.
+sky POST email/change-request "$token_e" - "{\"address\":\"$EMAIL_PERSONAL_ADDRESS\"}"
+expect 401 sudo_required 'a change request requires sudo'
+sky POST email/change-request "$token_e" "$sudo_e" "{\"address\":\"$EMAIL_PERSONAL_ADDRESS\",\"makePrimary\":false}"
+expect 202 - 'a free, valid address must be accepted'
+json_assert "$SKY_BODY" '(.expiresAt | fromdateiso8601) > ($now + 9 * 60) and (.expiresAt | fromdateiso8601) <= ($now + 10 * 60 + 5)' \
+  'the pending change must live for ten minutes' --argjson now "$(date -u +%s)"
+sky GET identity "$token_e" -
+json_assert "$SKY_BODY" '.personalEmail == null and .email == $school' \
+  'a change request must not touch the person before the address is proven' --arg school "$EMAIL_SCHOOL_ADDRESS"
+confirm_code=$(confirmation_code_of "$(mailpit_message_id "$EMAIL_PERSONAL_ADDRESS")")
+
+# 2 / 3 and 3 / 3, then the budget is spent.
+sky POST email/change-request "$token_e" "$sudo_e" '{"address":"not an address"}'
+expect 400 invalid_request 'Keycloak e-mail validation must refuse a malformed address'
+json_assert "$SKY_BODY" '.field == "address"' 'invalid_request must name the address field'
+sky POST email/change-request "$token_e" "$sudo_e" "{\"address\":\"$EMAIL_OTHER_PRIMARY_ADDRESS\"}"
+expect 409 email_taken 'an address that is another person primary must be refused'
+sky POST email/change-request "$token_e" "$sudo_e" "{\"address\":\"second-$EMAIL_PERSONAL_ADDRESS\"}"
+expect 429 rate_limited 'the fourth change request of the hour must be refused'
+[[ $(header_value Retry-After) -gt 0 ]] || fail 'rate_limited must set Retry-After'
+
+# The second person spends its own budget on the refusals the first one could not reach and
+# on the pending change the cross-account checks need.
+sky POST email/change-request "$token_o" "$sudo_o" "{\"address\":\"$EMAIL_OTHER_SCHOOL_ADDRESS\"}"
+expect 400 invalid_request 'the own school address is not a personal address'
+sky POST email/change-request "$token_o" "$sudo_o" "{\"address\":\"$EMAIL_TAKEN_PERSONAL_ADDRESS\"}"
+expect 409 email_taken 'an address that is another person personal e-mail must be refused'
+sky POST email/change-request "$token_o" "$sudo_o" "{\"address\":\"$EMAIL_OTHER_PERSONAL_ADDRESS\",\"makePrimary\":true}"
+expect 202 - 'the second person must start its own change'
+foreign_code=$(confirmation_code_of "$(mailpit_message_id "$EMAIL_OTHER_PERSONAL_ADDRESS")")
+
+# The code proves the mailbox and the session proves the person, so confirming needs no sudo;
+# a code is only ever compared with the pending change of the person whose session sends it.
+sky POST email/confirm - - "{\"code\":\"$confirm_code\"}"
+expect 401 unauthorized 'confirming without an Account Center session must be refused'
+sky POST email/confirm "$token_e" - '{"code":"12345"}'
+expect 400 invalid_request 'a code that is not six digits must be refused'
+json_assert "$SKY_BODY" '.field == "code"' 'invalid_request must name the code field'
+wrong_e=$(a_code_other_than "$confirm_code")
+sky POST email/confirm "$token_e" - "{\"code\":\"$wrong_e\"}"
+expect 400 invalid_email_code 'a wrong code must be refused'
+json_assert "$SKY_BODY" '.attemptsLeft == 4' 'a wrong code must cost exactly one of five tries (a malformed one costs none)'
+# A page reloaded between the mail and the code reads what is waiting instead of asking for a new code.
+sky GET email/pending "$token_e" -
+expect 200 - 'the waiting change must be readable'
+json_assert "$SKY_BODY" \
+  '.address == $personal and .attemptsLeft == 4 and ((.expiresAt | fromdateiso8601) > $now) and (keys | sort) == ["address","attemptsLeft","expiresAt"]' \
+  'the waiting change must show address, deadline and tries, and never the code' \
+  --arg personal "$EMAIL_PERSONAL_ADDRESS" --argjson now "$(date -u +%s)"
+# The address-squatting attack the link allowed: this person's code typed into the other
+# person's session only ever meets the other person's own change.
+if [[ $confirm_code != "$foreign_code" ]]; then
+  sky POST email/confirm "$token_o" - "{\"code\":\"$confirm_code\"}"
+  expect 400 invalid_email_code 'a code must never confirm a change of another account'
+else
+  sky POST email/confirm "$token_o" - "{\"code\":\"$(a_code_other_than "$foreign_code")\"}"
+  expect 400 invalid_email_code 'a wrong code must be refused'
+fi
+wrong_o=$(a_code_other_than "$foreign_code")
+for left in 3 2 1 0; do
+  sky POST email/confirm "$token_o" - "{\"code\":\"$wrong_o\"}"
+  expect 400 invalid_email_code 'a wrong code must be refused'
+  json_assert "$SKY_BODY" '.attemptsLeft == $left' 'every wrong code must cost one try' --argjson left "$left"
+done
+sky POST email/confirm "$token_o" - "{\"code\":\"$foreign_code\"}"
+expect 404 no_pending_email_change 'the right code must not work after the fifth wrong try'
+sky GET identity "$token_o" -
+json_assert "$SKY_BODY" '.personalEmail == null and .email == $primary' \
+  'a refused confirmation must not change the person' --arg primary "$EMAIL_OTHER_PRIMARY_ADDRESS"
+sky GET identity "$token_e" -
+json_assert "$SKY_BODY" '.personalEmail == null' \
+  'attempts in another session must not touch this person' 
+
+sky POST email/confirm "$token_e" - "{\"code\":\" ${confirm_code:0:3} ${confirm_code:3:3} \"}"
+expect 200 - 'the code from the mail must finish the change, spaces and all'
+json_assert "$SKY_BODY" \
+  '.personalEmail == $personal and .personalEmailVerified == true and .primary == "school" and .email == $school and .emailVerified == true' \
+  'confirming without makePrimary must add the address without moving the primary' \
+  --arg personal "$EMAIL_PERSONAL_ADDRESS" --arg school "$EMAIL_SCHOOL_ADDRESS"
+sky POST email/confirm "$token_e" - "{\"code\":\"$confirm_code\"}"
+expect 404 no_pending_email_change 'a used code must not work a second time'
+sky GET email/pending "$token_e" -
+expect 404 no_pending_email_change 'nothing waits once the change is confirmed'
+kcadm get "users/$email_user_uuid" -r "$REALM" -c \
+  | jq -e --arg personal "$EMAIL_PERSONAL_ADDRESS" --arg school "$EMAIL_SCHOOL_ADDRESS" \
+    '.email == $school and .attributes.personalEmail == [$personal] and (.attributes.personalEmailVerifiedAt[0] | length) > 0' >/dev/null \
+  || fail 'the proven personal address did not persist in Keycloak'
+json_assert "$(user_events UPDATE_PROFILE "$email_user_uuid")" \
+  '[.[] | select(.clientId == "account-center" and .details.context == "ACCOUNT")] | length >= 1' \
+  'UPDATE_PROFILE event for the confirmed personal address is missing'
+json_assert "$(skyapp_access_token "$EMAIL_USERNAME" "$email_password")" '.email == $school' \
+  'adding a personal address must not move the e-mail claim of other clients' \
+  --arg school "$EMAIL_SCHOOL_ADDRESS"
+
+# The primary is what Keycloak, the tokens, core and SkyMail see.
+sky POST email/primary "$token_e" - '{"which":"personal"}'
+expect 401 sudo_required 'the primary selection requires sudo'
+# Sudo lasts five minutes and the mail round trip above eats into it.
+sky POST sudo/password "$token_e" - "{\"password\":\"$email_password\"}"
+expect 200 - 'the e-mail fixture person must renew its sudo token'
+sudo_e=$(jq -r .sudoToken <<<"$SKY_BODY")
+sky POST email/primary "$token_e" "$sudo_e" '{"which":"personal"}'
+expect 200 - 'a proven personal address must become the primary'
+json_assert "$SKY_BODY" '.primary == "personal" and .email == $personal and .emailVerified == true' \
+  'the primary switch is not reflected in the identity' --arg personal "$EMAIL_PERSONAL_ADDRESS"
+json_assert "$(user_events UPDATE_EMAIL "$email_user_uuid")" \
+  '[.[] | select(.clientId == "account-center" and .details.updated_email == $personal and .details.previous_email == $school)] | length >= 1' \
+  'UPDATE_EMAIL event for the primary switch is missing' \
+  --arg personal "$EMAIL_PERSONAL_ADDRESS" --arg school "$EMAIL_SCHOOL_ADDRESS"
+json_assert "$(skyapp_access_token "$EMAIL_USERNAME" "$email_password")" '.email == $personal and .email_verified == true' \
+  'a fresh token does not carry the new primary e-mail' --arg personal "$EMAIL_PERSONAL_ADDRESS"
+[[ $(direct_grant_status "$email_password" "$EMAIL_PERSONAL_ADDRESS") == 200 ]] \
+  || fail 'the new primary address must sign in'
+
+# Removing the personal address while it is the primary needs an address to fall back to.
+# The sudo window is five minutes and the stages above spent most of it, so take a fresh one.
+sky POST sudo/password "$token_e" - "{\"password\":\"$email_password\"}"
+expect 200 - 'the e-mail fixture person must obtain a second sudo token'
+sudo_e=$(jq -r .sudoToken <<<"$SKY_BODY")
+# The school attribute alone proves nothing (CONTEXT, Verified YTÜ account): only the YTÜ link does.
+sky POST email/primary "$token_e" "$sudo_e" '{"which":"school"}'
+expect 409 email_not_verified 'a school address without the YTÜ link must not become the primary'
+kcadm get "users/$email_user_uuid" -r "$REALM" -c \
+  | jq 'del(.attributes.schoolEmail)' \
+  | kcadm update "users/$email_user_uuid" -r "$REALM" -n -f - >/dev/null
+sky DELETE email/personal "$token_e" "$sudo_e"
+expect 409 no_fallback_email 'the only address of a person must not be removable'
+sky GET identity "$token_e" -
+json_assert "$SKY_BODY" '.personalEmail == $personal and .primary == "personal"' \
+  'a refused removal must not change the person' --arg personal "$EMAIL_PERSONAL_ADDRESS"
+# Only the chosen address has to exist; a person without a school address is not stuck.
+sky POST email/primary "$token_e" "$sudo_e" '{"which":"personal"}'
+expect 200 - 'choosing the personal address must not require a school address as well'
+json_assert "$SKY_BODY" '.primary == "personal" and .email == $personal' \
+  'choosing the current primary must leave it as it is' --arg personal "$EMAIL_PERSONAL_ADDRESS"
+kcadm update "users/$email_user_uuid" -r "$REALM" \
+  -s "attributes.schoolEmail=[\"$EMAIL_SCHOOL_ADDRESS\"]" >/dev/null
+sky DELETE email/personal "$token_e" "$sudo_e"
+expect 409 no_fallback_email 'a school attribute without the YTÜ link must not take over the primary'
+kcadm create "users/$email_user_uuid/federated-identity/OBS" -r "$REALM" \
+  -b "{\"identityProvider\":\"OBS\",\"userId\":\"ms-object-id-email\",\"userName\":\"$EMAIL_SCHOOL_ADDRESS\"}" >/dev/null
+sky DELETE email/personal "$token_e" -
+expect 401 sudo_required 'removing the personal address requires sudo'
+sky DELETE email/personal "$token_e" "$sudo_e"
+expect 200 - 'the personal address must be removable when the school address can take over'
+json_assert "$SKY_BODY" \
+  '.personalEmail == null and .personalEmailVerified == false and .primary == "school" and .email == $school and .emailVerified == true' \
+  'the removal must hand the primary back to the school address' --arg school "$EMAIL_SCHOOL_ADDRESS"
+kcadm get "users/$email_user_uuid" -r "$REALM" -c \
+  | jq -e --arg school "$EMAIL_SCHOOL_ADDRESS" \
+    '.email == $school and ((.attributes.personalEmail // []) | length) == 0 and ((.attributes.personalEmailVerifiedAt // []) | length) == 0' >/dev/null \
+  || fail 'the removed personal address is still stored in Keycloak'
+kcadm delete "users/$email_user_uuid/federated-identity/OBS" -r "$REALM" >/dev/null
+
+# Replacing the personal address that is the primary must move the primary with it: otherwise
+# Keycloak email keeps an address the person no longer has and the primary reads "none".
+email_person email-third email-third@std.yildiz.edu.tr email-third-old@example.invalid
+email_third_uuid=$EMAIL_USER_UUID
+email_third_password=$EMAIL_PASSWORD
+kcadm update "users/$email_third_uuid" -r "$REALM" \
+  -s 'attributes.personalEmail=["email-third-old@example.invalid"]' \
+  -s 'attributes.personalEmailVerifiedAt=["2026-09-01T12:00:00Z"]' >/dev/null
+browser_login email-3 "$email_third_password" '' email-third
+token_t=$LOGIN_ACCESS_TOKEN
+sky GET identity "$token_t" -
+json_assert "$SKY_BODY" '.primary == "personal" and .personalEmailVerified == true' \
+  'the third person must start with a proven personal primary'
+sky POST sudo/password "$token_t" - "{\"password\":\"$email_third_password\"}"
+expect 200 - 'the third e-mail person must obtain a sudo token'
+sudo_t=$(jq -r .sudoToken <<<"$SKY_BODY")
+sky POST email/change-request "$token_t" "$sudo_t" '{"address":"email-third-new@example.invalid","makePrimary":false}'
+expect 202 - 'a replacement personal address must be accepted'
+sky GET email/pending "$token_t" -
+expect 200 - 'the replacement must be waiting'
+json_assert "$SKY_BODY" '.address == "email-third-new@example.invalid" and .attemptsLeft == 5' \
+  'the waiting replacement must show its address and all five tries'
+third_code=$(confirmation_code_of "$(mailpit_message_id email-third-new@example.invalid)")
+sky POST email/confirm "$token_t" - "{\"code\":\"$third_code\"}"
+expect 200 - 'the replacement code must finish the change'
+json_assert "$SKY_BODY" \
+  '.personalEmail == "email-third-new@example.invalid" and .primary == "personal" and .email == "email-third-new@example.invalid" and .emailVerified == true' \
+  'replacing the personal primary must move the primary to the new address'
+kcadm delete "users/$email_third_uuid" -r "$REALM" >/dev/null
+
 CURRENT_STAGE='sky-account rate limit'
 rate_limited=''
 for attempt in $(seq 1 11); do
@@ -642,8 +972,15 @@ json_assert "$SKY_BODY" '.retryAfter == ($retry | tonumber)' 'retryAfter must ma
 
 CURRENT_STAGE='sky-account secrets in logs'
 keycloak_logs=$("${COMPOSE[@]}" logs --no-color keycloak 2>&1)
-for secret_value in "$totp_secret" "$sudo_a" "$sudo_totp" "$sudo_reauth" "$reauth_id_token_1" "$ROTATED_PASSWORD" "$REAUTH_ROTATED_PASSWORD" "$setup_handle"; do
-  [[ $keycloak_logs != *"$secret_value"* ]] || fail 'a secret, sudo token or password leaked into Keycloak logs'
+for secret_value in "$totp_secret" "$sudo_a" "$sudo_totp" "$sudo_reauth" "$sudo_e" "$sudo_o" \
+  "$reauth_id_token_1" "$ROTATED_PASSWORD" "$REAUTH_ROTATED_PASSWORD" "$email_password" \
+  "$email_other_password" "$setup_handle"; do
+  [[ $keycloak_logs != *"$secret_value"* ]] || fail 'a secret, sudo token, password or e-mail token leaked into Keycloak logs'
+done
+# Six digits turn up in any log by chance, so the codes are looked for next to what would carry them.
+for code_value in "$confirm_code" "$foreign_code" "$third_code"; do
+  [[ $keycloak_logs != *"code\":\"$code_value"* && $keycloak_logs != *"code=$code_value"* && $keycloak_logs != *"code: $code_value"* ]] \
+    || fail 'an e-mail verification code leaked into Keycloak logs'
 done
 
 CURRENT_STAGE='sky-account cleanup'
@@ -660,6 +997,9 @@ kcadm delete "attack-detection/brute-force/users/$FIXTURE_USER_UUID" -r "$REALM"
 kcadm delete identity-provider/instances/OBS -r "$REALM" >/dev/null
 kcadm delete "users/$taken_user_uuid" -r "$REALM" >/dev/null
 kcadm delete "users/$reauth_user_uuid" -r "$REALM" >/dev/null
+kcadm delete "users/$email_user_uuid" -r "$REALM" >/dev/null
+kcadm delete "users/$email_other_uuid" -r "$REALM" >/dev/null
+mailpit_reset
 printf '%s' "$user_profile_before" | kcadm update users/profile -r "$REALM" -f - >/dev/null
 kcadm get "users/$FIXTURE_USER_UUID" -r "$REALM" -c \
   | jq -e '.username == "account-fixture" and .firstName == "Account"' >/dev/null \

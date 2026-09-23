@@ -9,6 +9,15 @@
   ],
   "defaultLocale": "tr",
   "loginTheme": "e-skylab-theme",
+  "smtpServer": {
+    "host": "mailpit",
+    "port": "1025",
+    "from": "no-reply@yildizskylab.invalid",
+    "fromDisplayName": "SKY LAB test",
+    "ssl": "false",
+    "starttls": "false",
+    "auth": "false"
+  },
   "eventsEnabled": true,
   "adminEventsEnabled": true,
   "adminEventsDetailsEnabled": false,

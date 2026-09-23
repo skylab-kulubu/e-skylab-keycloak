@@ -38,6 +38,8 @@ public final class IdentityResource {
 
     static final String SCHOOL_EMAIL_ATTRIBUTE = "schoolEmail";
     static final String PERSONAL_EMAIL_ATTRIBUTE = "personalEmail";
+    /** ISO-8601 UTC moment the person proved the current {@code personalEmail}; only this SPI writes it. */
+    static final String PERSONAL_EMAIL_VERIFIED_AT_ATTRIBUTE = "personalEmailVerifiedAt";
     static final String USERNAME_CHANGED_AT_ATTRIBUTE = "usernameChangedAt";
     static final long USERNAME_COOLDOWN_SECONDS = 14L * 24 * 60 * 60;
     static final int MAX_NAME_LENGTH = 64;
@@ -59,7 +61,7 @@ public final class IdentityResource {
     public Response identity() {
         return request.execute(() -> {
             Caller caller = request.authenticate();
-            return AccountRequest.ok(200, identityOf(caller.user()));
+            return AccountRequest.ok(200, identityOf(request, caller.user()));
         });
     }
 
@@ -94,7 +96,7 @@ public final class IdentityResource {
                         .detail(Details.UPDATED_LAST_NAME, lastName);
             }
             event.success();
-            return AccountRequest.ok(200, identityOf(user));
+            return AccountRequest.ok(200, identityOf(request, user));
         });
     }
 
@@ -116,7 +118,7 @@ public final class IdentityResource {
             UserModel user = caller.user();
             String previous = user.getUsername();
             if (requested.equals(previous)) {
-                return AccountRequest.ok(200, identityOf(user));
+                return AccountRequest.ok(200, identityOf(request, user));
             }
             Long availableAt = usernameChangeAvailableAt(user);
             if (availableAt != null) {
@@ -136,7 +138,7 @@ public final class IdentityResource {
             applyUsername(request.session(), user, requested, event);
             user.setSingleAttribute(USERNAME_CHANGED_AT_ATTRIBUTE, AccountRequest.isoSeconds(Time.currentTime()));
             event.success();
-            return AccountRequest.ok(200, identityOf(user));
+            return AccountRequest.ok(200, identityOf(request, user));
         });
     }
 
@@ -217,7 +219,30 @@ public final class IdentityResource {
         return "none";
     }
 
-    private ObjectNode identityOf(UserModel user) {
+    /**
+     * The Personal e-mail counts as proven only while this extension recorded the moment it
+     * was proven; an address written straight into the attribute (admin, import) is not.
+     */
+    static boolean isPersonalEmailVerified(UserModel user) {
+        if (blankToNull(user.getFirstAttribute(PERSONAL_EMAIL_ATTRIBUTE)) == null) {
+            return false;
+        }
+        String verifiedAt = user.getFirstAttribute(PERSONAL_EMAIL_VERIFIED_AT_ATTRIBUTE);
+        if (verifiedAt == null || verifiedAt.isBlank()) {
+            return false;
+        }
+        try {
+            Instant.parse(verifiedAt.trim());
+            return true;
+        } catch (DateTimeParseException exception) {
+            LOG.warnf("sky-account ignored an unreadable %s attribute of user %s",
+                    PERSONAL_EMAIL_VERIFIED_AT_ATTRIBUTE, user.getId());
+            return false;
+        }
+    }
+
+    /** The {@code GET identity} document, also returned by every endpoint that changes it. */
+    static ObjectNode identityOf(AccountRequest request, UserModel user) {
         boolean verifiedYtu = request.isVerifiedYtu(user);
         String schoolEmail = blankToNull(user.getFirstAttribute(SCHOOL_EMAIL_ATTRIBUTE));
         String personalEmail = blankToNull(user.getFirstAttribute(PERSONAL_EMAIL_ATTRIBUTE));
@@ -232,6 +257,7 @@ public final class IdentityResource {
         body.put("emailVerified", user.isEmailVerified());
         body.put("schoolEmail", schoolEmail);
         body.put("personalEmail", personalEmail);
+        body.put("personalEmailVerified", isPersonalEmailVerified(user));
         body.put("primary", primaryOf(user.getEmail(), schoolEmail, personalEmail));
         body.put("verifiedYtu", verifiedYtu);
         body.put("nameLocked", verifiedYtu);

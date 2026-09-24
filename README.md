@@ -40,7 +40,7 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.12.0`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.12.1`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.1.0`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
@@ -260,7 +260,10 @@ belgesindedir.
 - Sudo modu: parola, doğrulama kodu ya da passkey kanıtı, Keycloak'ın iç HMAC
   anahtarıyla (`HS512`, Keycloak dışında doğrulanamaz) imzaladığı beş dakikalık,
   `sub`+`sid` bağlı bir sudo token verir (`X-Sky-Sudo` başlığı; BFF için opak). Token tek kullanımlık değildir; başka oturumun
-  bearer'ıyla çalışmaz, süresi dolunca `sudo_expired` döner. Her başarılı
+  bearer'ıyla çalışmaz, süresi dolunca `sudo_expired` döner. `aud`
+  `["sky-account","core"]`'dur: core hesap silmede kanıtı kendi gizli
+  istemcisiyle Keycloak introspection'ına sorar (Keycloak yalnız audience'taki
+  istemciye cevap verir). Her başarılı
   kanıt `CUSTOM_REQUIRED_ACTION` (`action=sky-sudo`,
   `method=password|totp|passkey|authentication`) olayı bırakır.
 - Taze giriş kanıtı: üç kimlik bilgisinden hiçbiri olmayan kişi Keycloak'ta
@@ -291,7 +294,9 @@ belgesindedir.
 
 Entegrasyon testi (`tests/sky-account-contract.sh`, `tests/run-integration.sh`
 tarafından çağrılır) gerçek Keycloak üzerinde bearer korumasını, YTÜ kilidini,
-brute-force sayımını ve kilidi, sudo oturum bağını, taze giriş kanıtını (ID
+brute-force sayımını ve kilidi, sudo oturum bağını, sudo token'ın `core`
+istemcisiyle introspection'ını (audience dışındaki `account-center` ve kapanmış
+oturumun token'ı `active:false` alır), taze giriş kanıtını (ID
 token ile sudo → parola belirleme; başka oturumun/kişinin ID token'ı, bozuk imza
 ve access token reddedilir), parola politikasını,
 diğer oturumların kapatılmasını, TOTP kurulum/onay/giriş/silme akışını,

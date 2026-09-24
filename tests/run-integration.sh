@@ -24,49 +24,6 @@ docker image inspect "$TEST_IMAGE" >/dev/null 2>&1 || {
 
 trap 'status=$?; printf "integration command failed during %s (line %s)\n" "$CURRENT_STAGE" "$LINENO" >&2; exit "$status"' ERR
 
-CURRENT_STAGE='native bridge test identity setup'
-native_bridge_dir="$TEST_STATE_DIR/native-bridge"
-mkdir -p "$native_bridge_dir"
-chmod 0755 "$native_bridge_dir"
-openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
-  -out "$native_bridge_dir/ca.key" >/dev/null 2>&1
-openssl req -x509 -new -key "$native_bridge_dir/ca.key" -sha256 -days 1 \
-  -subj '/CN=SKY LAB native bridge integration CA' \
-  -out "$native_bridge_dir/ca.crt" >/dev/null 2>&1
-openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
-  -out "$native_bridge_dir/server.key" >/dev/null 2>&1
-openssl req -new -key "$native_bridge_dir/server.key" \
-  -subj '/CN=native-bridge' \
-  -out "$native_bridge_dir/server.csr" >/dev/null 2>&1
-printf 'subjectAltName=DNS:native-bridge\nextendedKeyUsage=serverAuth\n' \
-  >"$native_bridge_dir/server.ext"
-openssl x509 -req -in "$native_bridge_dir/server.csr" \
-  -CA "$native_bridge_dir/ca.crt" -CAkey "$native_bridge_dir/ca.key" \
-  -CAcreateserial -sha256 -days 1 -extfile "$native_bridge_dir/server.ext" \
-  -out "$native_bridge_dir/server.crt" >/dev/null 2>&1
-openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
-  -out "$native_bridge_dir/keycloak.key" >/dev/null 2>&1
-openssl req -new -key "$native_bridge_dir/keycloak.key" \
-  -subj '/CN=keycloak-native-bridge' \
-  -out "$native_bridge_dir/keycloak.csr" >/dev/null 2>&1
-printf 'extendedKeyUsage=clientAuth\n' >"$native_bridge_dir/keycloak.ext"
-openssl x509 -req -in "$native_bridge_dir/keycloak.csr" \
-  -CA "$native_bridge_dir/ca.crt" -CAkey "$native_bridge_dir/ca.key" \
-  -CAcreateserial -sha256 -days 1 -extfile "$native_bridge_dir/keycloak.ext" \
-  -out "$native_bridge_dir/keycloak.crt" >/dev/null 2>&1
-chmod 0644 "$native_bridge_dir/ca.crt" \
-  "$native_bridge_dir/server.crt" "$native_bridge_dir/server.key" \
-  "$native_bridge_dir/keycloak.crt" "$native_bridge_dir/keycloak.key"
-export NATIVE_BRIDGE_HMAC_SECRET
-NATIVE_BRIDGE_HMAC_SECRET=$(openssl rand -base64 32 | tr -d '\n')
-export NATIVE_BRIDGE_CLIENT_SHA256
-NATIVE_BRIDGE_CLIENT_SHA256=$(openssl x509 \
-  -in "$native_bridge_dir/keycloak.crt" -outform DER \
-  | openssl dgst -sha256 -r \
-  | awk '{print $1}')
-export NATIVE_BRIDGE_AUTH_TIME
-NATIVE_BRIDGE_AUTH_TIME=$(( $(date -u +%s) - 3600 ))
-
 CURRENT_STAGE='SkyMail sender secret mount setup'
 # The sky-mail sender validates its secret file when Keycloak starts, but the
 # keycloak-mailer secret only exists once the operator script has run. The mount starts
@@ -85,21 +42,6 @@ chmod 0644 "$sky_mail_dir/client.secret"
 "$SCRIPT_DIR/check-operator-login-prompts.sh"
 
 fail() {
-  if [[ $CURRENT_STAGE == 'native handoff real Keycloak SSO contract' ]]; then
-    printf 'native authorization diagnostic: status=%s url=%s\n' \
-      "${AUTHORIZATION_RESULT_STATUS:-unset}" \
-      "${AUTHORIZATION_RESULT_URL:-unset}" >&2
-    if [[ -n ${AUTHORIZATION_RESULT_BODY:-} && -f $AUTHORIZATION_RESULT_BODY ]]; then
-      sed -E \
-        -e 's/A{43}/[REDACTED-BRIDGE-CODE]/g' \
-        -e 's/U{43}/[REDACTED-BRIDGE-CODE]/g' \
-        -e 's/D{43}/[REDACTED-BRIDGE-CODE]/g' \
-        "$AUTHORIZATION_RESULT_BODY" \
-        | head -c 2000 >&2 || true
-      printf '\n' >&2
-    fi
-    "${COMPOSE[@]}" logs --no-color --tail=120 keycloak native-bridge >&2 || true
-  fi
   printf 'integration failure: %s\n' "$1" >&2
   exit 1
 }
@@ -122,52 +64,6 @@ json_assert() {
   local message=$3
   shift 3
   jq -e "$@" "$expression" <<<"$json" >/dev/null || fail "$message"
-}
-
-walk_authorization_redirects() {
-  local label=$1
-  local current_url=$2
-  local cookie_file=$3
-  local attempt status location
-  AUTHORIZATION_RESULT_URL=''
-  AUTHORIZATION_RESULT_STATUS=''
-  AUTHORIZATION_RESULT_BODY=''
-  AUTHORIZATION_RESULT_HEADERS=''
-  for attempt in $(seq 1 12); do
-    AUTHORIZATION_RESULT_BODY="$TEST_STATE_DIR/$label-$attempt.body"
-    AUTHORIZATION_RESULT_HEADERS="$TEST_STATE_DIR/$label-$attempt.headers"
-    status=$(curl --silent --show-error \
-      --output "$AUTHORIZATION_RESULT_BODY" \
-      --dump-header "$AUTHORIZATION_RESULT_HEADERS" \
-      --write-out '%{http_code}' \
-      --cookie-jar "$cookie_file" \
-      --cookie "$cookie_file" \
-      "$current_url")
-    location=$(awk '
-      tolower($1) == "location:" {
-        sub(/^[^:]*:[[:space:]]*/, "")
-        sub(/\r$/, "")
-        print
-      }
-    ' "$AUTHORIZATION_RESULT_HEADERS")
-    if [[ $location == https://my.yildizskylab.com/api/auth/callback?* ]]; then
-      AUTHORIZATION_RESULT_URL=$location
-      AUTHORIZATION_RESULT_STATUS=$status
-      return 0
-    fi
-    if [[ $status =~ ^30[12378]$ && $location == http://localhost:18080/* ]]; then
-      current_url=$location
-      continue
-    fi
-    if [[ $status =~ ^30[12378]$ && $location == /* ]]; then
-      current_url="http://localhost:18080$location"
-      continue
-    fi
-    AUTHORIZATION_RESULT_URL=$current_url
-    AUTHORIZATION_RESULT_STATUS=$status
-    return 0
-  done
-  fail "authorization redirect chain exceeded its bounded length for $label"
 }
 
 # ---------------------------------------------------------------------------
@@ -666,7 +562,7 @@ v2_state_snapshot() {
       kcadm get "client-scopes/$scope_uuid" -r "$V2_REALM" -c
       kcadm get "client-scopes/$scope_uuid/protocol-mappers/models" -r "$V2_REALM" -c
     done
-    kcadm get authentication/flows/account-center-browser/executions -r "$V2_REALM" -c
+    kcadm get authentication/flows -r "$V2_REALM" -c
   } | jq -S -c '.'
 }
 
@@ -1035,18 +931,9 @@ stage_v2_passkey_cleanup() {
   [[ $(v2_fixture_passkey_ids) == "$survivor_ids" ]] || fail 'a refused cleanup run changed the credentials'
 }
 
-"${COMPOSE[@]}" up -d postgres rabbitmq native-bridge keycloak
+"${COMPOSE[@]}" up -d postgres rabbitmq keycloak
 CURRENT_STAGE='Keycloak readiness'
 wait_for_url http://localhost:19000/health/ready
-for _ in $(seq 1 60); do
-  if "${COMPOSE[@]}" logs native-bridge 2>&1 | grep -Fq 'Native bridge fixture is ready.'; then
-    break
-  fi
-  sleep 1
-done
-"${COMPOSE[@]}" logs native-bridge 2>&1 \
-  | grep -Fq 'Native bridge fixture is ready.' \
-  || fail 'native bridge fixture did not become ready'
 
 "${KCADM[@]}" config credentials \
   --config "$ADMIN_CONFIG" \
@@ -1064,10 +951,11 @@ kcadm() {
 CURRENT_STAGE='scoped reconciler bootstrap'
 "${COMPOSE[@]}" run --rm --no-deps keycloak-bootstrap >/dev/null
 
-# Production uses a realm-level custom browser flow. Account Center must copy
-# the active realm flow rather than silently falling back to Keycloak's built-in
-# `browser` flow. The disabled custom execution keeps this fixture behaviorally
-# inert while making the source graph observably different.
+# Production uses a realm-level custom browser flow. Account Center signs in
+# through that active realm flow itself (no client-specific copy since the Web
+# handoff replaced the native handoff), and reconciliation must never change it.
+# The disabled custom execution keeps this fixture behaviorally inert while making
+# the realm graph observably different from Keycloak's built-in `browser` flow.
 CURRENT_STAGE='active custom browser flow fixture'
 kcadm create authentication/flows/browser/copy \
   -r e-skylab-test \
@@ -1117,12 +1005,26 @@ built_in_scope_snapshot=$(kcadm get client-scopes -r e-skylab-test -c \
 CURRENT_STAGE='first reconciliation'
 "${COMPOSE[@]}" run --rm --no-deps keycloak-config >"$TEST_STATE_DIR/reconcile-first.log" 2>&1
 
-copied_custom_execution_count=$(kcadm get \
-  authentication/flows/account-center-browser/executions \
-  -r e-skylab-test -c \
-  | jq '[.[] | select(.providerId == "passkey-offer-authenticator" and .priority == 60)] | length')
-[[ $copied_custom_execution_count == 1 ]] \
-  || fail 'Account Center did not inherit the active custom browser flow'
+assert_account_center_uses_the_realm_browser_flow() {
+  local client_json
+  client_json=$(kcadm get clients -r e-skylab-test -q clientId=account-center -c \
+    | jq -c '.[] | select(.clientId == "account-center")')
+  json_assert "$client_json" '(.authenticationFlowBindingOverrides.browser // "") == ""' \
+    'account-center must sign in through the realm browser flow, not a client-specific one'
+  json_assert "$(kcadm get authentication/flows -r e-skylab-test -c)" \
+    '[.[] | select(.alias == "account-center-browser")] | length == 0' \
+    'the retired account-center-browser flow must not exist'
+  local subflow_error
+  if subflow_error=$(kcadm get authentication/flows/account-center-native-handoff/executions -r e-skylab-test 2>&1 >/dev/null); then
+    fail 'the retired account-center-native-handoff subflow must not exist'
+  fi
+  grep -qi 'not found' <<<"$subflow_error" \
+    || fail "reading the retired subflow failed for another reason than its absence: $subflow_error"
+}
+assert_account_center_uses_the_realm_browser_flow
+grep -Fq '[reconcile] authentication flow account-center-browser: unchanged (absent)' \
+  "$TEST_STATE_DIR/reconcile-first.log" \
+  || fail 'the first reconciliation did not report the absent client-specific flow'
 active_browser_flow_after=$(kcadm get \
   'authentication/flows/browser%20plus%20passkey/executions' \
   -r e-skylab-test -c | jq -S -c '.')
@@ -1199,26 +1101,6 @@ extra_account_role=$(kcadm get "clients/$account_client_uuid/roles" -r e-skylab-
 kcadm create "clients/$client_uuid/scope-mappings/clients/$account_client_uuid" \
   -r e-skylab-test -b "$extra_account_role" >/dev/null
 
-flow_execution=$(kcadm get authentication/flows/account-center-browser/executions \
-  -r e-skylab-test -c \
-  | jq -c '.[] | select(.providerId == "auth-cookie") | .requirement = "REQUIRED"')
-printf '%s' "$flow_execution" | "${KCADM[@]}" update --config "$ADMIN_CONFIG" \
-  authentication/flows/account-center-browser/executions \
-  -r e-skylab-test -n -f - >/dev/null
-idp_redirector_execution_uuid=$(kcadm get \
-  authentication/flows/account-center-browser/executions \
-  -r e-skylab-test -c \
-  | jq -r '.[] | select(.providerId == "identity-provider-redirector") | .id')
-kcadm create "authentication/executions/$idp_redirector_execution_uuid/config" \
-  -r e-skylab-test \
-  -b '{"alias":"drift-idp-redirector","config":{"defaultProvider":"drift-provider"}}' >/dev/null
-configured_execution_count=$(kcadm get \
-  authentication/flows/account-center-browser/executions \
-  -r e-skylab-test -c \
-  | jq '[.[] | select(.providerId == "identity-provider-redirector" and (.authenticationConfig | type) == "string" and (.authenticationConfig | length) > 0)] | length')
-[[ $configured_execution_count == 1 ]] \
-  || fail "identity-provider redirector authenticationConfig drift was not injected"
-
 # A failed security-state read must abort reconciliation. Process-substitution
 # readers can otherwise mask kcadm failures as an empty allowlist and continue.
 CURRENT_STAGE='injected reconciler read failure'
@@ -1242,6 +1124,29 @@ kcadm update realms/e-skylab-test \
 kcadm update authentication/required-actions/UPDATE_PASSWORD \
   -r e-skylab-test -s enabled=false >/dev/null
 stage_v2_inject_drift
+
+# The state production had before the Web handoff: account-center bound to
+# account-center-browser, a copy of the realm browser flow with the native handoff
+# subflow in front. The next pass must unbind the client and delete the flow with its
+# subflow. The sky-native-handoff execution itself cannot be recreated (Admin REST refuses
+# an unknown provider); Keycloak's deep delete never resolves providers, so the path is
+# the same with or without it.
+CURRENT_STAGE='retired native handoff flow fixture'
+kcadm create 'authentication/flows/browser%20plus%20passkey/copy' \
+  -r e-skylab-test -s 'newName=account-center-browser' >/dev/null
+kcadm create authentication/flows/account-center-browser/executions/flow \
+  -r e-skylab-test \
+  -b '{"alias":"account-center-native-handoff","type":"basic-flow","provider":"basic-flow","priority":5,"description":"Redeems one-time Account Center native handoff codes"}' >/dev/null
+legacy_flow_uuid=$(kcadm get authentication/flows -r e-skylab-test -c \
+  | jq -r '.[] | select(.alias == "account-center-browser") | .id')
+[[ -n $legacy_flow_uuid ]] || fail 'the retired client flow fixture was not created'
+kcadm update "clients/$client_uuid" -r e-skylab-test \
+  -s "authenticationFlowBindingOverrides.browser=$legacy_flow_uuid" >/dev/null
+json_assert "$(kcadm get "clients/$client_uuid" -r e-skylab-test -c)" \
+  '.authenticationFlowBindingOverrides.browser == $flow' \
+  'the retired client flow binding was not injected' --arg flow "$legacy_flow_uuid"
+kcadm get authentication/flows/account-center-native-handoff/executions -r e-skylab-test >/dev/null \
+  || fail 'the retired native handoff subflow fixture was not created'
 
 # A second pass proves both idempotence and drift repair.
 CURRENT_STAGE='second reconciliation and drift repair'
@@ -1278,47 +1183,20 @@ for required_action in UPDATE_PASSWORD CONFIGURE_TOTP webauthn-register-password
     --arg alias "$required_action"
 done
 
-flow_uuid=$(jq -r '.authenticationFlowBindingOverrides.browser' <<<"$client")
-flow_count=$(kcadm get authentication/flows -r e-skylab-test -c \
-  | jq '[.[] | select(.alias == "account-center-browser" and .id == $flow)] | length' --arg flow "$flow_uuid")
-[[ $flow_count == 1 ]] || fail "client-specific browser flow is missing or duplicated"
-source_flow_graph=$(kcadm get \
-  'authentication/flows/browser%20plus%20passkey/executions' \
-  -r e-skylab-test -c \
-  | jq -c '[.[] | [.level, .priority, .requirement, (if .authenticationFlow then "FLOW" else .providerId end), (if (.providerId == "conditional-credential" and (.authenticationConfig | type) == "string" and (.authenticationConfig | length) > 0) then "BUILTIN_PASSWORDLESS" elif ((.authenticationConfig | type) == "string" and (.authenticationConfig | length) > 0) then "CONFIGURED" else "NONE" end)]]')
-account_center_flow=$(kcadm get \
-  authentication/flows/account-center-browser/executions \
-  -r e-skylab-test -c)
-account_center_source_graph=$(jq -c \
-  '[.[] | select(.displayName != "account-center-native-handoff" and .providerId != "sky-native-handoff") | [.level, .priority, .requirement, (if .authenticationFlow then "FLOW" else .providerId end), (if (.providerId == "conditional-credential" and (.authenticationConfig | type) == "string" and (.authenticationConfig | length) > 0) then "BUILTIN_PASSWORDLESS" elif ((.authenticationConfig | type) == "string" and (.authenticationConfig | length) > 0) then "CONFIGURED" else "NONE" end)]]' \
-  <<<"$account_center_flow")
-[[ $account_center_source_graph == "$source_flow_graph" ]] \
-  || fail "client-specific browser flow did not preserve or repair the active realm browser graph"
-native_handoff_flow_count=$(jq \
-  '[.[] | select(.level == 0 and .priority == 5 and .requirement == "ALTERNATIVE" and .authenticationFlow == true and .displayName == "account-center-native-handoff")] | length' \
-  <<<"$account_center_flow")
-[[ $native_handoff_flow_count == 1 ]] \
-  || fail "native handoff subflow is missing, duplicated or drifted"
-native_handoff_execution_count=$(jq \
-  '[.[] | select(.level == 1 and .priority == 10 and .requirement == "REQUIRED" and .providerId == "sky-native-handoff")] | length' \
-  <<<"$account_center_flow")
-[[ $native_handoff_execution_count == 1 ]] \
-  || fail "native handoff execution is missing, duplicated or drifted"
+assert_account_center_uses_the_realm_browser_flow
+grep -Fq '[reconcile] client account-center browser flow binding: updated (removed; the realm browser flow applies)' \
+  "$TEST_STATE_DIR/reconcile-second.log" \
+  || fail 'reconciliation did not report removing the retired client flow binding'
+grep -Fq '[reconcile] authentication flow account-center-browser: deleted (with its retired native handoff subflow)' \
+  "$TEST_STATE_DIR/reconcile-second.log" \
+  || fail 'reconciliation did not report deleting the retired client flow'
 active_browser_flow_after_repair=$(kcadm get \
   'authentication/flows/browser%20plus%20passkey/executions' \
   -r e-skylab-test -c | jq -S -c '.')
 [[ $active_browser_flow_after_repair == "$active_browser_flow_before" ]] \
-  || fail 'drift repair mutated the active realm browser flow'
-conditional_credential_config_uuid=$(kcadm get \
-  authentication/flows/account-center-browser/executions \
-  -r e-skylab-test -c \
-  | jq -r '.[] | select(.providerId == "conditional-credential") | .authenticationConfig')
-conditional_credential_config=$(kcadm get \
-  "authentication/config/$conditional_credential_config_uuid" \
-  -r e-skylab-test -c)
-json_assert "$conditional_credential_config" \
-  '(.alias | type) == "string" and (.alias | length) > 0 and .config == {"credentials":"webauthn-passwordless"}' \
-  'conditional credential authenticationConfig drift was not repaired'
+  || fail 'retiring the client flow mutated the active realm browser flow'
+json_assert "$(kcadm get realms/e-skylab-test -c)" '.browserFlow == "browser plus passkey"' \
+  'retiring the client flow changed the realm browser flow binding'
 
 scope_count=$(kcadm get client-scopes -r e-skylab-test -c \
   | jq '[.[] | select(.name == "account-center-account-api")] | length')
@@ -1540,123 +1418,7 @@ json_assert "$aia_par_response" \
 fixture_user_uuid=$(kcadm get users -r e-skylab-test -q username=account-fixture -c \
   | jq -r '.[] | select(.username == "account-fixture") | .id')
 
-CURRENT_STAGE='native handoff real Keycloak SSO contract'
-native_code_verifier=account-center-native-handoff-verifier-0123456789abcdefghijklmnop
-native_code_challenge=$(printf '%s' "$native_code_verifier" \
-  | openssl dgst -binary -sha256 \
-  | openssl base64 -A \
-  | tr '+/' '-_' \
-  | tr -d '=')
-native_par_request() {
-  local bridge_code=$1
-  local state=$2
-  curl --fail --silent --show-error \
-    --user "account-center:$client_secret" \
-    --data-urlencode client_id=account-center \
-    --data-urlencode response_type=code \
-    --data-urlencode scope=openid \
-    --data-urlencode redirect_uri=https://my.yildizskylab.com/api/auth/callback \
-    --data-urlencode "code_challenge=$native_code_challenge" \
-    --data-urlencode code_challenge_method=S256 \
-    --data-urlencode "state=$state" \
-    --data-urlencode "nonce=$state-nonce" \
-    --data-urlencode "sky_native_handoff=$bridge_code" \
-    http://localhost:18080/realms/e-skylab-test/protocol/openid-connect/ext/par/request
-}
-
-valid_bridge_code=$(printf 'A%.0s' $(seq 1 43))
-valid_native_par=$(native_par_request "$valid_bridge_code" native-valid-state)
-json_assert "$valid_native_par" \
-  '.request_uri | startswith("urn:ietf:params:oauth:request_uri:")' \
-  'valid native bridge PAR request was not accepted'
-valid_native_request_uri=$(jq -r .request_uri <<<"$valid_native_par")
-valid_native_request_uri_query=$(jq -rn \
-  --arg value "$valid_native_request_uri" '$value | @uri')
-valid_native_browser_url="http://localhost:18080/realms/e-skylab-test/protocol/openid-connect/auth?client_id=account-center&request_uri=$valid_native_request_uri_query"
-[[ $valid_native_browser_url != *"$valid_bridge_code"* ]] \
-  || fail 'native bridge code leaked into the browser authorization URL'
-walk_authorization_redirects \
-  native-valid \
-  "$valid_native_browser_url" \
-  "$TEST_STATE_DIR/native-valid.cookies"
-[[ $AUTHORIZATION_RESULT_URL == https://my.yildizskylab.com/api/auth/callback?* ]] \
-  || fail 'valid native handoff did not reach the exact Account Center callback'
-[[ $AUTHORIZATION_RESULT_URL == *'state=native-valid-state'* ]] \
-  || fail 'valid native handoff lost OIDC state'
-native_authorization_code=$(sed -n \
-  's/.*[?&]code=\([^&]*\).*/\1/p' <<<"$AUTHORIZATION_RESULT_URL")
-[[ -n $native_authorization_code ]] \
-  || fail 'valid native handoff callback lacks an authorization code'
-grep -Eq '[[:space:]]KEYCLOAK_(SESSION|IDENTITY)[[:space:]]' \
-  "$TEST_STATE_DIR/native-valid.cookies" \
-  || fail 'valid native handoff did not create a real Keycloak SSO cookie'
-
-native_token_response=$(curl --fail --silent --show-error \
-  --user "account-center:$client_secret" \
-  --data-urlencode grant_type=authorization_code \
-  --data-urlencode client_id=account-center \
-  --data-urlencode "code=$native_authorization_code" \
-  --data-urlencode redirect_uri=https://my.yildizskylab.com/api/auth/callback \
-  --data-urlencode "code_verifier=$native_code_verifier" \
-  http://localhost:18080/realms/e-skylab-test/protocol/openid-connect/token)
-native_id_token=$(jq -r .id_token <<<"$native_token_response")
-[[ -n $native_id_token && $native_id_token != null ]] \
-  || fail 'valid native handoff code exchange did not return an ID token'
-native_id_payload_segment=$(cut -d. -f2 <<<"$native_id_token")
-case $((${#native_id_payload_segment} % 4)) in
-  2) native_id_payload_segment="${native_id_payload_segment}==" ;;
-  3) native_id_payload_segment="${native_id_payload_segment}=" ;;
-esac
-native_id_payload=$(tr '_-' '/+' <<<"$native_id_payload_segment" | base64 --decode)
-json_assert "$native_id_payload" \
-  '.sub == "11111111-1111-4111-8111-111111111111" and .auth_time == $auth_time' \
-  'native handoff ID token changed the subject or original auth_time' \
-  --argjson auth_time "$NATIVE_BRIDGE_AUTH_TIME"
-
-for native_failure_case in \
-  "replay:$valid_bridge_code" \
-  "unknown:$(printf 'U%.0s' $(seq 1 43))" \
-  "disabled:$(printf 'D%.0s' $(seq 1 43))"; do
-  native_failure_label=${native_failure_case%%:*}
-  native_failure_code=${native_failure_case#*:}
-  native_failure_par=$(native_par_request \
-    "$native_failure_code" "native-$native_failure_label-state")
-  native_failure_request_uri=$(jq -r .request_uri <<<"$native_failure_par")
-  native_failure_request_uri_query=$(jq -rn \
-    --arg value "$native_failure_request_uri" '$value | @uri')
-  native_failure_browser_url="http://localhost:18080/realms/e-skylab-test/protocol/openid-connect/auth?client_id=account-center&request_uri=$native_failure_request_uri_query"
-  [[ $native_failure_browser_url != *"$native_failure_code"* ]] \
-    || fail "$native_failure_label bridge code leaked into the browser URL"
-  walk_authorization_redirects \
-    "native-$native_failure_label" \
-    "$native_failure_browser_url" \
-    "$TEST_STATE_DIR/native-$native_failure_label.cookies"
-  [[ $AUTHORIZATION_RESULT_URL != https://my.yildizskylab.com/api/auth/callback?* ]] \
-    || fail "$native_failure_label native handoff reached the Account Center callback"
-  if grep -Eqi '<input[^>]+name=["'\'']password["'\'']' \
-      "$AUTHORIZATION_RESULT_BODY"; then
-    fail "$native_failure_label native handoff fell back to the password form"
-  fi
-  if grep -Eq '"showTryAnotherWayLink"[[:space:]]*:[[:space:]]*true' \
-      "$AUTHORIZATION_RESULT_BODY"; then
-    fail "$native_failure_label native handoff exposed another login path"
-  fi
-  if grep -Fq "$native_failure_code" \
-      "$AUTHORIZATION_RESULT_BODY" "$AUTHORIZATION_RESULT_HEADERS"; then
-    fail "$native_failure_label native handoff exposed the bridge code in its response"
-  fi
-done
-
-native_bridge_logs=$("${COMPOSE[@]}" logs --no-color keycloak native-bridge 2>&1)
-for secret_bridge_code in \
-  "$valid_bridge_code" \
-  "$(printf 'U%.0s' $(seq 1 43))" \
-  "$(printf 'D%.0s' $(seq 1 43))"; do
-  [[ $native_bridge_logs != *"$secret_bridge_code"* ]] \
-    || fail 'native bridge code leaked into Keycloak or bridge fixture logs'
-done
-
-# The Web handoff (sky-handoff provider, ADR-0048) that replaces the native handoff above:
+# The Web handoff (sky-handoff provider, ADR-0048), which replaced the retired native handoff:
 # SkyApp mints a code, the WebView opens it with its proof and account-center signs in
 # silently from the browser session. Its stages are named 'web handoff ...'.
 CURRENT_STAGE='web handoff contract'

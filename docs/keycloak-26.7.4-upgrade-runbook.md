@@ -45,12 +45,19 @@ below have recorded evidence and an owner.
   job alone receives `packages: write`; it verifies the one-day artifact's
   commit SHA, checksums, image ID and one-JAR/theme contract, and cannot rebuild
   the candidate.
-- The `sky-native-handoff` authenticator, protected mTLS/HMAC redemption client,
-  client-specific browser flow and `skyapp` audience mapper are included in the
-  candidate. The reconciler copies the realm's active browser flow, not the
-  built-in flow named `browser`, and treats that active flow as a read-only
-  source. Native application WebView coverage remains part of the deferred
-  post-release compatibility scope.
+- The `skyapp` audience mapper is included in the candidate. `account-center`
+  signs in through the realm's active browser flow, which the reconciler never
+  writes. The retired native handoff (the `sky-native-handoff` authenticator,
+  its mTLS/HMAC redemption client and the client-specific
+  `account-center-browser` flow) is gone; SkyApp opens web pages through
+  `sky-handoff` (ADR-0048, `docs/sky-handoff-api.md`). A realm that still has
+  the old flow is migrated by the reconciler: the client binding is removed and
+  the flow deleted. Remove the client's `browser` binding **before** the first
+  image without the provider starts (for example with `kcadm update
+  clients/<account-center id> -s authenticationFlowBindingOverrides.browser=`
+  on the running Keycloak): a bound `account-center-browser` flow references the
+  missing `sky-native-handoff` provider, and every `account-center` login fails
+  until the reconciler has run.
 - `https://my.yildizskylab.com/api/auth/backchannel-logout` is the agreed
   Keycloak contract, but the Account Center route must exist and pass logout
   tests before production enablement.
@@ -220,6 +227,9 @@ data volume. Keycloak's durable state remains in its existing database.
 ## 7. Production rollout
 
 1. Reconfirm a fresh backup and the tested rollback owner.
+   If the running realm still binds `account-center` to `account-center-browser`
+   (the retired native handoff), remove that binding on the running Keycloak now,
+   before the new image starts (see the retired native handoff note above).
 2. Deploy the exact candidate by setting `KEYCLOAK_IMAGE_DIGEST` and the
    recorded shared PostgreSQL endpoint inputs; the GHCR repository is
    source-controlled and cannot be overridden. Do not mount the old provider
@@ -228,8 +238,8 @@ data volume. Keycloak's durable state remains in its existing database.
 3. Confirm `/health/ready` on the management port before routing traffic.
 4. Run `reconcile-account-center.sh` once, then inspect the client contract with
    read-only admin calls. Confirm the realm's active browser flow alias and graph
-   did not change, and that the Account Center override contains the copied graph
-   plus exactly one native handoff branch. Save redacted evidence. For the v2
+   did not change, that `account-center` has no browser flow override and that no
+   `account-center-browser` flow exists. Save redacted evidence. For the v2
    identity settings (relying party id, brute force, User Profile, token
    audience, `keycloak-mailer`) follow
    [`docs/v2-identity-reconcile-runbook.md`](v2-identity-reconcile-runbook.md).

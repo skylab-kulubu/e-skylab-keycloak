@@ -487,7 +487,7 @@ sudo_header=$(decode_jwt_segment "$sudo_a" 1)
 json_assert "$sudo_header" '.alg == "HS512" and (.kid | length) > 0' 'sudo token must be an HS512 internal token with a realm key id'
 sudo_payload=$(decode_jwt_segment "$sudo_a" 2)
 json_assert "$sudo_payload" \
-  '.typ == "sky-sudo" and .aud == "sky-account" and .azp == "account-center" and .sub == $sub and .sid == $sid and (.jti | length) > 0 and .amr == ["pwd"] and .iss == ($base + "/realms/" + $realm) and .exp - .iat == 300' \
+  '.typ == "sky-sudo" and .aud == ["sky-account", "core"] and .azp == "account-center" and .sub == $sub and .sid == $sid and (.jti | length) > 0 and .amr == ["pwd"] and .iss == ($base + "/realms/" + $realm) and .exp - .iat == 300' \
   'sudo token claims differ' --arg sub "$FIXTURE_USER_UUID" --arg sid "$session_a" --arg base "$BASE_URL" --arg realm "$REALM"
 json_assert "$(user_events CUSTOM_REQUIRED_ACTION)" \
   '[.[] | select(.clientId == "account-center" and .sessionId == $sid and .details.action == "sky-sudo" and .details.method == "password")] | length == 1' \
@@ -509,6 +509,43 @@ expect 200 - 'the second session must obtain its own sudo token'
 sudo_b=$(jq -r .sudoToken <<<"$SKY_BODY")
 sky POST credentials/password "$token_b" "$sudo_b" '{"newPassword":"short","logoutOtherSessions":false}'
 expect 400 password_policy 'a sudo token bound to its own session must be accepted'
+
+# K3e: core verifies the sudo proof of a self-delete (A7b) by introspecting the token with its
+# own confidential client. Keycloak 26.7 answers introspection only to a client named in the
+# token's aud, so the sudo token names core next to sky-account; account-center (its azp, not
+# an audience) must keep getting active=false. The response is what core relies on (see
+# docs/sky-account-api.md): Keycloak copies typ, sub, sid, azp, iss, jti, iat, exp and aud from
+# the token (not amr or nbf) and runs account-center's introspection mappers on top, which add
+# account to aud. An Account Center access token also introspects as active for core, so typ
+# and the sky-account audience are what tell a sudo proof apart.
+CURRENT_STAGE='sky-account sudo token introspection by core'
+core_uuid=$(kcadm get clients -r "$REALM" -q clientId=core -c | jq -r '.[] | select(.clientId == "core") | .id')
+[[ -n $core_uuid ]] || fail 'the core fixture client is missing'
+kcadm create "clients/$core_uuid/client-secret" -r "$REALM" >/dev/null 2>&1
+core_secret=$(kcadm get "clients/$core_uuid/client-secret" -r "$REALM" -c | jq -r .value)
+[[ -n $core_secret && $core_secret != null ]] || fail 'the core fixture client has no secret to introspect with'
+# introspect <client id> <secret> <token>
+introspect() {
+  curl --fail --silent --show-error --user "$1:$2" --data-urlencode "token=$3" \
+    "$BASE_URL/realms/$REALM/protocol/openid-connect/token/introspect"
+}
+sudo_introspection=$(introspect core "$core_secret" "$sudo_a")
+json_assert "$sudo_introspection" '.active == true' 'core must be able to introspect a sudo token'
+json_assert "$sudo_introspection" \
+  '.typ == "sky-sudo" and .token_type == "sky-sudo" and .azp == "account-center" and .client_id == "account-center" and .sub == $sub and .sid == $sid and .iss == ($base + "/realms/" + $realm) and .jti == $token.jti and .iat == $token.iat and .exp == $token.exp' \
+  'the introspected sudo token lacks the claims core checks' \
+  --arg sub "$FIXTURE_USER_UUID" --arg sid "$session_a" --arg base "$BASE_URL" --arg realm "$REALM" \
+  --argjson token "$sudo_payload"
+json_assert "$sudo_introspection" \
+  '(.aud | type) == "array" and (.aud | index("sky-account")) != null and (.aud | index("core")) != null' \
+  'the introspected sudo token audience is not an array naming sky-account and core'
+json_assert "$(introspect account-center "$CLIENT_SECRET" "$sudo_a")" '.active == false' \
+  'introspection answered a sudo token to a client outside its audience'
+json_assert "$(introspect core "$core_secret" "$sudo_b")" '.active == true and .sid == $sid' \
+  'core must introspect the second session sudo token with that session' --arg sid "$session_b"
+json_assert "$(introspect core "$core_secret" "$token_a")" \
+  '.active == true and .typ == "Bearer" and (.aud | index("sky-account")) == null' \
+  'an Account Center access token must not look like a sudo token to core'
 
 # The Microsoft fallback: a person without password, TOTP or passkey re-authenticates on
 # Keycloak and the BFF proves that with the ID token of its callback. Budget note: the
@@ -557,7 +594,7 @@ json_assert "$SKY_BODY" \
   '(.sudoToken | type) == "string" and (.expiresAt | fromdateiso8601) == $auth_time + 300' \
   'the sudo window must start at the authentication, not at the call' --argjson auth_time "$reauth_auth_time"
 json_assert "$(decode_jwt_segment "$sudo_reauth" 2)" \
-  '.typ == "sky-sudo" and .aud == "sky-account" and .azp == "account-center" and .amr == ["idp"] and .sub == $sub and .sid == $sid and .exp == $auth_time + 300' \
+  '.typ == "sky-sudo" and .aud == ["sky-account", "core"] and .azp == "account-center" and .amr == ["idp"] and .sub == $sub and .sid == $sid and .exp == $auth_time + 300' \
   'authentication sudo token claims differ' --arg sub "$reauth_user_uuid" --arg sid "$reauth_session_1" --argjson auth_time "$reauth_auth_time"
 sky POST credentials/password "$reauth_token_2" "$sudo_reauth" "{\"newPassword\":\"$REAUTH_ROTATED_PASSWORD\",\"logoutOtherSessions\":false}"
 expect 401 sudo_required 'the authentication sudo token is bound to the session that authenticated'
@@ -588,6 +625,8 @@ sky POST credentials/password "$token_a" "$sudo_a" "{\"newPassword\":\"$ROTATED_
 expect 204 - 'a policy-compliant password change must succeed'
 sky GET identity "$token_b" -
 expect 401 unauthorized 'the other session must be logged out'
+json_assert "$(introspect core "$core_secret" "$sudo_b")" '.active == false' \
+  'introspection must refuse a sudo token whose session was logged out'
 sky GET identity "$token_a" -
 expect 200 - 'the current session must survive its own password change'
 [[ $(direct_grant_status "$FIXTURE_PASSWORD") =~ ^40[01]$ ]] || fail 'the old password still signs in'

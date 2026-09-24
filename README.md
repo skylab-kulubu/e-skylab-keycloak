@@ -40,7 +40,7 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.11.1`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.11.2`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.1.0`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
@@ -349,9 +349,11 @@ SMTP'den çıkmaya devam eder.
 Operatör `keycloak-mailer` istemcisini `config/create-mailer-client.sh` ile
 oluşturur, Keycloak'ın ürettiği gizli anahtarı üretim sunucusunda
 `/opt/weblab/account-center-keycloak/credentials/mailer-client.secret`
-dosyasına (`root:1000`, `0640`; konteyner uid 1000 okuyabilmelidir) yazar ve
-Compose bu dosyayı salt okunur olarak `/run/secrets/sky-mail/client.secret`
-yoluna bağlar. Anahtar her token isteğinde okunur; döndürme dosyanın içeriğini
+dosyasına (`root:root`, `0640`; Keycloak süreci uid 1000, gid 0 ile çalışır ve
+dosyayı grup üzerinden okur) yazar ve bu dosya salt okunur olarak
+`/run/secrets/sky-mail/client.secret` yoluna bağlanır. Production Keycloak bir
+Dokploy uygulamasıdır ve bu Compose dosyasını kullanmaz: bağlama ve `SKY_MAIL_*`
+değişkenleri Dokploy'da elle tanımlanır. Anahtar her token isteğinde okunur; döndürme dosyanın içeriğini
 yerinde güncellemekle yapılır. Eşleme tablosu, değişkenler, ortam, geri düşüş
 sözcükleri ve operatör adımları
 [`docs/keycloak-mail-via-skymail.md`](docs/keycloak-mail-via-skymail.md)

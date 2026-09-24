@@ -164,8 +164,10 @@ final class SkyMailClient {
                 .header("Accept", "application/json")
                 .header("Content-Type", "application/x-www-form-urlencoded")
                 .header("Authorization", "Basic " + credentials)
+                // SkyMail authenticates each call through Keycloak's userinfo endpoint, which
+                // refuses a token without the openid scope.
                 .POST(HttpRequest.BodyPublishers.ofString(
-                        "grant_type=client_credentials", StandardCharsets.UTF_8))
+                        "grant_type=client_credentials&scope=openid", StandardCharsets.UTF_8))
                 .build();
         try {
             HttpResponse<InputStream> response =

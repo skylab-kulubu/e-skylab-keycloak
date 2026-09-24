@@ -182,29 +182,39 @@ her `reason` için ayrı ayrı doğrular.
    yazın:
 
    ```bash
-   install -d -m 0750 -o root -g 1000 /opt/weblab/account-center-keycloak/credentials
+   install -d -m 0750 -o root -g root /opt/weblab/account-center-keycloak/credentials
    umask 077
    kcadm.sh get clients/<client-uuid>/client-secret -r e-skylab \
      | jq -r .value > /opt/weblab/account-center-keycloak/credentials/mailer-client.secret
-   chown root:1000 /opt/weblab/account-center-keycloak/credentials/mailer-client.secret
+   chown root:root /opt/weblab/account-center-keycloak/credentials/mailer-client.secret
    chmod 0640 /opt/weblab/account-center-keycloak/credentials/mailer-client.secret
    ```
 
-   Dosya Compose tarafından salt okunur olarak
-   `/run/secrets/sky-mail/client.secret` yoluna bağlanır. Keycloak konteynerde
-   uid 1000 ile çalıştığı için dosya o kullanıcı tarafından okunabilir olmalıdır:
-   `root:1000` sahipliği ve `0640` izni bunu verir, `0600` root-only izin
-   vermez ve sağlayıcı kapalı tarafa düşer. Dosyanın sonundaki satır sonu
-   kırpılır.
+   Dosya salt okunur olarak `/run/secrets/sky-mail/client.secret` yoluna
+   bağlanır. Keycloak konteynerde uid 1000, **gid 0** ile çalışır (ek grubu
+   yoktur), bu yüzden dosyayı grup üzerinden okur: `root:root` sahipliği ve
+   `0640` izni bunu verir. `root:1000` vermez. 1000 bir kullanıcı kimliğidir,
+   sürecin grubu değildir; 2026-09-24'te production'da sağlayıcı bu yüzden
+   `sky_mail_disabled reason=secret_file_missing` dedi. `0600` de vermez.
+   Dosyanın sonundaki satır sonu kırpılır.
 
    Anahtar her token isteğinde dosyadan okunur; döndürme için dosyanın içeriğini
    **yerinde** güncelleyin (aynı inode), Keycloak'ı yeniden başlatmak
    gerekmez. Dosyayı silip yerine yenisini koymak bağlamayı kopardığı için
    yeniden başlatma gerektirir.
 
-3. **Etkinleştirme.** `.env` içinde `SKY_MAIL_ENABLED=true` ve
-   `SKY_MAIL_BASE_URL=https://api.yildizskylab.com/api/skymail` ayarlayıp `keycloak`
-   servisini yeniden başlatın. Açılışta `sky_mail_enabled client=keycloak-mailer`
+3. **Etkinleştirme.** Production Keycloak bir **Dokploy uygulamasıdır**; bu
+   depodaki `docker-compose.yml`'yi kullanmaz, dolayısıyla oradaki varsayılanlar
+   ve bağlama production'a ulaşmaz. Dokploy'da:
+   - Advanced → Volumes → Bind Mount: host yolu
+     `/opt/weblab/account-center-keycloak/credentials/mailer-client.secret`,
+     bağlama yolu `/run/secrets/sky-mail/client.secret` ("File Mount" değil:
+     o, anahtarı Dokploy veritabanına kopyalar);
+   - Environment: `SKY_MAIL_ENABLED=true`,
+     `SKY_MAIL_BASE_URL=https://api.yildizskylab.com/api/skymail` ve
+     `SKY_MAIL_CLIENT_ID=keycloak-mailer` (Compose varsayılanı burada yoktur);
+   - Deploy. Compose ile çalışan ortamlarda aynı değerler `.env`'e yazılıp
+     `keycloak` servisi yeniden başlatılır. Açılışta `sky_mail_enabled client=keycloak-mailer`
    satırını arayın; `sky_mail_disabled reason=…` görürseniz dosya bağlaması ya
    da izinleri eksiktir.
 

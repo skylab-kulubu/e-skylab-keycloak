@@ -29,6 +29,16 @@ Only the two original brand image assets were carried forward.
   language menu. The `sl-*` class contract handed out by `KcPage.tsx` is
   styled with the login tokens; `login-page-expired.ftl` is the only custom
   page body because Keycloak's markup cannot be phrased in Turkish.
+- `sky-handoff-failed.ftl` is the SPI's Web handoff failure page
+  (`/realms/{realm}/sky-handoff/v1/failed?reason=`, rendered through Keycloak's
+  login forms with the reason code as `skyHandoffReason`). `HandoffFailed.tsx`
+  shows one sentence per reason (`src/login/handoffFailure.ts`; anything else
+  is `unavailable`) and the retry hint inside `LegacyFrame`, with no form, no
+  login link and no language menu; its heading is a full sentence, so the
+  document title drops the final period before " · SKY LAB". The SPI sends it with its own strict
+  headers (no framing, `no-store`, `no-referrer`, the inline page context
+  allowed by hash only) and falls back to a built-in page when a realm's login
+  theme lacks it.
 - Every visible string comes from `src/login/i18n.ts` (Turkish first, English
   second); the Turkish keys that Keycloakify's default set lacks live there.
 - The custom template owns the semantic main/content-info landmarks, the skip
@@ -38,7 +48,8 @@ Only the two original brand image assets were carried forward.
   behavior.
 - `src/login/pageIds.ts` lists every themed page id; `src/devKcContext.ts`
   serves realistic Turkish mock data for each of them at `?page=<id>.ftl`
-  (`&lang=en` switches locale).
+  (`&lang=en` switches locale; `&reason=<code>` picks the Web handoff failure
+  reason of `sky-handoff-failed.ftl`).
 
 ## Account Center boundary
 
@@ -81,7 +92,8 @@ Vitest covers the remember-me bridge, the stylesheet contract and, through
 card, the KVKK footer and Keycloak's element ids. The theme Chromium suite
 covers deterministic rendered-page contracts. `tests/browser/visual.spec.ts`
 compares a desktop (1280×800) and mobile (390×844) screenshot of every page,
-Turkish locale, reduced motion, against the committed baselines in
+Turkish locale, reduced motion (plus every Web handoff failure reason on mobile
+with the phone in light and in dark mode), against the committed baselines in
 `tests/browser/visual.spec.ts-snapshots/` (at most 1% of pixels may differ).
 Baselines are rendered only inside `mcr.microsoft.com/playwright:v<pinned>-jammy`
 with the fonts pinned by `tests/browser/fonts.conf` and the screenshot-only
@@ -98,7 +110,9 @@ screenshot was captured. The Keycloak integration runner additionally drives
 Chromium through a live Keycloak `26.7.4` instance for Turkish/English locale
 switching, password login, password/TOTP AIA cancel and completion, WebAuthn
 error retry and registration plus a cookie-cleared passwordless assertion with
-the same virtual authenticator.
+the same virtual authenticator, and renders every Web handoff failure reason
+from the live SPI in light and dark mode under the page's own Content Security
+Policy (`tests/integration/sky-handoff-failed.spec.ts`).
 
 CI browser automation cannot prove platform authenticator behavior on real
 Touch ID, Face ID, Android Credential Manager, Windows Hello or the supported

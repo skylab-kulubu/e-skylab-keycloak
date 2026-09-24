@@ -12,11 +12,14 @@ import org.keycloak.models.SingleUseObjectProvider;
  * immediately (outside the request transaction): parallel requests cannot share a slot and a
  * refused attempt keeps its claim even when the response is an error. Every slot expires at
  * the end of its window, so the next window starts with a fresh budget.
+ *
+ * <p>The sky-handoff provider shares this limiter through {@link #claim}, which reports the wait
+ * instead of throwing a sky-account problem.
  */
-final class RateLimiter {
+public final class RateLimiter {
 
     /** A named budget: at most {@code maxAttempts} hits per {@code windowSeconds} window. */
-    record Limit(String name, int maxAttempts, int windowSeconds) {
+    public record Limit(String name, int maxAttempts, int windowSeconds) {
     }
 
     static final Limit SUDO = new Limit("sudo", 10, 15 * 60);
@@ -35,12 +38,24 @@ final class RateLimiter {
 
     private final SingleUseObjectProvider store;
 
-    RateLimiter(SingleUseObjectProvider store) {
+    public RateLimiter(SingleUseObjectProvider store) {
         this.store = store;
     }
 
     /** Claims a slot for the user against the limit; throws the 429 problem when none is left. */
     void hit(Limit limit, String userId) {
+        int retryAfterSeconds = claim(limit, userId);
+        if (retryAfterSeconds > 0) {
+            throw Problems.rateLimited(retryAfterSeconds).exception();
+        }
+    }
+
+    /**
+     * Claims a slot for the user against the limit.
+     *
+     * @return {@code 0} when a slot was claimed, otherwise the seconds until the window ends
+     */
+    public int claim(Limit limit, String userId) {
         int now = Time.currentTime();
         long window = now / limit.windowSeconds();
         long windowEnd = (window + 1) * limit.windowSeconds();
@@ -48,9 +63,9 @@ final class RateLimiter {
         String prefix = KEY_PREFIX + limit.name() + ":" + userId + ":" + window + ":";
         for (int slot = 1; slot <= limit.maxAttempts(); slot++) {
             if (store.putIfAbsent(prefix + slot, remainingSeconds)) {
-                return;
+                return 0;
             }
         }
-        throw Problems.rateLimited(remainingSeconds).exception();
+        return remainingSeconds;
     }
 }

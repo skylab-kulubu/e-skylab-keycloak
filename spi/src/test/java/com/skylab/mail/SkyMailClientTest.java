@@ -46,6 +46,7 @@ class SkyMailClientTest {
     private final List<String> mailBodies = new CopyOnWriteArrayList<>();
     private final List<String> mailAuthorizations = new CopyOnWriteArrayList<>();
     private final List<String> tokenAuthorizations = new CopyOnWriteArrayList<>();
+    private final List<String> tokenBodies = new CopyOnWriteArrayList<>();
 
     private volatile int mailStatus = 201;
     private volatile String mailResponse = "{\"id\":\"8f1c0d3e-0000-4000-8000-000000000001\"}";
@@ -58,7 +59,7 @@ class SkyMailClientTest {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.setExecutor(Executors.newFixedThreadPool(2));
         server.createContext(TOKEN_PATH, exchange -> {
-            drain(exchange);
+            tokenBodies.add(new String(drain(exchange), StandardCharsets.UTF_8));
             tokenRequests.incrementAndGet();
             tokenAuthorizations.add(String.valueOf(exchange.getRequestHeaders().getFirst("Authorization")));
             String body = tokenStatus == 200
@@ -161,6 +162,16 @@ class SkyMailClientTest {
                 new String(Base64.getDecoder().decode(credentials), StandardCharsets.UTF_8));
         assertFalse(mailAuthorizations.getFirst().contains(SECRET));
         assertFalse(mailBodies.getFirst().contains(SECRET));
+    }
+
+    // SkyMail authenticates every call through Keycloak's userinfo endpoint, and Keycloak answers
+    // a token without the openid scope there with 403, which SkyMail turns into 401. Production
+    // K5 fell back with reason=refused on 2026-09-24 for exactly that; core asks for openid too.
+    @Test
+    void asksForTheOpenidScopeSoSkyMailCanReadUserinfo() {
+        client().send(message(), "ada@yildizskylab.com", REALM_ISSUER);
+
+        assertEquals(List.of("grant_type=client_credentials&scope=openid"), tokenBodies);
     }
 
     @Test

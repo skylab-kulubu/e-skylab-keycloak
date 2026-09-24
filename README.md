@@ -353,9 +353,11 @@ SMTP'den çıkmaya devam eder.
 Operatör `keycloak-mailer` istemcisini `config/create-mailer-client.sh` ile
 oluşturur, Keycloak'ın ürettiği gizli anahtarı üretim sunucusunda
 `/opt/weblab/account-center-keycloak/credentials/mailer-client.secret`
-dosyasına (`root:1000`, `0640`; konteyner uid 1000 okuyabilmelidir) yazar ve
-Compose bu dosyayı salt okunur olarak `/run/secrets/sky-mail/client.secret`
-yoluna bağlar. Anahtar her token isteğinde okunur; döndürme dosyanın içeriğini
+dosyasına (`root:root`, `0640`; Keycloak süreci uid 1000, gid 0 ile çalışır ve
+dosyayı grup üzerinden okur) yazar ve bu dosya salt okunur olarak
+`/run/secrets/sky-mail/client.secret` yoluna bağlanır. Production Keycloak bir
+Dokploy uygulamasıdır ve bu Compose dosyasını kullanmaz: bağlama ve `SKY_MAIL_*`
+değişkenleri Dokploy'da elle tanımlanır. Anahtar her token isteğinde okunur; döndürme dosyanın içeriğini
 yerinde güncellemekle yapılır. Eşleme tablosu, değişkenler, ortam, geri düşüş
 sözcükleri ve operatör adımları
 [`docs/keycloak-mail-via-skymail.md`](docs/keycloak-mail-via-skymail.md)

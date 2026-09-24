@@ -269,6 +269,11 @@ a:hover {
   text-align: center;
 }
 
+/* A card that is only its heading and sentence (the Web handoff failure page). */
+.sl-legacy-intro:last-child {
+  margin-bottom: 0;
+}
+
 .sl-legacy-intro h1 {
   margin: 0;
   color: var(--sl-legacy-ink);

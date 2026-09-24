@@ -146,7 +146,9 @@ if [[ -n ${KEYCLOAK_MAILER_ADMIN_PASSWORD:-} ]]; then
   fi
   credential_arguments+=(--password "$KEYCLOAK_MAILER_ADMIN_PASSWORD")
 fi
-"$KCADM" config credentials "${credential_arguments[@]}" >/dev/null
+# No redirection: kcadm asks for the password only when stdout is a terminal ("Console is not
+# active" otherwise). Its "Logging into" line goes to stderr, so stdout stays clean either way.
+"$KCADM" config credentials "${credential_arguments[@]}"
 log "realm=$TARGET_REALM client=$MAILER_CLIENT_ID mode=$MODE"
 
 changes=0

@@ -22,5 +22,31 @@
       "claim.name": "auth_time",
       "jsonType.label": "long"
     }
+  },
+  {
+    "name": "sky_session_lifetime",
+    "protocol": "openid-connect",
+    "protocolMapper": "sky-session-lifetime-mapper",
+    "consentRequired": false,
+    "config": {
+      "id.token.claim": "true",
+      "access.token.claim": "true",
+      "introspection.token.claim": "true"
+    }
+  },
+  {
+    "name": "sky_embed",
+    "protocol": "openid-connect",
+    "protocolMapper": "oidc-usersessionmodel-note-mapper",
+    "consentRequired": false,
+    "config": {
+      "user.session.note": "sky.embed",
+      "claim.name": "sky_embed",
+      "jsonType.label": "String",
+      "id.token.claim": "true",
+      "access.token.claim": "true",
+      "introspection.token.claim": "true",
+      "userinfo.token.claim": "false"
+    }
   }
 ]

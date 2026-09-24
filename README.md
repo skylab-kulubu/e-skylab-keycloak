@@ -40,7 +40,7 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.11.2`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.12.0`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.1.0`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
@@ -117,7 +117,11 @@ Uzlaştırıcı, gizli `account-center` istemcisini şu sözleşmeyle yönetir:
   `realm-management` bulunmadığını doğrular. `manage-account-links` ayrıca
   `account` istemcisinin scope mapping izin listesindedir; AIA `idp_link`
   eylemi `client.hasScope` denetimi yapar.
-- Core claim kapsamı yalnız gerekli `sub` ve `auth_time` alanlarını üretir.
+- Core claim kapsamı yalnız gerekli `sub` ve `auth_time` alanlarını, bir de
+  Hesap Merkezi'nin oturum sınırı ve gömülü görünümü için `sky_session_started`,
+  `sky_session_expires` (SPI'daki `sky-session-lifetime-mapper`) ve `sky_embed`
+  (yalnız Web handoff oturumunda `"skyapp"`) claim'lerini üretir; ayrıntı
+  [`docs/sky-handoff-api.md`](docs/sky-handoff-api.md).
 - BFF'nin en küçük `openid` isteğine uygun biçimde isteğe bağlı kapsam yoktur.
 
 Realm oturumu, giriş ayarları ve tema `config/account-center-realm.json`
@@ -358,6 +362,38 @@ yerinde güncellemekle yapılır. Eşleme tablosu, değişkenler, ortam, geri d�
 sözcükleri ve operatör adımları
 [`docs/keycloak-mail-via-skymail.md`](docs/keycloak-mail-via-skymail.md)
 belgesindedir.
+
+## sky-handoff API (SkyApp'ten web'e geçiş)
+
+`sky-handoff` uzantısı (`/realms/{realm}/sky-handoff/v1`, ADR-0048) SkyApp'in bir
+SKY LAB sitesini WebView'inde oturum açık açmasını sağlar; tam sözleşme
+[`docs/sky-handoff-api.md`](docs/sky-handoff-api.md).
+
+- `POST handoffs`: SkyApp bearer token'ı (çevrimiçi ya da offline oturum,
+  `azp=skyapp`, `sid`) ve `{target, path}` ile 45 saniyelik, tek kullanımlık kod
+  ve kod başına kanıt (`X-Sky-Handoff-Proof`) verir; kişi başına 30 / 5 dk.
+- `GET open?code=`: kanıtı denetler, kodu atomik tüketir, özgün `auth_time` ve
+  `sky.embed=skyapp` notlu yeni bir tarayıcı oturumu kurar (başka kişinin oturumu
+  varsa kapatır) ve hedefin giriş kapısına `303` ile gönderir; her hata
+  `v1/failed?reason=` sayfasına düşer: giriş temasının LegacyFrame tasarımında,
+  neden başına bir cümle ve "Uygulamaya dönüp tekrar dene.", form ve giriş
+  bağlantısı yok (tema sayfayı çizemezse yerleşik düz sayfa).
+- Hedefler istemci öznitelikleridir (`sky.handoff.enabled`, `signInPath`,
+  `returnParam`); köken her zaman `https://*.yildizskylab.com`.
+- `GET admin/targets` / `PUT admin/targets/{clientId}`: superadmin sayfasının
+  kullandığı dar yönetim uçları; yalnız `/ADMIN` grubunun üyeleri (alt grup
+  üyeliği de sayılır), yalnız superadmin'in `admin` istemcisinin (`azp`) çevrimiçi
+  token'ıyla. Grup `KC_SPI_REALM_RESTAPI_EXTENSION__SKY_HANDOFF__ADMIN_GROUP` ya da
+  `SKY_HANDOFF_ADMIN_GROUP`, istemci `..._ADMIN_CLIENT` ya da
+  `SKY_HANDOFF_ADMIN_CLIENT` ile değişir; grup yoksa herkes `403` alır. Yalnız üç
+  öznitelik yazılır, her değişiklik eski → yeni değerli bir yönetim olayı bırakır.
+
+Entegrasyon testi (`tests/sky-handoff-contract.sh`, `tests/run-integration.sh`
+tarafından native handoff aşamasının yanında çağrılır) kodu alma, kanıtsız/yanlış
+kanıtlı açılış, sayfasız `account-center` girişi ve özgün `auth_time`, tekrar
+(`used`), 45 saniye (`expired`), kapatılan hedef, devre dışı kişi, iptal edilen
+offline oturum, başka kişinin oturumunun değiştirilmesi, hız sınırı, olaylar ve
+kod/kanıt/yolun günlüğe düşmemesini gerçek Keycloak üzerinde doğrular.
 
 ## Yerel geliştirme ve doğrulama
 

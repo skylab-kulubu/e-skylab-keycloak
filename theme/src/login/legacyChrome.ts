@@ -6,18 +6,20 @@ import type { LegacyFrameLanguageMenu } from "./LegacyFrame";
 type LegacyChromeOptions = {
   /** "login" keeps the login page's KVKK sentence; "action" is the context-neutral variant of every other page. */
   kvkk?: "login" | "action";
+  /** False for a page that offers nothing to do, not even switching the language. */
+  languageMenu?: boolean;
 };
 
 /** Props shared by every page rendered inside `LegacyFrame` (skip link, KVKK footer, language menu). */
 export function getLegacyChromeProps(i18n: I18n, options: LegacyChromeOptions = {}) {
-  const { kvkk = "login" } = options;
+  const { kvkk = "login", languageMenu = true } = options;
   const { msgStr } = i18n;
 
   return {
     kvkkLinkText: msgStr("kvkkLinkText"),
     kvkkPrefix: msgStr(kvkk === "login" ? "kvkkPrefix" : "kvkkActionPrefix"),
     kvkkSuffix: msgStr(kvkk === "login" ? "kvkkSuffix" : "kvkkActionSuffix"),
-    languageMenu: getLegacyLanguageMenu(i18n),
+    languageMenu: languageMenu ? getLegacyLanguageMenu(i18n) : undefined,
     skipToContent: msgStr("skipToContent"),
     translationsReady: !i18n.isFetchingTranslations
   };

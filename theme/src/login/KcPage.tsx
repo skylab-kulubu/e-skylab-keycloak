@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import DefaultPage from "keycloakify/login/DefaultPage";
 import type { ClassKey } from "keycloakify/login";
 import type { KcContext } from "./KcContext";
+import HandoffFailed from "./HandoffFailed";
 import Login from "./Login";
 import LoginPageExpired from "./LoginPageExpired";
 import PasskeyOffer from "./PasskeyOffer";
@@ -51,6 +52,14 @@ export default function KcPage(props: { kcContext: KcContext }) {
     return (
       <Suspense fallback={<main className="sl-loading" aria-live="polite">{i18n.msgStr("skylabLoading")}</main>}>
         <PasskeyOffer kcContext={kcContext} i18n={i18n} />
+      </Suspense>
+    );
+  }
+
+  if (kcContext.pageId === "sky-handoff-failed.ftl") {
+    return (
+      <Suspense fallback={<main className="sl-loading" aria-live="polite">{i18n.msgStr("skylabLoading")}</main>}>
+        <HandoffFailed kcContext={kcContext} i18n={i18n} />
       </Suspense>
     );
   }

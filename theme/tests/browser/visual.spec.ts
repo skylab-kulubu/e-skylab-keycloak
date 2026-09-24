@@ -1,10 +1,12 @@
 import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
+import { handoffFailureReasons } from "../../src/login/handoffFailure";
 import { themedPageIds } from "../../src/login/pageIds";
 
 /**
  * Screenshot baselines for every Keycloak page in Turkish, desktop and mobile,
- * with reduced motion. Baselines live in visual.spec.ts-snapshots/ and are
+ * with reduced motion, plus every Web handoff failure reason on mobile in light
+ * and dark mode. Baselines live in visual.spec.ts-snapshots/ and are
  * rendered inside the Playwright Linux image so they match the CI runner:
  * `theme/scripts/update-visual-baselines.sh` regenerates them, `--check` compares.
  *
@@ -85,6 +87,22 @@ test.describe("visual baselines", () => {
         await expect(page.locator("#kc-login")).toBeVisible();
         await expect(page).toHaveScreenshot(`login-password-view-${viewportName}.png`, screenshotOptions);
       });
+    });
+  }
+
+  // The Web handoff failure page opens inside SkyApp's WebView: every reason at
+  // the phone size, with the phone in light and in dark mode.
+  for (const colorScheme of ["light", "dark"] as const) {
+    test.describe(`sky-handoff-failed ${colorScheme}`, () => {
+      test.use({ viewport: viewports.mobile, reducedMotion: "reduce", locale: "tr-TR", colorScheme });
+
+      for (const reason of handoffFailureReasons) {
+        test(`sky-handoff-failed-${reason}-${colorScheme}`, async ({ page }) => {
+          await page.goto(`/?page=sky-handoff-failed.ftl&reason=${reason}`);
+          await stabilise(page, "sky-handoff-failed.ftl");
+          await expect(page).toHaveScreenshot(`sky-handoff-failed-${reason}-${colorScheme}-mobile.png`, screenshotOptions);
+        });
+      }
     });
   }
 });

@@ -116,7 +116,9 @@ if [[ -n ${KEYCLOAK_CLEANUP_ADMIN_PASSWORD:-} ]]; then
   fi
   credential_arguments+=(--password "$KEYCLOAK_CLEANUP_ADMIN_PASSWORD")
 fi
-"$KCADM" config credentials "${credential_arguments[@]}" >/dev/null
+# No redirection: kcadm asks for the password only when stdout is a terminal ("Console is not
+# active" otherwise). Its "Logging into" line goes to stderr, so stdout stays clean either way.
+"$KCADM" config credentials "${credential_arguments[@]}"
 
 relying_party_id=$(kcadm get "realms/$TARGET_REALM" \
   --fields webAuthnPolicyPasswordlessRpId \

@@ -9,7 +9,8 @@ import java.util.List;
 /**
  * The Sudo mode proof: a short-lived JWT that Keycloak signs as an internal token
  * ({@link TokenCategory#INTERNAL}: HS512 with the realm's HMAC key, which never leaves
- * Keycloak, so nobody outside can verify or mint one) and binds to the person ({@code sub})
+ * Keycloak, so nobody outside can mint one or verify one without asking Keycloak's
+ * introspection endpoint) and binds to the person ({@code sub})
  * and to the Account Center session ({@code sid}) that proved a credential.
  */
 public final class SudoToken extends JsonWebToken {

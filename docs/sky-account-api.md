@@ -67,14 +67,25 @@ opak bir dize olarak saklar ve geri gönderir; içeriğine güvenmez.
 | `sub` | kişinin Keycloak id'si (bearer `sub`) |
 | `sid` | kanıtı üreten Hesap Merkezi oturumu (bearer `sid`) |
 | `azp` | `account-center` |
-| `aud` | `sky-account` |
+| `aud` | `["sky-account","core"]` (her zaman dizi) |
 | `amr` | `["pwd"]`, `["otp"]`, passkey için `["hwk","user"]`, taze giriş kanıtı için `["idp"]` (ID token kendi `amr` claim'ini taşıyorsa o değerler) |
 | `jti`, `iat`, `nbf`, `exp` | `exp = iat + 300`; taze giriş kanıtında `exp = auth_time + 300` (hiçbir zaman `iat + 300`'den geç değil) |
 
 Doğrulama (`SudoTokens.require`): imza (`session.tokens().decode`, yalnız
-Keycloak'ın iç algoritması `HS512`), `typ`, `iss`, `aud`, `azp`, `jti`, `sub` ve
-`sid` bearer'ın değerleriyle eşit, `iat`/`nbf` gelecekte değil (10 sn tolerans),
-`exp` geçmemiş.
+Keycloak'ın iç algoritması `HS512`), `typ`, `iss`, `aud` içinde `sky-account`,
+`azp`, `jti`, `sub` ve `sid` bearer'ın değerleriyle eşit, `iat`/`nbf` gelecekte
+değil (10 sn tolerans), `exp` geçmemiş.
+
+`aud` içindeki `core` (K3e) core'un hesap silmede (A7b, `X-Sky-Sudo`) sudo
+kanıtını doğrulayabilmesi içindir: token Keycloak'ın iç HMAC anahtarıyla
+imzalandığı için core onu kendisi doğrulayamaz, Keycloak'ın introspection
+ucuna kendi gizli `core` istemcisiyle sorar. Keycloak 26.7 introspection'ı
+yalnız token'ın `aud` değerinde adı geçen istemciye yanıtlar; bu yüzden
+audience kontrolü hiçbir yerde gevşetilmeden `core` ikinci audience olarak
+eklendi. `sky-account` kendi kontrolünde yalnız `sky-account`'u arar; yalnız
+`core` taşıyan bir token reddedilir, bu sürümden önce yalnız `sky-account` ile
+verilmiş (beş dakikalık) token'lar geçerliliğini korur.
+
 Token **tek kullanımlık değildir**: beş dakikalık pencere içinde aynı oturumun
 tüm hassas işlemlerini karşılar. Başka bir oturumun (`sid`) bearer'ıyla
 kullanılamaz; süresi geçince `401 sudo_expired`, diğer her ret `401 sudo_required`
@@ -101,6 +112,63 @@ brute-force korumasını (10 deneme, 60 sn artan bekleme, en çok 15 dk, 12 saat
 sıfırlama, kalıcı kilit yok) ve parola politikasını
 (`length(8) and notUsername and notEmail`) her koşuda açık tutar; bu API o
 ayarları olduğu gibi kullanır.
+
+### core için introspection sözleşmesi
+
+`POST /realms/{realm}/protocol/openid-connect/token/introspect`, HTTP Basic
+`core:<core istemci sırrı>`, gövde `token=<sudo token>`. Gerçek Keycloak
+26.7.4'te bir sudo token için dönen yanıtın biçimi (değerler gizlendi;
+`tests/sky-account-contract.sh` → `sky-account sudo token introspection by core`
+aşaması doğrular):
+
+```json
+{
+  "exp": 0,
+  "iat": 0,
+  "auth_time": 0,
+  "jti": "<uuid>",
+  "iss": "https://e.yildizskylab.com/realms/e-skylab",
+  "aud": ["sky-account", "core", "account"],
+  "sub": "<kişinin Keycloak id'si>",
+  "typ": "sky-sudo",
+  "azp": "account-center",
+  "sid": "<Hesap Merkezi oturum id'si>",
+  "resource_access": { "account": { "roles": ["manage-account", "manage-account-links", "view-profile"] } },
+  "sky_session_expires": 0,
+  "sky_authorization": { "<istemci>": { "roles": ["<rol>"] } },
+  "sky_session_started": 0,
+  "client_id": "account-center",
+  "username": "<kullanıcı adı>",
+  "token_type": "sky-sudo",
+  "active": true
+}
+```
+
+- `typ`, `token_type`, `azp`, `client_id`, `sub`, `sid`, `iss`, `jti`, `iat`,
+  `exp` ve `aud` token'dan kopyalanır. `aud` her zaman **dizidir** ve
+  `account-center`'ın introspection mapper'ları onu genişletir (bugün
+  `account` eklenir): core `aud` için eşitlik değil **içerme** (`sky-account`
+  ve `core`) kontrol etmelidir.
+- `amr` ve `nbf` introspection yanıtında **yoktur** (Keycloak yalnız temel
+  claim'leri kopyalar). Kanıt yöntemi gerekiyorsa core onu buradan okuyamaz.
+- `auth_time`, `resource_access`, `sky_authorization`, `sky_session_*` ve
+  `username` token'dan değil, `account-center` istemcisinin oturumdan
+  ürettiği introspection mapper'larından gelir. Buradaki `auth_time` oturumun
+  **giriş** zamanıdır, sudo kanıtının zamanı değildir; sudo yolunda
+  tazelik yalnız token'ın kendi `exp` değerinden gelir.
+- Bir Hesap Merkezi access token'ı da core'a `active:true` döner
+  (`typ=Bearer`, `aud` içinde `sky-account` yok). Core sudo kanıtını
+  `typ == "sky-sudo"` **ve** `aud ∋ "sky-account"` ile ayırt etmelidir;
+  ayrıca `azp == "account-center"`, `sub` bearer'ın `sub` değerine, `sid`
+  bearer'ın `sid` değerine eşit olmalı, `iss` realm issuer olmalı ve `exp`
+  geçmemiş olmalıdır (Keycloak da `exp`'i kontrol eder, ama core yanıtı
+  kendisi de doğrulamalıdır).
+- Keycloak `active:false` döner (başka alan yok) eğer: çağıran istemci
+  `aud`'da değilse (ör. `account-center`), token'ın `sid` oturumu kapanmışsa
+  ya da `account-center` istemci oturumu yoksa, kişi devre dışıysa/yoksa,
+  `exp` geçmişse, `azp` istemcisi devre dışıysa, `iss` realm issuer'ı değilse
+  ya da imza realm anahtarıyla doğrulanmazsa. Keycloak introspection'da `typ`
+  kontrol etmez; o core'un işidir.
 
 ## Hız sınırları
 
@@ -713,7 +781,9 @@ SMTP ayarına ihtiyaç duyar; SMTP tanımlı değilse `email/change-request`
   değiştirebilirdi) `503 unmanaged_attributes_enabled` döner, okumalar sürer.
   Yapılandırma okunamıyorsa da aynı yanıt verilir.
 - Sudo token tek kullanımlık değildir (5 dakikalık pencere, `sid` bağlı) ve
-  Keycloak dışında doğrulanamaz (iç HMAC anahtarı).
+  Keycloak dışında doğrulanamaz (iç HMAC anahtarı); core onu Keycloak
+  introspection'ına sorar (`aud` içinde `core`; bkz. core için introspection
+  sözleşmesi).
 - Taze giriş kanıtı (`sudo/authentication`) ID token'ı Keycloak'ın kendi
   `TokenVerifier` yolu ve realm anahtarlarıyla doğrular; yalnız bearer
   oturumunun (`sid`) ve kişisinin (`sub`) `account-center`'a verilmiş ID token'ı

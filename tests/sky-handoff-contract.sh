@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Real-Keycloak contract for the Web handoff (/realms/{realm}/sky-handoff/v1, ADR-0048).
-# Invoked by run-integration.sh next to the native handoff stage, once the reconciled realm,
+# Invoked by run-integration.sh once the reconciled realm,
 # the account-center client and the fixture user exist. Inputs: SKY_HANDOFF_COMPOSE_FILE,
 # SKY_HANDOFF_ADMIN_CONFIG, SKY_HANDOFF_CLIENT_SECRET (account-center), TEST_STATE_DIR.
 # Leaves account-center enabled as a Handoff target and removes the users it creates.
@@ -23,8 +23,7 @@ FIXTURE_USERNAME=account-fixture
 FIXTURE_PASSWORD=fixture-password-change-me
 OTHER_USERNAME=handoff-other
 # The admin endpoints' fixture (tests/fixture-realm.json): a member of /ADMIN, an empty subgroup
-# of /ADMIN and superadmin's client admin (public, direct grants; fixture only). The member's id
-# must not be 33333333-...: the native bridge fixture uses that id for a person who must not exist.
+# of /ADMIN and superadmin's client admin (public, direct grants; fixture only).
 ADMIN_FIXTURE_UUID=44444444-4444-4444-8444-444444444444
 ADMIN_USERNAME=handoff-admin-fixture
 ADMIN_PASSWORD=handoff-admin-password-change-me

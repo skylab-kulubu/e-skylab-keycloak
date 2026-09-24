@@ -19,8 +19,8 @@ PASSKEY_EXTRA_ORIGINS=${KEYCLOAK_PASSKEY_EXTRA_ORIGINS:-https://my.yildizskylab.
 # changed; cleanup-legacy-passkeys.sh uses it as the cutover and refuses a later one.
 PASSKEY_SWITCH_ATTRIBUTE=skylab.passkeyRpIdSwitchedAt
 CLIENT_ID=account-center
-FLOW_ALIAS=account-center-browser
-NATIVE_FLOW_ALIAS=account-center-native-handoff
+# The retired client-specific browser flow of the native handoff (ADR-0048); removed on sight.
+LEGACY_FLOW_ALIAS=account-center-browser
 SCOPE_NAME=account-center-account-api
 CORE_SCOPE_NAME=account-center-core-claims
 SKYAPP_CLIENT_ID=skyapp
@@ -187,43 +187,6 @@ flow_id_by_alias() {
   return 1
 }
 
-realm_browser_flow_alias() {
-  local realm_csv browser_flow
-  if ! realm_csv=$(kcadm get "realms/$TARGET_REALM" \
-    --fields browserFlow \
-    --format csv \
-    --noquotes); then
-    printf 'Failed to read the active browser flow for realm %s\n' "$TARGET_REALM" >&2
-    return 2
-  fi
-  while IFS= read -r browser_flow; do
-    if [[ -n $browser_flow ]]; then
-      printf '%s\n' "$browser_flow"
-      return 0
-    fi
-  done <<<"$realm_csv"
-  printf 'Realm %s does not have an active browser flow\n' "$TARGET_REALM" >&2
-  return 1
-}
-
-urlencode_path_segment() {
-  local input=$1 output='' character encoded index
-  local LC_ALL=C
-  for ((index = 0; index < ${#input}; index++)); do
-    character=${input:index:1}
-    case $character in
-      [a-zA-Z0-9.~_-])
-        output+=$character
-        ;;
-      *)
-        printf -v encoded '%02X' "'$character"
-        output+="%$encoded"
-        ;;
-    esac
-  done
-  printf '%s\n' "$output"
-}
-
 client_scope_id_by_name() {
   local wanted=$1
   local scopes_csv id name
@@ -277,249 +240,50 @@ optional_lookup() {
   return "$status"
 }
 
-authentication_config_signature() {
-  local provider_id=$1
-  local config_id=$2
-  local config_json
-
-  if [[ -z $config_id ]]; then
-    printf 'NONE\n'
-    return 0
-  fi
-  if [[ $provider_id != conditional-credential ]]; then
-    printf 'CONFIGURED\n'
-    return 0
-  fi
-
-  if ! config_json=$(kcadm_json "authentication/config/$config_id" \
-    -r "$TARGET_REALM" -c); then
-    printf 'Failed to read authentication configuration %s\n' "$config_id" >&2
-    return 2
-  fi
-  if [[ $config_json == *'"config":{"credentials":"webauthn-passwordless"}'* ]]; then
-    printf 'BUILTIN_PASSWORDLESS\n'
+# account-center signs in through the realm's own browser flow. The retired native handoff
+# needed a client-specific copy of it (account-center-browser, with the sky-native-handoff
+# subflow) bound to the client; the Web handoff (ADR-0048) does not. An older deployment is
+# brought back here: the client's browser binding is removed, then that flow is deleted
+# together with its subflows. Both steps are no-ops once done. Keycloak does not refuse to
+# delete a flow that something still points to, so a realm flow binding or another client
+# that still uses it stops the run instead.
+retire_account_center_browser_flow() {
+  local live_file overrides flow_id realm_bindings clients_json
+  live_file=$(mktemp "$WORK_DIR/client-flow.XXXXXX")
+  kcadm_json "clients/$ACCOUNT_CENTER_UUID" -r "$TARGET_REALM" >"$live_file"
+  overrides=$(json_tool field authenticationFlowBindingOverrides <"$live_file")
+  if [[ $overrides =~ \"browser\"[[:space:]]*:[[:space:]]*\"[^\"]+\" ]]; then
+    kcadm update "clients/$ACCOUNT_CENTER_UUID" -r "$TARGET_REALM" \
+      -s 'authenticationFlowBindingOverrides.browser=' >/dev/null
+    log "client $CLIENT_ID browser flow binding: updated (removed; the realm browser flow applies)"
   else
-    printf 'DRIFTED\n'
-  fi
-}
-
-flow_graph_signature() {
-  local alias=$1
-  local executions_csv encoded_alias
-  local level priority requirement provider_id authentication_flow authentication_config
-  local kind config_state
-  encoded_alias=$(urlencode_path_segment "$alias")
-  if ! executions_csv=$(kcadm get "authentication/flows/$encoded_alias/executions" \
-    -r "$TARGET_REALM" \
-    --fields level,priority,requirement,providerId,authenticationFlow,authenticationConfig \
-    --format csv \
-    --noquotes); then
-    printf 'Failed to read authentication flow executions for %s\n' "$alias" >&2
-    return 2
-  fi
-  while IFS=, read -r level priority requirement provider_id authentication_flow authentication_config; do
-    [[ -n $level ]] || continue
-    if [[ $authentication_flow == true ]]; then
-      kind=FLOW
-    else
-      kind=$provider_id
-    fi
-    if ! config_state=$(authentication_config_signature \
-      "$provider_id" "$authentication_config"); then
-      printf 'Failed to read authentication configuration for %s\n' "$provider_id" >&2
-      return 2
-    fi
-    printf '%s|%s|%s|%s|%s\n' \
-      "$level" "$priority" "$requirement" "$kind" "$config_state"
-  done <<<"$executions_csv"
-}
-
-account_center_source_graph_signature() {
-  local alias=$1
-  local executions_csv encoded_alias
-  local level priority requirement display_name provider_id authentication_flow authentication_config
-  local kind config_state native_flow_count=0 native_execution_count=0
-  encoded_alias=$(urlencode_path_segment "$alias")
-  if ! executions_csv=$(kcadm get "authentication/flows/$encoded_alias/executions" \
-    -r "$TARGET_REALM" \
-    --fields level,priority,requirement,displayName,providerId,authenticationFlow,authenticationConfig \
-    --format csv \
-    --noquotes); then
-    printf 'Failed to read authentication flow executions for %s\n' "$alias" >&2
-    return 2
-  fi
-  while IFS=, read -r level priority requirement display_name provider_id authentication_flow authentication_config; do
-    [[ -n $level ]] || continue
-    if [[ $authentication_flow == true && $display_name == "$NATIVE_FLOW_ALIAS" ]]; then
-      native_flow_count=$((native_flow_count + 1))
-      if [[ $level != 0 || $priority != 5 || $requirement != ALTERNATIVE ]]; then
-        printf 'The %s subflow contract differs from desired state\n' "$NATIVE_FLOW_ALIAS" >&2
-        return 1
-      fi
-      continue
-    fi
-    if [[ $authentication_flow != true && $provider_id == sky-native-handoff ]]; then
-      native_execution_count=$((native_execution_count + 1))
-      if [[ $level != 1 || $priority != 10 || $requirement != REQUIRED ]]; then
-        printf 'The sky-native-handoff execution contract differs from desired state\n' >&2
-        return 1
-      fi
-      continue
-    fi
-    if [[ $authentication_flow == true ]]; then
-      kind=FLOW
-    else
-      kind=$provider_id
-    fi
-    if ! config_state=$(authentication_config_signature \
-      "$provider_id" "$authentication_config"); then
-      printf 'Failed to read authentication configuration for %s\n' "$provider_id" >&2
-      return 2
-    fi
-    printf '%s|%s|%s|%s|%s\n' \
-      "$level" "$priority" "$requirement" "$kind" "$config_state"
-  done <<<"$executions_csv"
-  if [[ $native_flow_count != 1 || $native_execution_count != 1 ]]; then
-    printf 'Expected exactly one native handoff subflow and execution; observed %s and %s\n' \
-      "$native_flow_count" "$native_execution_count" >&2
-    return 1
-  fi
-}
-
-add_native_handoff_execution() {
-  local alias=$1
-  local executions_csv native_flow_execution_id native_execution_id
-  local id level display_name provider_id authentication_flow
-
-  kcadm create "authentication/flows/$alias/executions/flow" \
-    -r "$TARGET_REALM" \
-    -b "{\"alias\":\"$NATIVE_FLOW_ALIAS\",\"type\":\"basic-flow\",\"provider\":\"basic-flow\",\"priority\":5,\"description\":\"Redeems one-time Account Center native handoff codes\"}" >/dev/null
-
-  kcadm create "authentication/flows/$NATIVE_FLOW_ALIAS/executions/execution" \
-    -r "$TARGET_REALM" \
-    -b '{"provider":"sky-native-handoff","priority":10}' >/dev/null
-
-  if ! executions_csv=$(kcadm get "authentication/flows/$alias/executions" \
-    -r "$TARGET_REALM" \
-    --fields id,level,displayName,providerId,authenticationFlow \
-    --format csv \
-    --noquotes); then
-    printf 'Failed to read authentication executions after adding native handoff\n' >&2
-    return 2
+    log "client $CLIENT_ID browser flow binding: unchanged (the realm browser flow applies)"
   fi
 
-  native_flow_execution_id=''
-  native_execution_id=''
-  while IFS=, read -r id level display_name provider_id authentication_flow; do
-    if [[ $level == 0 && $display_name == "$NATIVE_FLOW_ALIAS" && $authentication_flow == true ]]; then
-      if [[ -n $native_flow_execution_id ]]; then
-        printf 'Duplicate %s subflows were created\n' "$NATIVE_FLOW_ALIAS" >&2
-        return 1
-      fi
-      native_flow_execution_id=$id
-    fi
-    if [[ $level == 1 && $provider_id == sky-native-handoff && $authentication_flow != true ]]; then
-      if [[ -n $native_execution_id ]]; then
-        printf 'Duplicate sky-native-handoff executions were created\n' >&2
-        return 1
-      fi
-      native_execution_id=$id
-    fi
-  done <<<"$executions_csv"
-
-  if [[ -z $native_flow_execution_id || -z $native_execution_id ]]; then
-    printf 'Observed native handoff execution inventory:\n%s\n' "$executions_csv" >&2
-    printf 'Native handoff subflow and execution were not created as expected\n' >&2
-    return 1
-  fi
-
-  kcadm update "authentication/flows/$alias/executions" \
-    -r "$TARGET_REALM" \
-    -n \
-    -b "{\"id\":\"$native_flow_execution_id\",\"priority\":5,\"requirement\":\"ALTERNATIVE\"}" >/dev/null
-
-  kcadm update "authentication/flows/$NATIVE_FLOW_ALIAS/executions" \
-    -r "$TARGET_REALM" \
-    -n \
-    -b "{\"id\":\"$native_execution_id\",\"priority\":10,\"requirement\":\"REQUIRED\"}" >/dev/null
-}
-
-ensure_browser_flow() {
-  local client_id=$1
-  local flow_id actual_graph source_alias source_graph current_source_graph encoded_source_alias graph_status
-  if source_alias=$(realm_browser_flow_alias); then
+  if flow_id=$(optional_lookup flow_id_by_alias "$LEGACY_FLOW_ALIAS"); then
     :
   else
     return $?
   fi
-  if [[ $source_alias == "$FLOW_ALIAS" ]]; then
-    printf 'The realm browser flow cannot be the Account Center client flow\n' >&2
-    return 1
-  fi
-  if ! source_graph=$(flow_graph_signature "$source_alias"); then
-    return 2
-  fi
-  if [[ $source_graph == *'|sky-native-handoff|'* ]]; then
-    printf 'The active realm browser flow already contains the reserved sky-native-handoff provider\n' >&2
-    return 1
-  fi
-  if flow_id=$(optional_lookup flow_id_by_alias "$FLOW_ALIAS"); then
-    :
-  else
-    return $?
-  fi
-
-  if [[ -n $flow_id ]]; then
-    if actual_graph=$(account_center_source_graph_signature "$FLOW_ALIAS"); then
-      :
-    else
-      graph_status=$?
-      if [[ $graph_status == 2 ]]; then
-        return 2
-      fi
-      actual_graph=''
-    fi
-    if [[ $actual_graph != "$source_graph" ]]; then
-      kcadm update "clients/$client_id" -r "$TARGET_REALM" \
-        -s 'authenticationFlowBindingOverrides.browser=' >/dev/null
-      kcadm delete "authentication/flows/$flow_id" -r "$TARGET_REALM" >/dev/null
-      flow_id=''
-    fi
-  fi
-
   if [[ -z $flow_id ]]; then
-    encoded_source_alias=$(urlencode_path_segment "$source_alias")
-    kcadm create "authentication/flows/$encoded_source_alias/copy" \
-      -r "$TARGET_REALM" \
-      -s "newName=$FLOW_ALIAS" >/dev/null
-    if flow_id=$(flow_id_by_alias "$FLOW_ALIAS"); then
-      :
-    else
-      return $?
-    fi
-    add_native_handoff_execution "$FLOW_ALIAS"
+    log "authentication flow $LEGACY_FLOW_ALIAS: unchanged (absent)"
+    return 0
   fi
-
-  if ! current_source_graph=$(flow_graph_signature "$source_alias"); then
-    return 2
-  fi
-  if [[ $current_source_graph != "$source_graph" ]]; then
-    printf 'The active realm browser flow changed during reconciliation; retry safely\n' >&2
+  realm_bindings=$(kcadm_json "realms/$TARGET_REALM" -c \
+    --fields browserFlow,registrationFlow,directGrantFlow,resetCredentialsFlow,clientAuthenticationFlow,dockerAuthenticationFlow,firstBrokerLoginFlow)
+  if [[ $realm_bindings == *"\"$LEGACY_FLOW_ALIAS\""* ]]; then
+    printf 'A realm flow binding still uses %s; bind the realm to its own flows before this flow can be retired\n' \
+      "$LEGACY_FLOW_ALIAS" >&2
     return 1
   fi
-  if actual_graph=$(account_center_source_graph_signature "$FLOW_ALIAS"); then
-    :
-  else
-    graph_status=$?
-    return "$graph_status"
-  fi
-  if [[ $actual_graph != "$source_graph" ]]; then
-    printf 'Expected %s to preserve active realm flow %s:\n%s\nActual source portion:\n%s\n' \
-      "$FLOW_ALIAS" "$source_alias" "$source_graph" "$actual_graph" >&2
-    printf 'The %s execution graph differs from the active realm browser flow\n' "$FLOW_ALIAS" >&2
+  clients_json=$(kcadm_json clients -r "$TARGET_REALM" --fields clientId,authenticationFlowBindingOverrides -c)
+  if [[ $clients_json == *"$flow_id"* ]]; then
+    printf 'Another client is still bound to %s; unbind it before this flow can be retired\n' \
+      "$LEGACY_FLOW_ALIAS" >&2
     return 1
   fi
-  printf '%s\n' "$flow_id"
+  kcadm delete "authentication/flows/$flow_id" -r "$TARGET_REALM" >/dev/null
+  log "authentication flow $LEGACY_FLOW_ALIAS: deleted (with its retired native handoff subflow)"
 }
 
 # Reads ENDPOINT, compares the desired fields against it and writes only when at least one
@@ -836,7 +600,6 @@ ensure_account_center_client() {
 # reads the person's effective client roles itself instead of going through the client scope.
 # The integration harness proves that a token of a view-users holder gets 403 from Admin REST.
 reconcile_account_center_client() {
-  local flow_uuid=$1
   local desired_file="$WORK_DIR/client-$CLIENT_ID.json"
   local callback_uri="$BASE_URL/api/auth/callback"
   local logout_uri="$BASE_URL/api/auth/logout/callback"
@@ -870,9 +633,6 @@ reconcile_account_center_client() {
     "backchannel.logout.session.required": "true",
     "backchannel.logout.revoke.offline.tokens": "true",
     "post.logout.redirect.uris": "$logout_uri"
-  },
-  "authenticationFlowBindingOverrides": {
-    "browser": "$flow_uuid"
   }
 }
 EOF
@@ -1052,8 +812,8 @@ reconcile_required_actions
 reconcile_user_profile
 
 ensure_account_center_client
-flow_uuid=$(ensure_browser_flow "$ACCOUNT_CENTER_UUID")
-reconcile_account_center_client "$flow_uuid"
+retire_account_center_browser_flow
+reconcile_account_center_client
 
 ensure_client_scope "$SCOPE_NAME" \
   "$CONFIG_DIR/account-center-account-api-mappers.json"

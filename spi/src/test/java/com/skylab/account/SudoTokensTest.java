@@ -46,13 +46,38 @@ class SudoTokensTest {
         assertEquals(USER_ID, token.getSubject());
         assertEquals(SESSION_ID, token.getSessionId());
         assertEquals(AccessGuard.ACCOUNT_CENTER_CLIENT_ID, token.getIssuedFor());
-        assertEquals(List.of(SudoTokens.AUDIENCE), List.of(token.getAudience()));
+        assertEquals(List.of(SudoTokens.AUDIENCE, SudoTokens.CORE_AUDIENCE), List.of(token.getAudience()));
         assertEquals(List.of("pwd"), token.getAuthenticationMethods());
         assertEquals(SudoTokens.TTL_SECONDS, token.getExp() - token.getIat());
         assertEquals(token.getExp(), issued.expiresAt());
         assertEquals(36, token.getId().length());
 
         assertEquals(token.getId(), fixture.sudoTokens.require(fixture.caller, issued.token()).getId());
+    }
+
+    @Test
+    void theTokenNamesCoreAsASecondAudienceSoCoreCanIntrospectIt() throws Exception {
+        assertEquals("core", SudoTokens.CORE_AUDIENCE);
+        for (SudoTokens.Method method : SudoTokens.Method.values()) {
+            SudoTokens.Issued issued = fixture.sudoTokens.issue(fixture.caller, method);
+            SudoToken token = new JWSInput(issued.token()).readJsonContent(SudoToken.class);
+
+            assertEquals(List.of("sky-account", "core"), List.of(token.getAudience()), method.name());
+            assertTrue(token.hasAudience(SudoTokens.AUDIENCE), method.name());
+            assertTrue(token.hasAudience(SudoTokens.CORE_AUDIENCE), method.name());
+            assertEquals(AccessGuard.ACCOUNT_CENTER_CLIENT_ID, token.getIssuedFor(), "azp stays account-center");
+            assertEquals(SudoTokens.TYPE, token.getType(), "typ stays sky-sudo");
+            assertEquals(token.getId(), fixture.sudoTokens.require(fixture.caller, issued.token()).getId(),
+                    "sky-account keeps accepting its own token with the wider audience");
+        }
+    }
+
+    @Test
+    void stillAcceptsATokenIssuedBeforeCoreJoinedTheAudience() {
+        SudoToken earlier = fixture.validClaims();
+        earlier.audience(SudoTokens.AUDIENCE);
+
+        assertEquals("jti-1", fixture.sudoTokens.require(fixture.caller, fixture.sign(earlier)).getId());
     }
 
     @Test
@@ -125,6 +150,11 @@ class SudoTokensTest {
         SudoToken wrongAudience = fixture.validClaims();
         wrongAudience.audience("account");
         assertEquals("sudo_required", requireFailure(fixture.caller, fixture.sign(wrongAudience)));
+
+        SudoToken coreOnly = fixture.validClaims();
+        coreOnly.audience(SudoTokens.CORE_AUDIENCE);
+        assertEquals("sudo_required", requireFailure(fixture.caller, fixture.sign(coreOnly)),
+                "core alone in the audience is not a sky-account token");
 
         SudoToken wrongParty = fixture.validClaims();
         wrongParty.issuedFor("skyapp");
@@ -218,7 +248,7 @@ class SudoTokensTest {
             token.issuer(ISSUER);
             token.subject(USER_ID);
             token.issuedFor(AccessGuard.ACCOUNT_CENTER_CLIENT_ID);
-            token.audience(SudoTokens.AUDIENCE);
+            token.audience(SudoTokens.AUDIENCE, SudoTokens.CORE_AUDIENCE);
             token.issuedNowWithTTL(SudoTokens.TTL_SECONDS);
             token.setSessionId(SESSION_ID);
             return token;

@@ -20,12 +20,20 @@ import java.util.Objects;
  * window, exactly as the Sudo mode definition promises. Replay is bounded by the window and by
  * the {@code sub}/{@code sid} binding: the token only works together with the very Account
  * Center bearer session that proved the credential. The BFF treats it as an opaque string:
- * it is signed with Keycloak's internal HMAC key and only this extension verifies it.
+ * it is signed with Keycloak's internal HMAC key, so only Keycloak can verify it: this
+ * extension through {@link #require}, and core through Keycloak's introspection endpoint
+ * (which is why core is the second audience).
  */
 final class SudoTokens {
 
     static final String TYPE = "sky-sudo";
     static final String AUDIENCE = "sky-account";
+    /**
+     * The second audience: core verifies the sudo proof of a self-delete by introspecting the
+     * token with its own confidential client, and Keycloak answers introspection only to a
+     * client named in {@code aud} (K3e). {@link #require} still checks only {@link #AUDIENCE}.
+     */
+    static final String CORE_AUDIENCE = "core";
     static final String HEADER = "X-Sky-Sudo";
     static final int TTL_SECONDS = 300;
     static final int CLOCK_SKEW_SECONDS = 10;
@@ -90,7 +98,7 @@ final class SudoTokens {
         token.issuer(issuer(caller));
         token.subject(caller.user().getId());
         token.issuedFor(AccessGuard.ACCOUNT_CENTER_CLIENT_ID);
-        token.audience(AUDIENCE);
+        token.audience(AUDIENCE, CORE_AUDIENCE);
         token.iat(now);
         token.nbf(now);
         token.exp(Math.min(expiresAt, now + TTL_SECONDS));

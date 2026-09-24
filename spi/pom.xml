@@ -6,7 +6,7 @@
 
   <groupId>com.skylab</groupId>
   <artifactId>e-skylab-spi</artifactId>
-  <version>1.12.0</version>
+  <version>1.12.1</version>
   <name>SKY LAB Keycloak providers</name>
 
   <properties>

@@ -66,6 +66,10 @@ json_assert() {
   jq -e "$@" "$expression" <<<"$json" >/dev/null || fail "$message"
 }
 
+# The audience scopes of the skyforms and frontend-main login clients; stages called below.
+# shellcheck source=login-client-audiences.sh
+source "$SCRIPT_DIR/login-client-audiences.sh"
+
 # ---------------------------------------------------------------------------
 # v2 identity reconcile stages (passkey relying party id, realm login and brute
 # force settings, User Profile, account-center scope, keycloak-mailer client,
@@ -718,6 +722,7 @@ v2_state_snapshot() {
       kcadm get "client-scopes/$scope_uuid" -r "$V2_REALM" -c
       kcadm get "client-scopes/$scope_uuid/protocol-mappers/models" -r "$V2_REALM" -c
     done
+    lca_state_snapshot
     kcadm get authentication/flows -r "$V2_REALM" -c
   } | jq -S -c '.'
 }
@@ -1217,6 +1222,8 @@ json_assert "$default_account_roles_before" \
 built_in_scope_snapshot=$(kcadm get client-scopes -r e-skylab-test -c \
   | jq -c '[.[] | {id, name}] | sort_by(.id)')
 
+stage_login_audiences_hand_made
+
 CURRENT_STAGE='first reconciliation'
 "${COMPOSE[@]}" run --rm --no-deps keycloak-config >"$TEST_STATE_DIR/reconcile-first.log" 2>&1
 
@@ -1247,6 +1254,7 @@ active_browser_flow_after=$(kcadm get \
   || fail 'Account Center reconciliation mutated the active realm browser flow'
 
 stage_v2_after_first_reconciliation
+stage_login_audiences_after_first_reconciliation
 
 # Inject drift before the second pass. Reconciliation must repair the existing
 # realm, flow, scope and allowlists rather than merely treating names as success.
@@ -1444,7 +1452,7 @@ skyapp_scope_count=$(kcadm get client-scopes -r e-skylab-test -c \
 [[ $skyapp_scope_count == 1 ]] || fail "skyapp audience scope is missing or duplicated"
 
 built_in_scope_after=$(kcadm get client-scopes -r e-skylab-test -c \
-  | jq -c '[.[] | select(.name != "account-center-account-api" and .name != "account-center-core-claims" and .name != "skyapp-account-center-audience") | {id, name}] | sort_by(.id)')
+  | jq -c '[.[] | select(.name != "account-center-account-api" and .name != "account-center-core-claims" and .name != "skyapp-account-center-audience" and .name != "skyforms-forms-audience" and .name != "frontend-main-core-audience") | {id, name}] | sort_by(.id)')
 [[ $built_in_scope_after == "$built_in_scope_snapshot" ]] \
   || fail "a built-in client scope id or name was mutated"
 
@@ -1523,6 +1531,7 @@ json_assert "$skyapp_default_scopes" \
   '[.[] | select(.id == $scope and .name == "skyapp-account-center-audience")] | length == 1' \
   'skyapp audience scope is not attached as a default scope' \
   --arg scope "$skyapp_scope_uuid"
+stage_login_audiences_after_second_reconciliation
 
 default_scopes=$(kcadm get "clients/$client_uuid/default-client-scopes" -r e-skylab-test -c)
 json_assert "$default_scopes" \

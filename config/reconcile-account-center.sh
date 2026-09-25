@@ -25,6 +25,12 @@ SCOPE_NAME=account-center-account-api
 CORE_SCOPE_NAME=account-center-core-claims
 SKYAPP_CLIENT_ID=skyapp
 SKYAPP_SCOPE_NAME=skyapp-account-center-audience
+# Login clients whose access token must name the API they call in aud (made by hand in
+# production first, adopted here by name; see reconcile_login_client_audience).
+FRONTEND_MAIN_CLIENT_ID=frontend-main
+FRONTEND_MAIN_SCOPE_NAME=frontend-main-core-audience
+SKYFORMS_CLIENT_ID=skyforms
+SKYFORMS_SCOPE_NAME=skyforms-forms-audience
 ACCOUNT_ROLE_ALLOWLIST=(manage-account view-profile manage-account-links)
 KCADM_CONFIG=$(mktemp /tmp/account-center-kcadm.XXXXXX)
 WORK_DIR=$(mktemp -d /tmp/account-center-reconcile.XXXXXX)
@@ -746,6 +752,40 @@ reconcile_skyapp_audience() {
   ensure_default_client_scope "$skyapp_client_uuid" "$skyapp_scope_uuid" "$SKYAPP_SCOPE_NAME"
 }
 
+# A login client whose access token must carry the audience of the API it calls, for every
+# person: Keycloak's audience-resolve adds an API only when the token carries that API's roles,
+# and most people hold none. frontend-main (the site) needs core (core requires it on every
+# Bearer, ADR 0019: without it every CMS image upload is 401); skyforms needs forms (forms-backend
+# requires it: without it members get 401). Both scopes were made by hand in production with
+# these exact names, so they are adopted by name (never recreated), repaired when they drift and
+# kept among the client's default scopes. A realm without the client (the sandbox may lack one)
+# skips the item with a warning.
+reconcile_login_client_audience() {
+  local client_id=$1 scope_name=$2 mappers_file=$3
+  local client_uuid scope_uuid optional_scopes
+  if ! client_uuid=$(optional_lookup client_id_by_client_id "$client_id"); then
+    return 2
+  fi
+  if [[ -z $client_uuid ]]; then
+    warn "client $client_id does not exist in realm $TARGET_REALM; skipped client scope $scope_name"
+    return 0
+  fi
+  ensure_client_scope "$scope_name" "$mappers_file"
+  scope_uuid=$ENSURED_SCOPE_ID
+  # Keycloak keeps one link per client and scope, so an optional link would block the default one.
+  optional_scopes=$(kcadm get "clients/$client_uuid/optional-client-scopes" \
+    -r "$TARGET_REALM" \
+    --fields id,name \
+    --format csv \
+    --noquotes)
+  if grep -Eq "^$scope_uuid," <<<"$optional_scopes"; then
+    kcadm delete "clients/$client_uuid/optional-client-scopes/$scope_uuid" \
+      -r "$TARGET_REALM" >/dev/null
+    log "client $client_id: detached optional scope $scope_name (it must be a default scope)"
+  fi
+  ensure_default_client_scope "$client_uuid" "$scope_uuid" "$scope_name"
+}
+
 # The keycloak-mailer service-account client (K5) is provisioned by the operator with
 # create-mailer-client.sh because assigning its SkyMail roles needs user permissions the
 # reconciler identity deliberately lacks. Here the client is verified only: a missing client
@@ -915,6 +955,10 @@ ensure_client_scope "$CORE_SCOPE_NAME" \
   "$CONFIG_DIR/account-center-core-claims-mappers.json"
 core_scope_uuid=$ENSURED_SCOPE_ID
 reconcile_skyapp_audience
+reconcile_login_client_audience "$FRONTEND_MAIN_CLIENT_ID" "$FRONTEND_MAIN_SCOPE_NAME" \
+  "$CONFIG_DIR/frontend-main-core-audience-mappers.json"
+reconcile_login_client_audience "$SKYFORMS_CLIENT_ID" "$SKYFORMS_SCOPE_NAME" \
+  "$CONFIG_DIR/skyforms-forms-audience-mappers.json"
 reconcile_account_center_client_scopes "$scope_uuid" "$core_scope_uuid"
 reconcile_account_scope_mappings
 verify_mailer_client

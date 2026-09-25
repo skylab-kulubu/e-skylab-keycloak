@@ -198,6 +198,22 @@
           "temporary": false
         }
       ]
+    },
+    {
+      "id": "55555555-5555-4555-8555-555555555555",
+      "username": "audience-fixture",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Audience",
+      "lastName": "Fixture",
+      "email": "audience-fixture@example.invalid",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "audience-fixture-password-change-me",
+          "temporary": false
+        }
+      ]
     }
   ]
 }

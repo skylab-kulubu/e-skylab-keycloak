@@ -37,9 +37,12 @@ import java.util.regex.Pattern;
 public final class IdentityResource {
 
     static final String SCHOOL_EMAIL_ATTRIBUTE = "schoolEmail";
-    static final String PERSONAL_EMAIL_ATTRIBUTE = "personalEmail";
-    /** ISO-8601 UTC moment the person proved the current {@code personalEmail}; only this SPI writes it. */
-    static final String PERSONAL_EMAIL_VERIFIED_AT_ATTRIBUTE = "personalEmailVerifiedAt";
+    static final String PERSONAL_EMAIL_ATTRIBUTE = PersonalEmailProof.ADDRESS_ATTRIBUTE;
+    /**
+     * ISO-8601 UTC moment the person proved the current {@code personalEmail}; only
+     * {@link PersonalEmailProof} shapes it (this SPI's confirm, and once the A1c adoption).
+     */
+    static final String PERSONAL_EMAIL_VERIFIED_AT_ATTRIBUTE = PersonalEmailProof.VERIFIED_AT_ATTRIBUTE;
     static final String USERNAME_CHANGED_AT_ATTRIBUTE = "usernameChangedAt";
     static final long USERNAME_COOLDOWN_SECONDS = 14L * 24 * 60 * 60;
     static final int MAX_NAME_LENGTH = 64;

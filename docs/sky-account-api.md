@@ -619,8 +619,26 @@ değiştirmek `email` alanını yazmak demektir, bu yüzden token'lar, core ve S
 bir sonraki token'da yeni adresi kendiliğinden görür.
 
 Doğrulanmışlık kaydı: onay anında bu uzantı `personalEmailVerifiedAt` özniteliğine
-ISO-8601 UTC damgayı yazar; `personalEmail` silindiğinde damga da silinir. Yalnız
-damgalı adres birincil olabilir (`GET identity` alanı `personalEmailVerified`).
+ISO-8601 UTC damgayı (tam saniye, ör. `2026-09-21T14:13:20Z`) yazar; `personalEmail`
+silindiğinde damga da silinir. Yalnız damgalı adres birincil olabilir (`GET identity`
+alanı `personalEmailVerified`). Kaydı tek bir yer biçimlendirir:
+`com.skylab.account.PersonalEmailProof` (adres kırpılıp `Locale.ROOT` ile küçük harfe
+çevrilir, ardından damga).
+
+Kişisel e-posta iki yoldan doğar:
+
+1. **Kodla** (`email/change-request` → `email/confirm`, aşağıda). Her yeni adresin yolu
+   budur.
+2. **Bir kereye mahsus devralma (A1c, 2026-09).** v2'den önce Keycloak `email`'i okul
+   adresi olmayan ve hiç `personalEmail`'i olmayan hesaplarda (eski birincil) Keycloak
+   adresi kayıt sırasında link ile doğrulamışsa (`emailVerified=true`), operatör
+   `config/adopt-legacy-personal-email.sh` ile adresi kişisel e-posta olarak yazar.
+   Betik aynı `PersonalEmailProof` kodunu çağırır, yani `email/confirm`'ün yazdığı iki
+   özniteliğin aynısını yazar; `email` ve `emailVerified`'a dokunmaz, adres birincil
+   kalır ve `primary` `personal` okunur. `yildiz.edu.tr` ya da alt alan adlarındaki
+   adresler, başka birinde (`email`, `schoolEmail`, `personalEmail`) olan adresler ve
+   iki kişiye birden düşecek adresler devralınmaz, yalnız sayılır. Doğrulanmamış eski
+   birincil olduğu gibi kalır; kişi onu `my./email`'de kodla kanıtlar (aşağıda). Runbook §10.
 
 #### `POST email/change-request` — sudo gerekir
 
@@ -629,8 +647,11 @@ isteğe bağlı, varsayılan `false`). Adres kırpılır ve `Locale.ROOT` ile k�
 çevrilir (Türkçe yerelin `I` → `ı` katlaması devreye girmez), Keycloak'ın kendi
 e-posta doğrulayıcısından (`EmailValidator`, realm SMTP ayarıyla birlikte) geçer.
 
-- Adres zaten kişinin kendi birincil, okul ya da kişisel adresiyse
-  `400 invalid_request` (`field: "address"`) — değiştirilecek bir şey yoktur.
+- Adres zaten kişinin kendi okul ya da kişisel adresiyse `400 invalid_request`
+  (`field: "address"`) — değiştirilecek bir şey yoktur. Keycloak `email` tek başına
+  sayılmaz: birincil adres bu ikisinden biridir, ikisi de olmayan bir birincil (v2'den
+  önce konmuş eski birincil) tam da kişinin kodla kanıtlayıp kişisel e-postası yapacağı
+  adrestir (A1c). Kişinin kendi `email`'i olduğu için tekliği de engellemez.
 - Adres başka kişideyse `409 email_taken`. Denetim üç yerde yapılır: Keycloak'ın
   kendi `getUserByEmail` araması (büyük/küçük harf duyarsız; realm
   `duplicateEmailsAllowed=false` olduğu sürece belirleyici) ve `schoolEmail` ile
@@ -694,13 +715,17 @@ kaydı sona kadar depoda bırakmak, iki paralel onayın ikisinin de onu görmesi
 olurdu. Ardından:
 
 - `personalEmail` ve `personalEmailVerifiedAt` yazılır;
-- `makePrimary` istendiyse, kişinin henüz hiç `email` alanı yoksa, **ya da** yeni adres
-  birincil olan kişisel adresin yerini alıyorsa Keycloak `email` bu adres olur ve `emailVerified=true` yazılır (olay `UPDATE_EMAIL`,
-  `previous_email`/`updated_email`). İkinci durum kişinin yerine bir seçim yapmaz:
+- `makePrimary` istendiyse, kişinin henüz hiç `email` alanı yoksa, yeni adres
+  birincil olan kişisel adresin yerini alıyorsa, **ya da** kanıtlanan adres zaten
+  birincilse (eski birincil, A1c) Keycloak `email` bu adres olur ve `emailVerified=true` yazılır (olay `UPDATE_EMAIL`,
+  `previous_email`/`updated_email`; adres zaten doğrulanmış birincilse hiçbir şey
+  yazılmaz). İkinci durum kişinin yerine bir seçim yapmaz:
   `email`'i boş bir hesabın giriş yapabileceği ve posta alabileceği başka bir adres
   yoktur, az önce kanıtladığı adres tek adaydır. Üçüncüsü de bir seçim değil:
   birincil olan kişisel adresi değiştiren kişinin `email`'i aksi halde artık sahip
-  olmadığı bir adreste kalırdı ve `primary` `none` okunurdu;
+  olmadığı bir adreste kalırdı ve `primary` `none` okunurdu. Dördüncüsü birinciyi
+  değiştirmez, yalnız Keycloak'ın hiç link ile doğrulamadığı eski birincili doğrulanmış
+  işaretler; aksi halde `primary` `personal` okunurken `emailVerified` `false` kalırdı;
 - olay `UPDATE_PROFILE` (`context=ACCOUNT`).
 
 Yanıt `200` + güncel `identity`.

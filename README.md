@@ -40,7 +40,7 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.13.1`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.13.2`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.1.0`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
@@ -122,7 +122,12 @@ Uzlaştırıcı, gizli `account-center` istemcisini şu sözleşmeyle yönetir:
   Hesap Merkezi'nin oturum sınırı ve gömülü görünümü için `sky_session_started`,
   `sky_session_expires` (SPI'daki `sky-session-lifetime-mapper`) ve `sky_embed`
   (yalnız Web handoff oturumunda `"skyapp"`) claim'lerini üretir; ayrıntı
-  [`docs/sky-handoff-api.md`](docs/sky-handoff-api.md).
+  [`docs/sky-handoff-api.md`](docs/sky-handoff-api.md). Ayrıca kişinin
+  `university` ve `department` özniteliklerini aynı adlı düz metin claim'ler
+  olarak yalnız access token'a ve introspection'a yazar (ID token ve userinfo'da
+  yok, öznitelik yoksa claim yok). core bunlarla YTÜ bağlantılı kişinin
+  üniversite, bölüm ve fakültesini yeniler (C2); ayrıntı
+  [`docs/v2-identity-reconcile-runbook.md`](docs/v2-identity-reconcile-runbook.md) §9.
 - BFF'nin en küçük `openid` isteğine uygun biçimde isteğe bağlı kapsam yoktur.
 
 Realm oturumu, giriş ayarları ve tema `config/account-center-realm.json`
@@ -184,6 +189,16 @@ bu rol core'a her istemcinin yönlendirme adreslerini ve gizli anahtarlarını
 yeniden yazma gücü verir). Entegrasyon testi kuru koşu → uygulama → yazmayan
 ikinci koşuyu ve core token'ının rolleri okuyup rol oluşturamadığını doğrular
 (runbook §8).
+
+A1c için operatör `config/adopt-legacy-personal-email.sh` ile v2'den önce
+konmuş, okul adresi olmayan ve Keycloak'ın link ile doğruladığı birincil
+adresleri bir kereye mahsus kişisel e-posta olarak devralır (aynı kuru koşu /
+`--apply` / kcadm prompt düzeni, `KEYCLOAK_LEGACY_EMAIL_ADMIN_PASSWORD` yalnız
+`SKY_HARNESS=1` ile; çıktı yalnız sayı). Kayıt `email/confirm`'ünkiyle aynıdır
+ve aynı SPI koduyla (`PersonalEmailProof`) yazılır; birincil değişmez.
+Doğrulanmamış, okul alan adındaki, başkasında olan ya da iki kişiye düşecek
+adresler yalnız sayılır. Entegrasyon testi ayrı bir realm'de kuru koşu →
+uygulama → yazmayan ikinci koşuyu doğrular (runbook §10).
 
 `account-center` realm'in etkin tarayıcı akışını kullanır; böylece
 production'a özel parola, OTP ve passkey davranışı olduğu gibi geçerlidir ve

@@ -79,6 +79,7 @@ V2_ISO_UTC='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
 V2_SWITCHED_AT_FIRST=''
 V2_ACCESS_TOKEN=''
 V2_ACCESS_PAYLOAD=''
+V2_ID_PAYLOAD=''
 v2_cleanup_run_options=()
 
 v2_client_uuid() {
@@ -116,10 +117,12 @@ v2_jwt_payload() {
 }
 
 # PAR, Keycloak's own login form and the code exchange with curl, the way the browser stage
-# below does it; leaves the access token in V2_ACCESS_TOKEN and its payload in V2_ACCESS_PAYLOAD.
+# below does it; leaves the access token in V2_ACCESS_TOKEN, its payload in V2_ACCESS_PAYLOAD
+# and the ID token payload in V2_ID_PAYLOAD. The person is account-fixture unless a fourth
+# argument names another username.
 v2_login_account_center() {
-  local label=$1 password=$2 client_secret=$3
-  local verifier challenge par request_uri_query page login_action status location code response
+  local label=$1 password=$2 client_secret=$3 username=${4:-account-fixture}
+  local verifier challenge par request_uri_query page login_action status location code response id_token
   local cookies="$TEST_STATE_DIR/v2-login-$label.cookies" headers="$TEST_STATE_DIR/v2-login-$label.headers"
   verifier="v2-$label-verifier-0123456789abcdefghijklmnopqrstuvwxyz"
   challenge=$(printf '%s' "$verifier" | openssl dgst -binary -sha256 | openssl base64 -A | tr '+/' '-_' | tr -d '=')
@@ -146,7 +149,7 @@ v2_login_account_center() {
     --dump-header "$headers" \
     --write-out '%{http_code}' \
     --cookie-jar "$cookies" --cookie "$cookies" \
-    --data-urlencode username=account-fixture \
+    --data-urlencode "username=$username" \
     --data-urlencode "password=$password" \
     --data-urlencode credentialId= \
     "$login_action")
@@ -171,6 +174,9 @@ v2_login_account_center() {
   V2_ACCESS_TOKEN=$(jq -r .access_token <<<"$response")
   [[ -n $V2_ACCESS_TOKEN && $V2_ACCESS_TOKEN != null ]] || fail "v2 login $label: no access token was issued"
   V2_ACCESS_PAYLOAD=$(v2_jwt_payload "$V2_ACCESS_TOKEN")
+  id_token=$(jq -r .id_token <<<"$response")
+  [[ -n $id_token && $id_token != null ]] || fail "v2 login $label: no ID token was issued"
+  V2_ID_PAYLOAD=$(v2_jwt_payload "$id_token")
 }
 
 v2_admin_rest_status() {
@@ -807,6 +813,65 @@ stage_v2_assert_claim_surfaces() {
     'introspection answered a client outside the token audience'
 }
 
+# core keeps a person's university, department and faculty in step with the YTÜ login from
+# any token that carries the university and department claims (C2). Account Center's own
+# access token carries them through the account-center-core-claims scope, from the user
+# attributes, as plain strings like the realm's department_ve_university_to_jwt scope: in the
+# access token and in core's introspection answer, never in the ID token or userinfo. A person
+# without the attributes gets neither claim, so core never reads an empty value as a change.
+stage_v2_assert_ytu_claims() {
+  CURRENT_STAGE='v2 university and department claims of account-center tokens'
+  local client_secret=$1
+  local university='Yıldız Teknik Üniversitesi' department='Bilgisayar Mühendisliği'
+  local stale_user user_uuid password userinfo core_uuid core_secret introspection
+  v2_login_account_center ytu-absent fixture-password-change-me "$client_secret"
+  json_assert "$V2_ACCESS_PAYLOAD" '(has("university") or has("department")) | not' \
+    'the access token of a person without YTÜ attributes carries university or department'
+
+  while IFS= read -r stale_user; do
+    [[ -n $stale_user ]] || continue
+    kcadm delete "users/$stale_user" -r "$V2_REALM" >/dev/null
+  done < <(kcadm get users -r "$V2_REALM" -c -q username=ytu-claims-fixture -q exact=true | jq -r '.[].id')
+  password=$(openssl rand -base64 24 | tr -d '\n')
+  user_uuid=$(jq -n \
+    --arg password "$password" --arg university "$university" --arg department "$department" \
+    '{username: "ytu-claims-fixture", enabled: true, emailVerified: true,
+      firstName: "Ytu", lastName: "Fixture", email: "ytu-claims-fixture@example.invalid",
+      attributes: {university: [$university], department: [$department]},
+      credentials: [{type: "password", value: $password, temporary: false}]}' \
+    | kcadm create users -r "$V2_REALM" -i -f -)
+  [[ -n $user_uuid ]] || fail 'the YTÜ claims fixture person was not created'
+  json_assert "$(kcadm get "users/$user_uuid" -r "$V2_REALM" -c)" \
+    '.attributes.university == [$university] and .attributes.department == [$department]' \
+    'the YTÜ claims fixture person does not hold the university and department attributes' \
+    --arg university "$university" --arg department "$department"
+
+  v2_login_account_center ytu-present "$password" "$client_secret" ytu-claims-fixture
+  json_assert "$V2_ACCESS_PAYLOAD" \
+    '.university == $university and .department == $department' \
+    'the account-center access token does not carry university and department as plain strings' \
+    --arg university "$university" --arg department "$department"
+  json_assert "$V2_ID_PAYLOAD" '(has("university") or has("department")) | not' \
+    'university or department leaked into the account-center ID token'
+  userinfo=$(curl --fail --silent --show-error \
+    -H "Authorization: Bearer $V2_ACCESS_TOKEN" \
+    "http://localhost:18080/realms/$V2_REALM/protocol/openid-connect/userinfo")
+  json_assert "$userinfo" '.sub == $sub and ((has("university") or has("department")) | not)' \
+    'university or department leaked into userinfo' --arg sub "$user_uuid"
+  core_uuid=$(v2_client_uuid core)
+  core_secret=$(kcadm get "clients/$core_uuid/client-secret" -r "$V2_REALM" -c | jq -r .value)
+  [[ -n $core_secret && $core_secret != null ]] || fail 'the core fixture client has no secret to introspect with'
+  introspection=$(curl --fail --silent --show-error \
+    --user "core:$core_secret" \
+    --data-urlencode "token=$V2_ACCESS_TOKEN" \
+    "http://localhost:18080/realms/$V2_REALM/protocol/openid-connect/token/introspect")
+  json_assert "$introspection" \
+    '.active == true and .university == $university and .department == $department' \
+    'introspection by the core resource server does not carry university and department' \
+    --arg university "$university" --arg department "$department"
+  kcadm delete "users/$user_uuid" -r "$V2_REALM" >/dev/null
+}
+
 # One passkey registered through Keycloak's own login page with a Chromium virtual
 # authenticator, after the relying party id switched back to the harness value.
 v2_register_passkey_after_switch() {
@@ -1213,6 +1278,26 @@ kcadm update \
 kcadm create "client-scopes/$core_scope_uuid/protocol-mappers/models" \
   -r e-skylab-test \
   -b '{"name":"email-drift","protocol":"openid-connect","protocolMapper":"oidc-usermodel-property-mapper","config":{"user.attribute":"email","claim.name":"email","id.token.claim":"true","access.token.claim":"true"}}' >/dev/null
+# The university and department mappers: one drifts into a multivalued ID token claim, the
+# other disappears; the second pass must rewrite the first and recreate the second.
+core_department_mapper_uuid=$(kcadm get \
+  "client-scopes/$core_scope_uuid/protocol-mappers/models" \
+  -r e-skylab-test -c \
+  | jq -r '.[] | select(.name == "department") | .id')
+[[ -n $core_department_mapper_uuid ]] || fail 'the first reconciliation did not create the department mapper'
+kcadm update \
+  "client-scopes/$core_scope_uuid/protocol-mappers/models/$core_department_mapper_uuid" \
+  -r e-skylab-test \
+  -s 'config.multivalued=true' \
+  -s 'config."id.token.claim"=true' >/dev/null
+core_university_mapper_uuid=$(kcadm get \
+  "client-scopes/$core_scope_uuid/protocol-mappers/models" \
+  -r e-skylab-test -c \
+  | jq -r '.[] | select(.name == "university") | .id')
+[[ -n $core_university_mapper_uuid ]] || fail 'the first reconciliation did not create the university mapper'
+kcadm delete \
+  "client-scopes/$core_scope_uuid/protocol-mappers/models/$core_university_mapper_uuid" \
+  -r e-skylab-test >/dev/null
 skyapp_client_uuid=$(kcadm get clients -r e-skylab-test -c \
   | jq -r '.[] | select(.clientId == "skyapp") | .id')
 skyapp_scope_uuid=$(kcadm get client-scopes -r e-skylab-test -c \
@@ -1392,8 +1477,19 @@ core_mappers=$(kcadm get \
   "client-scopes/$core_scope_uuid/protocol-mappers/models" \
   -r e-skylab-test -c)
 json_assert "$core_mappers" \
-  'length == 4 and ([.[].name] | sort) == ["auth_time", "sky_embed", "sky_session_lifetime", "sub"]' \
+  'length == 6 and ([.[].name] | sort) == ["auth_time", "department", "sky_embed", "sky_session_lifetime", "sub", "university"]' \
   'unexpected, profile or email mappers remain in the core-claims scope'
+# The same claim shape as the realm's department_ve_university_to_jwt scope (String, single
+# value), but only in the access token and introspection: core reads them there.
+json_assert "$core_mappers" \
+  '[.[] | select((.name == "university" or .name == "department") and .protocolMapper == "oidc-usermodel-attribute-mapper" and .config["user.attribute"] == .name and .config["claim.name"] == .name and .config["jsonType.label"] == "String" and .config.multivalued == "false" and .config["access.token.claim"] == "true" and .config["introspection.token.claim"] == "true" and .config["id.token.claim"] == "false" and .config["userinfo.token.claim"] == "false")] | length == 2' \
+  'source-controlled university and department mapper contract differs'
+grep -Eq '^\[reconcile\] protocol mappers of scope [^ ]+: updated \(.*\+university' \
+  "$TEST_STATE_DIR/reconcile-second.log" \
+  || fail 'the second reconciliation did not recreate the deleted university mapper'
+grep -Eq '^\[reconcile\] protocol mappers of scope [^ ]+: updated \(.*~department' \
+  "$TEST_STATE_DIR/reconcile-second.log" \
+  || fail 'the second reconciliation did not repair the drifted department mapper'
 json_assert "$core_mappers" \
   '[.[] | select(.name == "sky_session_lifetime" and .protocolMapper == "sky-session-lifetime-mapper" and .config["id.token.claim"] == "true" and .config["access.token.claim"] == "true" and .config["introspection.token.claim"] == "true")] | length == 1' \
   'source-controlled sky_session_lifetime mapper contract differs'
@@ -1473,6 +1569,14 @@ stage_v2_assert_mailer_client
 stage_v2_mailer_drift_is_reported
 stage_v2_reconcile_noop
 stage_v2_identity_guardrails
+
+# A1c: the operator adoption of verified legacy primaries as the Personal e-mail, in a throwaway
+# realm that takes the reconciled User Profile: dry run, apply, then a run that writes nothing.
+CURRENT_STAGE='legacy personal e-mail adoption operator script'
+LEGACY_EMAIL_COMPOSE_FILE="$COMPOSE_FILE" \
+  LEGACY_EMAIL_ADMIN_CONFIG="$ADMIN_CONFIG" \
+  LEGACY_EMAIL_SOURCE_REALM="$V2_REALM" \
+  "$SCRIPT_DIR/legacy-personal-email-adoption.sh"
 
 CURRENT_STAGE='minimal openid PAR contract'
 discovery=$(curl --fail --silent --show-error \
@@ -1693,6 +1797,7 @@ json_assert "$account_profile" \
 
 stage_v2_assert_claim_surfaces "$access_token" "$id_token_payload" "$client_secret"
 stage_v2_admin_rest_is_not_reachable_with_account_center_tokens "$client_secret"
+stage_v2_assert_ytu_claims "$client_secret"
 
 CURRENT_STAGE='real Chromium login and AIA contracts'
 real_browser_config="$TEST_STATE_DIR/real-keycloak-browser.json"

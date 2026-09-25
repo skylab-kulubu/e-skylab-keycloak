@@ -225,8 +225,10 @@ Hatalar (RFC 7807, Türkçe `detail`):
 
 Uzlaştırıcı (`reconcile-account-center.sh`) iki eşleyiciyi `account-center`'ın varsayılan
 `account-center-core-claims` kapsamına ekler (`config/account-center-core-claims-mappers.json`,
-idempotent; istemcinin kendisinde başka bir şey değişmez). Üçü de ID ve access token'da ve
-introspection cevabında yer alır, userinfo'da yoktur.
+idempotent; istemcinin kendisinde başka bir şey değişmez). Aşağıdaki üç claim de ID ve access
+token'da ve introspection cevabında yer alır, userinfo'da yoktur. Aynı kapsam core için
+`university` ve `department` claim'lerini de taşır (yalnız access token ve introspection; bkz.
+[`v2-identity-reconcile-runbook.md`](v2-identity-reconcile-runbook.md) §9).
 
 | Claim | Eşleyici | Değer |
 |---|---|---|

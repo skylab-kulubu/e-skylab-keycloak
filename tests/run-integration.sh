@@ -221,6 +221,17 @@ v2_cleanup_legacy_passkeys() {
     keycloak-config "$@" 2>&1
 }
 
+# The operator-run identity guardrails, with the same harness-only password path.
+v2_identity_guardrails() {
+  "${COMPOSE[@]}" run --rm --no-deps \
+    -e KEYCLOAK_ADMIN_REALM=master \
+    -e KEYCLOAK_GUARDRAILS_ADMIN_USERNAME=admin \
+    -e KEYCLOAK_GUARDRAILS_ADMIN_PASSWORD=integration-admin-password \
+    -e SKY_HARNESS=1 \
+    --entrypoint /opt/keycloak/config/identity-guardrails.sh \
+    keycloak-config "$@" 2>&1
+}
+
 # Runs after the first reconciliation. The reconciler must not create the
 # keycloak-mailer client (it has no user permissions to assign its roles); it
 # warns with the operator command instead. The harness then runs that script:
@@ -521,6 +532,144 @@ stage_v2_mailer_drift_is_reported() {
   printf '%s\n' "$output" >"$TEST_STATE_DIR/create-mailer-apply-3.log"
   grep -Fq 'applied 1 change(s)' <<<"$output" \
     || { printf '%s\n' "$output" >&2; fail 'mailer script did not repair exactly the drifted flag'; }
+}
+
+# The operator script for what the reconciler identity may not do (no user or identity
+# provider permissions). The fixture reproduces production: core's service account holds
+# realm-management manage-clients next to the roles core needs, core has one of its four
+# certificate roles, and OBS (created here, like the sky-account contract does, so the login
+# page stays without an identity provider button) has the department mapper on INHERIT next
+# to two FORCE mappers that must not change. Dry run, apply, then a second run that writes
+# nothing; core's own token then reads its roles and role holders but cannot create a role.
+stage_v2_identity_guardrails() {
+  CURRENT_STAGE='identity guardrails operator script (core certificate roles, OBS department sync, core least privilege)'
+  local core_uuid realm_management_uuid service_user roles_before roles_after department_id output
+  local other_mappers_before other_mappers_after idp_before idp_after newest_before new_events
+  local core_secret core_token status
+  core_uuid=$(v2_client_uuid core)
+  realm_management_uuid=$(v2_client_uuid realm-management)
+  service_user=$(kcadm get "clients/$core_uuid/service-account-user" -r "$V2_REALM" -c | jq -r .id)
+  [[ -n $service_user && $service_user != null ]] || fail 'the core fixture has no service account'
+  roles_before=$(kcadm get "users/$service_user/role-mappings/clients/$realm_management_uuid" -r "$V2_REALM" -c \
+    | jq -c '[.[].name] | sort')
+  json_assert "$roles_before" '. == ["manage-clients","manage-users","query-clients","query-groups","query-users","view-clients","view-users"]' \
+    'the core service account fixture does not start with production realm-management roles'
+
+  kcadm delete identity-provider/instances/OBS -r "$V2_REALM" >/dev/null 2>&1 || true
+  kcadm create identity-provider/instances -r "$V2_REALM" \
+    -s alias=OBS -s providerId=microsoft -s enabled=true -s config.syncMode=LEGACY \
+    -s 'config.clientId=integration-client' -s 'config.clientSecret=integration-secret' >/dev/null
+  kcadm create identity-provider/instances/OBS/mappers -r "$V2_REALM" \
+    -b '{"name":"department mapper","identityProviderAlias":"OBS","identityProviderMapper":"microsoft-department-mapper","config":{"syncMode":"INHERIT"}}' >/dev/null
+  kcadm create identity-provider/instances/OBS/mappers -r "$V2_REALM" \
+    -b '{"name":"school-email-importer","identityProviderAlias":"OBS","identityProviderMapper":"microsoft-user-attribute-mapper","config":{"syncMode":"FORCE","jsonField":"mail","userAttribute":"schoolEmail"}}' >/dev/null
+  kcadm create identity-provider/instances/OBS/mappers -r "$V2_REALM" \
+    -b '{"name":"university","identityProviderAlias":"OBS","identityProviderMapper":"hardcoded-attribute-idp-mapper","config":{"syncMode":"FORCE","attribute":"university","attribute.value":"YTU"}}' >/dev/null
+  department_id=$(kcadm get identity-provider/instances/OBS/mappers -r "$V2_REALM" -c \
+    | jq -r '.[] | select(.name == "department mapper") | .id')
+  other_mappers_before=$(kcadm get identity-provider/instances/OBS/mappers -r "$V2_REALM" -c \
+    | jq -S -c '[.[] | select(.name != "department mapper")] | sort_by(.name)')
+  idp_before=$(kcadm get identity-provider/instances/OBS -r "$V2_REALM" -c | jq -S -c '.')
+
+  # Outside the harness the administrator password never travels through the environment.
+  if "${COMPOSE[@]}" run --rm --no-deps \
+    -e KEYCLOAK_ADMIN_REALM=master \
+    -e KEYCLOAK_GUARDRAILS_ADMIN_USERNAME=admin \
+    -e KEYCLOAK_GUARDRAILS_ADMIN_PASSWORD=integration-admin-password \
+    --entrypoint /opt/keycloak/config/identity-guardrails.sh \
+    keycloak-config >"$TEST_STATE_DIR/identity-guardrails-refused.log" 2>&1; then
+    cat "$TEST_STATE_DIR/identity-guardrails-refused.log" >&2
+    fail 'identity-guardrails.sh accepted an environment password without SKY_HARNESS=1'
+  fi
+  grep -Fq 'KEYCLOAK_GUARDRAILS_ADMIN_PASSWORD is accepted only by the test harness (SKY_HARNESS=1)' \
+    "$TEST_STATE_DIR/identity-guardrails-refused.log" \
+    || { cat "$TEST_STATE_DIR/identity-guardrails-refused.log" >&2; fail 'identity-guardrails.sh did not explain the refused environment password'; }
+
+  output=$(v2_identity_guardrails)
+  printf '%s\n' "$output" >"$TEST_STATE_DIR/identity-guardrails-dry-run.log"
+  local expected
+  for expected in \
+    'would create client role certificate:template:manage on core' \
+    'would create client role certificate:binding:manage on core' \
+    'would create client role certificate:revoke on core' \
+    "would set sync mode of identity provider OBS mapper 'department mapper' from INHERIT to FORCE" \
+    'would remove realm-management role manage-clients from service-account-core once the certificate roles above exist' \
+    'service-account-core keeps its other realm-management roles: ' \
+    'dry run: 5 change(s) pending'; do
+    grep -Fq -- "$expected" <<<"$output" \
+      || { printf '%s\n' "$output" >&2; fail "identity guardrails dry run did not print: $expected"; }
+  done
+  if grep -Fq 'would create client role certificate:issue' <<<"$output"; then
+    fail 'identity guardrails dry run planned an existing certificate role'
+  fi
+  [[ $(kcadm get "clients/$core_uuid/roles" -r "$V2_REALM" -c | jq '[.[] | select(.name | startswith("certificate:"))] | length') == 1 ]] \
+    || fail 'identity guardrails dry run created a role'
+  [[ $(kcadm get "identity-provider/instances/OBS/mappers/$department_id" -r "$V2_REALM" -c | jq -r .config.syncMode) == INHERIT ]] \
+    || fail 'identity guardrails dry run changed the department mapper'
+  [[ $(kcadm get "users/$service_user/role-mappings/clients/$realm_management_uuid" -r "$V2_REALM" -c | jq -c '[.[].name] | sort') == "$roles_before" ]] \
+    || fail 'identity guardrails dry run changed the core service account roles'
+
+  output=$(v2_identity_guardrails --apply)
+  printf '%s\n' "$output" >"$TEST_STATE_DIR/identity-guardrails-apply.log"
+  grep -Fq 'applied 5 change(s)' <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'identity guardrails apply did not perform the five planned changes'; }
+  json_assert "$(kcadm get "clients/$core_uuid/roles" -r "$V2_REALM" -c)" \
+    '([.[] | select(.name | startswith("certificate:")) | .name] | sort) == ["certificate:binding:manage","certificate:issue","certificate:revoke","certificate:template:manage"] and ([.[] | select(.name | startswith("certificate:")) | .description // ""] | unique) == [""]' \
+    'core does not hold exactly the four certificate roles without descriptions, the way core created them'
+  json_assert "$(kcadm get "identity-provider/instances/OBS/mappers/$department_id" -r "$V2_REALM" -c)" \
+    '.name == "department mapper" and .identityProviderMapper == "microsoft-department-mapper" and .config == {"syncMode": "FORCE"}' \
+    'the OBS department mapper is not exactly the same mapper on sync mode FORCE'
+  other_mappers_after=$(kcadm get identity-provider/instances/OBS/mappers -r "$V2_REALM" -c \
+    | jq -S -c '[.[] | select(.name != "department mapper")] | sort_by(.name)')
+  [[ $other_mappers_after == "$other_mappers_before" ]] || fail 'identity guardrails changed another OBS mapper'
+  idp_after=$(kcadm get identity-provider/instances/OBS -r "$V2_REALM" -c | jq -S -c '.')
+  [[ $idp_after == "$idp_before" ]] || fail 'identity guardrails changed the OBS identity provider itself'
+  roles_after=$(kcadm get "users/$service_user/role-mappings/clients/$realm_management_uuid" -r "$V2_REALM" -c \
+    | jq -c '[.[].name] | sort')
+  json_assert "$roles_after" '. == ["manage-users","query-clients","query-groups","query-users","view-clients","view-users"]' \
+    'the core service account did not lose exactly manage-clients (it must keep view-clients and query-clients)'
+  json_assert "$(kcadm get "users/$service_user/role-mappings/clients/$realm_management_uuid/composite" -r "$V2_REALM" -c)" \
+    '([.[].name] | index("manage-clients")) == null' \
+    'the core service account still holds manage-clients effectively'
+
+  # core's own token: what core does at startup and for certificates still works, a client
+  # write does not.
+  kcadm create "clients/$core_uuid/client-secret" -r "$V2_REALM" >/dev/null 2>&1
+  core_secret=$(kcadm get "clients/$core_uuid/client-secret" -r "$V2_REALM" -c | jq -r .value)
+  core_token=$(curl --fail --silent --show-error \
+    --user "core:$core_secret" \
+    -d grant_type=client_credentials \
+    "http://localhost:18080/realms/$V2_REALM/protocol/openid-connect/token" | jq -r .access_token)
+  [[ -n $core_token && $core_token != null ]] || fail 'core client credentials grant failed'
+  for expected in "clients?clientId=core" "clients/$core_uuid/roles" \
+    "clients/$core_uuid/roles/certificate:issue/users" "clients/$core_uuid/roles/certificate:issue/groups"; do
+    status=$(v2_admin_rest_status "$core_token" "$expected")
+    [[ $status == 200 ]] || fail "core lost read access to $expected (HTTP $status)"
+  done
+  status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    -X POST -H "Authorization: Bearer $core_token" -H 'Content-Type: application/json' \
+    -d '{"name":"certificate:probe"}' \
+    "http://localhost:18080/admin/realms/$V2_REALM/clients/$core_uuid/roles")
+  [[ $status == 403 ]] || fail "core can still create client roles without manage-clients (HTTP $status)"
+
+  newest_before=$(kcadm get admin-events -r "$V2_REALM" -q max=1 -c | jq -r '.[0].time // 0')
+  output=$(v2_identity_guardrails)
+  grep -Fq 'dry run: 0 change(s) pending' <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'identity guardrails are not idempotent after apply'; }
+  output=$(v2_identity_guardrails --apply)
+  printf '%s\n' "$output" >"$TEST_STATE_DIR/identity-guardrails-noop.log"
+  grep -Fq 'applied 0 change(s)' <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'a second identity guardrails apply changed something'; }
+  new_events=$(kcadm get admin-events -r "$V2_REALM" -q max=200 -c \
+    | jq --argjson since "$newest_before" '[.[] | select(.time > $since)] | length')
+  [[ $new_events == 0 ]] || fail "a no-op identity guardrails run produced $new_events admin event(s)"
+
+  kcadm delete identity-provider/instances/OBS -r "$V2_REALM" >/dev/null
+  output=$(v2_identity_guardrails)
+  grep -Fq 'identity provider OBS does not exist in realm e-skylab-test; department mapper sync mode skipped' <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'identity guardrails did not report the missing OBS identity provider'; }
+  grep -Fq 'dry run: 0 change(s) pending' <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'identity guardrails planned a change without the OBS identity provider'; }
 }
 
 # A further reconciliation of an already reconciled realm must write nothing:
@@ -1323,6 +1472,7 @@ stage_v2_assert_account_api_scope
 stage_v2_assert_mailer_client
 stage_v2_mailer_drift_is_reported
 stage_v2_reconcile_noop
+stage_v2_identity_guardrails
 
 CURRENT_STAGE='minimal openid PAR contract'
 discovery=$(curl --fail --silent --show-error \

@@ -397,10 +397,14 @@ expect_admin_problem() {
   json_assert "$ADMIN_BODY" '(.detail | length) > 0' "$3 (a Turkish detail is required)"
 }
 
-# client_without_handoff <client uuid>: the client representation minus the three handoff attributes
+# client_without_handoff <client uuid>: the client representation minus the three handoff attributes.
+# Keycloak lists the client's scope names from a hash map, so their order can change once the
+# cached client is reloaded (skyforms carries skyforms-forms-audience next to basic); compare
+# them as sets.
 client_without_handoff() {
   kcadm get "clients/$1" -r "$REALM" -c \
-    | jq -S -c 'del(.attributes["sky.handoff.enabled"], .attributes["sky.handoff.signInPath"], .attributes["sky.handoff.returnParam"])'
+    | jq -S -c 'del(.attributes["sky.handoff.enabled"], .attributes["sky.handoff.signInPath"], .attributes["sky.handoff.returnParam"])
+      | (.defaultClientScopes, .optionalClientScopes) |= (if type == "array" then sort else . end)'
 }
 
 # ---------------------------------------------------------------------------------------------

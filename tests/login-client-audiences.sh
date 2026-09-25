@@ -213,8 +213,9 @@ lca_state_snapshot() {
   local client_id scope_name client_uuid scope_uuid
   for client_id in skyforms frontend-main; do
     client_uuid=$(lca_client_uuid "$client_id")
-    kcadm get "clients/$client_uuid/default-client-scopes" -r "$V2_REALM" -c
-    kcadm get "clients/$client_uuid/optional-client-scopes" -r "$V2_REALM" -c
+    # Keycloak lists a client's scopes in hash-map order; compare them as sets.
+    kcadm get "clients/$client_uuid/default-client-scopes" -r "$V2_REALM" -c | jq -c 'sort_by(.id)'
+    kcadm get "clients/$client_uuid/optional-client-scopes" -r "$V2_REALM" -c | jq -c 'sort_by(.id)'
   done
   for scope_name in "$LCA_SKYFORMS_SCOPE" "$LCA_FRONTEND_MAIN_SCOPE"; do
     scope_uuid=$(lca_scope_uuids "$scope_name")

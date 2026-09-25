@@ -122,7 +122,12 @@ Uzlaştırıcı, gizli `account-center` istemcisini şu sözleşmeyle yönetir:
   Hesap Merkezi'nin oturum sınırı ve gömülü görünümü için `sky_session_started`,
   `sky_session_expires` (SPI'daki `sky-session-lifetime-mapper`) ve `sky_embed`
   (yalnız Web handoff oturumunda `"skyapp"`) claim'lerini üretir; ayrıntı
-  [`docs/sky-handoff-api.md`](docs/sky-handoff-api.md).
+  [`docs/sky-handoff-api.md`](docs/sky-handoff-api.md). Ayrıca kişinin
+  `university` ve `department` özniteliklerini aynı adlı düz metin claim'ler
+  olarak yalnız access token'a ve introspection'a yazar (ID token ve userinfo'da
+  yok, öznitelik yoksa claim yok). core bunlarla YTÜ bağlantılı kişinin
+  üniversite, bölüm ve fakültesini yeniler (C2); ayrıntı
+  [`docs/v2-identity-reconcile-runbook.md`](docs/v2-identity-reconcile-runbook.md) §9.
 - BFF'nin en küçük `openid` isteğine uygun biçimde isteğe bağlı kapsam yoktur.
 
 Realm oturumu, giriş ayarları ve tema `config/account-center-realm.json`

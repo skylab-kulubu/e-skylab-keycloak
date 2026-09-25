@@ -2,7 +2,8 @@
 
 Bu runbook `config/reconcile-account-center.sh` içindeki v2 kimlik adımlarının
 (passkey relying party id, realm giriş ve brute-force ayarları, User Profile,
-`account-center-account-api` kapsamı, `keycloak-mailer` istemcisi) üretime
+`account-center-account-api` ve `account-center-core-claims` kapsamları,
+`keycloak-mailer` istemcisi) üretime
 alınma sırasını, ön kontrolleri, duyuru metnini ve geçiş sonrası eski passkey
 temizliğini tanımlar. `docs/keycloak-26.7.4-upgrade-runbook.md` içindeki yedek,
 klon provası ve geri dönüş adımları geçerliliğini korur; burada yalnız bu
@@ -22,6 +23,7 @@ entegrasyon testi bunu doğrular.
 | Şifresiz passkey politikası (`account-center-passkey-policy.json` + ortam) | `webAuthnPolicyPasswordlessRpId=yildizskylab.com`, `webAuthnPolicyPasswordlessExtraOrigins=["https://my.yildizskylab.com"]`; entity name `SKY LAB`, ES256/RS256, resident key ve kullanıcı doğrulaması zorunlu, passkeys açık, conditional mediation; diğer alanlar Keycloak varsayılanları. Relying party id gerçekten değişiyorsa politika yazılmadan önce realm özniteliği `skylab.passkeyRpIdSwitchedAt=<ISO-8601 UTC>` kaydedilir (öznitelik haritası canlı halinin üstüne birleştirilir, başka öznitelik silinmez) ve `[reconcile] passkey relying party id switches from '…' to '…'` satırı basılır; §5'teki temizlik bu anı cutover alır. İki faktörlü (`webAuthnPolicy*`) politika yönetilmez. `attributes` taşımayan realm PUT'ları CIBA/PAR sürelerini Keycloak varsayılanına sıfırlar (önceden de böyleydi). |
 | User Profile (`account-center-user-profile.json`) | Canlı yapı korunur (gruplar, açıklamalar, mesaj anahtarları, ek öznitelikler); `firstName`, `lastName`, `email` kişi için salt okunur (`edit=[admin]`, `view=[admin,user]`); `username` izinleri olduğu gibi; `schoolEmail`, `personalEmail`, `skyNumber`, `department`, `university`, `skyMail`, `usernameChangedAt` `view=[admin,user]`, `edit=[admin]`; e-posta özniteliklerinde `email`, `usernameChangedAt` için ISO-8601 UTC `pattern` doğrulayıcısı; eksik Türkçe görünen adlar eklenir, mevcutlar korunur; `unmanagedAttributePolicy=ADMIN_VIEW` (asla `ENABLED`) |
 | `account-center-account-api` kapsamı | `account-api-audience` (`account`), `account-api-core-audience` (`core`), `account-api-manage-account`, `account-api-view-profile`, `account-api-manage-account-links` (sabit roller), `account-api-roles` (`resource_access.account.roles`), `account-api-sky-authorization` (SPI mapper'ı `sky-authorization-mapper`: `sky_authorization.<istemci>.roles`, yalnız access token ve introspection; ID token/userinfo'da yok; `realm-management`, `broker`, `account`, `account-console`, `security-admin-console`, `admin-cli`, `*-realm` hariç; sıralı; 64 istemci / 256 rol sınırı; rol yoksa claim yok). Audience-resolve mapper yoktur; `aud` tam olarak `["account","core"]` kalır. |
+| `account-center-core-claims` kapsamı (`account-center-core-claims-mappers.json`) | `sub`, `auth_time`, `sky_session_lifetime` (`sky_session_started`/`sky_session_expires`), `sky_embed` (ayrıntı `docs/sky-handoff-api.md`) ve C2'den beri `university`, `department` (`oidc-usermodel-attribute-mapper`, aynı adlı kullanıcı özniteliğinden, `jsonType.label=String`, `multivalued=false`: realm'in `department_ve_university_to_jwt` kapsamıyla aynı biçim, düz metin; yalnız access token ve introspection; ID token/userinfo'da yok; öznitelik yoksa claim yok). core bu iki claim'i taşıyan her token'da kişinin üniversite, bölüm ve fakültesini yeniler ve `ytu_linked` yapar (§9). Kapsamdaki diğer mapper'lar silinir. |
 | `account-center` istemcisi | v1 sözleşmesi, `fullScopeAllowed=false` **kalır**: Keycloak Admin REST `AdminAuth.hasAppRole = user.hasRole && client.hasScope` ile yetkilendirir ve tam kapsam açıkken `client.hasScope` her rol için doğrudur; `realm-management` rolü olan bir kişinin `my.` token'ı Admin REST'te geçerli olurdu. `sky_authorization` bu yüzden kapsamdan bağımsız SPI mapper'ından gelir ve token'ın yetkisini genişletmez (harness: `view-users` sahibinin `account-center` token'ı ile `GET /admin/realms/{realm}/users` → 403; tam kapsamla 200 alırdı). Token'daki `resource_access` yalnız `account` rollerini içerir, `core` rolü taşımaz (test edilir). `account` istemci rolü scope mapping izin listesi: `manage-account`, `view-profile`, `manage-account-links` (AIA `idp_link` `client.hasScope` denetimi için). |
 | `keycloak-mailer` istemcisi (K5) | Uzlaştırıcı **yalnız doğrular**: istemci yoksa uyarı ve çalıştırılacak komut; bayraklar (gizli, yalnız service account, standard flow / direct grant / implicit kapalı, `fullScopeAllowed=false`, `roles` varsayılan kapsamı) yanlışsa koşu hata ile durur; service account rolleri uzlaştırıcı kimliğiyle okunamadığından (kullanıcı yetkisi yok) uyarı olarak raporlanır. İstemciyi ve rolleri operatör `config/create-mailer-client.sh` ile oluşturur (§6). Gizli anahtarı Keycloak üretir, hiçbir betik yazdırmaz. |
 | Kimlik korumaları: core sertifika rolleri, OBS `department mapper`, core'un `manage-clients` rolü | Uzlaştırıcı **dokunmaz**: kimliğinin kullanıcı ve kimlik sağlayıcısı yetkisi yoktur. Operatör `config/identity-guardrails.sh` ile uygular (§8). |
@@ -426,3 +428,90 @@ edilir). core'un istemci kimliği `--core-client` ya da
 Geri dönüş: `department mapper` Admin Console'dan `INHERIT`'e alınır
 (bölüm yalnız boşsa doldurulur). `manage-clients` geri verilmez; core'un
 yeni sürümü ona ihtiyaç duymaz. Oluşturulan roller zararsızdır ve kalır.
+
+## 9. Hesap Merkezi token'ında YTÜ üniversite ve bölüm claim'leri (C2)
+
+Üniversite ve bölüm YTÜ Microsoft girişini izler. OBS `department mapper`
+her girişte bölümü yeniler (§8); core, `university` ve `department`
+claim'lerini taşıyan her token'da kişinin üniversite, bölüm ve fakültesini
+yeniler ve `ytu_linked` yapar. Diğer istemciler bu claim'leri realm'in
+`department_ve_university_to_jwt` kapsamından alır. `account-center`'ın
+varsayılan kapsamları ise bilerek yalnız `account-center-account-api` ve
+`account-center-core-claims`'tir (`fullScopeAllowed=false`, en az claim).
+Bu yüzden yalnız `my.yildizskylab.com` kullanan bir kişi core'daki kaydını
+hiç yenilemiyordu.
+
+Uzlaştırıcı artık `account-center-core-claims` kapsamına iki mapper ekler
+(`config/account-center-core-claims-mappers.json`): `university` ve
+`department`. İkisi de `oidc-usermodel-attribute-mapper`'dır ve aynı adlı
+kullanıcı özniteliğini aynı adlı claim'e yazar.
+
+- **Biçim:** `jsonType.label=String`, `multivalued=false`. Bu, realm'deki
+  `department_ve_university_to_jwt` kapsamıyla aynıdır (2026-09-21
+  gerçekleri): claim düz bir metindir. core hem metni hem diziyi okur.
+- **Yüzeyler:** yalnız access token ve introspection cevabı. core kişiyi
+  Hesap Merkezi'nin access token'ından okur. ID token ve userinfo'da yoktur:
+  Hesap Merkezi bu alanları token'dan değil core'un `ytuLinked` görünümünden
+  okur, oturumunda sakladığı ID token da küçük kalır. Kapsamdaki diğer
+  mapper'lar da introspection'a yazar.
+- **Öznitelik yoksa claim yoktur.** core boş bir değeri değişiklik diye
+  okumaz ve YTÜ bağlantısı olmayan kişiyi bağlı saymaz.
+- `department_ve_university_to_jwt` kapsamının kendisi `account-center`'a
+  eklenmez. Uzlaştırıcı varsayılan kapsamları tam bir küme olarak uygular;
+  o kapsamın ID token ve userinfo ayarları uzlaştırıcının dışında elle
+  değişebilir.
+
+Uzlaştırıcı mapper'ları ada göre eşler. Eksik olanı oluşturur, farklı olanı
+yeniden yazar, kapsamda listede olmayan mapper'ı siler. Değişmeyen koşu
+hiçbir şey yazmaz. Entegrasyon testi şunları kanıtlar:
+
+- mapper sözleşmesini;
+- silinen `university` mapper'ının yeniden oluşturulmasını ve çok değerli ID
+  token claim'ine kaymış `department` mapper'ının onarılmasını;
+- boş koşunun hiçbir admin olayı üretmemesini;
+- öznitelikleri olan bir kişinin `account-center` access token'ında ve core'un
+  introspection cevabında iki düz metin claim'i, ID token ve userinfo'da
+  hiçbirini;
+- özniteliği olmayan kişinin token'ında hiçbir claim olmamasını.
+
+### Üretim sırası
+
+1. Bu mapper'ları taşıyan Keycloak sürümü yayımlanır. `main` tek squash
+   commit'le `production`'a alınır, `keycloak-production` ortamındaki Touch ID
+   onay değişkenleri o commit'e bağlanır, release iş akışı imajı yayımlar ve
+   Dokploy'u tetikler. `/health/ready` yeşil olmalıdır. Uzlaştırıcı imajın
+   içindedir; imaj değişmeden `reconcile-account-center.sh` eski mapper
+   listesini uygular.
+2. Sunucuda (`api.yildizskylab.com`) uzlaştırıcı, Hesap Merkezi sürüm
+   sihirbazlarındaki gibi çalışan üretim Keycloak konteynerinin içinde bir kez
+   koşar. Kapsamlı uzlaştırıcı istemcisinin gizli anahtarı yalnız stdin'den
+   geçer, ekrana basılmaz:
+
+   ```bash
+   kc=$(docker ps -q -f name=sky-lab-production-keycloak | head -n 1)
+   sudo cat <config-client.secret dosyası> | docker exec -i "$kc" sh -eu -c '
+     IFS= read -r KEYCLOAK_CONFIG_CLIENT_SECRET; export KEYCLOAK_CONFIG_CLIENT_SECRET
+     export KEYCLOAK_ADMIN_URL=http://127.0.0.1:8080 KEYCLOAK_REALM=e-skylab
+     export ACCOUNT_CENTER_BASE_URL=https://my.yildizskylab.com ACCOUNT_CENTER_REQUIRE_PRODUCTION_HOST=true
+     export KEYCLOAK_PASSKEY_RP_ID=yildizskylab.com KEYCLOAK_PASSKEY_EXTRA_ORIGINS=https://my.yildizskylab.com
+     exec /opt/keycloak/config/reconcile-account-center.sh'
+   ```
+
+   Beklenen tek değişiklik satırı
+   `[reconcile] protocol mappers of scope <id>: updated (+university +department)`.
+   Diğer satırlar `unchanged`, `asserted` ya da `verified` olmalıdır;
+   `keycloak-mailer` rol uyarısı beklenir.
+3. Aynı komutu ikinci kez çalıştırın. Hiçbir `[reconcile]` satırı `updated`
+   dememelidir.
+4. Admin Console → Clients → `account-center` → Client scopes → Evaluate'te
+   YTÜ bağlantılı bir kişi seçin. Generated access token `university` ve
+   `department`'ı düz metin olarak taşımalıdır; Generated ID token ve
+   Generated user info taşımamalıdır. YTÜ bağlantısı olmayan bir kişinin
+   token'ında ikisi de olmamalıdır. Ardından o YTÜ bağlantılı kişi yalnız
+   `my.yildizskylab.com`'a girdiğinde core'daki kaydında `ytu_linked=true`
+   olur, üniversite/bölüm/fakülte güncellenir.
+
+Geri dönüş: bir önceki imaj yeniden dağıtılır ve uzlaştırıcı yeniden
+çalıştırılır. Eski mapper listesi `university` ve `department`'ı kapsamdan
+siler. core'daki kayıtlar kalır; kişi başka bir istemciyle girdiğinde yine
+yenilenir.

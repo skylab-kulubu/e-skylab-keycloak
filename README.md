@@ -200,6 +200,19 @@ Doğrulanmamış, okul alan adındaki, başkasında olan ya da iki kişiye düş
 adresler yalnız sayılır. Entegrasyon testi ayrı bir realm'de kuru koşu →
 uygulama → yazmayan ikinci koşuyu doğrular (runbook §10).
 
+Hesap silmede (ADR-0051) core, SkyMail, CMS ve Forms'a ayrı bir gizli service
+account istemcisinden, `core-erasure`'dan aldığı token'larla gider. Operatör
+istemciyi, üç isteğe bağlı `account-erase-*` kapsamını ve üç erase rolünü
+(`skymail:account:erase`, `cms:account:erase`, `skyforms:account:erase`)
+imajdaki idempotent `config/create-erasure-client.sh` ile kurar (aynı kuru koşu /
+`--apply` / kcadm prompt düzeni, `KEYCLOAK_ERASURE_ADMIN_PASSWORD` yalnız
+`SKY_HARNESS=1` ile). İstemcide `fullScopeAllowed=false` ve doğrudan scope
+mapping yoktur; bir rol token'a yalnız onu eşleyen kapsam istendiğinde girer,
+böylece bir servise giden token başka bir servisin erase rolünü taşımaz.
+Varsayılan kapsamlar `basic` (`sub`) ve `roles`'tür. Uzlaştırıcı istemciyi yalnız
+doğrular. Secret'ı OpenBao'ya ve core'un ortamına sky_lab_genel'deki
+`ops/wizards/core-erasure-client-wizard.sh` taşır (runbook §11).
+
 `account-center` realm'in etkin tarayıcı akışını kullanır; böylece
 production'a özel parola, OTP ve passkey davranışı olduğu gibi geçerlidir ve
 uzlaştırıcı o akışa hiç yazmaz. Native handoff döneminden kalan kurulumda
@@ -494,7 +507,8 @@ Doğrulama sırası şu şekildedir:
    olay yayını sözleşmeleri gerçek servislerle sınanır; v2 kimlik adımları
    (passkey RP ID, brute force, parola politikası, User Profile, token
    `aud`/`sky_authorization`, Admin REST'in `account-center` token'ını
-   reddetmesi, `keycloak-mailer`, sapma onarımı, değişiklik üretmeyen üçüncü
+   reddetmesi, `keycloak-mailer`, `core-erasure` (erase kapsamı başına tek rol ve
+   `aud`, core token'larının değişmemesi), sapma onarımı, değişiklik üretmeyen üçüncü
    koşu, relying party id geçişi etrafında passkey temizliği kuru koşusu ve
    `--apply` uygulaması) aynı koşuda doğrulanır.
 5. Commit'e bağlı fiziksel WebAuthn kanıtı doğrulanır.

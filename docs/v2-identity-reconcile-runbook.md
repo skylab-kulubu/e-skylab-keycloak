@@ -3,7 +3,7 @@
 Bu runbook `config/reconcile-account-center.sh` içindeki v2 kimlik adımlarının
 (passkey relying party id, realm giriş ve brute-force ayarları, User Profile,
 `account-center-account-api` ve `account-center-core-claims` kapsamları,
-`keycloak-mailer` istemcisi) üretime
+`keycloak-mailer` ve `core-erasure` istemcileri) üretime
 alınma sırasını, ön kontrolleri, duyuru metnini ve geçiş sonrası eski passkey
 temizliğini tanımlar. `docs/keycloak-26.7.4-upgrade-runbook.md` içindeki yedek,
 klon provası ve geri dönüş adımları geçerliliğini korur; burada yalnız bu
@@ -26,6 +26,7 @@ entegrasyon testi bunu doğrular.
 | `account-center-core-claims` kapsamı (`account-center-core-claims-mappers.json`) | `sub`, `auth_time`, `sky_session_lifetime` (`sky_session_started`/`sky_session_expires`), `sky_embed` (ayrıntı `docs/sky-handoff-api.md`) ve C2'den beri `university`, `department` (`oidc-usermodel-attribute-mapper`, aynı adlı kullanıcı özniteliğinden, `jsonType.label=String`, `multivalued=false`: realm'in `department_ve_university_to_jwt` kapsamıyla aynı biçim, düz metin; yalnız access token ve introspection; ID token/userinfo'da yok; öznitelik yoksa claim yok). core bu iki claim'i taşıyan her token'da kişinin üniversite, bölüm ve fakültesini yeniler ve `ytu_linked` yapar (§9). Kapsamdaki diğer mapper'lar silinir. |
 | `account-center` istemcisi | v1 sözleşmesi, `fullScopeAllowed=false` **kalır**: Keycloak Admin REST `AdminAuth.hasAppRole = user.hasRole && client.hasScope` ile yetkilendirir ve tam kapsam açıkken `client.hasScope` her rol için doğrudur; `realm-management` rolü olan bir kişinin `my.` token'ı Admin REST'te geçerli olurdu. `sky_authorization` bu yüzden kapsamdan bağımsız SPI mapper'ından gelir ve token'ın yetkisini genişletmez (harness: `view-users` sahibinin `account-center` token'ı ile `GET /admin/realms/{realm}/users` → 403; tam kapsamla 200 alırdı). Token'daki `resource_access` yalnız `account` rollerini içerir, `core` rolü taşımaz (test edilir). `account` istemci rolü scope mapping izin listesi: `manage-account`, `view-profile`, `manage-account-links` (AIA `idp_link` `client.hasScope` denetimi için). |
 | `keycloak-mailer` istemcisi (K5) | Uzlaştırıcı **yalnız doğrular**: istemci yoksa uyarı ve çalıştırılacak komut; bayraklar (gizli, yalnız service account, standard flow / direct grant / implicit kapalı, `fullScopeAllowed=false`, `roles` varsayılan kapsamı) yanlışsa koşu hata ile durur; service account rolleri uzlaştırıcı kimliğiyle okunamadığından (kullanıcı yetkisi yok) uyarı olarak raporlanır. İstemciyi ve rolleri operatör `config/create-mailer-client.sh` ile oluşturur (§6). Gizli anahtarı Keycloak üretir, hiçbir betik yazdırmaz. |
+| `core-erasure` istemcisi (hesap silme, ADR-0051) | Uzlaştırıcı **yalnız doğrular** (`keycloak-mailer` gibi): istemci yoksa uyarı ve çalıştırılacak komut. Şunlardan biri sözleşmeden farklıysa koşu hata ile durur ve operatör komutunu yazar: bayraklar (gizli, yalnız service account, standard flow / direct grant / implicit kapalı, `fullScopeAllowed=false`), varsayılan kapsamlar (tam olarak `basic` ve `roles`; Keycloak'ın eklediği `service_account` hoş görülür), isteğe bağlı kapsamlar (tam olarak üç `account-erase-*`), doğrudan scope mapping (olmamalı), her erase kapsamının tek audience mapper'ı ve tek rolü, servis istemcilerinin (`skymail`, `skycms`, `forms`) varlığı. Service account rolleri uzlaştırıcı kimliğiyle okunamadığından uyarı olarak raporlanır. İstemciyi, kapsamları ve rolleri operatör `config/create-erasure-client.sh` ile kurar (§11). |
 | Kimlik korumaları: core sertifika rolleri, OBS `department mapper`, core'un `manage-clients` rolü | Uzlaştırıcı **dokunmaz**: kimliğinin kullanıcı ve kimlik sağlayıcısı yetkisi yoktur. Operatör `config/identity-guardrails.sh` ile uygular (§8). |
 
 Ortam değişkenleri: `KEYCLOAK_PASSKEY_RP_ID` (varsayılan `yildizskylab.com`) ve
@@ -605,3 +606,128 @@ Geri dönüş: devralma yalnız iki öznitelik ekler; bir kişi için geri almak
 gerekirse Admin Console'da `personalEmail` ve `personalEmailVerifiedAt`
 silinir (`email` zaten değişmemiştir). Toplu geri dönüş §1.3'teki veritabanı
 yedeğidir.
+
+## 11. Hesap silme: `core-erasure` istemcisi ve servislerin erase rolleri (ADR-0051)
+
+core bir hesabı silerken SkyMail, CMS ve Forms'a birer silme komutu gönderir
+(ADR-0051; komut sözleşmesi core-backend `docs/account-erasure-command.md`). Her
+komutun token'ı ayrı bir Keycloak istemcisinden, `core-erasure`'dan gelir. Kural:
+bir servise giden token başka bir servisin erase rolünü taşımaz. Taşısaydı token'ı
+alan servis onu öbür servise gönderip silme yaptırabilirdi. core'un kendi istemcisi
+(`core`) bu iş için kullanılmaz: onda `fullScopeAllowed` açıktır ve kapatmak core'un
+bugünkü token'larını (SkyMail gönderimi, Admin REST) etkiler.
+
+Sözleşme `config/erasure-client-contract.sh`'tadır; operatör betiği ve uzlaştırıcı
+aynı dosyayı okur.
+
+| Parça | Durum |
+| --- | --- |
+| `core-erasure` istemcisi | Gizli (`client-secret`), yalnız service account (standard flow, implicit ve direct grant kapalı), `fullScopeAllowed=false`, doğrudan scope mapping yok, `redirectUris` ve `webOrigins` boş |
+| Varsayılan kapsamlar | Tam olarak `basic` ve `roles`. `basic` `sub`'ı verir: servislerin hesap erişim kapısı çağıranın kendi `sub`'ını okur, `sub`'sız token 401 alır (cms-backend #13). `roles` `resource_access`'i verir. Keycloak 26 `service_account` kapsamını her service account istemcisine ekler ve istemcinin her güncellemesinde (Admin Console'da kaydetme, rotatorun secret yazması) yeniden ekler; bu yüzden hoş görülür. Yalnız `client_id`, `clientHost` ve `clientAddress` verir. |
+| İsteğe bağlı kapsamlar | Tam olarak `account-erase-skymail`, `account-erase-cms`, `account-erase-forms` |
+| Her erase kapsamı | `openid-connect`. Tek mapper: `<kapsam>-audience` (`oidc-audience-mapper`, `included.client.audience=<servis istemcisi>`, access token ve introspection'da; ID token ve userinfo'da yok). Tek rol scope mapping'i: o servisin erase rolü. |
+| Erase rolleri | `skymail` üzerinde `skymail:account:erase`, `skycms` üzerinde `cms:account:erase`, `forms` üzerinde `skyforms:account:erase`. Yalnız `service-account-core-erasure` taşır. |
+
+Token isteği `grant_type=client_credentials`, `scope=openid account-erase-<servis>`
+biçimindedir. Örneğin `account-erase-cms` token'ında `azp=core-erasure`,
+`aud=["skycms"]`, `resource_access={"skycms":{"roles":["cms:account:erase"]}}` ve
+`sub` (service account'un kimliği) vardır; öbür iki rol ve `realm_access` yoktur.
+Erase kapsamı istenmeyen token hiçbir erase rolü taşımaz. Service account üç rolü de
+taşır, ama `fullScopeAllowed=false` olduğundan bir rol token'a yalnız onu eşleyen
+kapsam istendiğinde girer. core istemcisi bir erase kapsamı isteyemez
+(`invalid_scope`).
+
+`config/create-erasure-client.sh` imajın içindedir ve §8'deki betiklerin
+düzenindedir: varsayılanı kuru koşudur, `--apply` yazar, ikinci koşu hiçbir şey
+yazmaz ve hiçbir admin olayı üretmez; yönetici parolası kcadm'ın kendi prompt'una
+yazılır (`KEYCLOAK_ERASURE_ADMIN_PASSWORD` yalnız `SKY_HARNESS=1` ile kabul edilir).
+Sırası:
+
+1. `skymail`, `skycms` ve `forms` istemcileri ile `basic` ve `roles` kapsamları var
+   olmalıdır. Biri yoksa betik hiçbir şey yazmadan durur ve eksikleri adıyla yazar;
+   servis istemcilerini servisler kurar.
+2. Eksik erase rollerini oluşturur.
+3. Erase kapsamlarını oluşturur ya da onarır: fazla ya da sapmış mapper'ı siler,
+   audience mapper'ı ekler; kapsamdaki realm rollerini ve öbür servislerin rollerini
+   kaldırır, kendi rolünü eşler.
+4. İstemciyi oluşturur ya da bayraklarını düzeltir. Secret'ı Keycloak üretir; hiçbir
+   betik basmaz.
+5. Varsayılan ve isteğe bağlı kapsam listelerini tam olarak sözleşmeye getirir (bir
+   kapsam listeler arasında önce ayrılır, sonra eklenir).
+6. İstemcinin doğrudan scope mapping'lerini kaldırır.
+7. Service account'a tam olarak üç erase rolünü verir; bu üç istemcideki başka
+   rollerini kaldırır.
+8. Bir erase rolünü service account'tan başka biri (kişi ya da grup) taşıyorsa bunu
+   yazar ve sıfır dışı çıkar. O atamayı silmez; elle kaldırılır.
+
+Uzlaştırıcı `core-erasure`'ı yalnız doğrular (§0; K2'deki `keycloak-mailer` ile aynı
+gerekçe: service account'a rol atamak kullanıcı yetkisi ister). Başarılı doğrulama
+`[reconcile] client core-erasure: verified (...)` ve her kapsam için
+`[reconcile] erase scope <kapsam>: verified (aud ..., role ...)` satırlarıdır.
+
+### Secret'ın core'a ulaşması
+
+Secret hiçbir insanın elinden geçmez (ADR-0049). sky_lab_genel'deki
+`ops/wizards/core-erasure-client-wizard.sh` sunucuda root olarak koşar ve her taraf
+için, önce sandbox (`e-skylab-sandbox`), sonra production (`e-skylab`):
+
+1. `create-erasure-client.sh`'ı çalışan Keycloak konteynerinde koşar: kuru koşu,
+   onay, `--apply`.
+2. Secret'ı Keycloak admin API'sinden belleğe okur (iki realm'deki `secret-rotator`
+   istemcisiyle, o yoksa master yöneticisiyle) ve
+   `kv/<taraf>/<core appName>/ACCOUNT_ERASURE_CLIENT_SECRET`'a yazar. Ardından üç
+   erase kapsamının her biriyle ve kapsamsız birer token ister; yukarıdaki claim'leri
+   denetler.
+3. core'un Dokploy ortamına iki satır ekler, öbür satırlara dokunmaz ve deploy
+   etmez: `ACCOUNT_ERASURE_CLIENT_ID=core-erasure` ve
+   `ACCOUNT_ERASURE_CLIENT_SECRET=${{vault.bao-<taraf>.<core appName>/ACCOUNT_ERASURE_CLIENT_SECRET:value}}`.
+   Referansın Dokploy'un kendi fetch'iyle çözüldüğünü ve değerin Keycloak'takiyle
+   aynı olduğunu dener.
+4. Rotator kuruluysa kuru çalışmasında `istemci core-erasure: eşleşti` satırını
+   arar; sızıntı taraması yapar (OpenBao logları ve audit, Dokploy ortamları,
+   operatör çıktısı).
+
+Gece rotasyonu (`ops/wizards/openbao/rotate.sh`, ADR-0050)
+`ACCOUNT_ERASURE_CLIENT_SECRET`'ı eşi `ACCOUNT_ERASURE_CLIENT_ID` ile tanır. core'un
+iki Keycloak kalemi (`core` ve `core-erasure`) aynı birimde döner ve core bir kez
+deploy edilir. core secret'ın kopyasını tutmaz; her token isteğinde ortamdan yeniden
+okur.
+
+### Üretim sırası
+
+1. Bu betiği taşıyan Keycloak sürümü yayımlanır (production dalı, Dokploy yeniden
+   dağıtımı; `/health/ready` yeşil). Uzlaştırıcı o andan itibaren
+   `WARNING: client core-erasure does not exist; run: ...` yazar; bu sürümü
+   engellemez.
+2. `skymail`, `skycms` ve `forms` istemcilerinin iki realm'de de var olduğu
+   doğrulanır. Betik eksik olanı adıyla yazar ve durur.
+3. Sunucuda (`api.yildizskylab.com`) wizard koşulur; nasıl kopyalanacağı başında
+   yazar: `sudo bash ~/openbao-setup/core-erasure-client-wizard.sh`. Geçici bir
+   master yöneticisi gerekir; parolası yalnız kcadm'ın prompt'una yazılır. Betiği
+   elle koşmak gerekirse (secret'ın taşınması yine wizard'ındır):
+
+   ```bash
+   kc=$(docker ps -q -f name=sky-lab-production-keycloak | head -n 1)
+   docker exec -it -e KEYCLOAK_ADMIN_URL=http://127.0.0.1:8080 -e KEYCLOAK_REALM=e-skylab-sandbox "$kc" \
+     /opt/keycloak/config/create-erasure-client.sh --admin-user <geçici-yönetici>
+   docker exec -it -e KEYCLOAK_ADMIN_URL=http://127.0.0.1:8080 -e KEYCLOAK_REALM=e-skylab-sandbox "$kc" \
+     /opt/keycloak/config/create-erasure-client.sh --admin-user <geçici-yönetici> --apply
+   # sonra aynısı KEYCLOAK_REALM=e-skylab ile
+   ```
+
+   Hiç kurulmamış bir realm'de kuru koşuda beklenen: üçer `would create client
+   role`, `would create optional client scope`, `would add audience mapper`,
+   `would map role` ve `would assign role` satırı, bir `would create confidential
+   service-account client core-erasure` satırı ve `dry run: 16 change(s) pending`.
+   Uygulamadan sonra kuru koşu `dry run: 0 change(s) pending` demelidir.
+4. Uzlaştırıcı bir kez daha koşar; `client core-erasure: verified` ve üç
+   `erase scope ...: verified` satırı beklenir.
+5. Geçici yönetici kaldırılır. core değişkenleri bir sonraki deploy'unda alır;
+   `ACCOUNT_ERASURE_WORKER_ENABLED=false` iken okumaz bile.
+
+Geri dönüş: istemci, kapsamlar ve roller başka hiçbir istemcinin token'ını
+değiştirmez (entegrasyon testi core'un SkyMail gönderim token'ının ve Admin REST
+erişiminin aynı kaldığını doğrular). Gerekirse Admin Console'dan `core-erasure`
+istemcisi, üç `account-erase-*` kapsamı ve üç erase rolü silinir; core'un
+ortamındaki iki satır ve OpenBao'daki yol kaldırılır. Uzlaştırıcı istemci yokken
+yalnız uyarır.

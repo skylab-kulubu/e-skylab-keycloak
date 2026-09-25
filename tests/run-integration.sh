@@ -191,12 +191,13 @@ v2_reconcile_log_must_be_quiet() {
   local log_file=$1
   grep -Fq 'Account Center Keycloak configuration is reconciled.' "$log_file" \
     || fail 'reconciliation did not report completion'
-  # The reconciler identity has no user permissions, so the keycloak-mailer service-account
-  # roles are never readable from a reconcile run; that warning is the expected steady state.
+  # The reconciler identity has no user permissions, so the service-account roles of
+  # keycloak-mailer and core-erasure are never readable from a reconcile run; those warnings
+  # are the expected steady state.
   if grep -E '^\[reconcile\] ' "$log_file" \
-    | grep -Ev 'unchanged|asserted|verified|WARNING: service-account roles of keycloak-mailer are not readable' >/dev/null; then
+    | grep -Ev 'unchanged|asserted|verified|WARNING: service-account roles of (keycloak-mailer|core-erasure) are not readable' >/dev/null; then
     grep -E '^\[reconcile\] ' "$log_file" \
-      | grep -Ev 'unchanged|asserted|verified|WARNING: service-account roles of keycloak-mailer are not readable' >&2 || true
+      | grep -Ev 'unchanged|asserted|verified|WARNING: service-account roles of (keycloak-mailer|core-erasure) are not readable' >&2 || true
     fail 'a no-op reconciliation reported a change'
   fi
 }
@@ -1567,6 +1568,16 @@ stage_v2_assert_user_profile
 stage_v2_assert_account_api_scope
 stage_v2_assert_mailer_client
 stage_v2_mailer_drift_is_reported
+
+# Account erasure (ADR-0051, ticket 03): the operator script builds the core-erasure client, its
+# erase scopes and roles; the reconciler verifies them. It runs before the no-op reconciliation so
+# that run proves the verification writes nothing.
+CURRENT_STAGE='core-erasure client operator script and reconciler verification'
+ERASURE_COMPOSE_FILE="$COMPOSE_FILE" \
+  ERASURE_ADMIN_CONFIG="$ADMIN_CONFIG" \
+  ERASURE_REALM="$V2_REALM" \
+  "$SCRIPT_DIR/core-erasure-client.sh"
+
 stage_v2_reconcile_noop
 stage_v2_identity_guardrails
 

@@ -24,6 +24,7 @@ entegrasyon testi bunu doğrular.
 | User Profile (`account-center-user-profile.json`) | Canlı yapı korunur (gruplar, açıklamalar, mesaj anahtarları, ek öznitelikler); `firstName`, `lastName`, `email` kişi için salt okunur (`edit=[admin]`, `view=[admin,user]`); `username` izinleri olduğu gibi; `schoolEmail`, `personalEmail`, `skyNumber`, `department`, `university`, `skyMail`, `usernameChangedAt` `view=[admin,user]`, `edit=[admin]`; e-posta özniteliklerinde `email`, `usernameChangedAt` için ISO-8601 UTC `pattern` doğrulayıcısı; eksik Türkçe görünen adlar eklenir, mevcutlar korunur; `unmanagedAttributePolicy=ADMIN_VIEW` (asla `ENABLED`) |
 | `account-center-account-api` kapsamı | `account-api-audience` (`account`), `account-api-core-audience` (`core`), `account-api-manage-account`, `account-api-view-profile`, `account-api-manage-account-links` (sabit roller), `account-api-roles` (`resource_access.account.roles`), `account-api-sky-authorization` (SPI mapper'ı `sky-authorization-mapper`: `sky_authorization.<istemci>.roles`, yalnız access token ve introspection; ID token/userinfo'da yok; `realm-management`, `broker`, `account`, `account-console`, `security-admin-console`, `admin-cli`, `*-realm` hariç; sıralı; 64 istemci / 256 rol sınırı; rol yoksa claim yok). Audience-resolve mapper yoktur; `aud` tam olarak `["account","core"]` kalır. |
 | `account-center-core-claims` kapsamı (`account-center-core-claims-mappers.json`) | `sub`, `auth_time`, `sky_session_lifetime` (`sky_session_started`/`sky_session_expires`), `sky_embed` (ayrıntı `docs/sky-handoff-api.md`) ve C2'den beri `university`, `department` (`oidc-usermodel-attribute-mapper`, aynı adlı kullanıcı özniteliğinden, `jsonType.label=String`, `multivalued=false`: realm'in `department_ve_university_to_jwt` kapsamıyla aynı biçim, düz metin; yalnız access token ve introspection; ID token/userinfo'da yok; öznitelik yoksa claim yok). core bu iki claim'i taşıyan her token'da kişinin üniversite, bölüm ve fakültesini yeniler ve `ytu_linked` yapar (§9). Kapsamdaki diğer mapper'lar silinir. |
+| `frontend-main-core-audience` ve `skyforms-forms-audience` kapsamları | `frontend-main` ve `skyforms` giriş istemcilerinin varsayılan kapsamları; access token'ın `aud`'una `core` ve `forms` ekler. Üretimde elle kuruldular, uzlaştırıcı adlarıyla devralır. İstemci realm'de yoksa uyarı yazılır ve o kalem atlanır (§0.1). |
 | `account-center` istemcisi | v1 sözleşmesi, `fullScopeAllowed=false` **kalır**: Keycloak Admin REST `AdminAuth.hasAppRole = user.hasRole && client.hasScope` ile yetkilendirir ve tam kapsam açıkken `client.hasScope` her rol için doğrudur; `realm-management` rolü olan bir kişinin `my.` token'ı Admin REST'te geçerli olurdu. `sky_authorization` bu yüzden kapsamdan bağımsız SPI mapper'ından gelir ve token'ın yetkisini genişletmez (harness: `view-users` sahibinin `account-center` token'ı ile `GET /admin/realms/{realm}/users` → 403; tam kapsamla 200 alırdı). Token'daki `resource_access` yalnız `account` rollerini içerir, `core` rolü taşımaz (test edilir). `account` istemci rolü scope mapping izin listesi: `manage-account`, `view-profile`, `manage-account-links` (AIA `idp_link` `client.hasScope` denetimi için). |
 | `keycloak-mailer` istemcisi (K5) | Uzlaştırıcı **yalnız doğrular**: istemci yoksa uyarı ve çalıştırılacak komut; bayraklar (gizli, yalnız service account, standard flow / direct grant / implicit kapalı, `fullScopeAllowed=false`, `roles` varsayılan kapsamı) yanlışsa koşu hata ile durur; service account rolleri uzlaştırıcı kimliğiyle okunamadığından (kullanıcı yetkisi yok) uyarı olarak raporlanır. İstemciyi ve rolleri operatör `config/create-mailer-client.sh` ile oluşturur (§6). Gizli anahtarı Keycloak üretir, hiçbir betik yazdırmaz. |
 | `core-erasure` istemcisi (hesap silme, ADR-0051) | Uzlaştırıcı **yalnız doğrular** (`keycloak-mailer` gibi): istemci yoksa uyarı ve çalıştırılacak komut. Şunlardan biri sözleşmeden farklıysa koşu hata ile durur ve operatör komutunu yazar: bayraklar (gizli, yalnız service account, standard flow / direct grant / implicit kapalı, `fullScopeAllowed=false`), varsayılan kapsamlar (tam olarak `basic` ve `roles`; Keycloak'ın eklediği `service_account` hoş görülür), isteğe bağlı kapsamlar (tam olarak üç `account-erase-*`), doğrudan scope mapping (olmamalı), her erase kapsamının tek audience mapper'ı ve tek rolü, servis istemcilerinin (`skymail`, `skycms`, `forms`) varlığı. Service account rolleri uzlaştırıcı kimliğiyle okunamadığından uyarı olarak raporlanır. İstemciyi, kapsamları ve rolleri operatör `config/create-erasure-client.sh` ile kurar (§11). |
@@ -35,6 +36,40 @@ Ortam değişkenleri: `KEYCLOAK_PASSKEY_RP_ID` (varsayılan `yildizskylab.com`) 
 `ACCOUNT_CENTER_REQUIRE_PRODUCTION_HOST=true` iken uzlaştırıcı yalnız üretim
 değerlerini kabul eder. Entegrasyon fixture'ı `localhost` +
 `http://localhost:18080` kullanır.
+
+### 0.1 Giriş istemcilerinin audience kapsamları (`frontend-main`, `skyforms`)
+
+Keycloak'ın audience-resolve mapper'ı bir API'yi `aud`'a yalnız token o API'nin
+rollerini taşıyorsa ekler. Kişilerin çoğunun API rolü yoktur; token'larında API
+bulunmaz ve API 401 döner. Bu iki giriş istemcisi API'yi kendi varsayılan kapsamıyla
+`aud`'a ekler. İki kapsam da önce üretimde (`e-skylab`) elle kuruldu.
+
+| İstemci | Kapsam / mapper | `aud`'a eklenen | Önlediği olay |
+| --- | --- | --- | --- |
+| `frontend-main` (skylab-site girişi) | `frontend-main-core-audience` / `core-audience` | `core` | core her Bearer token'da `aud` içinde `core` ister (ADR 0019). Site editörlerinin (ADMIN dahil) `core` rolü yoktur. Site, CMS görsel yüklemesinde (`/api/cms-media` → core `POST /v1/media`) editörün token'ını iletir; her yükleme 401 aldı. Elle kuruldu: 2026-09-25. |
+| `skyforms` (SkyForms girişi) | `skyforms-forms-audience` / `forms-audience` | `forms` | forms-backend `aud` içinde `forms` ister. Yöneticilerin `forms` rolü vardır, üyelerin yoktur: üyeler 401 aldı, SkyForms "Oturumunuzun süresi doldu" döngüsüne girdi. Elle kuruldu: 2026-09-21. |
+
+Uzlaştırıcı ikisini `skyapp-account-center-audience` gibi yönetir: kapsam
+`include.in.token.scope=false`, `display.on.consent.screen=false`; tek mapper
+`oidc-audience-mapper`, access token ve introspection'da açık, ID token'da kapalı
+(`config/frontend-main-core-audience-mappers.json`,
+`config/skyforms-forms-audience-mappers.json`); başka mapper silinir; kapsam istemcinin
+varsayılan kapsamıdır (isteğe bağlı listedeyse oradan alınır). Kapsam ve mapper adla
+bulunur, yeniden oluşturulmaz, yerinde onarılır. İstemci realm'de yoksa (sandbox'ta biri
+eksik olabilir) uzlaştırıcı `WARNING: client <istemci> does not exist in realm <realm>;
+skipped client scope <kapsam>` yazar, kapsamı kurmaz ve devam eder; istemci eklenince
+sonraki koşu kurar.
+
+İlk üretim koşusunda beklenen: iki `client scope ...: updated (attributes)` satırı
+(Admin Console yeni kapsamı büyük olasılıkla `include.in.token.scope=true` ile kurar;
+tek etkisi token'ın `scope` claim'inden bu iki adın düşmesidir). `created`, mapper
+`updated` ya da `default client scope ... attached` görürseniz elle kurulan durum
+beklenenden farklıymış; uzlaştırıcı düzeltmiştir, nedenini not edin. İkinci koşuda iki
+satır da `unchanged` olmalıdır. Doğrulama: Admin Console → Clients → `frontend-main`
+(ya da `skyforms`) → Client scopes → Evaluate, rolü olmayan bir kullanıcıyla: access
+token'ın `aud`'u `core` (ya da `forms`) içerir, ID token içermez. Harness
+(`tests/login-client-audiences.sh`) devralmayı, eksik istemcide atlamayı, kayma
+onarımını, rolsüz bir kişinin iki token'ını ve no-op koşuyu doğrular.
 
 ## 1. Ön koşullar
 

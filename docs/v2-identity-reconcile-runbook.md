@@ -24,6 +24,7 @@ entegrasyon testi bunu doğrular.
 | `account-center-account-api` kapsamı | `account-api-audience` (`account`), `account-api-core-audience` (`core`), `account-api-manage-account`, `account-api-view-profile`, `account-api-manage-account-links` (sabit roller), `account-api-roles` (`resource_access.account.roles`), `account-api-sky-authorization` (SPI mapper'ı `sky-authorization-mapper`: `sky_authorization.<istemci>.roles`, yalnız access token ve introspection; ID token/userinfo'da yok; `realm-management`, `broker`, `account`, `account-console`, `security-admin-console`, `admin-cli`, `*-realm` hariç; sıralı; 64 istemci / 256 rol sınırı; rol yoksa claim yok). Audience-resolve mapper yoktur; `aud` tam olarak `["account","core"]` kalır. |
 | `account-center` istemcisi | v1 sözleşmesi, `fullScopeAllowed=false` **kalır**: Keycloak Admin REST `AdminAuth.hasAppRole = user.hasRole && client.hasScope` ile yetkilendirir ve tam kapsam açıkken `client.hasScope` her rol için doğrudur; `realm-management` rolü olan bir kişinin `my.` token'ı Admin REST'te geçerli olurdu. `sky_authorization` bu yüzden kapsamdan bağımsız SPI mapper'ından gelir ve token'ın yetkisini genişletmez (harness: `view-users` sahibinin `account-center` token'ı ile `GET /admin/realms/{realm}/users` → 403; tam kapsamla 200 alırdı). Token'daki `resource_access` yalnız `account` rollerini içerir, `core` rolü taşımaz (test edilir). `account` istemci rolü scope mapping izin listesi: `manage-account`, `view-profile`, `manage-account-links` (AIA `idp_link` `client.hasScope` denetimi için). |
 | `keycloak-mailer` istemcisi (K5) | Uzlaştırıcı **yalnız doğrular**: istemci yoksa uyarı ve çalıştırılacak komut; bayraklar (gizli, yalnız service account, standard flow / direct grant / implicit kapalı, `fullScopeAllowed=false`, `roles` varsayılan kapsamı) yanlışsa koşu hata ile durur; service account rolleri uzlaştırıcı kimliğiyle okunamadığından (kullanıcı yetkisi yok) uyarı olarak raporlanır. İstemciyi ve rolleri operatör `config/create-mailer-client.sh` ile oluşturur (§6). Gizli anahtarı Keycloak üretir, hiçbir betik yazdırmaz. |
+| Kimlik korumaları: core sertifika rolleri, OBS `department mapper`, core'un `manage-clients` rolü | Uzlaştırıcı **dokunmaz**: kimliğinin kullanıcı ve kimlik sağlayıcısı yetkisi yoktur. Operatör `config/identity-guardrails.sh` ile uygular (§8). |
 
 Ortam değişkenleri: `KEYCLOAK_PASSKEY_RP_ID` (varsayılan `yildizskylab.com`) ve
 `KEYCLOAK_PASSKEY_EXTRA_ORIGINS` (virgülle ayrılmış, varsayılan
@@ -341,3 +342,87 @@ politikası, User Profile, `skylab.passkeyRpIdSwitchedAt` özniteliği ve
 kalır. Tam geri dönüş §1.3'teki veritabanı yedeğinin geri yüklenmesidir; geri
 yüklemeden sonra yeni RP ID ile kaydedilmiş passkey'ler kaybolur. `keycloak-mailer`
 istemcisi uzlaştırıcıya bağlı değildir; gerekirse Admin Console'dan silinir.
+
+## 8. Kimlik korumaları: core sertifika rolleri, OBS bölüm eşlemesi, core'un en az yetkisi
+
+`config/identity-guardrails.sh` imajın içindedir ve uzlaştırıcının yapamadığı
+üç işi bu sırayla yapar. Uzlaştırıcı kimliğinin kullanıcı yetkisi
+(`manage-users`) ve kimlik sağlayıcısı yetkisi (`manage-identity-providers`,
+okumak için bile `view-identity-providers`) yoktur; bu yüzden betik
+`create-mailer-client.sh` gibi geçici bir yöneticiyle çalışır. Varsayılanı
+kuru koşudur (planı `would ...` satırlarıyla basar, hiçbir şey yazmaz);
+`--apply` uygular; ikinci koşu hiçbir şey yazmaz ve hiçbir admin olayı
+üretmez. Yönetici parolası kcadm'ın kendi prompt'una yazılır
+(`KEYCLOAK_GUARDRAILS_ADMIN_PASSWORD` yalnız `SKY_HARNESS=1` ile kabul
+edilir). core'un istemci kimliği `--core-client` ya da
+`KEYCLOAK_CORE_CLIENT_ID` ile değişir (varsayılan `core`).
+
+1. **core'un sertifika rolleri.** `core` istemcisinde
+   `certificate:template:manage`, `certificate:binding:manage`,
+   `certificate:issue` ve `certificate:revoke` yoksa oluşturulur (core'un
+   kendisinin oluşturduğu gibi açıklamasız). Var olanlara dokunulmaz. core
+   artık bu rolleri kendisi oluşturmaz; açılışta yalnız okur ve eksik rol varsa
+   bu betiği adıyla gösteren bir uyarı basar.
+2. **OBS `department mapper` → `syncMode=FORCE`.** Kişiler bölüm
+   değiştirdiği için bölüm her YTÜ Microsoft girişinde Microsoft Graph'tan
+   yeniden okunur. SPI 1.13.1'deki `microsoft-department-mapper` `FORCE`'da
+   her girişte günceller; `LEGACY`'de (IdP'nin `LEGACY` modunu izleyen
+   `INHERIT` dahil) eskisi gibi yalnız boş bölümü doldurur. Graph'a
+   ulaşılamazsa, token yoksa ya da Graph boş dönerse kayıtlı bölüm silinmez.
+   IdP yoksa adım atlanır (`identity provider OBS does not exist ...
+   skipped`); o adla eşleme yoksa uyarı basılır. Aynı adla birden fazla eşleme
+   ya da farklı türde bir eşleme varsa hiçbir şey yazılmaz, betik sonda sıfır
+   dışı çıkar. IdP'nin kendisine ve diğer eşlemelere (`school-email-importer`,
+   `university`) dokunulmaz.
+3. **`service-account-core`'dan `manage-clients` kaldırılır**, diğer
+   `realm-management` rolleri (`view-clients`, `query-clients`,
+   `manage-users` ...) kalır. ADR-0048 core'a `manage-clients` vermeyi
+   reddetti: bu rol core'un her istemcinin yönlendirme adreslerini ve gizli
+   anahtarlarını yeniden yazabilmesi demektir. core bu rolü yalnız 1. adımdaki
+   rolleri oluşturmak için kullanıyordu (`POST /clients/{id}/roles`); rolleri,
+   rol sahiplerini ve istemcileri okumak `view-clients`/`query-clients` ile
+   çalışır. Bu adım yalnız 1. adım dört rolün de var olduğunu doğruladıktan
+   sonra çalışır. Rol bir bileşik rol (ör. `realm-admin`) ya da grup üzerinden
+   hâlâ geliyorsa betik bunu yazar ve sıfır dışı çıkar; o kaynak elle
+   kaldırılır.
+
+### Üretim sırası
+
+1. Bu betiği ve SPI 1.13.1'i taşıyan Keycloak sürümü yayımlanır (production
+   dalı, Dokploy yeniden dağıtımı; `/health/ready` yeşil).
+2. Sunucuda (`api.yildizskylab.com`), geçici bir master yöneticisiyle önce
+   kuru koşu, çıktı kontrol edildikten sonra uygulama. Üretim Keycloak'ı bir
+   Dokploy Application'ıdır; betik çalışan konteynerin içinde koşar:
+
+   ```bash
+   kc=$(docker ps -q -f name=sky-lab-production-keycloak | head -n 1)
+   docker exec -it -e KEYCLOAK_ADMIN_URL=http://127.0.0.1:8080 -e KEYCLOAK_REALM=e-skylab "$kc" \
+     /opt/keycloak/config/identity-guardrails.sh --admin-user <geçici-yönetici>
+   docker exec -it -e KEYCLOAK_ADMIN_URL=http://127.0.0.1:8080 -e KEYCLOAK_REALM=e-skylab "$kc" \
+     /opt/keycloak/config/identity-guardrails.sh --admin-user <geçici-yönetici> --apply
+   ```
+
+   Compose ile çalışan bir ortamda aynı iş:
+   `docker compose -f docker-compose.yml run --rm --no-deps -it --entrypoint
+   /opt/keycloak/config/identity-guardrails.sh keycloak-config --admin-user
+   <geçici-yönetici> [--apply]`.
+
+   Kuru koşuda beklenen: eksik sertifika rolleri için `would create client
+   role ... on core`, `would set sync mode of identity provider OBS mapper
+   'department mapper' from INHERIT to FORCE`, `would remove realm-management
+   role manage-clients from service-account-core`, kalan rollerin listesi
+   (`view-clients` ve `query-clients` içinde olmalı). Uygulamadan sonra kuru
+   koşu `dry run: 0 change(s) pending` demelidir. Üç adım tek koşuda
+   uygulanır: `manage-clients`'ın kaldırılması hâlâ eski core çalışırken de
+   güvenlidir, çünkü eski core yalnız eksik rolü oluşturmaya çalışır ve betik
+   rolü ancak dört rolün var olduğunu doğruladıktan sonra kaldırır; eski core
+   yeniden başlarsa rolleri yalnız okur. Ayrı bir ikinci koşu gerekmez.
+3. core'un salt okunur rol denetimini taşıyan sürümü yayımlanır.
+4. core'un açılış günlüğünde `certificate client roles` ile başlayan bir
+   uyarı olmamalıdır. Bir YTÜ hesabıyla giriş yapıldıktan sonra Admin Console
+   → Users → kişi → Attributes'ta `department` Graph'taki değeri gösterir.
+5. Geçici yönetici kaldırılır.
+
+Geri dönüş: `department mapper` Admin Console'dan `INHERIT`'e alınır
+(bölüm yalnız boşsa doldurulur). `manage-clients` geri verilmez; core'un
+yeni sürümü ona ihtiyaç duymaz. Oluşturulan roller zararsızdır ve kalır.

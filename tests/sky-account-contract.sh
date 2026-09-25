@@ -1022,6 +1022,39 @@ json_assert "$SKY_BODY" \
   'replacing the personal primary must move the primary to the new address'
 kcadm delete "users/$email_third_uuid" -r "$REALM" >/dev/null
 
+# A1c: a primary set before v2 that is neither the school nor a personal address (a legacy
+# primary). Its own code makes it the Personal e-mail and it stays the Primary e-mail; Keycloak,
+# which never verified it by link here, marks it verified at the same time. The stored record is
+# the one config/adopt-legacy-personal-email.sh writes for the addresses Keycloak had verified.
+email_person email-legacy email-legacy@std.yildiz.edu.tr email-legacy-primary@example.invalid
+email_legacy_uuid=$EMAIL_USER_UUID
+email_legacy_password=$EMAIL_PASSWORD
+browser_login email-4 "$email_legacy_password" '' email-legacy
+token_l=$LOGIN_ACCESS_TOKEN
+kcadm update "users/$email_legacy_uuid" -r "$REALM" -s emailVerified=false >/dev/null
+sky GET identity "$token_l" -
+json_assert "$SKY_BODY" \
+  '.email == "email-legacy-primary@example.invalid" and .emailVerified == false and .personalEmail == null and .primary == "none"' \
+  'the legacy person must start with a primary that is neither school nor personal'
+sky POST sudo/password "$token_l" - "{\"password\":\"$email_legacy_password\"}"
+expect 200 - 'the legacy e-mail person must obtain a sudo token'
+sudo_l=$(jq -r .sudoToken <<<"$SKY_BODY")
+sky POST email/change-request "$token_l" "$sudo_l" '{"address":"Email-Legacy-Primary@Example.invalid"}'
+expect 202 - 'the legacy primary itself must be accepted for its code'
+legacy_code=$(personal_code_for email-legacy-primary@example.invalid)
+sky POST email/confirm "$token_l" - "{\"code\":\"$legacy_code\"}"
+expect 200 - 'the legacy primary code must finish the change'
+json_assert "$SKY_BODY" \
+  '.personalEmail == "email-legacy-primary@example.invalid" and .personalEmailVerified == true and .primary == "personal" and .email == "email-legacy-primary@example.invalid" and .emailVerified == true' \
+  'a proven legacy primary must become the personal e-mail, stay the primary and be marked verified'
+kcadm get "users/$email_legacy_uuid" -r "$REALM" -c \
+  | jq -e --arg regex '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' \
+    '.email == "email-legacy-primary@example.invalid" and .attributes.personalEmail == [.email] and (.attributes.personalEmailVerifiedAt | length) == 1 and (.attributes.personalEmailVerifiedAt[0] | test($regex))' >/dev/null \
+  || fail 'the proven legacy primary is not stored the way the adoption script stores it'
+sky POST email/change-request "$token_l" "$sudo_l" '{"address":"email-legacy-primary@example.invalid"}'
+expect 400 invalid_request 'the proven address is now the own personal e-mail and needs no code'
+kcadm delete "users/$email_legacy_uuid" -r "$REALM" >/dev/null
+
 CURRENT_STAGE='sky-account rate limit'
 rate_limited=''
 for attempt in $(seq 1 11); do
@@ -1042,11 +1075,11 @@ CURRENT_STAGE='sky-account secrets in logs'
 keycloak_logs=$("${COMPOSE[@]}" logs --no-color keycloak 2>&1)
 for secret_value in "$totp_secret" "$sudo_a" "$sudo_totp" "$sudo_reauth" "$sudo_e" "$sudo_o" \
   "$reauth_id_token_1" "$ROTATED_PASSWORD" "$REAUTH_ROTATED_PASSWORD" "$email_password" \
-  "$email_other_password" "$setup_handle"; do
+  "$email_other_password" "$email_legacy_password" "$sudo_l" "$setup_handle"; do
   [[ $keycloak_logs != *"$secret_value"* ]] || fail 'a secret, sudo token, password or e-mail token leaked into Keycloak logs'
 done
 # Six digits turn up in any log by chance, so the codes are looked for next to what would carry them.
-for code_value in "$confirm_code" "$foreign_code" "$third_code"; do
+for code_value in "$confirm_code" "$foreign_code" "$third_code" "$legacy_code"; do
   [[ $keycloak_logs != *"code\":\"$code_value"* && $keycloak_logs != *"code=$code_value"* && $keycloak_logs != *"code: $code_value"* ]] \
     || fail 'an e-mail verification code leaked into Keycloak logs'
 done

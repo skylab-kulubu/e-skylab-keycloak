@@ -48,5 +48,37 @@
       "introspection.token.claim": "true",
       "userinfo.token.claim": "false"
     }
+  },
+  {
+    "name": "university",
+    "protocol": "openid-connect",
+    "protocolMapper": "oidc-usermodel-attribute-mapper",
+    "consentRequired": false,
+    "config": {
+      "user.attribute": "university",
+      "claim.name": "university",
+      "jsonType.label": "String",
+      "multivalued": "false",
+      "id.token.claim": "false",
+      "access.token.claim": "true",
+      "introspection.token.claim": "true",
+      "userinfo.token.claim": "false"
+    }
+  },
+  {
+    "name": "department",
+    "protocol": "openid-connect",
+    "protocolMapper": "oidc-usermodel-attribute-mapper",
+    "consentRequired": false,
+    "config": {
+      "user.attribute": "department",
+      "claim.name": "department",
+      "jsonType.label": "String",
+      "multivalued": "false",
+      "id.token.claim": "false",
+      "access.token.claim": "true",
+      "introspection.token.claim": "true",
+      "userinfo.token.claim": "false"
+    }
   }
 ]

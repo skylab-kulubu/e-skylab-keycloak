@@ -160,10 +160,8 @@ public final class EmailResource {
                     .event(EventType.UPDATE_PROFILE)
                     .detail(Details.CONTEXT, PROFILE_CONTEXT);
             String previousPersonal = normaliseAttribute(user, IdentityResource.PERSONAL_EMAIL_ATTRIBUTE);
-            user.setSingleAttribute(IdentityResource.PERSONAL_EMAIL_ATTRIBUTE, address);
-            user.setSingleAttribute(IdentityResource.PERSONAL_EMAIL_VERIFIED_AT_ATTRIBUTE,
-                    AccountRequest.isoSeconds(Time.currentTime()));
-            if (confirmedBecomesPrimary(outcome.change().makePrimary(), previousPersonal, user.getEmail())) {
+            PersonalEmailProof.attributes(address, Time.currentTime()).forEach(user::setSingleAttribute);
+            if (confirmedBecomesPrimary(outcome.change().makePrimary(), previousPersonal, user.getEmail(), address)) {
                 applyPrimary(caller, user, address);
             }
             event.success();
@@ -196,14 +194,18 @@ public final class EmailResource {
 
     /**
      * Whether a just-proven personal address becomes the Primary e-mail: when the person asked for
-     * it, when there is no primary at all, or when it replaces the personal address that was the
-     * primary. Without the last case Keycloak email would keep an address the person no longer
-     * has, and the identity would report the primary as "none".
+     * it, when there is no primary at all, when it replaces the personal address that was the
+     * primary, or when it already is the primary (a legacy primary from before v2, proven now:
+     * A1c). Without the third case Keycloak email would keep an address the person no longer
+     * has, and the identity would report the primary as "none"; without the last one a legacy
+     * primary Keycloak never verified would read "personal" while {@code emailVerified} stays false.
      */
-    static boolean confirmedBecomesPrimary(boolean makePrimary, String previousPersonal, String currentEmail) {
+    static boolean confirmedBecomesPrimary(boolean makePrimary, String previousPersonal, String currentEmail,
+                                           String address) {
         return makePrimary
                 || isBlank(currentEmail)
-                || (previousPersonal != null && previousPersonal.equalsIgnoreCase(currentEmail));
+                || (previousPersonal != null && previousPersonal.equalsIgnoreCase(currentEmail))
+                || address.equalsIgnoreCase(currentEmail);
     }
 
     /** Chooses which of the two proven addresses Keycloak, the tokens, core and SkyMail see. */
@@ -382,10 +384,14 @@ public final class EmailResource {
         }
     }
 
-    /** Whether the address is already one of this person's own addresses. */
+    /**
+     * Whether the address is already the person's School or Personal e-mail, so there is nothing
+     * to prove. Keycloak {@code email} alone does not count: the primary is one of these two, and
+     * a primary that is neither (set before v2) is exactly what a person proves with a code to make
+     * it their Personal e-mail (A1c). It stays the primary ({@link #confirmedBecomesPrimary}).
+     */
     static boolean isOwnAddress(UserModel user, String address) {
-        return address.equalsIgnoreCase(user.getEmail())
-                || address.equalsIgnoreCase(user.getFirstAttribute(IdentityResource.SCHOOL_EMAIL_ATTRIBUTE))
+        return address.equalsIgnoreCase(user.getFirstAttribute(IdentityResource.SCHOOL_EMAIL_ATTRIBUTE))
                 || address.equalsIgnoreCase(user.getFirstAttribute(IdentityResource.PERSONAL_EMAIL_ATTRIBUTE));
     }
 
@@ -398,7 +404,7 @@ public final class EmailResource {
 
     /** Trims and lowercases with {@link Locale#ROOT}, so a Turkish locale cannot fold {@code I} to {@code ı}. */
     static String normalise(String raw) {
-        return raw.trim().toLowerCase(Locale.ROOT);
+        return PersonalEmailProof.normalise(raw);
     }
 
     private static String normaliseAttribute(UserModel user, String attribute) {

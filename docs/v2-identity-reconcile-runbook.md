@@ -515,3 +515,88 @@ Geri dönüş: bir önceki imaj yeniden dağıtılır ve uzlaştırıcı yeniden
 çalıştırılır. Eski mapper listesi `university` ve `department`'ı kapsamdan
 siler. core'daki kayıtlar kalır; kişi başka bir istemciyle girdiğinde yine
 yenilenir.
+
+## 10. Eski birincil adresin kişisel e-posta olarak devralınması (A1c)
+
+v2'den önce konmuş bir Keycloak `email`'i okul adresi değilse ve kişinin hiç
+`personalEmail`'i yoksa (**eski birincil**) `my./email` sayfası "henüz kişisel
+e-posta eklemedin" derken hemen altında o adresi birincil olarak gösteriyordu.
+Üretimde (2026-09-25, salt okunur sayım) 48 kişi böyle: 44 gmail.com, 1 hotmail,
+3 başka alan adı, hiçbiri okul alan adında değil; 45'inde `emailVerified=true`
+(Keycloak'ın kayıttaki doğrulama linki), 47'si OBS'ye bağlı, 1'inin okul adresi
+yok. Karar (Yusuf): link ile doğrulanmış olanlar doğrudan kişisel e-posta olarak
+devralınır; doğrulanmamış olanlar mevcut K3c kod akışıyla kanıtlar (Hesap
+Merkezi o adres için "kodla doğrula" sunar).
+
+`config/adopt-legacy-personal-email.sh` imajın içindedir ve §8'deki betiklerin
+düzenindedir: varsayılanı kuru koşudur (yalnız sayılar, hiçbir şey yazmaz),
+`--apply` yazar, ikinci koşu hiçbir şey yazmaz ve hiçbir admin olayı üretmez.
+Yönetici parolası kcadm'ın kendi prompt'una yazılır
+(`KEYCLOAK_LEGACY_EMAIL_ADMIN_PASSWORD` yalnız `SKY_HARNESS=1` ile kabul edilir).
+**Çıktı yalnız sayıdır**: hiçbir adres, kullanıcı adı ya da kimlik basılmaz; adres
+ve kimlikler yalnız konteynerin içindeki özel geçici dizinde durur ve çıkışta
+silinir.
+
+Seçilen kişi: service account değil; `email` dolu; `emailVerified=true`;
+`email` okul adresine (`schoolEmail`, büyük/küçük harf duyarsız) eşit değil;
+`personalEmail` yok; adres `yildiz.edu.tr` ya da herhangi bir alt alan adında
+(`std.yildiz.edu.tr` dahil) değil. Böyle bir kişiye sky-account'un
+`email/confirm`'ünün yazdığının aynısı yazılır, üstelik aynı Java koduyla
+(`com.skylab.account.PersonalEmailProof`, imajdaki SPI jar'ından çağrılır):
+
+- `personalEmail` = adres, kırpılmış ve `Locale.ROOT` ile küçük harf;
+- `personalEmailVerifiedAt` = yazma anı, ISO-8601 UTC, tam saniye
+  (ör. `2026-09-25T10:15:30Z`).
+
+`email` ve `emailVerified`'a dokunulmaz: adres birincil kalır, `GET identity`
+`primary: "personal"` ve `personalEmailVerified: true` okur. Hesabın diğer
+alanları ve öznitelikleri olduğu gibi geri yazılır (yazmadan hemen önce hesap
+yeniden okunur; o arada değişmişse atlanır ve `changedSinceScan` sayılır).
+
+Devralınmayan, yalnız sayılanlar:
+
+- `unverified`: Keycloak'ın doğrulamadığı eski birincil. Kişi `my./email`'de
+  "kodla doğrula" ile kanıtlar; kod doğrulanınca adres kişisel e-posta olur,
+  birincil kalır ve Keycloak onu doğrulanmış işaretler.
+- `schoolDomain`: okul alan adındaki adres; okul adresi kişisel e-posta olamaz.
+- `taken`: adres başka bir kişide (`email`, `schoolEmail` ya da `personalEmail`,
+  büyük/küçük harf duyarsız).
+- `duplicate`: aynı adres iki kişinin kişisel e-postası olacaktı; ikisi de
+  atlanır. (`duplicateEmailsAllowed=false` olan realm'de pratikte oluşmaz.)
+
+`taken` ve `duplicate` elle karar ister; betik bunları yazar ama sıfır dışı
+çıkmaz. Yazma hatası olursa ya da uygulamadan sonraki yeniden taramada hâlâ
+devralınacak kişi kalırsa betik sıfır dışı çıkar; `--apply` yeniden
+çalıştırılabilir, devralınmış hesaplar yeniden yazılmaz.
+
+### Üretim sırası
+
+1. Bu betiği ve SPI 1.13.2'yi taşıyan Keycloak sürümü yayımlanır (production
+   dalı, Dokploy yeniden dağıtımı; `/health/ready` yeşil). 1.13.2 aynı zamanda
+   `email/change-request`'in eski birincili kabul etmesini getirir.
+2. Sunucuda (`api.yildizskylab.com`), §8'deki gibi geçici bir master
+   yöneticisiyle önce kuru koşu, sayılar kontrol edildikten sonra uygulama:
+
+   ```bash
+   kc=$(docker ps -q -f name=sky-lab-production-keycloak | head -n 1)
+   docker exec -it -e KEYCLOAK_ADMIN_URL=http://127.0.0.1:8080 -e KEYCLOAK_REALM=e-skylab "$kc" \
+     /opt/keycloak/config/adopt-legacy-personal-email.sh --admin-user <geçici-yönetici>
+   docker exec -it -e KEYCLOAK_ADMIN_URL=http://127.0.0.1:8080 -e KEYCLOAK_REALM=e-skylab "$kc" \
+     /opt/keycloak/config/adopt-legacy-personal-email.sh --admin-user <geçici-yönetici> --apply
+   ```
+
+   Kuru koşuda beklenen (2026-09-25 sayımına göre): `legacyPrimaries=48`,
+   `adopt=45 unverified=3 schoolDomain=0`, `duplicate=0 taken=0` ve
+   `dry run: 45 adoption(s) pending`. Sayılar o günden bu yana değişmiş
+   olabilir; `taken` ya da `duplicate` sıfırdan büyükse önce onlara bakılır.
+   Uygulamada beklenen: `applied 45 adoption(s); failed=0 changedSinceScan=0`
+   ve `after: legacy primaries still to adopt=0`. Ardından kuru koşu
+   `dry run: 0 adoption(s) pending` demelidir.
+3. Hesap Merkezi'nin eski birincil için "kodla doğrula"yı sunan sürümü
+   yayımlanır (doğrulanmamış 3 kişi için).
+4. Geçici yönetici kaldırılır.
+
+Geri dönüş: devralma yalnız iki öznitelik ekler; bir kişi için geri almak
+gerekirse Admin Console'da `personalEmail` ve `personalEmailVerifiedAt`
+silinir (`email` zaten değişmemiştir). Toplu geri dönüş §1.3'teki veritabanı
+yedeğidir.

@@ -40,7 +40,7 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.13.1`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.13.2`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.1.0`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
@@ -189,6 +189,16 @@ bu rol core'a her istemcinin yönlendirme adreslerini ve gizli anahtarlarını
 yeniden yazma gücü verir). Entegrasyon testi kuru koşu → uygulama → yazmayan
 ikinci koşuyu ve core token'ının rolleri okuyup rol oluşturamadığını doğrular
 (runbook §8).
+
+A1c için operatör `config/adopt-legacy-personal-email.sh` ile v2'den önce
+konmuş, okul adresi olmayan ve Keycloak'ın link ile doğruladığı birincil
+adresleri bir kereye mahsus kişisel e-posta olarak devralır (aynı kuru koşu /
+`--apply` / kcadm prompt düzeni, `KEYCLOAK_LEGACY_EMAIL_ADMIN_PASSWORD` yalnız
+`SKY_HARNESS=1` ile; çıktı yalnız sayı). Kayıt `email/confirm`'ünkiyle aynıdır
+ve aynı SPI koduyla (`PersonalEmailProof`) yazılır; birincil değişmez.
+Doğrulanmamış, okul alan adındaki, başkasında olan ya da iki kişiye düşecek
+adresler yalnız sayılır. Entegrasyon testi ayrı bir realm'de kuru koşu →
+uygulama → yazmayan ikinci koşuyu doğrular (runbook §10).
 
 `account-center` realm'in etkin tarayıcı akışını kullanır; böylece
 production'a özel parola, OTP ve passkey davranışı olduğu gibi geçerlidir ve

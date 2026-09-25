@@ -1570,6 +1570,14 @@ stage_v2_mailer_drift_is_reported
 stage_v2_reconcile_noop
 stage_v2_identity_guardrails
 
+# A1c: the operator adoption of verified legacy primaries as the Personal e-mail, in a throwaway
+# realm that takes the reconciled User Profile: dry run, apply, then a run that writes nothing.
+CURRENT_STAGE='legacy personal e-mail adoption operator script'
+LEGACY_EMAIL_COMPOSE_FILE="$COMPOSE_FILE" \
+  LEGACY_EMAIL_ADMIN_CONFIG="$ADMIN_CONFIG" \
+  LEGACY_EMAIL_SOURCE_REALM="$V2_REALM" \
+  "$SCRIPT_DIR/legacy-personal-email-adoption.sh"
+
 CURRENT_STAGE='minimal openid PAR contract'
 discovery=$(curl --fail --silent --show-error \
   http://localhost:18080/realms/e-skylab-test/.well-known/openid-configuration)

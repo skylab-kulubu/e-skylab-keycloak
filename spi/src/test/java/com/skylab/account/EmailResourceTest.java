@@ -49,9 +49,21 @@ class EmailResourceTest {
         when(user.getFirstAttribute(IdentityResource.SCHOOL_EMAIL_ATTRIBUTE)).thenReturn("Ada@std.yildiz.edu.tr");
         when(user.getFirstAttribute(IdentityResource.PERSONAL_EMAIL_ATTRIBUTE)).thenReturn("ada@example.com");
 
-        assertTrue(EmailResource.isOwnAddress(user, "ada@std.yildiz.edu.tr"), "the primary is already theirs");
+        assertTrue(EmailResource.isOwnAddress(user, "ada@std.yildiz.edu.tr"), "the school primary is already theirs");
         assertTrue(EmailResource.isOwnAddress(user, "ada@example.com"), "the personal address is already theirs");
         assertFalse(EmailResource.isOwnAddress(user, "ada.lovelace@example.com"));
+    }
+
+    // A1c: a primary set before v2 is neither the school nor the personal address; proving it with
+    // a code is how it becomes the Personal e-mail, so asking for its code is not a no-op.
+    @Test
+    void aLegacyPrimaryIsNotYetAnAddressThePersonOwnsAsPersonal() {
+        UserModel user = mock(UserModel.class);
+        when(user.getEmail()).thenReturn("ada@gmail.com");
+        when(user.getFirstAttribute(IdentityResource.SCHOOL_EMAIL_ATTRIBUTE)).thenReturn("ada@std.yildiz.edu.tr");
+
+        assertFalse(EmailResource.isOwnAddress(user, "Ada@Gmail.com"));
+        assertTrue(EmailResource.isOwnAddress(user, "ada@std.yildiz.edu.tr"));
     }
 
     @Test
@@ -78,18 +90,25 @@ class EmailResourceTest {
 
     @Test
     void aConfirmedAddressBecomesPrimaryWhenAskedOrWhenThereIsNoPrimaryYet() {
-        assertTrue(EmailResource.confirmedBecomesPrimary(true, null, "ada@std.yildiz.edu.tr"));
-        assertTrue(EmailResource.confirmedBecomesPrimary(false, null, ""));
-        assertTrue(EmailResource.confirmedBecomesPrimary(false, null, null));
-        assertFalse(EmailResource.confirmedBecomesPrimary(false, null, "ada@std.yildiz.edu.tr"));
+        assertTrue(EmailResource.confirmedBecomesPrimary(true, null, "ada@std.yildiz.edu.tr", "ada@example.com"));
+        assertTrue(EmailResource.confirmedBecomesPrimary(false, null, "", "ada@example.com"));
+        assertTrue(EmailResource.confirmedBecomesPrimary(false, null, null, "ada@example.com"));
+        assertFalse(EmailResource.confirmedBecomesPrimary(false, null, "ada@std.yildiz.edu.tr", "ada@example.com"));
+    }
+
+    // A1c: proving the legacy primary keeps it primary, and Keycloak must then mark it verified;
+    // without this an unverified legacy primary would read "personal" with emailVerified=false.
+    @Test
+    void aProvenLegacyPrimaryStaysPrimaryAndIsMarkedVerified() {
+        assertTrue(EmailResource.confirmedBecomesPrimary(false, null, "Ada@Gmail.com", "ada@gmail.com"));
     }
 
     // Replacing the personal address that is the primary must move the primary with it; otherwise
     // Keycloak email keeps pointing at an address the person no longer has (primary "none").
     @Test
     void replacingThePersonalAddressThatIsPrimaryMovesThePrimaryWithIt() {
-        assertTrue(EmailResource.confirmedBecomesPrimary(false, "old@example.com", "OLD@example.com"));
-        assertFalse(EmailResource.confirmedBecomesPrimary(false, "old@example.com", "ada@std.yildiz.edu.tr"),
+        assertTrue(EmailResource.confirmedBecomesPrimary(false, "old@example.com", "OLD@example.com", "new@example.com"));
+        assertFalse(EmailResource.confirmedBecomesPrimary(false, "old@example.com", "ada@std.yildiz.edu.tr", "new@example.com"),
                 "replacing a personal address that is not primary leaves the primary alone");
     }
 

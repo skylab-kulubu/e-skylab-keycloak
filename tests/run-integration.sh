@@ -1598,6 +1598,15 @@ LEGACY_EMAIL_COMPOSE_FILE="$COMPOSE_FILE" \
   LEGACY_EMAIL_SOURCE_REALM="$V2_REALM" \
   "$SCRIPT_DIR/legacy-personal-email-adoption.sh"
 
+# Account erasure ticket 09: which personal data Keycloak's admin and user events keep once core's
+# saga has deleted a person, and what each remedy does, in a throwaway realm with production's
+# event settings that takes the reconciled User Profile.
+CURRENT_STAGE='erasure event PII evidence'
+EVENT_PII_COMPOSE_FILE="$COMPOSE_FILE" \
+  EVENT_PII_ADMIN_CONFIG="$ADMIN_CONFIG" \
+  EVENT_PII_SOURCE_REALM="$V2_REALM" \
+  "$SCRIPT_DIR/erasure-event-pii.sh"
+
 CURRENT_STAGE='minimal openid PAR contract'
 discovery=$(curl --fail --silent --show-error \
   http://localhost:18080/realms/e-skylab-test/.well-known/openid-configuration)

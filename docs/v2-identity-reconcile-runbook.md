@@ -564,10 +564,15 @@ Devralınmayan, yalnız sayılanlar:
 - `duplicate`: aynı adres iki kişinin kişisel e-postası olacaktı; ikisi de
   atlanır. (`duplicateEmailsAllowed=false` olan realm'de pratikte oluşmaz.)
 
-`taken` ve `duplicate` elle karar ister; betik bunları yazar ama sıfır dışı
+`taken` ve `duplicate` elle karar ister; betik bunları sayar ama sıfır dışı
 çıkmaz. Yazma hatası olursa ya da uygulamadan sonraki yeniden taramada hâlâ
 devralınacak kişi kalırsa betik sıfır dışı çıkar; `--apply` yeniden
-çalıştırılabilir, devralınmış hesaplar yeniden yazılmaz.
+çalıştırılabilir, devralınmış hesaplar yeniden yazılmaz. Yazma, Keycloak'ın
+hesabın tamamını User Profile kurallarıyla yeniden doğrulaması demektir; bir
+hesap bu yüzden reddedilirse (ör. v2'den önce kalmış ve artık izin verilmeyen
+bir karakter taşıyan ad) yeniden koşu onu da reddeder. Betik kimlik basmadığı
+için o hesap `failed` sayısıyla görünür; kişi "Kodla doğrula" ile aynı sonuca
+kendisi ulaşabilir.
 
 ### Üretim sırası
 

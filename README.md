@@ -40,7 +40,7 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.13.0`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.13.1`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.1.0`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
@@ -170,6 +170,20 @@ yetkisi verilmediği için uzlaştırıcı bu istemciyi yalnız doğrular: yoksa
 uyarı ve çalıştırılacak komut, bayraklar yanlışsa hata, service account
 rolleri okunamıyorsa uyarı. Gizli anahtarı Keycloak üretir; hiçbir betik
 yazdırmaz, ops `kcadm get clients/{id}/client-secret` ile okur (runbook §6).
+
+Uzlaştırıcının kimliği kullanıcı ve kimlik sağlayıcısı yetkisi taşımadığı için
+üç kimlik korumasını operatör `config/identity-guardrails.sh` ile uygular
+(aynı kuru koşu / `--apply` / kcadm prompt düzeni,
+`KEYCLOAK_GUARDRAILS_ADMIN_PASSWORD` yalnız `SKY_HARNESS=1` ile): `core`
+istemcisinin dört `certificate:*` rolü yoksa oluşturulur (core artık rol
+oluşturmaz, yalnız okur); YTÜ Microsoft IdP'si `OBS`'nin `department mapper`
+eşlemesi `syncMode=FORCE` olur ve SPI'daki `microsoft-department-mapper`
+bölümü her girişte Microsoft Graph'tan yeniler; `service-account-core`'dan
+`realm-management/manage-clients` kaldırılır, diğer rolleri kalır (ADR-0048:
+bu rol core'a her istemcinin yönlendirme adreslerini ve gizli anahtarlarını
+yeniden yazma gücü verir). Entegrasyon testi kuru koşu → uygulama → yazmayan
+ikinci koşuyu ve core token'ının rolleri okuyup rol oluşturamadığını doğrular
+(runbook §8).
 
 `account-center` realm'in etkin tarayıcı akışını kullanır; böylece
 production'a özel parola, OTP ve passkey davranışı olduğu gibi geçerlidir ve

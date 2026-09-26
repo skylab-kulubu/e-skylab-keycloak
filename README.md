@@ -213,6 +213,18 @@ Varsayılan kapsamlar `basic` (`sub`) ve `roles`'tür. Uzlaştırıcı istemciyi
 doğrular. Secret'ı OpenBao'ya ve core'un ortamına sky_lab_genel'deki
 `ops/wizards/core-erasure-client-wizard.sh` taşır (runbook §11).
 
+CMS inscribed'a geçerken (ADR-0056) operatör site istemcilerinde (`frontend-main`,
+`frontend-arge`, `admin`) inscribed'ın yeteneklerini imajdaki idempotent
+`config/inscribed-cms-roles.sh` ile kurar (varsayılan `--check`, `--apply`; kcadm
+prompt düzeni ya da `--kcadm-config`): `content:read`, `content:write`,
+`schema:sync` rolleri; `cms:access` ilk ikisini içeren bileşik rol olur (grup
+eşlemeleri aynı kalır); istemcinin kendi rollerini düz `roles` claim'i olarak yalnız
+access token'a yazan `inscribed-roles` mapper'ı; access token'da tam yollu `groups`
+yoksa `inscribed-groups`; service account'lara `content:read` + `schema:sync`. Başka
+bir `roles` ya da tam yolsuz `groups` yayıcısını raporlar, dokunmaz. Uzlaştırıcı bunu
+doğrulamaz. Üretimde sky_lab_genel'deki `ops/wizards/inscribed-keycloak-roles-wizard.sh`
+koşar; harness `tests/inscribed-cms-roles.sh` tek başına çalışır (runbook §12).
+
 `account-center` realm'in etkin tarayıcı akışını kullanır; böylece
 production'a özel parola, OTP ve passkey davranışı olduğu gibi geçerlidir ve
 uzlaştırıcı o akışa hiç yazmaz. Native handoff döneminden kalan kurulumda

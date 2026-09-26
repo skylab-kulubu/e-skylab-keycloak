@@ -31,6 +31,17 @@ FRONTEND_MAIN_CLIENT_ID=frontend-main
 FRONTEND_MAIN_SCOPE_NAME=frontend-main-core-audience
 SKYFORMS_CLIENT_ID=skyforms
 SKYFORMS_SCOPE_NAME=skyforms-forms-audience
+# Event retention (account erasure ticket 09). Keycloak deletes no event with the person core's
+# erasure saga removes: CREATE and UPDATE admin events hold the whole user representation
+# (e-mail, names, school and personal e-mail), DELETE holds the username, LOGIN and LOGIN_ERROR
+# user events hold the typed address, and admin events without an expiration are kept forever.
+# Both stores therefore expire after 30 days, the period KVKK (Law 6698, art. 13) gives for
+# concluding an erasure request. Admin event details stay on: they are the audit trail of who
+# changed what (Yusuf's choice, 2026-09-26). Listeners and enabled event types are not managed.
+EVENT_RETENTION_SECONDS=2592000
+EVENT_RETENTION_SETTINGS="{\"eventsEnabled\":true,\"eventsExpiration\":$EVENT_RETENTION_SECONDS,\"adminEventsEnabled\":true,\"adminEventsDetailsEnabled\":true}"
+# The admin event expiration is a realm attribute (seconds), read by Keycloak's scheduled task.
+ADMIN_EVENTS_EXPIRATION_ATTRIBUTE=adminEventsExpiration
 ACCOUNT_ROLE_ALLOWLIST=(manage-account view-profile manage-account-links)
 KCADM_CONFIG=$(mktemp /tmp/account-center-kcadm.XXXXXX)
 WORK_DIR=$(mktemp -d /tmp/account-center-reconcile.XXXXXX)
@@ -336,6 +347,37 @@ reconcile_brute_force_and_password_policy() {
     return 1
   fi
   log 'login settings asserted: editUsernameAllowed=false loginWithEmailAllowed=true duplicateEmailsAllowed=false'
+}
+
+# User and admin event retention (EVENT_RETENTION_* above). The four settings are fields of the
+# realm; the admin event expiration is a realm attribute and is sent with the complete live
+# attribute map (Keycloak drops every attribute a PUT with "attributes" leaves out). Both go in one
+# PUT, and only when one of them differs, so an unchanged realm produces no admin event. The
+# realm PUT needs manage-realm, which the reconciler identity holds; Keycloak's events/config
+# endpoint (manage-events) is not used. Listeners and enabled event types are never sent.
+reconcile_event_retention() {
+  local desired_file="$WORK_DIR/event-retention.json" live_file="$WORK_DIR/event-retention-live.json"
+  local attribute_file="$WORK_DIR/event-retention-attribute.json" write_file="$WORK_DIR/event-retention-write.json"
+  local label="realm event retention (user and admin events ${EVENT_RETENTION_SECONDS} s, admin event details on)"
+  local changed
+  printf '%s\n' "$EVENT_RETENTION_SETTINGS" >"$desired_file"
+  printf '{"attributes":{"%s":"%s"}}\n' "$ADMIN_EVENTS_EXPIRATION_ATTRIBUTE" "$EVENT_RETENTION_SECONDS" \
+    >"$attribute_file"
+  kcadm_json "realms/$TARGET_REALM" >"$live_file"
+  changed=$(json_tool diff-fields "$desired_file" <"$live_file")
+  if [[ -n $(json_tool diff-fields "$attribute_file" <"$live_file") ]]; then
+    json_tool realm-attribute "$ADMIN_EVENTS_EXPIRATION_ATTRIBUTE" "$EVENT_RETENTION_SECONDS" \
+      <"$live_file" >"$attribute_file"
+    json_tool merge "$desired_file" "$attribute_file" >"$write_file"
+    changed=$(printf '%s\nattributes.%s' "$changed" "$ADMIN_EVENTS_EXPIRATION_ATTRIBUTE")
+  elif [[ -n $changed ]]; then
+    cp "$desired_file" "$write_file"
+  else
+    log "$label: unchanged"
+    return 0
+  fi
+  kcadm update "realms/$TARGET_REALM" -n -f "$write_file" >/dev/null
+  log "$label: updated ($(sed '/^$/d' <<<"$changed" | tr '\n' ' ' | sed 's/ $//'))"
 }
 
 validate_passkey_policy_inputs() {
@@ -940,6 +982,7 @@ compile_json_tool
 
 reconcile_realm_settings
 reconcile_brute_force_and_password_policy
+reconcile_event_retention
 reconcile_passkey_policy
 reconcile_required_actions
 reconcile_user_profile

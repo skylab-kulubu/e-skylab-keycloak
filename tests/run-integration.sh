@@ -66,6 +66,10 @@ json_assert() {
   jq -e "$@" "$expression" <<<"$json" >/dev/null || fail "$message"
 }
 
+# The audience scopes of the skyforms and frontend-main login clients; stages called below.
+# shellcheck source=login-client-audiences.sh
+source "$SCRIPT_DIR/login-client-audiences.sh"
+
 # ---------------------------------------------------------------------------
 # v2 identity reconcile stages (passkey relying party id, realm login and brute
 # force settings, User Profile, account-center scope, keycloak-mailer client,
@@ -191,12 +195,13 @@ v2_reconcile_log_must_be_quiet() {
   local log_file=$1
   grep -Fq 'Account Center Keycloak configuration is reconciled.' "$log_file" \
     || fail 'reconciliation did not report completion'
-  # The reconciler identity has no user permissions, so the keycloak-mailer service-account
-  # roles are never readable from a reconcile run; that warning is the expected steady state.
+  # The reconciler identity has no user permissions, so the service-account roles of
+  # keycloak-mailer and core-erasure are never readable from a reconcile run; those warnings
+  # are the expected steady state.
   if grep -E '^\[reconcile\] ' "$log_file" \
-    | grep -Ev 'unchanged|asserted|verified|WARNING: service-account roles of keycloak-mailer are not readable' >/dev/null; then
+    | grep -Ev 'unchanged|asserted|verified|WARNING: service-account roles of (keycloak-mailer|core-erasure) are not readable' >/dev/null; then
     grep -E '^\[reconcile\] ' "$log_file" \
-      | grep -Ev 'unchanged|asserted|verified|WARNING: service-account roles of keycloak-mailer are not readable' >&2 || true
+      | grep -Ev 'unchanged|asserted|verified|WARNING: service-account roles of (keycloak-mailer|core-erasure) are not readable' >&2 || true
     fail 'a no-op reconciliation reported a change'
   fi
 }
@@ -717,6 +722,7 @@ v2_state_snapshot() {
       kcadm get "client-scopes/$scope_uuid" -r "$V2_REALM" -c
       kcadm get "client-scopes/$scope_uuid/protocol-mappers/models" -r "$V2_REALM" -c
     done
+    lca_state_snapshot
     kcadm get authentication/flows -r "$V2_REALM" -c
   } | jq -S -c '.'
 }
@@ -1216,6 +1222,8 @@ json_assert "$default_account_roles_before" \
 built_in_scope_snapshot=$(kcadm get client-scopes -r e-skylab-test -c \
   | jq -c '[.[] | {id, name}] | sort_by(.id)')
 
+stage_login_audiences_hand_made
+
 CURRENT_STAGE='first reconciliation'
 "${COMPOSE[@]}" run --rm --no-deps keycloak-config >"$TEST_STATE_DIR/reconcile-first.log" 2>&1
 
@@ -1246,6 +1254,7 @@ active_browser_flow_after=$(kcadm get \
   || fail 'Account Center reconciliation mutated the active realm browser flow'
 
 stage_v2_after_first_reconciliation
+stage_login_audiences_after_first_reconciliation
 
 # Inject drift before the second pass. Reconciliation must repair the existing
 # realm, flow, scope and allowlists rather than merely treating names as success.
@@ -1443,7 +1452,7 @@ skyapp_scope_count=$(kcadm get client-scopes -r e-skylab-test -c \
 [[ $skyapp_scope_count == 1 ]] || fail "skyapp audience scope is missing or duplicated"
 
 built_in_scope_after=$(kcadm get client-scopes -r e-skylab-test -c \
-  | jq -c '[.[] | select(.name != "account-center-account-api" and .name != "account-center-core-claims" and .name != "skyapp-account-center-audience") | {id, name}] | sort_by(.id)')
+  | jq -c '[.[] | select(.name != "account-center-account-api" and .name != "account-center-core-claims" and .name != "skyapp-account-center-audience" and .name != "skyforms-forms-audience" and .name != "frontend-main-core-audience") | {id, name}] | sort_by(.id)')
 [[ $built_in_scope_after == "$built_in_scope_snapshot" ]] \
   || fail "a built-in client scope id or name was mutated"
 
@@ -1522,6 +1531,7 @@ json_assert "$skyapp_default_scopes" \
   '[.[] | select(.id == $scope and .name == "skyapp-account-center-audience")] | length == 1' \
   'skyapp audience scope is not attached as a default scope' \
   --arg scope "$skyapp_scope_uuid"
+stage_login_audiences_after_second_reconciliation
 
 default_scopes=$(kcadm get "clients/$client_uuid/default-client-scopes" -r e-skylab-test -c)
 json_assert "$default_scopes" \
@@ -1567,6 +1577,16 @@ stage_v2_assert_user_profile
 stage_v2_assert_account_api_scope
 stage_v2_assert_mailer_client
 stage_v2_mailer_drift_is_reported
+
+# Account erasure (ADR-0051, ticket 03): the operator script builds the core-erasure client, its
+# erase scopes and roles; the reconciler verifies them. It runs before the no-op reconciliation so
+# that run proves the verification writes nothing.
+CURRENT_STAGE='core-erasure client operator script and reconciler verification'
+ERASURE_COMPOSE_FILE="$COMPOSE_FILE" \
+  ERASURE_ADMIN_CONFIG="$ADMIN_CONFIG" \
+  ERASURE_REALM="$V2_REALM" \
+  "$SCRIPT_DIR/core-erasure-client.sh"
+
 stage_v2_reconcile_noop
 stage_v2_identity_guardrails
 
@@ -1577,6 +1597,15 @@ LEGACY_EMAIL_COMPOSE_FILE="$COMPOSE_FILE" \
   LEGACY_EMAIL_ADMIN_CONFIG="$ADMIN_CONFIG" \
   LEGACY_EMAIL_SOURCE_REALM="$V2_REALM" \
   "$SCRIPT_DIR/legacy-personal-email-adoption.sh"
+
+# Account erasure ticket 09: which personal data Keycloak's admin and user events keep once core's
+# saga has deleted a person, and what each remedy does, in a throwaway realm with production's
+# event settings that takes the reconciled User Profile.
+CURRENT_STAGE='erasure event PII evidence'
+EVENT_PII_COMPOSE_FILE="$COMPOSE_FILE" \
+  EVENT_PII_ADMIN_CONFIG="$ADMIN_CONFIG" \
+  EVENT_PII_SOURCE_REALM="$V2_REALM" \
+  "$SCRIPT_DIR/erasure-event-pii.sh"
 
 CURRENT_STAGE='minimal openid PAR contract'
 discovery=$(curl --fail --silent --show-error \

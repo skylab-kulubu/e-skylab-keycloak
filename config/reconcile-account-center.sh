@@ -25,6 +25,12 @@ SCOPE_NAME=account-center-account-api
 CORE_SCOPE_NAME=account-center-core-claims
 SKYAPP_CLIENT_ID=skyapp
 SKYAPP_SCOPE_NAME=skyapp-account-center-audience
+# Login clients whose access token must name the API they call in aud (made by hand in
+# production first, adopted here by name; see reconcile_login_client_audience).
+FRONTEND_MAIN_CLIENT_ID=frontend-main
+FRONTEND_MAIN_SCOPE_NAME=frontend-main-core-audience
+SKYFORMS_CLIENT_ID=skyforms
+SKYFORMS_SCOPE_NAME=skyforms-forms-audience
 ACCOUNT_ROLE_ALLOWLIST=(manage-account view-profile manage-account-links)
 KCADM_CONFIG=$(mktemp /tmp/account-center-kcadm.XXXXXX)
 WORK_DIR=$(mktemp -d /tmp/account-center-reconcile.XXXXXX)
@@ -37,6 +43,8 @@ PASSKEY_EXTRA_ORIGIN_LIST=()
 source "$CONFIG_DIR/account-center-origin.sh"
 # shellcheck source=mailer-client-contract.sh
 source "$CONFIG_DIR/mailer-client-contract.sh"
+# shellcheck source=erasure-client-contract.sh
+source "$CONFIG_DIR/erasure-client-contract.sh"
 
 cleanup() {
   rm -f "$KCADM_CONFIG"
@@ -744,6 +752,40 @@ reconcile_skyapp_audience() {
   ensure_default_client_scope "$skyapp_client_uuid" "$skyapp_scope_uuid" "$SKYAPP_SCOPE_NAME"
 }
 
+# A login client whose access token must carry the audience of the API it calls, for every
+# person: Keycloak's audience-resolve adds an API only when the token carries that API's roles,
+# and most people hold none. frontend-main (the site) needs core (core requires it on every
+# Bearer, ADR 0019: without it every CMS image upload is 401); skyforms needs forms (forms-backend
+# requires it: without it members get 401). Both scopes were made by hand in production with
+# these exact names, so they are adopted by name (never recreated), repaired when they drift and
+# kept among the client's default scopes. A realm without the client (the sandbox may lack one)
+# skips the item with a warning.
+reconcile_login_client_audience() {
+  local client_id=$1 scope_name=$2 mappers_file=$3
+  local client_uuid scope_uuid optional_scopes
+  if ! client_uuid=$(optional_lookup client_id_by_client_id "$client_id"); then
+    return 2
+  fi
+  if [[ -z $client_uuid ]]; then
+    warn "client $client_id does not exist in realm $TARGET_REALM; skipped client scope $scope_name"
+    return 0
+  fi
+  ensure_client_scope "$scope_name" "$mappers_file"
+  scope_uuid=$ENSURED_SCOPE_ID
+  # Keycloak keeps one link per client and scope, so an optional link would block the default one.
+  optional_scopes=$(kcadm get "clients/$client_uuid/optional-client-scopes" \
+    -r "$TARGET_REALM" \
+    --fields id,name \
+    --format csv \
+    --noquotes)
+  if grep -Eq "^$scope_uuid," <<<"$optional_scopes"; then
+    kcadm delete "clients/$client_uuid/optional-client-scopes/$scope_uuid" \
+      -r "$TARGET_REALM" >/dev/null
+    log "client $client_id: detached optional scope $scope_name (it must be a default scope)"
+  fi
+  ensure_default_client_scope "$client_uuid" "$scope_uuid" "$scope_name"
+}
+
 # The keycloak-mailer service-account client (K5) is provisioned by the operator with
 # create-mailer-client.sh because assigning its SkyMail roles needs user permissions the
 # reconciler identity deliberately lacks. Here the client is verified only: a missing client
@@ -801,6 +843,97 @@ verify_mailer_client() {
   fi
 }
 
+# The core-erasure service-account client (account erasure, ADR-0051) is provisioned by the
+# operator with create-erasure-client.sh, for the same reason as keycloak-mailer: its service
+# account holds the erase roles, and assigning them needs user permissions. Here it is verified
+# only, and everything that keeps one service's erase role out of another service's token is
+# security state: wrong flags, a scope list other than the contract, a direct scope mapping, an
+# erase scope with another mapper or another role, or a missing resource client fail the run
+# (the fix is the operator command). A missing client and roles the reconciler cannot read are
+# warnings.
+verify_erasure_client() {
+  local client_uuid live expected drift='' i scope_uuid resource_uuid service_user_id assigned
+  local resource_arguments=() mismatched=''
+  if ! client_uuid=$(optional_lookup erasure_client_uuid "$ERASURE_CLIENT_ID"); then
+    return 2
+  fi
+  if [[ -z $client_uuid ]]; then
+    warn "client $ERASURE_CLIENT_ID does not exist; run: $ERASURE_CREATE_COMMAND"
+    return 0
+  fi
+  live=$(erasure_client_flags "$client_uuid")
+  [[ $live == "$ERASURE_FLAG_VALUES" ]] \
+    || drift+="; $ERASURE_FLAG_FIELDS: $live, expected $ERASURE_FLAG_VALUES"
+  live=$(erasure_client_scopes "$client_uuid" default)
+  expected=$(erasure_expected_default_scopes)
+  [[ $live == "$expected" ]] || drift+="; default scopes: ${live:-none}, expected $expected"
+  live=$(erasure_client_scopes "$client_uuid" optional)
+  expected=$(erasure_expected_optional_scopes)
+  [[ $live == "$expected" ]] || drift+="; optional scopes: ${live:-none}, expected $expected"
+  for i in "${!ERASURE_SERVICES[@]}"; do
+    if ! resource_uuid=$(optional_lookup erasure_client_uuid "${ERASURE_RESOURCE_CLIENTS[$i]}"); then
+      return 2
+    fi
+    if [[ -z $resource_uuid ]]; then
+      drift+="; resource client ${ERASURE_RESOURCE_CLIENTS[$i]} does not exist"
+      continue
+    fi
+    resource_arguments+=("$resource_uuid" "${ERASURE_RESOURCE_CLIENTS[$i]}")
+  done
+  live=$(erasure_role_mappings "clients/$client_uuid/scope-mappings" "${resource_arguments[@]}")
+  [[ -z $live ]] || drift+="; direct scope mappings $(paste -sd, - <<<"$live") (every token would carry them)"
+  for i in "${!ERASURE_SERVICES[@]}"; do
+    if ! scope_uuid=$(optional_lookup erasure_scope_uuid "${ERASURE_SCOPES[$i]}"); then
+      return 2
+    fi
+    if [[ -z $scope_uuid ]]; then
+      drift+="; scope ${ERASURE_SCOPES[$i]} does not exist"
+      continue
+    fi
+    [[ $(erasure_scope_protocol "$scope_uuid") == openid-connect ]] \
+      || drift+="; scope ${ERASURE_SCOPES[$i]} is not openid-connect"
+    live=$(erasure_scope_mappers "$scope_uuid")
+    [[ $live == "$(erasure_expected_mapper "$i")" ]] \
+      || drift+="; mappers of ${ERASURE_SCOPES[$i]}: $(paste -sd' ' - <<<"${live:-none}"), expected $(erasure_expected_mapper "$i")"
+    live=$(erasure_role_mappings "client-scopes/$scope_uuid/scope-mappings" "${resource_arguments[@]}")
+    expected="${ERASURE_RESOURCE_CLIENTS[$i]}:${ERASURE_ROLES[$i]}"
+    [[ $live == "$expected" ]] \
+      || drift+="; roles of ${ERASURE_SCOPES[$i]}: $(paste -sd, - <<<"${live:-none}"), expected $expected"
+  done
+  if [[ -n $drift ]]; then
+    printf 'Client %s drifted (%s); run: %s\n' "$ERASURE_CLIENT_ID" "${drift#; }" "$ERASURE_CREATE_COMMAND" >&2
+    return 1
+  fi
+  log "client $ERASURE_CLIENT_ID: verified (confidential service account, $ERASURE_FLAG_FIELDS=$ERASURE_FLAG_VALUES, default scopes $(erasure_expected_default_scopes), optional scopes $(erasure_expected_optional_scopes), no direct scope mappings)"
+  for i in "${!ERASURE_SERVICES[@]}"; do
+    log "erase scope ${ERASURE_SCOPES[$i]}: verified (aud ${ERASURE_RESOURCE_CLIENTS[$i]}, role ${ERASURE_RESOURCE_CLIENTS[$i]}/${ERASURE_ROLES[$i]})"
+  done
+  service_user_id=$(kcadm get "clients/$client_uuid/service-account-user" \
+    -r "$TARGET_REALM" \
+    --fields id \
+    --format csv \
+    --noquotes)
+  if [[ -z $service_user_id || $service_user_id == *,* ]]; then
+    warn "the $ERASURE_CLIENT_ID service-account user could not be resolved; run: $ERASURE_CREATE_COMMAND"
+    return 0
+  fi
+  for i in "${!ERASURE_SERVICES[@]}"; do
+    resource_uuid=${resource_arguments[$((i * 2))]}
+    if ! assigned=$(kcadm get "users/$service_user_id/role-mappings/clients/$resource_uuid" \
+      -r "$TARGET_REALM" --fields name --format csv --noquotes 2>/dev/null); then
+      warn "service-account roles of $ERASURE_CLIENT_ID are not readable with the reconciler identity (no user permissions); expected exactly one erase role per resource client, verify with an administrator: $ERASURE_CREATE_COMMAND (without --apply)"
+      return 0
+    fi
+    [[ $(sed '/^$/d' <<<"$assigned" | paste -sd, -) == "${ERASURE_ROLES[$i]}" ]] \
+      || mismatched+=" ${ERASURE_RESOURCE_CLIENTS[$i]}"
+  done
+  if [[ -z $mismatched ]]; then
+    log "service-account roles of $ERASURE_CLIENT_ID: verified (one erase role per resource client)"
+  else
+    warn "service-account roles of $ERASURE_CLIENT_ID differ on${mismatched}; run: $ERASURE_CREATE_COMMAND"
+  fi
+}
+
 authenticate
 kcadm_json "realms/$TARGET_REALM" >/dev/null
 compile_json_tool
@@ -822,8 +955,13 @@ ensure_client_scope "$CORE_SCOPE_NAME" \
   "$CONFIG_DIR/account-center-core-claims-mappers.json"
 core_scope_uuid=$ENSURED_SCOPE_ID
 reconcile_skyapp_audience
+reconcile_login_client_audience "$FRONTEND_MAIN_CLIENT_ID" "$FRONTEND_MAIN_SCOPE_NAME" \
+  "$CONFIG_DIR/frontend-main-core-audience-mappers.json"
+reconcile_login_client_audience "$SKYFORMS_CLIENT_ID" "$SKYFORMS_SCOPE_NAME" \
+  "$CONFIG_DIR/skyforms-forms-audience-mappers.json"
 reconcile_account_center_client_scopes "$scope_uuid" "$core_scope_uuid"
 reconcile_account_scope_mappings
 verify_mailer_client
+verify_erasure_client
 
 printf 'Account Center Keycloak configuration is reconciled.\n'

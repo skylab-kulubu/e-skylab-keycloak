@@ -51,6 +51,17 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # config/inscribed-cms-roles.sh against the stock Keycloak image (Dockerfile KEYCLOAK_IMAGE) in
+  # dev mode; needs no build of this repository's image.
+  inscribed-cms-roles:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: inscribed roles script against a throwaway Keycloak
+        run: bash tests/inscribed-cms-roles.sh
+
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 90

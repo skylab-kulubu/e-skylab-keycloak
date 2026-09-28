@@ -935,3 +935,125 @@ yabancı bir `roles` ya da düz `groups` mapper'ında `PROBLEM`'i,
 `frontend-arge-core-audience` ile arge token'ının `aud`'unda `core` ve `skycms`'i ve
 `e-skylab-sandbox`'ta `superadmin`'in yalnız yetenek rollerini aldığını, eksik site
 istemcilerinin `NOTE` ile atlandığını doğrular.
+
+## 13. Sandbox realm'inde site istemcisi: `frontend-arge`
+
+`e-skylab-sandbox`'ta site istemcisi yoktu. `https://sandbox-arge.yildizskylab.com`
+girişsiz çalışıyor, arge'nin editörü sandbox'ta denenemiyordu. Production'daki
+`frontend-arge` elle kurulmuştu ve uzlaştırıcı onu yönetmez (§0.1 yalnız audience
+kapsamını yönetir). Sandbox'takini `config/sandbox-site-clients.sh` kurar. Betik §12'deki
+betiklerin düzenindedir: varsayılanı `--check`'tir, `--apply` yazar, ikinci koşu hiçbir
+şey yazmaz. Yönetici parolası kcadm'ın kendi prompt'una yazılır ya da `--kcadm-config`
+kullanılır.
+
+**Yalnız `e-skylab-sandbox`.** `KEYCLOAK_REALM` başka bir şeyse (`e-skylab` dahil) betik
+girişten önce `refusing realm …` yazar ve 2 ile çıkar. Realm ya da `skycms` istemcisi
+yoksa 1 ile çıkar ve hiçbir şey yazmaz.
+
+Kurduğu istemci `frontend-arge`, production'dakinin biçimindedir:
+
+- gizli (`client-secret`; secret'ı Keycloak üretir, hiçbir betik basmaz);
+- standard flow açık: NextAuth'un Keycloak sağlayıcısı, dönüş adresi
+  `/api/auth/callback/keycloak`;
+- implicit ve direct grant kapalı;
+- service account açık: site içeriği sunucu tarafında okur ve `cms-sync` ile koleksiyon
+  şemalarını gönderir;
+- `fullScopeAllowed=true`;
+- redirect `https://sandbox-arge.yildizskylab.com/*`, web origin
+  `https://sandbox-arge.yildizskylab.com`, post-logout `https://sandbox-arge.yildizskylab.com/*`.
+  İstemcide başka adres varsa korunur ve `NOTE` ile listelenir (örneğin bir geliştiricinin
+  `localhost`'u).
+
+Access token'a şunlar girer:
+
+1. `aud` içinde `skycms` (inscribed denetler). İstemcide ya da varsayılan kapsamlarından
+   birinde bunu yapan bir audience mapper'ı varsa yeterlidir. Yoksa istemci mapper'ı
+   `skycms-audience` eklenir: access token ve introspection'a yazar, ID token'a yazmaz.
+2. Realm'de `core` istemcisi varsa `aud` içinde `core`. arge'nin CMS yüklemeleri editörün
+   token'ıyla core `POST /v1/media`'ya gider. Kapsam `frontend-arge-core-audience`,
+   uzlaştırıcının production'da kurduğu biçimin aynısıdır
+   (`config/frontend-arge-core-audience-mappers.json`, §0.1; harness karşılaştırır). İstemcinin
+   varsayılan kapsamı yapılır. `core` yoksa `NOTE` yazılır ve bu kalem atlanır.
+3. Tam yollu `groups`: inscribed'ın koleksiyonları okur. İstemcide ya da varsayılan
+   kapsamlarında tam yollu bir Group Membership mapper'ı varsa yeterlidir. Yoksa realm'in
+   `groups` kapsamı varsayılan kapsam yapılır; bu, production'daki biçimdir ve yalnız kapsam
+   sadece tam yollu Group Membership mapper'ları taşıyorsa yapılır. O da yoksa istemci mapper'ı
+   `groups` eklenir. `groups`'u başka biçimde (düz adlarla) yazan bir mapper `PROBLEM`'dir;
+   dokunulmaz.
+
+`frontend-main` kurulmaz: bugün sandbox'ta ana site uygulaması yok. Olunca aynı betiğe eklenir.
+
+CMS rolleri, düz `roles` claim'i ve service account'un `content:read` + `schema:sync`'i bu
+betiğin işi değil. Ardından §12'deki betik koşar:
+`KEYCLOAK_REALM=e-skylab-sandbox inscribed-cms-roles.sh --client frontend-arge`. O betik bu
+betiğin kurduğu tam yollu `groups`'u bulur, ikinci bir groups mapper'ı eklemez. Hiçbir betik
+bir gruba ya da kişiye rol vermez. Sandbox'ta editör yetkisi (`frontend-arge` · `cms:access`)
+sandbox admin panelinden bir gruba verilir; wizard isterse tek bir gruba kendisi verir.
+
+`fullScopeAllowed` notu: production olguları 2026-09-28'de `true` olarak iletildi. #47'nin
+açıklaması ve §12'nin harness'i ise production `frontend-arge`'ı `false` diye anlatıyor. Site
+iki durumda da çalışır: CMS rolleri istemcinin kendi rolleridir ve token her zaman
+istemcinin kendi rollerini taşır. Production'daki değer
+`kcadm get clients -r e-skylab -q clientId=frontend-arge --fields fullScopeAllowed` ile
+görülür. Farklıysa betikteki `FLAG_*` satırları değiştirilir.
+
+### Sandbox sırası
+
+1. sky_lab_genel'deki `ops/wizards/sandbox-arge-keycloak-wizard.sh` sunucuda koşar
+   (kopyalama komutları başında):
+   - Keycloak konteynerini bulur. Bu betiğin ve `inscribed-cms-roles.sh`'ın sha256'larını
+     denetleyip onları konteynerin `/tmp`'sine koyar.
+   - kcadm girişi yapar.
+   - Bu betiği sırayla koşar: `--check`, plan, onay, `--apply`, yeniden `--check`.
+   - Rol betiğini `frontend-arge` için aynı sırayla koşar.
+   - İsteğe bağlı olarak tek bir gruba `cms:access` verir.
+   - Evaluate ile örnek token'lara bakar ve giriş sayfasını dener.
+   - İstenirse service account'la gerçek bir `client_credentials` token'ı alır. Secret
+     belleğe okunur, basılmaz.
+2. Elle koşmak gerekirse:
+
+   ```bash
+   kc=$(docker ps -q -f name=sky-lab-production-keycloak | head -n 1)
+   docker exec -it -e KEYCLOAK_ADMIN_URL=http://127.0.0.1:8080 -e KEYCLOAK_REALM=e-skylab-sandbox "$kc" \
+     /opt/keycloak/config/sandbox-site-clients.sh --admin-user <yönetici>            # --check
+   docker exec -it -e KEYCLOAK_ADMIN_URL=http://127.0.0.1:8080 -e KEYCLOAK_REALM=e-skylab-sandbox "$kc" \
+     /opt/keycloak/config/sandbox-site-clients.sh --admin-user <yönetici> --apply
+   ```
+
+   Hiç kurulmamış bir sandbox'ta, realm'de `core` varken beklenen: `check: 6 change(s)
+   pending`. Bunlar istemci, `skycms-audience`, kapsam, mapper'ı, kapsam bağlantısı ve
+   `groups`'tur. `core` yoksa `check: 3 change(s) pending` ve bir `NOTE` beklenir.
+   Uygulamadan sonra beklenen: `check: 0 change(s) pending`.
+3. Mac'te `ops/wizards/arge-dokploy-wizard.sh --sandbox-kc` koşar:
+   - secret'ı sunucuda kcadm'le okur, doğrudan
+     `kv/sandbox/<sandbox arge appName>/KEYCLOAK_CLIENT_SECRET`'a yazar;
+   - sandbox arge'nin Dokploy ortamına `KEYCLOAK_CLIENT_SECRET` referansını ekler;
+   - deploy eder ve girişi dener.
+
+Geri dönüş: Admin Console → `e-skylab-sandbox` → Clients → `frontend-arge` silinir. Client
+scopes → `frontend-arge-core-audience` da silinir; başka istemci onu kullanmaz. Sandbox arge
+yeniden girişsiz çalışır. Dokploy ortamındaki `KEYCLOAK_CLIENT_SECRET` satırı ve OpenBao'daki
+yol kaldırılır. Production'a hiçbir adımda dokunulmaz.
+
+Harness: `tests/sandbox-site-clients.sh` tek başına çalışır. Dockerfile'daki Keycloak imajını
+`docker run --rm` ile dev modunda açar; sonda `docker rm -fv`. Şunları doğrular:
+
+- `e-skylab`, `master` ve başka bir realm girişten önce reddedilir.
+- `skycms` yokken hiçbir şey yazılmaz.
+- `--check` yazmaz (admin olayları).
+- `--apply` yalnız planı yazar ve kimseye rol vermez. İstemcinin bayrakları ve adresleri
+  beklenen biçimdedir; `core-audience` mapper'ı uzlaştırıcının JSON'uyla aynıdır.
+- İkinci koşu yazmaz.
+- Rol betiği sonradan ikinci bir groups mapper'ı eklemez.
+- Gerçek authorization code akışı çalışır: giriş sayfası, dönüş adresine `code`, secret ile
+  takas. Bir `/UYELER/ADMIN` editörünün access token'ında `aud` ⊇ {`skycms`, `core`},
+  `groups` = [`/UYELER/ADMIN`], `roles` ⊇ {`cms:access`, `content:read`, `content:write`}
+  bulunur; ID token'da rol, grup ve API audience'ı yoktur.
+- Sıradan üye CMS rolü almaz.
+- Production'ın dönüş adresi reddedilir (400).
+- Service account token'ında `content:read` + `schema:sync` bulunur.
+- Kaymalar onarılır; geliştiricinin ek adresi korunur.
+- Düz `groups` bir `PROBLEM`'dir.
+- Realm'in `groups` kapsamı varken o kapsam bağlanır.
+- `core` yokken `NOTE` yazılır.
+- Hiçbir çıktıda secret görünmez.

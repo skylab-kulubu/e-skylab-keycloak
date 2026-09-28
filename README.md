@@ -230,6 +230,21 @@ yolsuz `groups` yayıcısını raporlar, dokunmaz. Uzlaştırıcı bunu doğrula
 sky_lab_genel'deki `ops/wizards/inscribed-keycloak-roles-wizard.sh` koşar; harness
 `tests/inscribed-cms-roles.sh` tek başına çalışır (runbook §12).
 
+Sandbox realm'inde (`e-skylab-sandbox`) site istemcisi yoktu; sandbox arge girişsiz
+çalışıyor, editörü denenemiyordu. Operatör `frontend-arge`'ı imajdaki idempotent
+`config/sandbox-site-clients.sh` ile kurar (varsayılan `--check`, `--apply`; kcadm prompt
+düzeni ya da `--kcadm-config`). İstemci production'dakinin biçimindedir: gizli, standard
+flow ve service account açık, implicit ve direct grant kapalı, `fullScopeAllowed=true`;
+redirect `https://sandbox-arge.yildizskylab.com/*`, web origin ve post-logout adresi aynı
+host (istemcideki başka adresler korunur). Access token'a `skycms` audience'ı, realm'de
+`core` istemcisi varsa uzlaştırıcının biçimindeki `frontend-arge-core-audience` kapsamı ve
+tam yollu `groups` gelir. `e-skylab-sandbox` dışındaki her realm'i girişten önce reddeder;
+`skycms` istemcisi yoksa hiçbir şey yazmaz. `frontend-main` kurulmaz: sandbox'ta ana site
+uygulaması yok. CMS rolleri ardından `inscribed-cms-roles.sh` ile gelir. Sunucuda
+sky_lab_genel'deki `ops/wizards/sandbox-arge-keycloak-wizard.sh` ikisini koşar; secret'ı
+OpenBao'ya `ops/wizards/arge-dokploy-wizard.sh --sandbox-kc` taşır. Harness
+`tests/sandbox-site-clients.sh` tek başına çalışır (runbook §13).
+
 `account-center` realm'in etkin tarayıcı akışını kullanır; böylece
 production'a özel parola, OTP ve passkey davranışı olduğu gibi geçerlidir ve
 uzlaştırıcı o akışa hiç yazmaz. Native handoff döneminden kalan kurulumda

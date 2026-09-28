@@ -69,6 +69,9 @@ json_assert() {
 # The audience scopes of the skyforms and frontend-main login clients; stages called below.
 # shellcheck source=login-client-audiences.sh
 source "$SCRIPT_DIR/login-client-audiences.sh"
+# The realm's user and admin event retention (account erasure ticket 09); stages called below.
+# shellcheck source=event-retention.sh
+source "$SCRIPT_DIR/event-retention.sh"
 
 # ---------------------------------------------------------------------------
 # v2 identity reconcile stages (passkey relying party id, realm login and brute
@@ -1223,6 +1226,7 @@ built_in_scope_snapshot=$(kcadm get client-scopes -r e-skylab-test -c \
   | jq -c '[.[] | {id, name}] | sort_by(.id)')
 
 stage_login_audiences_hand_made
+stage_event_retention_before_first_reconciliation
 
 CURRENT_STAGE='first reconciliation'
 "${COMPOSE[@]}" run --rm --no-deps keycloak-config >"$TEST_STATE_DIR/reconcile-first.log" 2>&1
@@ -1255,6 +1259,7 @@ active_browser_flow_after=$(kcadm get \
 
 stage_v2_after_first_reconciliation
 stage_login_audiences_after_first_reconciliation
+stage_event_retention_after_first_reconciliation
 
 # Inject drift before the second pass. Reconciliation must repair the existing
 # realm, flow, scope and allowlists rather than merely treating names as success.
@@ -1367,6 +1372,7 @@ kcadm update realms/e-skylab-test \
 kcadm update authentication/required-actions/UPDATE_PASSWORD \
   -r e-skylab-test -s enabled=false >/dev/null
 stage_v2_inject_drift
+stage_event_retention_inject_drift
 
 # The state production had before the Web handoff: account-center bound to
 # account-center-browser, a copy of the realm browser flow with the native handoff
@@ -1452,7 +1458,7 @@ skyapp_scope_count=$(kcadm get client-scopes -r e-skylab-test -c \
 [[ $skyapp_scope_count == 1 ]] || fail "skyapp audience scope is missing or duplicated"
 
 built_in_scope_after=$(kcadm get client-scopes -r e-skylab-test -c \
-  | jq -c '[.[] | select(.name != "account-center-account-api" and .name != "account-center-core-claims" and .name != "skyapp-account-center-audience" and .name != "skyforms-forms-audience" and .name != "frontend-main-core-audience") | {id, name}] | sort_by(.id)')
+  | jq -c '[.[] | select(.name != "account-center-account-api" and .name != "account-center-core-claims" and .name != "skyapp-account-center-audience" and .name != "skyforms-forms-audience" and .name != "frontend-main-core-audience" and .name != "frontend-arge-core-audience") | {id, name}] | sort_by(.id)')
 [[ $built_in_scope_after == "$built_in_scope_snapshot" ]] \
   || fail "a built-in client scope id or name was mutated"
 
@@ -1573,6 +1579,7 @@ json_assert "$config_roles" \
   'configuration client realm-management roles exceed the allowlist'
 
 stage_v2_assert_realm_identity
+stage_event_retention_after_second_reconciliation
 stage_v2_assert_user_profile
 stage_v2_assert_account_api_scope
 stage_v2_assert_mailer_client
@@ -1588,6 +1595,7 @@ ERASURE_COMPOSE_FILE="$COMPOSE_FILE" \
   "$SCRIPT_DIR/core-erasure-client.sh"
 
 stage_v2_reconcile_noop
+stage_event_retention_after_noop_reconciliation
 stage_v2_identity_guardrails
 
 # A1c: the operator adoption of verified legacy primaries as the Personal e-mail, in a throwaway

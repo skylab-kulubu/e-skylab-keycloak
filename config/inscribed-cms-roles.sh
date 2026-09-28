@@ -1,13 +1,29 @@
 #!/usr/bin/env bash
-# One-off, idempotent provisioning of inscribed's capability roles on the Site clients (CMS moves
-# to inscribed, ADR-0056). inscribed (External mode) reads the tenant from azp, the audience
-# skycms and the capabilities from ONE fixed, flat claim: roles. The old CMS read cms:access from
+# Idempotent provisioning of inscribed's roles on the Site clients (CMS moves to inscribed,
+# ADR-0056). inscribed (External mode) reads the tenant from azp, the audience skycms and the
+# capabilities from ONE fixed, flat claim: roles. The old CMS read cms:access from
 # resource_access[azp].roles, a path that changes with the client, so inscribed cannot read it.
-# For every Site client (default: frontend-main, frontend-arge, admin) in this order it
+#
+# The script CREATES roles and composites and makes the claims. It never grants a role to a group
+# or to a person: group -> client-role mappings are made in the SKY LAB admin panel (Groups ->
+# client roles; CONTEXT.md "Client role"). Its only grants go to the clients' own service accounts.
+# It reports, read-only, who holds each CMS role, so the panel's grants can be checked.
+#
+# Clients: frontend-main, frontend-arge and the admin panel's client (admin; superadmin in the realm
+# e-skylab-sandbox), in this order, or the --client list. A client missing from the realm is skipped
+# with a NOTE (the sandbox realm may have no frontend-*). For every client
 #   1. creates the client roles content:read, content:write and schema:sync when they are missing;
-#   2. makes the client's existing cms:access role a composite of its own content:read and
-#      content:write, so every person and group that holds cms:access today gets them (group
-#      mappings are not touched; a client without cms:access is reported, never given one);
+#      on the site editors (frontend-main, frontend-arge) also cms:access and client:admin:
+#        - cms:access is what the sites' editor UI checks (@skylab-kulubu/inscribed-auth 0.3.1 looks
+#          for it anywhere in the access token's resource_access; a site login's token carries only
+#          that site's roles when the client does not allow the full scope, as frontend-arge does);
+#        - client:admin lets inscribed's collections create any team page and edit any team page
+#          (ClaimDerived: a departed leader's page) and lets its holder change this one tenant's
+#          settings (GET/PUT /admin/clients/<client>: isActive, allowAnonymousContentRead);
+#   2. makes the client's cms:access a composite of its own content:read and content:write, so a
+#      group holding cms:access gets both in the roles claim. A client other than the site editors
+#      keeps an existing cms:access this way and is never given one (its groups get content:*
+#      directly);
 #   3. adds the "User Client Role" mapper inscribed-roles: the client's own roles, composites
 #      expanded, as the flat multivalued claim roles in the access token and introspection only
 #      (not the ID token, not userinfo); a different mapper that already emits roles on the client
@@ -18,15 +34,24 @@
 #      without full paths is reported, never changed (other consumers may read it);
 #   5. gives the client's service account, when it has one, content:read and schema:sync (sites
 #      read content server-side and push collection schemas with client_credentials). Service
-#      accounts are never enabled here.
-# A client that does not exist in the realm is skipped with a warning (the sandbox realm has none
-# of them). Nothing is ever removed except this script's own redundant inscribed-groups mapper.
+#      accounts are never enabled here. With --post-cutover it also takes cms:access (and so
+#      content:write) away from that service account; never by default: the old CMS renders the
+#      site with that grant until inscribed takes over /api/cms on cutover night;
+#   6. reports which groups hold cms:access, content:read, content:write, schema:sync and
+#      client:admin on the client, directly or through a composite (one of the client's own or a
+#      realm role); a group's grant reaches its subgroups. A grant straight to a person (service
+#      accounts aside) is a WARNING: CMS roles go to groups only. A CMS role in the realm's default
+#      roles, or reaching a default group, is a PROBLEM. Composites of other clients are not
+#      followed.
+# Nothing is ever removed except this script's own redundant inscribed-groups mapper and, with
+# --post-cutover, cms:access on the service accounts.
 #
 # Usage (inside the Keycloak image, as an operator):
-#   inscribed-cms-roles.sh --admin-user <admin>             # --check (default): state and plan
-#   inscribed-cms-roles.sh --admin-user <admin> --apply     # creates, updates and assigns
+#   inscribed-cms-roles.sh --admin-user <admin>             # --check (default): state, plan, report
+#   inscribed-cms-roles.sh --admin-user <admin> --apply     # creates and updates
 #   inscribed-cms-roles.sh --kcadm-config <file> [--apply]  # reuse a logged-in kcadm session
 #   ... [--client <clientId>]...                            # other clients than the default three
+#   ... --post-cutover                                      # cutover night only, see 5.
 #
 # The administrator password is typed into kcadm's own prompt and never passes through this
 # script. --kcadm-config reuses a kcadm config file an operator (or the wizard) already logged in
@@ -34,9 +59,9 @@
 # (default http://keycloak:8080), KEYCLOAK_REALM (default e-skylab), KEYCLOAK_ADMIN_REALM (default
 # master), KEYCLOAK_INSCRIBED_ADMIN_USERNAME (or --admin-user).
 #
-# Output: one "[inscribed-roles] ..." line per fact, change ("would ..." in --check), WARNING and
-# PROBLEM, then "check: N change(s) pending, W warning(s), P problem(s)" or "applied N change(s),
-# ...". Exit 0 unless a PROBLEM (1) or a usage error (2). No token or secret is ever read.
+# Output: one "[inscribed-roles] ..." line per fact, change ("would ..." in --check), NOTE, WARNING
+# and PROBLEM, then "check: N change(s) pending, W warning(s), P problem(s)" or "applied N
+# change(s), ...". Exit 0 unless a PROBLEM (1) or a usage error (2). No token or secret is ever read.
 # Operators: ops/wizards/inscribed-keycloak-roles-wizard.sh in sky_lab_genel runs it in production.
 set -Eeuo pipefail
 shopt -s inherit_errexit
@@ -51,17 +76,30 @@ ADMIN_USER=${KEYCLOAK_INSCRIBED_ADMIN_USERNAME:-}
 KCADM_CONFIG=''
 OWN_CONFIG=false
 MODE=check
+POST_CUTOVER=false
 CLIENTS=()
 
-DEFAULT_CLIENTS=(frontend-main frontend-arge admin)
+# The admin panel logs in through admin in production and through superadmin in the sandbox.
+if [[ $TARGET_REALM == e-skylab-sandbox ]]; then
+  ADMIN_PANEL_CLIENT='superadmin'
+else
+  ADMIN_PANEL_CLIENT='admin'
+fi
+DEFAULT_CLIENTS=(frontend-main frontend-arge "$ADMIN_PANEL_CLIENT")
+# The sites whose editor UI opens on cms:access and on which team pages are edited.
+SITE_EDITOR_CLIENTS=(frontend-main frontend-arge)
 LEGACY_ROLE=cms:access
+ADMIN_ROLE=client:admin
 CAPABILITY_ROLES=(content:read content:write schema:sync)
 EDITOR_ROLES=(content:read content:write)
 SERVICE_ROLES=(content:read schema:sync)
+REPORT_ROLES=(cms:access content:read content:write schema:sync client:admin)
 declare -A ROLE_DESCRIPTION=(
   [content:read]='inscribed: read this site client'"'"'s pages and collections (ADR-0056)'
   [content:write]='inscribed: edit this site client'"'"'s pages and collections (ADR-0056); cms:access includes it'
   [schema:sync]='inscribed: push collection schemas (cms-sync) for this site client (ADR-0056)'
+  [cms:access]='Opens this site'"'"'s CMS editor; includes content:read + content:write (ADR-0056). Groups only, granted in the SKY LAB admin panel'
+  [client:admin]='inscribed: create and fix any team page, this tenant'"'"'s settings (ADR-0056). People only, through groups granted in the SKY LAB admin panel'
 )
 ROLES_CLAIM=roles
 ROLES_MAPPER=inscribed-roles
@@ -71,7 +109,7 @@ GROUPS_MAPPER=inscribed-groups
 MAPPER_FIELDS='id,protocolMapper,config(claim.name,full.path,access.token.claim,id.token.claim,userinfo.token.claim,introspection.token.claim,multivalued,jsonType.label,usermodel.clientRoleMapping.clientId,usermodel.clientRoleMapping.rolePrefix),name'
 
 usage() {
-  printf 'usage: %s (--admin-user <administrator> | --kcadm-config <file>) [--check | --apply] [--client <clientId>]...\n' \
+  printf 'usage: %s (--admin-user <administrator> | --kcadm-config <file>) [--check | --apply] [--client <clientId>]... [--post-cutover]\n' \
     "${BASH_SOURCE[0]##*/}" >&2
   exit 2
 }
@@ -99,6 +137,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --check | --dry-run)
       MODE=check
+      shift
+      ;;
+    --post-cutover)
+      POST_CUTOVER=true
       shift
       ;;
     *)
@@ -133,7 +175,7 @@ log() {
   printf '[inscribed-roles] %s\n' "$1"
 }
 
-declare -A role_ids=()
+declare -A role_ids=() planned=()
 changes=0
 warnings=0
 problems=0
@@ -183,20 +225,16 @@ csv() {
   kcadm get "$1" -r "$TARGET_REALM" --fields "$2" --format csv --noquotes "${@:3}" | tr -d '\r' | sed '/^$/d'
 }
 
-# Prints the internal id of a client; empty when it does not exist.
-client_uuid_of() {
-  local wanted=$1 id client_id
-  while IFS=, read -r id client_id; do
-    if [[ $client_id == "$wanted" ]]; then
-      printf '%s\n' "$id"
-      return 0
-    fi
-  done < <(csv clients id,clientId)
-  return 0
-}
-
 role_body() {
   printf '[{"id":"%s","name":"%s"}]' "$1" "$2"
+}
+
+is_site_editor() {
+  local candidate
+  for candidate in "${SITE_EDITOR_CLIENTS[@]}"; do
+    [[ $candidate != "$1" ]] || return 0
+  done
+  return 1
 }
 
 # expected_mapper_line KIND CLIENT: the CSV columns after id (protocolMapper and config) that the
@@ -288,6 +326,146 @@ scan_mapper() {
   fi
 }
 
+# load_scope_mappers SCOPE_ID: reads a client scope's mappers (MAPPER_FIELDS) once per run into
+# scope_mapper_lines; the clients share most scopes and this script never changes a scope.
+declare -A scope_mapper_lines=()
+load_scope_mappers() {
+  [[ -n ${scope_mapper_lines[$1]+set} ]] || scope_mapper_lines[$1]=$(csv "client-scopes/$1/protocol-mappers/models" "$MAPPER_FIELDS")
+}
+
+# --- holders (step 6) ------------------------------------------------------------------------------
+# Role graph: realm_parents / client_parents[child role id] = the ids of the composite roles that
+# include it directly, from the realm's composite roles (read once) and the current client's (read
+# per client).
+declare -A realm_parents=() client_parents=() realm_role_name=() client_role_name=()
+declare -A held_groups=() held_users=() warned_direct=() warned_default_group=()
+declare -A client_uuid=() client_sa=() client_by_lower=() sa_user_of=()
+default_role_id=''
+default_role_name=''
+default_groups=''
+
+# ancestors ID: every role id that includes ID through composites, one per line.
+ancestors() {
+  local -A seen=()
+  local queue=("$1") current parent
+  seen[$1]=1
+  while [[ ${#queue[@]} -gt 0 ]]; do
+    current=${queue[0]}
+    queue=("${queue[@]:1}")
+    for parent in ${realm_parents[$current]:-} ${client_parents[$current]:-}; do
+      [[ -z ${seen[$parent]:-} ]] || continue
+      seen[$parent]=1
+      queue+=("$parent")
+      printf '%s\n' "$parent"
+    done
+  done
+}
+
+# is_service_account USER_ID USERNAME: whether the user is a client's service-account user (its
+# name alone proves nothing: a person may be called service-account-x).
+is_service_account() {
+  local user_id=$1 username=$2 owner
+  [[ $username == service-account-* ]] || return 1
+  owner=${client_by_lower[${username#service-account-}]:-}
+  [[ -n $owner && ${client_sa[$owner]:-} == true ]] || return 1
+  if [[ -z ${sa_user_of[$owner]+set} ]]; then
+    sa_user_of[$owner]=$(csv "clients/$owner/service-account-user" id)
+  fi
+  [[ ${sa_user_of[$owner]} == "$user_id" ]]
+}
+
+# fetch_holders ROLE_ID CLIENT_UUID: caches the groups (paths) and users ("id,username") that hold
+# the role directly: a role of the current client or a composite realm role.
+fetch_holders() {
+  local id=$1 base
+  [[ -z ${held_groups[$id]+set} ]] || return 0
+  if [[ -n ${client_role_name[$id]:-} ]]; then
+    base="clients/$2/roles/${client_role_name[$id]}"
+  else
+    base="roles/${realm_role_name[$id]:-$id}"
+  fi
+  held_groups[$id]=$(csv "$base/groups" path -q max=100000)
+  held_users[$id]=$(csv "$base/users" id,username -q max=100000)
+}
+
+# report_holders CLIENT UUID: step 6, from the realm as it is now (after --apply's writes).
+report_holders() {
+  local client=$1 uuid=$2 role role_id role_name composite child carrier via path default_group
+  local groups_line sa_line people user_id username in_default=''
+  local -A ids_by_name=()
+  client_parents=()
+  client_role_name=()
+  while IFS=, read -r role_id role_name composite; do
+    [[ -n $role_id ]] || continue
+    ids_by_name[$role_name]=$role_id
+    client_role_name[$role_id]=$role_name
+    [[ $composite == true ]] || continue
+    while IFS=, read -r child _; do
+      [[ -n $child ]] || continue
+      client_parents[$child]+=" $role_id"
+    done < <(csv "roles-by-id/$role_id/composites" id)
+  done < <(csv "clients/$uuid/roles" id,name,composite)
+
+  log "$client: who holds its CMS roles now (a group's grant reaches its subgroups; the SKY LAB admin panel grants them, this script never does):"
+  for role in "${REPORT_ROLES[@]}"; do
+    role_id=${ids_by_name[$role]:-}
+    if [[ -z $role_id ]]; then
+      [[ -z ${planned[$role]:-} ]] || log "$client:   $role <- no group (the role does not exist yet)"
+      continue
+    fi
+    groups_line=''
+    sa_line=''
+    while IFS= read -r carrier; do
+      [[ -n $carrier ]] || continue
+      if [[ $carrier == "$role_id" ]]; then
+        via=''
+      elif [[ -n ${client_role_name[$carrier]:-} ]]; then
+        via=" (via ${client_role_name[$carrier]})"
+      else
+        via=" (via realm role ${realm_role_name[$carrier]:-$carrier})"
+      fi
+      if [[ $carrier == "$default_role_id" ]]; then
+        in_default+="${in_default:+, }$role"
+        continue
+      fi
+      fetch_holders "$carrier" "$uuid"
+      while IFS= read -r path; do
+        [[ -n $path ]] || continue
+        groups_line+="${groups_line:+, }$path$via"
+        while IFS= read -r default_group; do
+          [[ -n $default_group ]] || continue
+          [[ $default_group == "$path" || $default_group == "$path"/* ]] || continue
+          [[ -z ${warned_default_group[$carrier|$default_group]:-} ]] || continue
+          warned_default_group[$carrier|$default_group]=1
+          problem "$client: the default group $default_group gets ${client_role_name[$carrier]:-realm role ${realm_role_name[$carrier]:-}} (held by $path): every new user gets it. Take $default_group out of the default groups or the role off $path"
+        done <<<"$default_groups"
+      done <<<"${held_groups[$carrier]}"
+      people=''
+      while IFS=, read -r user_id username; do
+        [[ -n $user_id ]] || continue
+        if is_service_account "$user_id" "$username"; then
+          sa_line+="${sa_line:+, }$username$via"
+        else
+          people+="${people:+, }$username"
+        fi
+      done <<<"${held_users[$carrier]}"
+      if [[ -n $people && -z ${warned_direct[$carrier]:-} ]]; then
+        warned_direct[$carrier]=1
+        if [[ -n ${client_role_name[$carrier]:-} ]]; then
+          warning "$client/${client_role_name[$carrier]} is granted directly to user(s) $people, not through a group: grant it to a group in the SKY LAB admin panel and take the direct grant away"
+        else
+          warning "realm role ${realm_role_name[$carrier]:-$carrier} (it includes $client/$role) is granted directly to user(s) $people, not through a group"
+        fi
+      fi
+    done < <(printf '%s\n' "$role_id"; ancestors "$role_id")
+    log "$client:   $role <- ${groups_line:+group(s): }${groups_line:-no group}"
+    [[ -z $sa_line ]] || log "$client:   $role <- service account(s): $sa_line"
+  done
+  if [[ -n $in_default ]]; then
+    problem "$client: the realm's default roles ($default_role_name) include $in_default: every new user gets them. Take them out of the default roles"
+  fi
+}
+
 credential_arguments=(
   --config "$KCADM_CONFIG"
   --server "$ADMIN_URL"
@@ -299,23 +477,52 @@ if [[ $OWN_CONFIG == true ]]; then
   # active" otherwise). Its "Logging into" line goes to stderr, so stdout stays clean either way.
   "$KCADM" config credentials "${credential_arguments[@]}"
 fi
-log "realm=$TARGET_REALM mode=$MODE clients=${CLIENTS[*]}"
+post_cutover_note=''
+[[ $POST_CUTOVER != true ]] || post_cutover_note=' post-cutover'
+log "realm=$TARGET_REALM mode=$MODE clients=${CLIENTS[*]}$post_cutover_note"
+
+# --- the realm: clients, default roles and groups, composite realm roles --------------------------
+while IFS=, read -r id client_id sa_enabled; do
+  [[ -n $id ]] || continue
+  client_uuid[$client_id]=$id
+  client_by_lower[${client_id,,}]=$id
+  client_sa[$id]=$sa_enabled
+done < <(csv clients id,clientId,serviceAccountsEnabled)
+IFS=, read -r default_role_id default_role_name < <(
+  kcadm get "realms/$TARGET_REALM" --fields 'defaultRole(id,name)' --format csv --noquotes | tr -d '\r'
+) || true
+default_groups=$(csv default-groups path)
+while IFS=, read -r role_id role_name composite; do
+  [[ -n $role_id && $composite == true ]] || continue
+  realm_role_name[$role_id]=$role_name
+  while IFS=, read -r child _; do
+    [[ -n $child ]] || continue
+    realm_parents[$child]+=" $role_id"
+  done < <(csv "roles-by-id/$role_id/composites" id)
+done < <(csv roles id,name,composite)
 
 for client in "${CLIENTS[@]}"; do
-  uuid=$(client_uuid_of "$client")
+  uuid=${client_uuid[$client]:-}
   if [[ -z $uuid ]]; then
-    warning "client $client does not exist in realm $TARGET_REALM; skipped"
+    log "NOTE: client $client does not exist in realm $TARGET_REALM; skipped (nothing is made for it)"
     continue
   fi
   IFS=, read -r full_scope service_accounts < <(csv "clients/$uuid" fullScopeAllowed,serviceAccountsEnabled)
   log "$client: fullScopeAllowed=$full_scope serviceAccountsEnabled=$service_accounts"
 
-  # --- 1. the capability roles ------------------------------------------------------------------
+  # --- 1. the roles -------------------------------------------------------------------------------
   role_ids=()
+  planned=()
   while IFS=, read -r role_id role_name; do
     role_ids[$role_name]=$role_id
   done < <(csv "clients/$uuid/roles" id,name)
-  for role in "${CAPABILITY_ROLES[@]}"; do
+  wanted=("${CAPABILITY_ROLES[@]}")
+  site_editor=false
+  if is_site_editor "$client"; then
+    site_editor=true
+    wanted+=("$LEGACY_ROLE" "$ADMIN_ROLE")
+  fi
+  for role in "${wanted[@]}"; do
     if [[ -n ${role_ids[$role]:-} ]]; then
       log "$client: role $role exists"
       continue
@@ -326,21 +533,18 @@ for client in "${CLIENTS[@]}"; do
         -s "name=$role" -s "description=${ROLE_DESCRIPTION[$role]}"
       role_ids[$role]=$(csv "clients/$uuid/roles" id,name | sed -n "s/^\([^,]*\),$role\$/\1/p")
       [[ -n ${role_ids[$role]} ]] || { printf 'role %s on %s was not created\n' "$role" "$client" >&2; exit 1; }
+    else
+      planned[$role]=1
     fi
   done
 
   # --- 2. cms:access includes content:read and content:write ------------------------------------
   legacy_id=${role_ids[$LEGACY_ROLE]:-}
-  if [[ -z $legacy_id ]]; then
-    warning "$client has no $LEGACY_ROLE role: nobody gets content:read/content:write on it through $LEGACY_ROLE (grant them directly or create $LEGACY_ROLE by hand)"
+  if [[ -z $legacy_id && -z ${planned[$LEGACY_ROLE]:-} ]]; then
+    log "$client: no $LEGACY_ROLE role; none is made here (groups get content:read/content:write on $client directly)"
   else
-    holder_users=$(csv "clients/$uuid/roles/$LEGACY_ROLE/users" username -q max=100000 | wc -l | tr -d ' ')
-    holder_groups=$(csv "clients/$uuid/roles/$LEGACY_ROLE/groups" path | paste -sd ' ' -)
-    log "$client: $LEGACY_ROLE held directly by $holder_users user(s) (service accounts included); groups: ${holder_groups:-none}"
-    if [[ $holder_users == 0 && -z $holder_groups ]]; then
-      warning "nobody holds $client/$LEGACY_ROLE directly (a composite role may still grant it)"
-    fi
-    composites=$(csv "roles-by-id/$legacy_id/composites" id,containerId,name)
+    composites=''
+    [[ -z $legacy_id ]] || composites=$(csv "roles-by-id/$legacy_id/composites" id,containerId,name)
     others=''
     while IFS=, read -r composite_id container_id composite_name; do
       [[ -n $composite_id ]] || continue
@@ -351,7 +555,7 @@ for client in "${CLIENTS[@]}"; do
     done <<<"$composites"
     [[ -z $others ]] || log "$client: $LEGACY_ROLE also includes (left as is): $others"
     for role in "${EDITOR_ROLES[@]}"; do
-      if [[ -n ${role_ids[$role]:-} ]] && grep -Eq "^${role_ids[$role]},$uuid," <<<"$composites"; then
+      if [[ -n $legacy_id && -n ${role_ids[$role]:-} ]] && grep -Eq "^${role_ids[$role]},$uuid," <<<"$composites"; then
         log "$client: $LEGACY_ROLE includes $role"
         continue
       fi
@@ -362,6 +566,7 @@ for client in "${CLIENTS[@]}"; do
       fi
     done
   fi
+  [[ $site_editor == true ]] || log "$client: no $ADMIN_ROLE here (team pages are not edited through $client)"
 
   # --- 3 and 4. who emits roles and groups ------------------------------------------------------
   # Every mapper that reaches this client's access tokens without a scope parameter: the client's
@@ -394,19 +599,21 @@ for client in "${CLIENTS[@]}"; do
   done < <(csv "clients/$uuid/protocol-mappers/models" "$MAPPER_FIELDS")
   while IFS=, read -r scope_id scope_name; do
     [[ -n $scope_id ]] || continue
+    load_scope_mappers "$scope_id"
     while IFS=, read -r m_id m_type m_claim m_full m_access m_idt m_userinfo m_introspection m_multi m_json m_client m_prefix m_name; do
       [[ -n $m_id ]] || continue
       scan_mapper "default scope $scope_name mapper $m_name" "$m_type" "$m_claim" "$m_full" "$m_access"
-    done < <(csv "client-scopes/$scope_id/protocol-mappers/models" "$MAPPER_FIELDS")
+    done <<<"${scope_mapper_lines[$scope_id]}"
   done < <(csv "clients/$uuid/default-client-scopes" id,name)
   while IFS=, read -r scope_id scope_name; do
     [[ -n $scope_id ]] || continue
+    load_scope_mappers "$scope_id"
     while IFS=, read -r m_id m_type m_claim _; do
       [[ -n $m_id ]] || continue
       if claims_into "$m_claim" "$ROLES_CLAIM"; then
         optional_roles+=("$scope_name")
       fi
-    done < <(csv "client-scopes/$scope_id/protocol-mappers/models" "$MAPPER_FIELDS")
+    done <<<"${scope_mapper_lines[$scope_id]}"
   done < <(csv "clients/$uuid/optional-client-scopes" id,name)
   [[ ${#other_token[@]} -eq 0 ]] || log "$client: not in the access token, left as is: ${other_token[*]}"
 
@@ -448,17 +655,49 @@ for client in "${CLIENTS[@]}"; do
     direct_names=$(cut -d, -f2 <<<"$direct" | sed '/^$/d' | sort | paste -sd ' ' -)
     log "$client: service account $sa_name holds (direct): ${direct_names:-none}"
     log "$client: service account $sa_name holds (effective): ${effective:-none}"
+    sa_pending=false
     for role in "${SERVICE_ROLES[@]}"; do
       if grep -Eq "^[^,]+,$role\$" <<<"$direct"; then
         continue
       fi
       change "assign $client/$role to $sa_name"
+      sa_pending=true
       if [[ $MODE == apply ]]; then
         kcadm_write create "users/$sa_id/role-mappings/clients/$uuid" -r "$TARGET_REALM" \
           -b "$(role_body "${role_ids[$role]}" "$role")"
       fi
     done
+    legacy_direct_id=$(sed -n "s/^\([^,]*\),$LEGACY_ROLE\$/\1/p" <<<"$direct")
+    if [[ -n $legacy_direct_id && $POST_CUTOVER == true ]]; then
+      change "take $client/$LEGACY_ROLE (and so content:write) away from $sa_name (--post-cutover: inscribed serves /api/cms now)"
+      sa_pending=true
+      if [[ $MODE == apply ]]; then
+        kcadm_write delete "users/$sa_id/role-mappings/clients/$uuid" -r "$TARGET_REALM" \
+          -b "$(role_body "$legacy_direct_id" "$LEGACY_ROLE")"
+      fi
+    elif [[ -n $legacy_direct_id ]]; then
+      log "$client: $sa_name holds $LEGACY_ROLE, so content:write through it: the old CMS renders the site with it until the cutover. On cutover night, after inscribed took over /api/cms, --post-cutover takes it away"
+    fi
+    if [[ $POST_CUTOVER == true ]]; then
+      extras=''
+      while IFS=, read -r _ direct_name; do
+        [[ -n $direct_name && $direct_name != "$LEGACY_ROLE" && " ${SERVICE_ROLES[*]} " != *" $direct_name "* ]] || continue
+        extras+="${extras:+ }$direct_name"
+      done <<<"$direct"
+      [[ -z $extras ]] || warning "$client: $sa_name also holds $extras directly; inscribed wants only ${SERVICE_ROLES[*]} on it. Take it away by hand"
+      if [[ $MODE == apply || $sa_pending == false ]]; then
+        effective=$(csv "users/$sa_id/role-mappings/clients/$uuid/composite" name | sort | paste -sd ' ' -)
+        if [[ $effective == "${SERVICE_ROLES[*]}" ]]; then
+          log "$client: service account $sa_name holds exactly: $effective"
+        else
+          warning "$client: service account $sa_name ends up with ${effective:-nothing} on $client, not exactly ${SERVICE_ROLES[*]}"
+        fi
+      fi
+    fi
   fi
+
+  # --- 6. who holds the CMS roles (read-only) -----------------------------------------------------
+  report_holders "$client" "$uuid"
 done
 
 if [[ $MODE == apply ]]; then

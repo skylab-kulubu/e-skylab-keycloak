@@ -29,6 +29,8 @@ SKYAPP_SCOPE_NAME=skyapp-account-center-audience
 # production first, adopted here by name; see reconcile_login_client_audience).
 FRONTEND_MAIN_CLIENT_ID=frontend-main
 FRONTEND_MAIN_SCOPE_NAME=frontend-main-core-audience
+FRONTEND_ARGE_CLIENT_ID=frontend-arge
+FRONTEND_ARGE_SCOPE_NAME=frontend-arge-core-audience
 SKYFORMS_CLIENT_ID=skyforms
 SKYFORMS_SCOPE_NAME=skyforms-forms-audience
 # Event retention (account erasure ticket 09). Keycloak deletes no event with the person core's
@@ -797,11 +799,13 @@ reconcile_skyapp_audience() {
 # A login client whose access token must carry the audience of the API it calls, for every
 # person: Keycloak's audience-resolve adds an API only when the token carries that API's roles,
 # and most people hold none. frontend-main (the site) needs core (core requires it on every
-# Bearer, ADR 0019: without it every CMS image upload is 401); skyforms needs forms (forms-backend
-# requires it: without it members get 401). Both scopes were made by hand in production with
-# these exact names, so they are adopted by name (never recreated), repaired when they drift and
-# kept among the client's default scopes. A realm without the client (the sandbox may lack one)
-# skips the item with a warning.
+# Bearer, ADR 0019: the site's upload bridge forwards the editor's token to core /v1/media, and
+# without it every CMS image upload is 401); frontend-arge (arge) needs core for the same reason
+# once its CMS uploads go through core with the move to inscribed (ADR-0056); skyforms needs forms
+# (forms-backend requires it: without it members get 401). The scopes were made by hand in
+# production with these exact names, so they are adopted by name (never recreated), repaired when
+# they drift and kept among the client's default scopes. A realm without the client (the sandbox
+# has neither site client) skips the item with a warning.
 reconcile_login_client_audience() {
   local client_id=$1 scope_name=$2 mappers_file=$3
   local client_uuid scope_uuid optional_scopes
@@ -1000,6 +1004,8 @@ core_scope_uuid=$ENSURED_SCOPE_ID
 reconcile_skyapp_audience
 reconcile_login_client_audience "$FRONTEND_MAIN_CLIENT_ID" "$FRONTEND_MAIN_SCOPE_NAME" \
   "$CONFIG_DIR/frontend-main-core-audience-mappers.json"
+reconcile_login_client_audience "$FRONTEND_ARGE_CLIENT_ID" "$FRONTEND_ARGE_SCOPE_NAME" \
+  "$CONFIG_DIR/frontend-arge-core-audience-mappers.json"
 reconcile_login_client_audience "$SKYFORMS_CLIENT_ID" "$SKYFORMS_SCOPE_NAME" \
   "$CONFIG_DIR/skyforms-forms-audience-mappers.json"
 reconcile_account_center_client_scopes "$scope_uuid" "$core_scope_uuid"

@@ -2,23 +2,28 @@
 # Sourced by run-integration.sh; uses its kcadm, fail, json_assert, v2_jwt_payload, V2_REALM
 # and TEST_STATE_DIR.
 #
-# Two login clients whose access tokens must name the API they call in aud even for a person
-# who holds no role of that API: Keycloak's audience-resolve only adds a client whose roles the
-# token carries. Both scopes were made by hand in production and are adopted by the reconciler:
+# Login clients whose access tokens must name the API they call in aud even for a person who
+# holds no role of that API: Keycloak's audience-resolve only adds a client whose roles the token
+# carries. The scopes are made by hand in production first and adopted by the reconciler:
 #   skyforms      -> skyforms-forms-audience     (forms-audience, aud += forms; forms-backend
 #                    RequireAudience, members got 401 without it)
 #   frontend-main -> frontend-main-core-audience (core-audience, aud += core; core ADR 0019,
 #                    every CMS image upload through the site got 401 without it)
-# The fixture realm has skyforms but no frontend-main, like a sandbox realm without the site's
-# client: the first reconciliation must skip it with a warning. skyforms gets the scope the way
+#   frontend-arge -> frontend-arge-core-audience (core-audience, aud += core; arge's CMS
+#                    uploads go to core /v1/media with the editor's token after the move to
+#                    inscribed, ADR-0056)
+# The fixture realm has skyforms but neither site client, like the sandbox realm: the first
+# reconciliation must skip both with a warning. skyforms gets the scope the way
 # the Admin Console made it in production, so the first reconciliation must adopt it in place.
 
 LCA_USER='audience-fixture'
 LCA_PASSWORD='audience-fixture-password-change-me'
 LCA_SKYFORMS_SCOPE=skyforms-forms-audience
 LCA_FRONTEND_MAIN_SCOPE=frontend-main-core-audience
+LCA_FRONTEND_ARGE_SCOPE=frontend-arge-core-audience
 LCA_SKYFORMS_REDIRECT=https://forms.yildizskylab.com/api/auth/callback/keycloak
 LCA_FRONTEND_MAIN_REDIRECT=https://yildizskylab.com/api/auth/callback/keycloak
+LCA_FRONTEND_ARGE_REDIRECT=https://arge.yildizskylab.com/api/auth/callback/keycloak
 LCA_HAND_MADE_SCOPE_UUID=''
 LCA_HAND_MADE_MAPPER_UUID=''
 LCA_ACCESS_PAYLOAD=''
@@ -40,8 +45,8 @@ lca_scope_uuids() {
 stage_login_audiences_hand_made() {
   CURRENT_STAGE='login client audiences: hand-made production scope'
   local skyforms_uuid
-  [[ -z $(lca_client_uuid frontend-main) ]] \
-    || fail 'the fixture realm must start without frontend-main (the sandbox case)'
+  [[ -z $(lca_client_uuid frontend-main) && -z $(lca_client_uuid frontend-arge) ]] \
+    || fail 'the fixture realm must start without frontend-main and frontend-arge (the sandbox case)'
   skyforms_uuid=$(lca_client_uuid skyforms)
   [[ -n $skyforms_uuid ]] || fail 'the fixture realm lacks the skyforms client'
   LCA_HAND_MADE_SCOPE_UUID=$(kcadm create client-scopes -r "$V2_REALM" -i \
@@ -65,6 +70,10 @@ stage_login_audiences_after_first_reconciliation() {
     || fail 'the first reconciliation did not report skipping the missing frontend-main client'
   [[ -z $(lca_scope_uuids "$LCA_FRONTEND_MAIN_SCOPE") ]] \
     || fail 'the reconciler created a scope for a client that does not exist'
+  grep -Fq "[reconcile] WARNING: client frontend-arge does not exist in realm $V2_REALM; skipped client scope $LCA_FRONTEND_ARGE_SCOPE" "$log" \
+    || fail 'the first reconciliation did not report skipping the missing frontend-arge client'
+  [[ -z $(lca_scope_uuids "$LCA_FRONTEND_ARGE_SCOPE") ]] \
+    || fail 'the reconciler created the frontend-arge scope for a client that does not exist'
   [[ $(lca_scope_uuids "$LCA_SKYFORMS_SCOPE") == "$LCA_HAND_MADE_SCOPE_UUID" ]] \
     || fail 'the hand-made skyforms scope was not adopted in place (recreated or duplicated)'
   if grep -Fq "client scope $LCA_SKYFORMS_SCOPE: created" "$log"; then
@@ -82,12 +91,19 @@ stage_login_audiences_after_first_reconciliation() {
     '[.[] | select(.name == $name)] | length == 1' \
     'the adopted scope is not a default scope of skyforms exactly once' --arg name "$LCA_SKYFORMS_SCOPE"
 
-  # The site's login client, as skylab-site signs in: public, authorization code with S256 PKCE.
+  # The sites' login clients, signing in the way the harness can drive: public, authorization
+  # code with S256 PKCE (the audience scope does not depend on the client's authentication).
   kcadm create clients -r "$V2_REALM" \
     -s clientId=frontend-main -s 'name=SKY LAB site (fixture)' -s enabled=true \
     -s protocol=openid-connect -s publicClient=true -s standardFlowEnabled=true \
     -s directAccessGrantsEnabled=false -s rootUrl=https://yildizskylab.com \
     -s "redirectUris=[\"$LCA_FRONTEND_MAIN_REDIRECT\"]" \
+    -s 'attributes."pkce.code.challenge.method"=S256' >/dev/null
+  kcadm create clients -r "$V2_REALM" \
+    -s clientId=frontend-arge -s 'name=SKY LAB arge (fixture)' -s enabled=true \
+    -s protocol=openid-connect -s publicClient=true -s standardFlowEnabled=true \
+    -s directAccessGrantsEnabled=false -s rootUrl=https://arge.yildizskylab.com \
+    -s "redirectUris=[\"$LCA_FRONTEND_ARGE_REDIRECT\"]" \
     -s 'attributes."pkce.code.challenge.method"=S256' >/dev/null
 
   # Drift on the adopted scope: moved among the optional scopes (the token would carry forms
@@ -198,6 +214,8 @@ stage_login_audiences_after_second_reconciliation() {
   local log="$TEST_STATE_DIR/reconcile-second.log"
   grep -Fq "[reconcile] client scope $LCA_FRONTEND_MAIN_SCOPE: created" "$log" \
     || fail 'the second reconciliation did not create the scope of the new frontend-main client'
+  grep -Fq "[reconcile] client scope $LCA_FRONTEND_ARGE_SCOPE: created" "$log" \
+    || fail 'the second reconciliation did not create the scope of the new frontend-arge client'
   grep -Eq "^\[reconcile\] protocol mappers of scope $LCA_HAND_MADE_SCOPE_UUID: updated \(.*~forms-audience" "$log" \
     || fail 'the second reconciliation did not repair the drifted forms-audience mapper'
   grep -Fq "[reconcile] client skyforms: detached optional scope $LCA_SKYFORMS_SCOPE" "$log" \
@@ -206,18 +224,19 @@ stage_login_audiences_after_second_reconciliation() {
     || fail 'repairing the skyforms scope replaced it instead of repairing it in place'
   lca_assert_client skyforms "$LCA_SKYFORMS_SCOPE" forms-audience forms "$LCA_SKYFORMS_REDIRECT"
   lca_assert_client frontend-main "$LCA_FRONTEND_MAIN_SCOPE" core-audience core "$LCA_FRONTEND_MAIN_REDIRECT"
+  lca_assert_client frontend-arge "$LCA_FRONTEND_ARGE_SCOPE" core-audience core "$LCA_FRONTEND_ARGE_REDIRECT"
 }
 
 # Part of v2_state_snapshot: what the no-op reconciliation must leave byte for byte.
 lca_state_snapshot() {
   local client_id scope_name client_uuid scope_uuid
-  for client_id in skyforms frontend-main; do
+  for client_id in skyforms frontend-main frontend-arge; do
     client_uuid=$(lca_client_uuid "$client_id")
     # Keycloak lists a client's scopes in hash-map order; compare them as sets.
     kcadm get "clients/$client_uuid/default-client-scopes" -r "$V2_REALM" -c | jq -c 'sort_by(.id)'
     kcadm get "clients/$client_uuid/optional-client-scopes" -r "$V2_REALM" -c | jq -c 'sort_by(.id)'
   done
-  for scope_name in "$LCA_SKYFORMS_SCOPE" "$LCA_FRONTEND_MAIN_SCOPE"; do
+  for scope_name in "$LCA_SKYFORMS_SCOPE" "$LCA_FRONTEND_MAIN_SCOPE" "$LCA_FRONTEND_ARGE_SCOPE"; do
     scope_uuid=$(lca_scope_uuids "$scope_name")
     kcadm get "client-scopes/$scope_uuid" -r "$V2_REALM" -c
     kcadm get "client-scopes/$scope_uuid/protocol-mappers/models" -r "$V2_REALM" -c

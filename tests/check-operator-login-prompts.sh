@@ -7,7 +7,7 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 CONFIG_DIR="$SCRIPT_DIR/../config"
 status=0
-for script in create-mailer-client.sh cleanup-legacy-passkeys.sh identity-guardrails.sh adopt-legacy-personal-email.sh create-erasure-client.sh; do
+for script in create-mailer-client.sh cleanup-legacy-passkeys.sh identity-guardrails.sh adopt-legacy-personal-email.sh create-erasure-client.sh inscribed-cms-roles.sh; do
   if grep -nE '^[[:space:]]*"\$KCADM" config credentials "\$\{credential_arguments\[@\]\}".*>' "$CONFIG_DIR/$script"; then
     printf 'operator login prompt check failed: %s redirects the interactive kcadm login\n' "$script" >&2
     status=1

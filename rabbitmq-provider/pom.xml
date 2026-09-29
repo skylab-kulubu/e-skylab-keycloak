@@ -6,7 +6,7 @@
 
   <groupId>com.skylab.keycloak</groupId>
   <artifactId>keycloak-to-rabbit</artifactId>
-  <version>3.1.0</version>
+  <version>3.1.1</version>
   <name>Keycloak event publisher to RabbitMQ</name>
   <description>SKY LAB maintained build of aznamier/keycloak-event-listener-rabbitmq.</description>
   <licenses>

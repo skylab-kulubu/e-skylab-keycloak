@@ -42,7 +42,7 @@ realm ayarı bırakmamaktır.
   üretilir.
 - `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.14.0`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
-  sağlayıcısı (`3.1.0`) bulunur.
+  sağlayıcısı (`3.1.1`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
   etkinleştirilir.
 - Realm ve istemci ayarları `config/reconcile-account-center.sh` ile sürekli

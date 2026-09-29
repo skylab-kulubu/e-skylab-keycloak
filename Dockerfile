@@ -40,7 +40,7 @@ ENV KC_DB=postgres \
     KC_FEATURES=account-api:v1,account:v3,par:v1,passkeys:v1,web-authn:v1
 
 COPY --from=providers --chown=keycloak:keycloak --chmod=0644 /build/spi/target/e-skylab-spi-1.14.0.jar /opt/keycloak/providers/e-skylab-spi-1.14.0.jar
-COPY --from=providers --chown=keycloak:keycloak --chmod=0644 /build/rabbitmq-provider/target/keycloak-to-rabbit-3.1.0.jar /opt/keycloak/providers/keycloak-to-rabbit-3.1.0.jar
+COPY --from=providers --chown=keycloak:keycloak --chmod=0644 /build/rabbitmq-provider/target/keycloak-to-rabbit-3.1.1.jar /opt/keycloak/providers/keycloak-to-rabbit-3.1.1.jar
 COPY --from=theme --chown=keycloak:keycloak --chmod=0644 /build/theme/dist_keycloak/e-skylab-theme-2.0.1.jar /opt/keycloak/providers/e-skylab-theme-2.0.1.jar
 
 # Keep provider mtimes stable across Docker implementations. Keycloak records them

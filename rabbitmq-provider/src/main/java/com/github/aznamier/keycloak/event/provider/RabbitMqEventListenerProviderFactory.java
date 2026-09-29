@@ -28,7 +28,7 @@ public final class RabbitMqEventListenerProviderFactory implements EventListener
 
     @Override
     public EventListenerProvider create(KeycloakSession session) {
-        return new RabbitMqEventListenerProvider(openChannel(), session, config);
+        return new RabbitMqEventListenerProvider(this::openChannel, session, config);
     }
 
     private Channel openChannel() {

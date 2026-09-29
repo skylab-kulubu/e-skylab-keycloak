@@ -253,10 +253,13 @@ tam olarak `https://api.place.yildizskylab.com/api/auth/eskylab/callback`, web o
 `place:admin` ve `place:moderator` client rolleri (kimseye verilmez, admin panelinden verilir);
 `schoolEmail`'den `school_email` claim'i ve `resource_access.place.roles` (ID token, access token,
 userinfo). Place grup okumaz (ADR-0059): grup verisi yazan varsayılan ya da isteğe bağlı
-kapsamlar (`microprofile-jwt` dahil) istemciden ayrılır. `e-skylab` dışındaki her realm'i
-girişten önce reddeder. Uzlaştırıcı bu istemciyi yönetmez; imaj yayını gerekmez. Sunucuda
-sky_lab_genel'deki `ops/wizards/place-keycloak-client-wizard.sh` betiği koşar ve secret'ı
-doğrudan OpenBao'ya taşır. Harness `tests/place-client.sh` tek başına çalışır (runbook §14).
+kapsamlar (`microprofile-jwt` dahil) istemciden ayrılır. `school_email`'in tek kaynağı
+istemcinin kendi mapper'ıdır: bu claim'i yazan kapsamlar da (production'da elle eklenmiş
+mapper'ıyla `profile`) yalnız `place`'ten ayrılır; realm kapsamı ve öteki istemciler
+değişmez. `e-skylab` dışındaki her realm'i girişten önce reddeder. Uzlaştırıcı bu istemciyi
+yönetmez; imaj yayını gerekmez. Sunucuda sky_lab_genel'deki
+`ops/wizards/place-keycloak-client-wizard.sh` betiği koşar ve secret'ı doğrudan OpenBao'ya taşır.
+Harness `tests/place-client.sh` tek başına çalışır (runbook §14).
 
 `account-center` realm'in etkin tarayıcı akışını kullanır; böylece
 production'a özel parola, OTP ve passkey davranışı olduğu gibi geçerlidir ve

@@ -29,6 +29,7 @@ entegrasyon testi bunu doğrular.
 | `account-center` istemcisi | v1 sözleşmesi, `fullScopeAllowed=false` **kalır**: Keycloak Admin REST `AdminAuth.hasAppRole = user.hasRole && client.hasScope` ile yetkilendirir ve tam kapsam açıkken `client.hasScope` her rol için doğrudur; `realm-management` rolü olan bir kişinin `my.` token'ı Admin REST'te geçerli olurdu. `sky_authorization` bu yüzden kapsamdan bağımsız SPI mapper'ından gelir ve token'ın yetkisini genişletmez (harness: `view-users` sahibinin `account-center` token'ı ile `GET /admin/realms/{realm}/users` → 403; tam kapsamla 200 alırdı). Token'daki `resource_access` yalnız `account` rollerini içerir, `core` rolü taşımaz (test edilir). `account` istemci rolü scope mapping izin listesi: `manage-account`, `view-profile`, `manage-account-links` (AIA `idp_link` `client.hasScope` denetimi için). |
 | `keycloak-mailer` istemcisi (K5) | Uzlaştırıcı **yalnız doğrular**: istemci yoksa uyarı ve çalıştırılacak komut; bayraklar (gizli, yalnız service account, standard flow / direct grant / implicit kapalı, `fullScopeAllowed=false`, `roles` varsayılan kapsamı) yanlışsa koşu hata ile durur; service account rolleri uzlaştırıcı kimliğiyle okunamadığından (kullanıcı yetkisi yok) uyarı olarak raporlanır. İstemciyi ve rolleri operatör `config/create-mailer-client.sh` ile oluşturur (§6). Gizli anahtarı Keycloak üretir, hiçbir betik yazdırmaz. |
 | `core-erasure` istemcisi (hesap silme, ADR-0051) | Uzlaştırıcı **yalnız doğrular** (`keycloak-mailer` gibi): istemci yoksa uyarı ve çalıştırılacak komut. Şunlardan biri sözleşmeden farklıysa koşu hata ile durur ve operatör komutunu yazar: bayraklar (gizli, yalnız service account, standard flow / direct grant / implicit kapalı, `fullScopeAllowed=false`), varsayılan kapsamlar (tam olarak `basic` ve `roles`; Keycloak'ın eklediği `service_account` hoş görülür), isteğe bağlı kapsamlar (tam olarak üç `account-erase-*`), doğrudan scope mapping (olmamalı), her erase kapsamının tek audience mapper'ı ve tek rolü, servis istemcilerinin (`skymail`, `skycms`, `forms`) varlığı. Service account rolleri uzlaştırıcı kimliğiyle okunamadığından uyarı olarak raporlanır. İstemciyi, kapsamları ve rolleri operatör `config/create-erasure-client.sh` ile kurar (§11). |
+| Parola formu (K4, §15) | Realm tarayıcı akışı `browser plus passkey`'deki `auth-username-password-form`'un yerine aynı alt akışta, aynı öncelik ve `REQUIRED` ile `sky-username-password-form` konur; akışın geri kalanına dokunulmaz. İki formdan tam olarak biri yoksa, form `REQUIRED` değilse ya da yanındaki bir yürütmeyle aynı önceliği paylaşıyorsa koşu hiçbir şey yazmadan durur. `KEYCLOAK_PASSWORD_FORM=auth-username-password-form` Keycloak'ın formunu geri koyar. |
 | Kimlik korumaları: core sertifika rolleri, OBS `department mapper`, core'un `manage-clients` rolü | Uzlaştırıcı **dokunmaz**: kimliğinin kullanıcı ve kimlik sağlayıcısı yetkisi yoktur. Operatör `config/identity-guardrails.sh` ile uygular (§8). |
 
 Ortam değişkenleri: `KEYCLOAK_PASSKEY_RP_ID` (varsayılan `yildizskylab.com`) ve
@@ -377,6 +378,11 @@ kalır. `keycloak-mailer` service account'ının yalnız `skymail:access` ve
 doğrulanır (entegrasyon testi aynı kontrolü yapar).
 
 ## 7. Geri dönüş
+
+Parola formunun (K4) geri dönüşü imajdan **önce** yapılır: §15'teki
+`KEYCLOAK_PASSWORD_FORM=auth-username-password-form` koşusu. Akış
+`sky-username-password-form`'u gösterirken 1.14.0'dan eski bir imaja dönülürse realm'in
+bütün parolalı girişleri durur.
 
 Realm ayarları için ayrı bir geri dönüş yolu yoktur; önceki imaj digest'i ile
 eski uzlaştırıcı çalıştırıldığında RP ID yeniden boşalır (Keycloak passwordless
@@ -1160,3 +1166,126 @@ kapsamı realm'in varsayılan kapsamıdır (en kötü durum). Şunları doğrula
 - Grup yazan bir istemci mapper'ı ve ikinci bir `school_email` mapper'ı `PROBLEM`'dir; dokunulmaz.
 - User Profile `schoolEmail`'i tanımlamıyorsa `WARNING` yazılır.
 - Hiçbir çıktıda secret görünmez.
+
+## 15. Okul ya da kişisel e-postayla parolalı giriş (K4)
+
+Parolalı girişte kullanıcı adı alanı artık dört şeyden birini alır: kullanıcı adı, birincil
+e-posta (Keycloak `email`), YTÜ bağlantılı hesabın okul e-postası ya da kanıtlanmış kişisel
+e-posta (CONTEXT.md, Primary e-mail: "Either address signs in"). Bunu SPI 1.14.0'daki
+`sky-username-password-form` (`com.skylab.authenticator.SkyUsernamePasswordFormFactory`) yapar.
+Uzlaştırıcı onu realm tarayıcı akışına koyar.
+
+### Hangi adres giriş tanımlayıcısıdır
+
+- `schoolEmail`: yalnız hesabın YTÜ Microsoft bağlantısı (`OBS`) varken. Değeri OBS'nin
+  `school-email-importer` mapper'ı (Keycloak'ın `microsoft-user-attribute-mapper`'ı, FORCE)
+  her YTÜ girişinde Microsoft'un verdiği gibi yazar: kırpılır, küçük harfe çevrilmez,
+  benzersizlik denetlenmez. Bağlantısız bir hesapta içe aktarılmış ya da yönetici yazmış bir
+  değer kanıt sayılmaz (Verified YTÜ account).
+- `personalEmail`: yalnız `personalEmailVerifiedAt` damgası okunabilir bir ISO-8601 anken
+  (`IdentityResource.isPersonalEmailVerified`, SPI'ın birincil seçiminde kullandığı kural).
+  Değeri yalnız `email/confirm` (kod doğru girildikten sonra) ve A1c devralması yazar, ikisi de
+  `PersonalEmailProof` ile: kırpılmış, `Locale.ROOT` ile küçük harf. Bekleyen değişiklik
+  özniteliğe hiç girmez; tek kullanımlık depoda kodunu bekler. Benzersizlik yazılırken
+  denetlenir: `change-request` ve `confirm` adresi başka birinin `email`, `schoolEmail` ya da
+  `personalEmail`'inde bulursa `email_taken` döner.
+- `email` ve kullanıcı adı: Keycloak'ın kendi araması (`KeycloakModelUtils.findUserByNameOrEmail`),
+  büyük/küçük harf duyarsız. Realm `duplicateEmailsAllowed=false`, `loginWithEmailAllowed=true`
+  (uzlaştırıcı bunu doğrular), `registrationEmailAsUsername=false` (üretim olgusu, 2026-09-21;
+  uzlaştırıcı yönetmez).
+
+İki öznitelik de büyük/küçük harf duyarsız karşılaştırılır (Keycloak'ın tam öznitelik araması
+iki yanı da küçültür, sonra değer SPI'da bir kez daha denetlenir). `loginWithEmailAllowed`
+kapalıysa ya da girdide `@` yoksa yalnız kullanıcı adı aranır.
+
+### Belirsizlik ve hata cevabı
+
+Her yol her girişte sorulur. Girdi iki farklı kişiyi gösteriyorsa (örneğin birinin `email`'i,
+ötekinin okul e-postası) kimse seçilmez ve cevap, bilinmeyen bir kullanıcı adınınkiyle aynıdır:
+Keycloak'ın `testInvalidUser`'ı, yani sabit süreli sahte parola özeti, `user_not_found` olayı
+ve yanlış parolayla aynı "Geçersiz kullanıcı adı veya şifre" mesajı. Kanıtlanmamış bir adres de
+hiç kimseyi göstermez; cevabı yazım hatasınınkidir. Kullanıcı adı `@` içeren eski bir hesap o
+adresi taşıyan başka birine çözülüyorsa kişi aynı cevabı alır.
+
+### Keycloak'ın davranışı nasıl korunuyor
+
+`SkyUsernamePasswordForm`, Keycloak'ın `UsernamePasswordForm`'unu genişletir ve yalnız
+`validateForm`'u değiştirir. Keycloak'ın kendi aramasının bulduğu girdi, hiç kimseyi göstermeyen
+girdi ve formdan önce kişisi belli olan akış Keycloak'ın koduna hiç değiştirilmeden gider. Yalnız
+okul ya da kişisel e-postayla bulunan kişi için Keycloak'ın formu o kişinin kullanıcı adıyla
+çalışır. Parola denetimi, brute force, devre dışı hesap, zorunlu eylemler, hata mesajları ve
+passkey (conditional UI) yolu Keycloak'ındır. İki ayrıntı:
+
+- Keycloak brute force için kişiyi `ATTEMPTED_USERNAME` notundan bulur; giriş ve parola
+  sıfırlama sayfaları da bu notu geri gösterir. Not, form çalıştıktan sonra yazılan adrese
+  geri çevrilir; bir adres kimsenin kullanıcı adını açığa vurmaz. Not artık kişiye çözülmediği
+  için yanlış parola burada Keycloak'ın akışının yaptığı çağrıyla (`BruteForceProtector
+  .failedLogin`, bu yürütmenin `password` kategorisiyle) bir kez sayılır.
+- Hata olayı (`LOGIN_ERROR`, `invalid_user_credentials`) adresle girişte `username` ayrıntısı
+  olarak kullanıcı adını taşır; başarılı giriş olayı ve oturum yazılan adresi taşır.
+
+Belirsiz bir girdi, Keycloak'ın her girdide yaptığı gibi, kendi aramasının bulduğu kişiye
+(varsa, `email`'in ya da kullanıcı adının sahibi) brute-force hatası yazar; okul ya da kişisel
+e-posta sahibine yazmaz.
+
+### Uzlaştırıcı
+
+`reconcile_password_form 'browser plus passkey'`, `account-center-browser` emekliye ayrılıp
+silindikten hemen sonra koşar (o akış artık yoktur, değiştirilecek formu da yoktur). Admin REST
+bir yürütmenin sağlayıcısını değiştiremediği için yeni form aynı alt akışa aynı öncelikle
+eklenir (Keycloak yürütmeleri yalnız önceliğe göre sıralar), sonra eskisi silinir. O kısa anda
+akış parolayı iki kez sorar; parolasız bir an hiç olmaz. `ReconcileJson password-form` şu
+durumlarda hiçbir şey yazmadan durdurur: iki formdan tam olarak biri yok, form `REQUIRED`
+değil, bir authenticator config'i var ya da yanındaki bir yürütme aynı önceliği paylaşıyor.
+İki yazma arasında kesilmiş bir koşu iki formu yan yana, aynı öncelikte bırakır; sonraki koşu
+eskisini silip tamamlar. Satırlar:
+
+- `[reconcile] password form of flow 'browser plus passkey': updated (auth-username-password-form -> sky-username-password-form in subflow 'password flow', priority 0, REQUIRED)`
+- `[reconcile] password form of flow 'browser plus passkey': unchanged (sky-username-password-form)`
+
+Geri dönüş bayrağı `KEYCLOAK_PASSWORD_FORM` (varsayılan `sky-username-password-form`;
+`auth-username-password-form` Keycloak'ın formunu aynı yere geri koyar; başka değer koşuyu
+durdurur). Geri dönülen akışta adreslerle giriş durur, kullanıcı adı ve birincil e-posta çalışır.
+Bayraksız sonraki koşu SKY LAB formunu yeniden koyar.
+
+### Üretim sırası
+
+1. SPI 1.14.0'ı taşıyan Keycloak sürümü yayımlanır (`main` → `production` tek squash,
+   `keycloak-production` Touch ID onayı o commit'e bağlanır, `/health/ready` yeşil).
+2. Uzlaştırıcı §9'daki `docker exec` komutuyla bir kez koşar. Beklenen tek yeni değişiklik
+   satırı yukarıdaki `updated (auth-username-password-form -> sky-username-password-form in
+   subflow 'password flow', priority 0, REQUIRED)` satırıdır (üretim olguları: forms →
+   passwordless WebAuthn ALT / `password flow` alt akışı, formun önceliği 0, yanında
+   `conditional 2fa` 1 ve `Passkey Offer` 2).
+3. Aynı komut ikinci kez koşar; hiçbir satır `updated` dememelidir.
+4. Admin Console → Authentication → `browser plus passkey`: `password flow` alt akışının ilk
+   satırı "SKY LAB Username Password Form" (REQUIRED) olmalıdır.
+5. Deneme: okul e-postası birincil olmayan bir hesapla kişisel e-posta, YTÜ bağlantılı bir
+   hesapla okul e-postası girişi; bir yazım hatası "Geçersiz kullanıcı adı veya şifre" almalı.
+
+Geri dönüş: aynı `docker exec` komutuna `export KEYCLOAK_PASSWORD_FORM=auth-username-password-form`
+eklenip bir kez koşulur (beklenen satır `updated (sky-username-password-form ->
+auth-username-password-form ...)`), sonra gerekirse eski imaja dönülür. Sıra önemlidir: eski
+imajda `sky-username-password-form` bulunmadığından o akışla parolalı giriş de, Admin Console'da
+akışın yürütme listesi de hata verir. Eski imaj zaten çalışıyorsa önce 1.14.0 imajı yeniden
+dağıtılır, bayraklı koşu yapılır, sonra geri dönülür.
+
+### Kapsam dışı: parola sıfırlama ve direct grant
+
+`reset credentials` akışının `reset-credentials-choose-user`'ı kişiyi hâlâ yalnız kullanıcı
+adı ve `email`'le bulur. Okul ya da kişisel e-postasını yazan kişi "e-posta gönderildi"
+cevabını alır ama posta gitmez. Aynı aramaya geçmesi mantıklıdır (bağlantı yine birincil adrese
+gider, yazılan adrese değil; bulunamayan adres için cevap zaten aynıdır), ama ayrı bir
+authenticator ve akış değişikliği ister; ayrı bilet. `direct grant` akışı
+(`direct-grant-validate-username`; üretimde `admin-cli` ve `skycloud`) de değişmedi.
+
+Harness: `tests/login-by-either-email.sh` (`run-integration.sh` içinden). İlk uzlaştırmadan
+sonra akışın yalnız formu değişmiş olmalı. Kullanıcı adı, birincil, okul (karışık harfli
+kayıt, boşluklu ve büyük harfli girdi) ve kişisel e-postayla giriş doğru `sub`'ı verir. Yazım
+hatası, iki kişide olan adres (ikisinin doğru parolasıyla bile), kanıtsız kişisel e-posta ve
+bağlantısız okul e-postası yanlış parolayla aynı cevabı alır ve kullanıcı adını hiçbir sayfada
+göstermez; parola sıfırlama sayfası yazılan adresi taşır, kullanıcı adını değil. Adresle her
+yanlış parola bir kez sayılır, 10. yanlış parola hesabı kilitler, kilit adreslerle de geçerlidir;
+devre dışı hesap adresle de kullanıcı adıyla aldığı cevabı alır. Uzlaştırıcı tarafında: geçersiz
+bayrak, ikinci form (durur, yazmaz), yarıda kalmış değişim (tamamlar), geri dönüş ve yeniden
+ileri, her biri ikinci koşuda sessiz.

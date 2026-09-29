@@ -72,6 +72,10 @@ source "$SCRIPT_DIR/login-client-audiences.sh"
 # The realm's user and admin event retention (account erasure ticket 09); stages called below.
 # shellcheck source=event-retention.sh
 source "$SCRIPT_DIR/event-retention.sh"
+# K4: sign-in by username, Primary, School or Personal e-mail and the password form swap;
+# stages called below.
+# shellcheck source=login-by-either-email.sh
+source "$SCRIPT_DIR/login-by-either-email.sh"
 
 # ---------------------------------------------------------------------------
 # v2 identity reconcile stages (passkey relying party id, realm login and brute
@@ -1176,7 +1180,8 @@ CURRENT_STAGE='scoped reconciler bootstrap'
 
 # Production uses a realm-level custom browser flow. Account Center signs in
 # through that active realm flow itself (no client-specific copy since the Web
-# handoff replaced the native handoff), and reconciliation must never change it.
+# handoff replaced the native handoff), and reconciliation changes nothing in it but
+# the username/password form (K4, tests/login-by-either-email.sh).
 # The disabled custom execution keeps this fixture behaviorally inert while making
 # the realm graph observably different from Keycloak's built-in `browser` flow.
 CURRENT_STAGE='active custom browser flow fixture'
@@ -1251,11 +1256,9 @@ assert_account_center_uses_the_realm_browser_flow
 grep -Fq '[reconcile] authentication flow account-center-browser: unchanged (absent)' \
   "$TEST_STATE_DIR/reconcile-first.log" \
   || fail 'the first reconciliation did not report the absent client-specific flow'
-active_browser_flow_after=$(kcadm get \
-  'authentication/flows/browser%20plus%20passkey/executions' \
-  -r e-skylab-test -c | jq -S -c '.')
-[[ $active_browser_flow_after == "$active_browser_flow_before" ]] \
-  || fail 'Account Center reconciliation mutated the active realm browser flow'
+# The one change reconciliation makes to the realm browser flow is K4's: the SKY LAB
+# username/password form in the place of Keycloak's. Everything else stays as it was.
+stage_password_form_after_first_reconciliation "$active_browser_flow_before"
 
 stage_v2_after_first_reconciliation
 stage_login_audiences_after_first_reconciliation
@@ -1442,7 +1445,7 @@ grep -Fq '[reconcile] authentication flow account-center-browser: deleted (with 
 active_browser_flow_after_repair=$(kcadm get \
   'authentication/flows/browser%20plus%20passkey/executions' \
   -r e-skylab-test -c | jq -S -c '.')
-[[ $active_browser_flow_after_repair == "$active_browser_flow_before" ]] \
+[[ $(lbe_flow_shape <<<"$active_browser_flow_after_repair") == "$(lbe_flow_shape <<<"$active_browser_flow_before")" ]] \
   || fail 'retiring the client flow mutated the active realm browser flow'
 json_assert "$(kcadm get realms/e-skylab-test -c)" '.browserFlow == "browser plus passkey"' \
   'retiring the client flow changed the realm browser flow binding'
@@ -1708,6 +1711,8 @@ json_assert "$aia_par_response" \
 
 fixture_user_uuid=$(kcadm get users -r e-skylab-test -q username=account-fixture -c \
   | jq -r '.[] | select(.username == "account-fixture") | .id')
+
+stage_login_by_either_email "$client_secret"
 
 # The Web handoff (sky-handoff provider, ADR-0048), which replaced the retired native handoff:
 # SkyApp mints a code, the WebView opens it with its proof and account-center signs in

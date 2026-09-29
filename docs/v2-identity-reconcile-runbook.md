@@ -1057,3 +1057,106 @@ Harness: `tests/sandbox-site-clients.sh` tek başına çalışır. Dockerfile'da
 - Realm'in `groups` kapsamı varken o kapsam bağlanır.
 - `core` yokken `NOTE` yazılır.
 - Hiçbir çıktıda secret görünmez.
+
+## 14. Place: `place` istemcisi, roller ve `school_email` claim'i (ADR-0060)
+
+Place'in backend'i (`api.place.yildizskylab.com`) e-skylab girişini kendisi yürütür: realm
+`e-skylab`'ın gizli istemcisi `place`'tir (BFF; Authorization Code + PKCE). Keycloak token'ları
+tarayıcıya gitmez, Place kendi oturum cookie'sini verir (ADR-0058'in yönü). İstemciyi
+`config/create-place-client.sh` kurar. Betik §13'teki betiğin düzenindedir: varsayılanı
+`--check`'tir, `--apply` yazar, ikinci koşu hiçbir şey yazmaz. Yönetici parolası kcadm'ın
+kendi prompt'una yazılır ya da `--kcadm-config` kullanılır. Uzlaştırıcı bu istemciyi
+yönetmez ve doğrulamaz; imaj yayını gerekmez, betik çalışan konteynerde koşar.
+
+**Yalnız `e-skylab`.** Place'in sandbox'ı yok. `KEYCLOAK_REALM` başka bir şeyse betik girişten
+önce `refusing realm …` yazar ve 2 ile çıkar. Realm yoksa 1 ile çıkar ve hiçbir şey yazmaz.
+
+Kurduğu istemci `place`:
+
+- gizli (`client-secret`; secret'ı Keycloak üretir, betik basmaz);
+- yalnız standard flow: implicit, direct grant, service account, device grant, CIBA ve
+  standard token exchange kapalı; PKCE `S256` zorunlu;
+- `fullScopeAllowed=false`: token yalnız Place'in kendi rollerini taşır, `realm_access` ve başka
+  istemcilerin rolleri gelmez (tam kapsam açık olsaydı `realm-management` rolü olan bir
+  yetkilinin token'ı Admin REST'te de geçerli olurdu, §0'daki `account-center` notu);
+- consent ve front-channel logout kapalı (Place'ten çıkış e-skylab oturumunu kapatmaz);
+- dönüş adresi tam olarak `https://api.place.yildizskylab.com/api/auth/eskylab/callback`; web
+  origin yok (tarayıcı Keycloak'ın uçlarını çağırmaz). İstemcide başka adres varsa silinir ve
+  satırda listelenir.
+
+Roller: `place:admin` ve `place:moderator` (ADR-0059: uygulama geneli izin client rolüdür).
+Betik hiçbir kişiye ya da gruba rol vermez; roller SKY LAB admin panelinin "Rol ekle"sinden
+verilir (core'un rol kataloğu bütün istemcilerin rollerini listeler). Betik rolleri kimin
+taşıdığını raporlar: doğrudan taşıyan kişi sayısı ve grup yolları.
+
+Token'a girenler (ID token, access token, userinfo ve introspection):
+
+1. `school_email`: istemci mapper'ı `school-email`, `schoolEmail` özniteliğinden (User Profile'da
+   §0'daki biçimde). Place hesabı bununla eşler; kişinin birincil adresi (`email`, kişisel
+   olabilir, ADR-0044) eşlemede kullanılmaz. Öznitelik yoksa claim de yoktur ve Place girişi
+   reddeder. User Profile `schoolEmail`'i tanımlamıyorsa `WARNING` yazılır.
+2. `resource_access.place.roles`: istemci mapper'ı `place-roles`. Realm'in `roles` kapsamı bu
+   claim'i yalnız access token'a yazar; Place ID token'ı doğruladığı için ID token'a ve userinfo'ya
+   da bu mapper yazar.
+
+Grup yok (ADR-0059: Place grup okumaz). Keycloak yeni istemciye realm'in varsayılan ve isteğe
+bağlı kapsamlarını bağlar. Bunlardan grup verisi yazan (Group Membership mapper'ı ya da claim'i
+`groups` olan herhangi bir mapper; Keycloak'ın `microprofile-jwt`'si realm rollerini `groups`
+adıyla yazar) `place`'ten ayrılır. Ayrılan kapsam istenirse Keycloak isteği `invalid_scope` ile
+reddeder. İstemcinin kendi üzerinde grup yazan bir mapper, `school_email` yazan ikinci bir
+mapper ya da `school-email`/`place-roles` adında başka türde bir mapper `PROBLEM`'dir; dokunulmaz.
+
+### Üretim sırası
+
+1. e-skylab-keycloak PR'ı `main`'e birleşir. İmaj yayını gerekmez.
+2. sky_lab_genel'deki `ops/wizards/place-keycloak-client-wizard.sh` sunucuda koşar
+   (kopyalama komutları başında):
+   - Keycloak konteynerini bulur, realm'i ve istemcinin durumunu okur. Betiğin sha256'sını
+     wizard'daki sabitle karşılaştırır, betiği konteynerin `/tmp`'sine koyar.
+   - kcadm girişi yapar. Betiği sırayla koşar: `--check`, plan, onay, `--apply`, yeniden `--check`.
+   - Secret'ı konteynerde kcadm ile okur ve borudan doğrudan OpenBao'ya yazar:
+     `kv/etkinlik/<Place appName>/KEYCLOAK_CLIENT_SECRET` (`cas=0`). Değer ekrana, dosyaya ya da bir
+     komut satırına girmez. OpenBao'daki değerin sha256'sını Keycloak'takiyle karşılaştırır.
+   - Place backend'inin ortamına girecek sır olmayan değerleri basar: issuer, client id, dönüş
+     adresi ve secret'ın OpenBao referansı. Ortama yazmak Place'in yayın biletinin işidir.
+3. Elle koşmak gerekirse:
+
+   ```bash
+   kc=$(docker ps -q -f name=sky-lab-production-keycloak | head -n 1)
+   docker exec -i "$kc" sh -c 'cat > /tmp/create-place-client.sh' < create-place-client.sh
+   docker exec -it -e KEYCLOAK_ADMIN_URL=http://127.0.0.1:8080 "$kc" \
+     bash /tmp/create-place-client.sh --admin-user <yönetici>            # --check
+   docker exec -it -e KEYCLOAK_ADMIN_URL=http://127.0.0.1:8080 "$kc" \
+     bash /tmp/create-place-client.sh --admin-user <yönetici> --apply
+   ```
+
+   İlk koşuda beklenen en az `check: 5 change(s) pending` (istemci, iki rol, iki mapper) ve realm'in
+   grup yazan her varsayılan ya da isteğe bağlı kapsamı için bir `detach` (Keycloak'ın
+   varsayılanlarında `microprofile-jwt`). Uygulamadan sonra: `check: 0 change(s) pending`.
+
+Geri dönüş: Admin Console → `e-skylab` → Clients → `place` silinir (rolleri ve mapper'ları
+birlikte gider; realm kapsamlarına dokunulmamıştır). OpenBao'daki yol kaldırılır. Place
+backend'i `mail` modunda e-skylab'ı kullanmaz.
+
+Harness: `tests/place-client.sh` tek başına çalışır. Dockerfile'daki Keycloak imajını
+`docker run --rm` ile dev modunda açar; sonda `docker rm -fv`. Fixture realm'inde `groups`
+kapsamı realm'in varsayılan kapsamıdır (en kötü durum). Şunları doğrular:
+
+- `e-skylab` dışındaki realm'ler girişten önce reddedilir; realm yokken hiçbir şey yazılmaz.
+- `--check` yazmaz (admin olayları); `--apply` yalnız planı yazar ve kimseye rol vermez. İstemcinin
+  bayrakları, PKCE'si, adresleri, rolleri, mapper'ları ve kapsamları beklenen biçimdedir.
+- İkinci koşu yazmaz.
+- Admin panelinin yaptığı gibi bir kişiye `place:moderator`, bir gruba `place:admin` verilince
+  gerçek authorization code akışı (PKCE S256, state, nonce, giriş sayfası, dönüş adresine
+  `code`, secret ve verifier ile takas) çalışır. ID token'da (aud `place`, nonce), access token'da
+  ve userinfo'da `school_email` (okul adresi; `email` kişisel adres olarak kalır) ve
+  `resource_access.place.roles` bulunur; `groups`, `realm_access` ve başka istemcinin rolü
+  (kişinin `core` rolü) bulunmaz. Grupla verilen rol gelir; okul adresi olmayan kişide
+  `school_email` ve rol yoktur.
+- `groups` ve `microprofile-jwt` kapsamları `invalid_scope` ile, PKCE'siz ve `plain` istek,
+  `response_type=token`, yabancı dönüş adresi (400), password ve client_credentials grant'leri
+  reddedilir.
+- Kaymalar onarılır (bayraklar, PKCE, adresler, web origin, iki mapper, iki kapsam).
+- Grup yazan bir istemci mapper'ı ve ikinci bir `school_email` mapper'ı `PROBLEM`'dir; dokunulmaz.
+- User Profile `schoolEmail`'i tanımlamıyorsa `WARNING` yazılır.
+- Hiçbir çıktıda secret görünmez.

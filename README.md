@@ -245,6 +245,19 @@ sky_lab_genel'deki `ops/wizards/sandbox-arge-keycloak-wizard.sh` ikisini koşar;
 OpenBao'ya `ops/wizards/arge-dokploy-wizard.sh --sandbox-kc` taşır. Harness
 `tests/sandbox-site-clients.sh` tek başına çalışır (runbook §13).
 
+Place'in backend'i (ADR-0060) e-skylab girişini kendisi yürütür: realm `e-skylab`'ın gizli
+istemcisi `place`'tir. Operatör istemciyi idempotent `config/create-place-client.sh` ile kurar
+(varsayılan `--check`, `--apply`; kcadm prompt düzeni ya da `--kcadm-config`): yalnız standard
+flow, PKCE `S256` zorunlu, `fullScopeAllowed=false`, front-channel logout kapalı, dönüş adresi
+tam olarak `https://api.place.yildizskylab.com/api/auth/eskylab/callback`, web origin yok;
+`place:admin` ve `place:moderator` client rolleri (kimseye verilmez, admin panelinden verilir);
+`schoolEmail`'den `school_email` claim'i ve `resource_access.place.roles` (ID token, access token,
+userinfo). Place grup okumaz (ADR-0059): grup verisi yazan varsayılan ya da isteğe bağlı
+kapsamlar (`microprofile-jwt` dahil) istemciden ayrılır. `e-skylab` dışındaki her realm'i
+girişten önce reddeder. Uzlaştırıcı bu istemciyi yönetmez; imaj yayını gerekmez. Sunucuda
+sky_lab_genel'deki `ops/wizards/place-keycloak-client-wizard.sh` betiği koşar ve secret'ı
+doğrudan OpenBao'ya taşır. Harness `tests/place-client.sh` tek başına çalışır (runbook §14).
+
 `account-center` realm'in etkin tarayıcı akışını kullanır; böylece
 production'a özel parola, OTP ve passkey davranışı olduğu gibi geçerlidir ve
 uzlaştırıcı o akışa hiç yazmaz. Native handoff döneminden kalan kurulumda

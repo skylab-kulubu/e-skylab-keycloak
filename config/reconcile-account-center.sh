@@ -33,6 +33,22 @@ FRONTEND_ARGE_CLIENT_ID=frontend-arge
 FRONTEND_ARGE_SCOPE_NAME=frontend-arge-core-audience
 SKYFORMS_CLIENT_ID=skyforms
 SKYFORMS_SCOPE_NAME=skyforms-forms-audience
+# The admin panel's login client (ADR-0058; see reconcile_admin_panel_client): admin, superadmin in
+# the sandbox realm (as in inscribed-cms-roles.sh); KEYCLOAK_ADMIN_PANEL_CLIENT_ID names another.
+if [[ $TARGET_REALM == e-skylab-sandbox ]]; then
+  ADMIN_PANEL_CLIENT_ID=${KEYCLOAK_ADMIN_PANEL_CLIENT_ID:-superadmin}
+else
+  ADMIN_PANEL_CLIENT_ID=${KEYCLOAK_ADMIN_PANEL_CLIENT_ID:-admin}
+fi
+ADMIN_PANEL_SCOPE_NAME=admin-panel-api-audience
+# The API clients whose every role the panel's token may carry (skycms reads the panel's own roles).
+ADMIN_PANEL_API_CLIENTS=(core forms)
+# An operator runs one step with a kcadm session they logged in themselves (the sandbox realm has no
+# reconciler identity): KEYCLOAK_RECONCILE_KCADM_CONFIG names that session's kcadm config file, which
+# is never deleted here, and KEYCLOAK_RECONCILE_ONLY the step. The whole reconciliation still runs
+# only as the scoped reconciler identity, so an operator session requires KEYCLOAK_RECONCILE_ONLY.
+OPERATOR_KCADM_CONFIG=${KEYCLOAK_RECONCILE_KCADM_CONFIG:-}
+RECONCILE_ONLY=${KEYCLOAK_RECONCILE_ONLY:-}
 # Event retention (account erasure ticket 09). Keycloak deletes no event with the person core's
 # erasure saga removes: CREATE and UPDATE admin events hold the whole user representation
 # (e-mail, names, school and personal e-mail), DELETE holds the username, LOGIN and LOGIN_ERROR
@@ -45,7 +61,27 @@ EVENT_RETENTION_SETTINGS="{\"eventsEnabled\":true,\"eventsExpiration\":$EVENT_RE
 # The admin event expiration is a realm attribute (seconds), read by Keycloak's scheduled task.
 ADMIN_EVENTS_EXPIRATION_ATTRIBUTE=adminEventsExpiration
 ACCOUNT_ROLE_ALLOWLIST=(manage-account view-profile manage-account-links)
-KCADM_CONFIG=$(mktemp /tmp/account-center-kcadm.XXXXXX)
+case $RECONCILE_ONLY in
+  '' | admin-panel-client) ;;
+  *)
+    printf 'KEYCLOAK_RECONCILE_ONLY must be empty or admin-panel-client, not %s\n' "$RECONCILE_ONLY" >&2
+    exit 2
+    ;;
+esac
+if [[ -n $OPERATOR_KCADM_CONFIG ]]; then
+  if [[ -z $RECONCILE_ONLY ]]; then
+    printf 'KEYCLOAK_RECONCILE_KCADM_CONFIG needs KEYCLOAK_RECONCILE_ONLY: an operator session runs one step; the whole reconciliation runs as %s\n' \
+      "$CONFIG_CLIENT_ID" >&2
+    exit 2
+  fi
+  if [[ ! -r $OPERATOR_KCADM_CONFIG ]]; then
+    printf 'KEYCLOAK_RECONCILE_KCADM_CONFIG is not a readable kcadm config file: %s\n' "$OPERATOR_KCADM_CONFIG" >&2
+    exit 2
+  fi
+  KCADM_CONFIG=$OPERATOR_KCADM_CONFIG
+else
+  KCADM_CONFIG=$(mktemp /tmp/account-center-kcadm.XXXXXX)
+fi
 WORK_DIR=$(mktemp -d /tmp/account-center-reconcile.XXXXXX)
 JSON_TOOL_CLASSPATH=''
 ENSURED_SCOPE_ID=''
@@ -60,7 +96,9 @@ source "$CONFIG_DIR/mailer-client-contract.sh"
 source "$CONFIG_DIR/erasure-client-contract.sh"
 
 cleanup() {
-  rm -f "$KCADM_CONFIG"
+  if [[ -z $OPERATOR_KCADM_CONFIG ]]; then
+    rm -f "$KCADM_CONFIG"
+  fi
   rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
@@ -81,7 +119,9 @@ require() {
   fi
 }
 
-require KEYCLOAK_CONFIG_CLIENT_SECRET
+if [[ -z $OPERATOR_KCADM_CONFIG ]]; then
+  require KEYCLOAK_CONFIG_CLIENT_SECRET
+fi
 
 BASE_URL=$(normalize_account_center_base_url \
   "$BASE_URL" \
@@ -808,7 +848,7 @@ reconcile_skyapp_audience() {
 # has neither site client) skips the item with a warning.
 reconcile_login_client_audience() {
   local client_id=$1 scope_name=$2 mappers_file=$3
-  local client_uuid scope_uuid optional_scopes
+  local client_uuid
   if ! client_uuid=$(optional_lookup client_id_by_client_id "$client_id"); then
     return 2
   fi
@@ -816,6 +856,13 @@ reconcile_login_client_audience() {
     warn "client $client_id does not exist in realm $TARGET_REALM; skipped client scope $scope_name"
     return 0
   fi
+  ensure_default_audience_scope "$client_id" "$client_uuid" "$scope_name" "$mappers_file"
+}
+
+# The source-controlled audience scope of a login client, kept among its default scopes only.
+ensure_default_audience_scope() {
+  local client_id=$1 client_uuid=$2 scope_name=$3 mappers_file=$4
+  local scope_uuid optional_scopes
   ensure_client_scope "$scope_name" "$mappers_file"
   scope_uuid=$ENSURED_SCOPE_ID
   # Keycloak keeps one link per client and scope, so an optional link would block the default one.
@@ -830,6 +877,119 @@ reconcile_login_client_audience() {
     log "client $client_id: detached optional scope $scope_name (it must be a default scope)"
   fi
   ensure_default_client_scope "$client_uuid" "$scope_uuid" "$scope_name"
+}
+
+# The admin panel's login client (ADR-0058, admin-token-authz ticket 02), made by hand and
+# confidential in both realms. With full scope its token carried every audience and role of the
+# person (11 audiences, 12 realm roles, 3.3 KB in production). Here the token is narrowed to the APIs
+# the panel calls: every role of core and forms is in the client's role scope and nothing else,
+# "Full scope allowed" is off (the panel's own roles, content:* for inscribed, always pass), and
+# core, forms and skycms come from hardcoded audience mappers so a person without a role of that API
+# is not refused (the reason of reconcile_login_client_audience). realm_access disappears; groups and
+# the client's own mappers stay. Standard Token Exchange is on, so the panel's server can trade its
+# token for a token of one of the three APIs (Keycloak lets a confidential client exchange a token
+# issued to itself). The order keeps the live panel working during the run: audiences and API roles
+# first, full scope off last. A role made on core or forms outside the reconciler reaches the panel's
+# token with the next run.
+#
+# A missing client is skipped with a warning. A public one fails the run before anything is written
+# to it: token exchange needs a confidential client, and making it confidential changes how the panel
+# signs in (it must then send the client secret), which is the panel's change (admin-token-authz
+# ticket 07). The step runs last, so every other step is done by then.
+reconcile_admin_panel_client() {
+  local client_uuid live_file public_client desired_file="$WORK_DIR/client-$ADMIN_PANEL_CLIENT_ID.json"
+  if ! client_uuid=$(optional_lookup client_id_by_client_id "$ADMIN_PANEL_CLIENT_ID"); then
+    return 2
+  fi
+  if [[ -z $client_uuid ]]; then
+    warn "client $ADMIN_PANEL_CLIENT_ID does not exist in realm $TARGET_REALM; skipped the admin panel token contract"
+    return 0
+  fi
+  live_file=$(mktemp "$WORK_DIR/admin-panel.XXXXXX")
+  kcadm_json "clients/$client_uuid" -r "$TARGET_REALM" >"$live_file"
+  public_client=$(json_tool field publicClient <"$live_file")
+  if [[ $public_client != true && $public_client != false ]]; then
+    printf 'Client %s has no readable publicClient flag (%s); nothing was changed on it\n' \
+      "$ADMIN_PANEL_CLIENT_ID" "${public_client:-empty}" >&2
+    return 1
+  fi
+  if [[ $public_client == true ]]; then
+    printf 'Client %s is public: Standard Token Exchange needs a confidential client, and making it confidential changes how the admin panel signs in (it must send the client secret; admin-token-authz ticket 07). Nothing was changed on %s; make it confidential together with the panel, then run again\n' \
+      "$ADMIN_PANEL_CLIENT_ID" "$ADMIN_PANEL_CLIENT_ID" >&2
+    return 1
+  fi
+  ensure_default_audience_scope "$ADMIN_PANEL_CLIENT_ID" "$client_uuid" "$ADMIN_PANEL_SCOPE_NAME" \
+    "$CONFIG_DIR/admin-panel-api-audience-mappers.json"
+  reconcile_admin_panel_role_scope "$client_uuid"
+  printf '{"fullScopeAllowed":false,"attributes":{"standard.token.exchange.enabled":"true"}}\n' >"$desired_file"
+  apply_fields_if_changed "client $ADMIN_PANEL_CLIENT_ID (no full scope, standard token exchange)" \
+    "$desired_file" "clients/$client_uuid" -r "$TARGET_REALM"
+}
+
+# {"id":…,"name":…} of one role; role names are free text (a quote or backslash stays JSON).
+role_reference() {
+  local name=${2//\\/\\\\}
+  name=${name//\"/\\\"}
+  printf '{"id":"%s","name":"%s"}' "$1" "$name"
+}
+
+# The role scope of the admin panel's client: every role of the API clients, no other client role
+# and no realm role. A missing API client is reported; its roles are added once it exists.
+reconcile_admin_panel_role_scope() {
+  local client_uuid=$1
+  local live_file mapped api api_uuid roles_csv role_id role_name body owner owner_uuid is_api
+  local changed='' label
+  label="role scope mappings of $ADMIN_PANEL_CLIENT_ID (every role of $(printf '%s, ' "${ADMIN_PANEL_API_CLIENTS[@]}" | sed 's/, $//'))"
+  live_file=$(mktemp "$WORK_DIR/admin-panel-scope.XXXXXX")
+  kcadm_json "clients/$client_uuid/scope-mappings" -r "$TARGET_REALM" >"$live_file"
+  mapped=$(json_tool scope-mappings <"$live_file")
+  for api in "${ADMIN_PANEL_API_CLIENTS[@]}"; do
+    if ! api_uuid=$(optional_lookup client_id_by_client_id "$api"); then
+      return 2
+    fi
+    if [[ -z $api_uuid ]]; then
+      warn "client $api does not exist in realm $TARGET_REALM; no $api role is in the scope of $ADMIN_PANEL_CLIENT_ID"
+      continue
+    fi
+    roles_csv=$(kcadm get "clients/$api_uuid/roles" -r "$TARGET_REALM" \
+      --fields id,name \
+      --format csv \
+      --noquotes)
+    body=''
+    while IFS=, read -r role_id role_name; do
+      [[ -n $role_id ]] || continue
+      if ! grep -Fq "$api"$'\t'"$api_uuid"$'\t'"$role_id"$'\t' <<<"$mapped"; then
+        body="$body,$(role_reference "$role_id" "$role_name")"
+        changed="$changed +$api/$role_name"
+      fi
+    done <<<"$roles_csv"
+    if [[ -n $body ]]; then
+      kcadm create "clients/$client_uuid/scope-mappings/clients/$api_uuid" \
+        -r "$TARGET_REALM" \
+        -b "[${body#,}]" >/dev/null
+    fi
+  done
+  while IFS=$'\t' read -r owner owner_uuid role_id role_name; do
+    [[ -n $owner ]] || continue
+    is_api=false
+    for api in "${ADMIN_PANEL_API_CLIENTS[@]}"; do
+      [[ $owner == "$api" ]] && is_api=true
+    done
+    [[ $is_api == false ]] || continue
+    body="[$(role_reference "$role_id" "$role_name")]"
+    if [[ $owner == - ]]; then
+      kcadm delete "clients/$client_uuid/scope-mappings/realm" -r "$TARGET_REALM" -b "$body" >/dev/null
+      changed="$changed -realm/$role_name"
+    else
+      kcadm delete "clients/$client_uuid/scope-mappings/clients/$owner_uuid" -r "$TARGET_REALM" -b "$body" >/dev/null
+      changed="$changed -$owner/$role_name"
+    fi
+  done <<<"$mapped"
+  if [[ -z $changed ]]; then
+    log "$label: unchanged"
+  else
+    log "$label: updated (${changed# })"
+  fi
 }
 
 # The keycloak-mailer service-account client (K5) is provisioned by the operator with
@@ -980,9 +1140,17 @@ verify_erasure_client() {
   fi
 }
 
-authenticate
+if [[ -z $OPERATOR_KCADM_CONFIG ]]; then
+  authenticate
+fi
 kcadm_json "realms/$TARGET_REALM" >/dev/null
 compile_json_tool
+
+if [[ $RECONCILE_ONLY == admin-panel-client ]]; then
+  reconcile_admin_panel_client
+  printf 'Admin panel client configuration is reconciled.\n'
+  exit 0
+fi
 
 reconcile_realm_settings
 reconcile_brute_force_and_password_policy
@@ -1012,5 +1180,8 @@ reconcile_account_center_client_scopes "$scope_uuid" "$core_scope_uuid"
 reconcile_account_scope_mappings
 verify_mailer_client
 verify_erasure_client
+# Last: a public admin panel client stops the run, and every other step is done by then; core and
+# forms roles made by earlier steps are already in place to enter the panel's scope.
+reconcile_admin_panel_client
 
 printf 'Account Center Keycloak configuration is reconciled.\n'

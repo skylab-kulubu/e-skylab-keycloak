@@ -3,7 +3,7 @@
 Bu runbook `config/reconcile-account-center.sh` içindeki v2 kimlik adımlarının
 (passkey relying party id, realm giriş ve brute-force ayarları, olay saklama süresi, User Profile,
 `account-center-account-api` ve `account-center-core-claims` kapsamları,
-`keycloak-mailer` ve `core-erasure` istemcileri) üretime
+`keycloak-mailer` ve `core-erasure` istemcileri, admin panelinin istemcisi) üretime
 alınma sırasını, ön kontrolleri, duyuru metnini ve geçiş sonrası eski passkey
 temizliğini tanımlar. `docs/keycloak-26.7.4-upgrade-runbook.md` içindeki yedek,
 klon provası ve geri dönüş adımları geçerliliğini korur; burada yalnız bu
@@ -26,6 +26,7 @@ entegrasyon testi bunu doğrular.
 | `account-center-account-api` kapsamı | `account-api-audience` (`account`), `account-api-core-audience` (`core`), `account-api-manage-account`, `account-api-view-profile`, `account-api-manage-account-links` (sabit roller), `account-api-roles` (`resource_access.account.roles`), `account-api-sky-authorization` (SPI mapper'ı `sky-authorization-mapper`: `sky_authorization.<istemci>.roles`, yalnız access token ve introspection; ID token/userinfo'da yok; `realm-management`, `broker`, `account`, `account-console`, `security-admin-console`, `admin-cli`, `*-realm` hariç; sıralı; 64 istemci / 256 rol sınırı; rol yoksa claim yok). Audience-resolve mapper yoktur; `aud` tam olarak `["account","core"]` kalır. |
 | `account-center-core-claims` kapsamı (`account-center-core-claims-mappers.json`) | `sub`, `auth_time`, `sky_session_lifetime` (`sky_session_started`/`sky_session_expires`), `sky_embed` (ayrıntı `docs/sky-handoff-api.md`) ve C2'den beri `university`, `department` (`oidc-usermodel-attribute-mapper`, aynı adlı kullanıcı özniteliğinden, `jsonType.label=String`, `multivalued=false`: realm'in `department_ve_university_to_jwt` kapsamıyla aynı biçim, düz metin; yalnız access token ve introspection; ID token/userinfo'da yok; öznitelik yoksa claim yok). core bu iki claim'i taşıyan her token'da kişinin üniversite, bölüm ve fakültesini yeniler ve `ytu_linked` yapar (§9). Kapsamdaki diğer mapper'lar silinir. |
 | `frontend-main-core-audience`, `frontend-arge-core-audience` ve `skyforms-forms-audience` kapsamları | `frontend-main`, `frontend-arge` ve `skyforms` giriş istemcilerinin varsayılan kapsamları; access token'ın `aud`'una `core`, `core` ve `forms` ekler. Üretimde elle kuruldular, uzlaştırıcı adlarıyla devralır. İstemci realm'de yoksa uyarı yazılır ve o kalem atlanır (§0.1). |
+| Admin panelinin istemcisi (`admin`, sandbox'ta `superadmin`; ADR-0058) | Elle kurulmuş gizli istemci yerinde daraltılır: `fullScopeAllowed=false`, `standard.token.exchange.enabled=true`, rol kapsamında yalnız `core` ve `forms`'un her rolü, varsayılan kapsam `admin-panel-api-audience` (sabit `core`, `forms`, `skycms` audience'ı). Adım en son koşar. İstemci yoksa uyarı; public ise koşu ona yazmadan hata verir (§15). |
 | `account-center` istemcisi | v1 sözleşmesi, `fullScopeAllowed=false` **kalır**: Keycloak Admin REST `AdminAuth.hasAppRole = user.hasRole && client.hasScope` ile yetkilendirir ve tam kapsam açıkken `client.hasScope` her rol için doğrudur; `realm-management` rolü olan bir kişinin `my.` token'ı Admin REST'te geçerli olurdu. `sky_authorization` bu yüzden kapsamdan bağımsız SPI mapper'ından gelir ve token'ın yetkisini genişletmez (harness: `view-users` sahibinin `account-center` token'ı ile `GET /admin/realms/{realm}/users` → 403; tam kapsamla 200 alırdı). Token'daki `resource_access` yalnız `account` rollerini içerir, `core` rolü taşımaz (test edilir). `account` istemci rolü scope mapping izin listesi: `manage-account`, `view-profile`, `manage-account-links` (AIA `idp_link` `client.hasScope` denetimi için). |
 | `keycloak-mailer` istemcisi (K5) | Uzlaştırıcı **yalnız doğrular**: istemci yoksa uyarı ve çalıştırılacak komut; bayraklar (gizli, yalnız service account, standard flow / direct grant / implicit kapalı, `fullScopeAllowed=false`, `roles` varsayılan kapsamı) yanlışsa koşu hata ile durur; service account rolleri uzlaştırıcı kimliğiyle okunamadığından (kullanıcı yetkisi yok) uyarı olarak raporlanır. İstemciyi ve rolleri operatör `config/create-mailer-client.sh` ile oluşturur (§6). Gizli anahtarı Keycloak üretir, hiçbir betik yazdırmaz. |
 | `core-erasure` istemcisi (hesap silme, ADR-0051) | Uzlaştırıcı **yalnız doğrular** (`keycloak-mailer` gibi): istemci yoksa uyarı ve çalıştırılacak komut. Şunlardan biri sözleşmeden farklıysa koşu hata ile durur ve operatör komutunu yazar: bayraklar (gizli, yalnız service account, standard flow / direct grant / implicit kapalı, `fullScopeAllowed=false`), varsayılan kapsamlar (tam olarak `basic` ve `roles`; Keycloak'ın eklediği `service_account` hoş görülür), isteğe bağlı kapsamlar (tam olarak üç `account-erase-*`), doğrudan scope mapping (olmamalı), her erase kapsamının tek audience mapper'ı ve tek rolü, servis istemcilerinin (`skymail`, `skycms`, `forms`) varlığı. Service account rolleri uzlaştırıcı kimliğiyle okunamadığından uyarı olarak raporlanır. İstemciyi, kapsamları ve rolleri operatör `config/create-erasure-client.sh` ile kurar (§11). |
@@ -1160,3 +1161,106 @@ kapsamı realm'in varsayılan kapsamıdır (en kötü durum). Şunları doğrula
 - Grup yazan bir istemci mapper'ı ve ikinci bir `school_email` mapper'ı `PROBLEM`'dir; dokunulmaz.
 - User Profile `schoolEmail`'i tanımlamıyorsa `WARNING` yazılır.
 - Hiçbir çıktıda secret görünmez.
+
+## 15. Admin panelinin istemcisi: dar token ve token exchange (ADR-0058)
+
+Admin paneli (`admin.yildizskylab.com`, core-frontend) production'da `admin`, sandbox'ta
+`superadmin` istemcisiyle girer. İkisi de elle kurulmuş ve gizlidir (production olguları
+2026-09-21: `publicClient=false`, `fullScopeAllowed=true`; sandbox `superadmin`'in secret'ı
+2026-09-25'te döndürüldü ve introspection'da 200 aldı, yani gizli). Tam kapsam yüzünden panelin
+token'ı kişinin bütün audience ve rollerini taşıyordu: 11 audience, 12 realm rolü, ~3,3 KB.
+Uzlaştırıcı (`reconcile_admin_panel_client`) istemciyi adıyla bulur ve yerinde daraltır:
+
+| Ne | Durum |
+| --- | --- |
+| `admin-panel-api-audience` kapsamı | `config/admin-panel-api-audience-mappers.json`: `core-audience`, `forms-audience`, `skycms-audience` (`oidc-audience-mapper`, access token ve introspection açık, ID token kapalı); başka mapper silinir; istemcinin varsayılan kapsamı, isteğe bağlı listede olmaz (§0.1 düzeni) |
+| Rol kapsamı (scope mapping) | `core` ve `forms` istemcilerinin **her** rolü; başka istemcinin rolü ve realm rolü kaldırılır. İstemcinin kendi rolleri (`content:*`, inscribed) Keycloak'ta her zaman geçer. Realm'de `forms` yoksa uyarı yazılır, rolleri istemci oluşunca eklenir |
+| İstemci | `fullScopeAllowed=false`, öznitelik `standard.token.exchange.enabled=true`. Başka alana (secret, adresler, bayraklar, istemci mapper'ları) dokunulmaz |
+
+Sonuç: access token'da `aud` tam olarak `core`, `forms`, `skycms`; `realm_access` yok;
+`resource_access` yalnız `core`, `forms` ve istemcinin kendisi; `groups`, düz `roles`, `azp`,
+`sid` ve profil claim'leri olduğu gibi. Bugünkü panel (token tarayıcıda, üç API'ye aynı token)
+çalışmaya devam eder. Keycloak'ın Standard Token Exchange'i (26.2'den beri varsayılan açık özellik)
+istemcide açılır: gizli bir istemci kendine kesilmiş token'ı `audience=core` (ya da `forms`,
+`skycms`) ile tek audience'lı bir token'a çevirebilir; token'da olmayan bir audience `400
+invalid_request` alır. BFF (admin-token-authz 08/09) bunu kullanacak; bugünkü panel kullanmaz.
+
+Adımın sırası canlı paneli bozmaz: önce audience kapsamı ve API rolleri (tam kapsam açıkken
+etkisizdir), en son tam kapsamın kapanması. `core` ya da `forms`'ta uzlaştırıcı dışında (Admin
+Console, operatör betiği) oluşturulan yeni bir rol panelin token'ına **bir sonraki uzlaştırıcı
+koşusunda** girer; o zamana kadar panelde o rolün gerektirdiği iş 403 alır.
+
+Adım uzlaştırıcının en son adımıdır. İstemci realm'de yoksa `WARNING: client <istemci> does not
+exist in realm <realm>; skipped the admin panel token contract` yazılır. İstemci **public** ise koşu
+ona hiçbir şey yazmadan hata verir (diğer adımlar tamamlanmıştır) (`Client <istemci> is public: …`): token exchange gizli istemci ister ve
+istemciyi gizliye çevirmek panelin secret'la girmesini gerektirir (admin-token-authz 07). Önce
+panel secret'ını alır, sonra istemci gizliye çevrilir, sonra uzlaştırıcı yeniden koşar.
+
+İstemci adı realm'den gelir (`e-skylab-sandbox` → `superadmin`, diğerleri → `admin`;
+`inscribed-cms-roles.sh` ile aynı); `KEYCLOAK_ADMIN_PANEL_CLIENT_ID` başka bir ad verir.
+
+### Operatör oturumuyla tek adım (sandbox)
+
+Sandbox realm'inde uzlaştırıcı kimliği (`account-center-config`) yoktur ve tam uzlaştırma sandbox'a
+uygulanmaz. Operatör aynı adımı kendi kcadm oturumuyla tek başına koşar:
+
+```bash
+# Keycloak konteynerinde, master realm'e kcadm ile giriş yapılmış bir config dosyasıyla
+KEYCLOAK_REALM=e-skylab-sandbox \
+KEYCLOAK_RECONCILE_KCADM_CONFIG=/tmp/<kcadm-config> \
+KEYCLOAK_RECONCILE_ONLY=admin-panel-client \
+  /opt/keycloak/config/reconcile-account-center.sh
+```
+
+`KEYCLOAK_RECONCILE_KCADM_CONFIG` verilince uzlaştırıcı giriş yapmaz, config-client secret'ı
+istemez ve o dosyayı silmez; `KEYCLOAK_RECONCILE_ONLY` olmadan reddeder (2), çünkü tam uzlaştırma
+yalnız dar yetkili uzlaştırıcı kimliğiyle koşar. Çıktının son satırı `Admin panel client
+configuration is reconciled.` olur.
+
+### Sandbox sırası
+
+1. sky_lab_genel'deki `ops/wizards/admin-panel-keycloak-sandbox-wizard.sh` sunucuda koşar
+   (kopyalama komutları başında). Sürüm production'a çıkmadan da çalışır: gereken config
+   dosyalarını sha256'larıyla denetleyip Keycloak konteynerinin `/tmp`'sine koyar.
+   - kcadm girişi (şifre kcadm'ın kendi isteminde);
+   - önce: `superadmin`'in bayrakları ve bir kişi için Evaluate ile örnek access token'ın boyutu,
+     `aud`'u, `resource_access` anahtarları, `realm_access`'i (token ya da kişisel alan basılmaz);
+   - onayla adım, ardından ikinci koşu (her satır `unchanged` olmalı);
+   - sonra: aynı ölçüm;
+   - `sandbox-admin.yildizskylab.com`'da yeniden giriş ve kontrol listesi: dashboard, form kapısı,
+     News, SkyApp handoff hedefleri. Bir kontrol bozuksa wizard tam kapsamı geri açmayı önerir.
+2. Wizard'ın sonundaki önce/sonra satırı spec'e (admin-token-authz) yazılır.
+
+### Production sırası
+
+1. Bu değişikliği içeren sürüm production'a çıkar (yayın kapısı ve WebAuthn onayı).
+2. Uzlaştırıcı iki kez koşar (önceki yayın wizard'larındaki `reconcile` düzeni, config-client
+   secret'ı stdin'den). İlk koşuda beklenen: `client scope admin-panel-api-audience: created`,
+   `protocol mappers of scope <id>: updated (+core-audience +forms-audience +skycms-audience)`,
+   `default client scope admin-panel-api-audience attached to client <id>`, `role scope mappings
+   of admin (every role of core, forms): updated (+core/… +forms/…)` (elle konmuş başka eşleme
+   varsa `-<istemci>/<rol>` ya da `-realm/<rol>`), `client admin (no full scope, standard token
+   exchange): updated (fullScopeAllowed attributes)`. İkinci koşuda hepsi `unchanged`.
+3. Evaluate ile önce/sonra boyut (Clients → `admin` → Client scopes → Evaluate, bir Privileged
+   kişi, `openid profile email`) spec'e yazılır.
+4. `admin.yildizskylab.com`'da çıkış + giriş, sonra sandbox'taki kontrol listesi.
+
+Geri dönüş: Admin Console → Clients → `admin` (sandbox'ta `superadmin`) → Client scopes →
+`admin-dedicated` → Scope → "Full scope allowed" açılır; token bir sonraki girişte eski haline
+döner. Audience kapsamı kalabilir (zararsız). Uzlaştırıcı bir sonraki koşuda yeniden daraltır;
+geri dönüş kalıcı olacaksa bu adımı içermeyen sürüme dönülür.
+
+Harness (`tests/admin-panel-client.sh`, `run-integration.sh` çağırır): fixture'daki `admin`
+production'ın biçimindedir (gizli, tam kapsam, `inscribed-roles` ve tam yollu `groups`
+mapper'ları). Tam kapsamlı kontrol token'ı kişinin yabancı rollerini taşır; ilk koşu istemciyi
+yerinde (aynı id, aynı secret) daraltır ve `forms` yokluğunu bildirir; kaymalar (tam kapsam,
+exchange kapalı, eksik `core` rolü, realm ve `skymail` rolü, isteğe bağlı kapsam, bozuk ve yabancı
+mapper) ikinci koşuda onarılır. `forms` oluştuktan sonra adım operatör oturumuyla tek başına koşar:
+eksik istemci uyarıyla atlanır, public istemci reddedilir ve değişmez, adımsız operatör oturumu
+reddedilir, yeni `forms` rolü kapsama girer. Gerçek authorization code girişinde `aud` tam
+`core`, `forms`, `skycms`, `realm_access` yok, `resource_access` tam kişinin `admin`, `core`,
+`forms` rolleri, `roles` ve `groups` duruyor, `azp` ve `sid` var; hiç API rolü olmayan bir
+kişinin token'ı da üç audience'ı taşır; token exchange `core`, `forms`
+ve `skycms` için tek audience verir, `skymail` için `400 invalid_request`. Değişiklik üretmeyen
+koşu bu istemcinin durumunu da karşılaştırır; ardından web handoff sözleşmesi daraltılmış
+istemcinin token'ıyla admin uçlarını dener.

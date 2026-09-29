@@ -33,6 +33,10 @@ import java.util.TreeMap;
  *   merge BASE.json EXTRA.json  prints the top-level union of both objects (EXTRA wins); used to
  *                               add environment-derived fields to a source-controlled document.
  *   names                       prints the "name" of every element of the array on stdin.
+ *   scope-mappings              stdin is the scope mappings of one client (GET
+ *                               clients/{id}/scope-mappings); prints one line per mapped role:
+ *                               "-<TAB>-<TAB>roleId<TAB>roleName" for a realm role and
+ *                               "clientId<TAB>clientUuid<TAB>roleId<TAB>roleName" for a client role.
  *   field NAME                  prints the value of top-level NAME of the object on stdin as text
  *                               (empty when absent or null, JSON for containers).
  *   realm-attribute NAME VALUE  prints {"attributes": {...}} with the complete "attributes" map of
@@ -65,6 +69,7 @@ public final class ReconcileJson {
             case "mapper-diff" -> mapperDiff(requireFile(args), readStdin(), out);
             case "merge" -> merge(args, out);
             case "names" -> names(readStdin(), out);
+            case "scope-mappings" -> scopeMappings(readStdin(), out);
             case "field" -> field(args, readStdin(), out);
             case "realm-attribute" -> realmAttribute(args, readStdin(), out);
             case "user-profile" -> System.exit(userProfile(requireFile(args), readStdin(), out));
@@ -74,7 +79,7 @@ public final class ReconcileJson {
 
     private static void usage() {
         System.err.println("usage: ReconcileJson diff-fields|mapper-diff|user-profile FILE"
-                + "  |  ReconcileJson merge BASE EXTRA  |  ReconcileJson names"
+                + "  |  ReconcileJson merge BASE EXTRA  |  ReconcileJson names|scope-mappings"
                 + "  |  ReconcileJson field NAME  |  ReconcileJson realm-attribute NAME VALUE");
         System.exit(1);
     }
@@ -275,6 +280,35 @@ public final class ReconcileJson {
             }
             out.println(name);
         }
+    }
+
+    // ------------------------------------------------------------------ scope-mappings
+
+    private static void scopeMappings(JsonNode mappings, PrintStream out) {
+        if (!mappings.isObject()) {
+            throw new IllegalArgumentException("scope-mappings expects the scope mappings object of a client");
+        }
+        for (JsonNode role : mappings.path("realmMappings")) {
+            out.println("-\t-\t" + roleColumns(role));
+        }
+        for (Map.Entry<String, JsonNode> client : mappings.path("clientMappings").properties()) {
+            String clientUuid = client.getValue().path("id").asText();
+            if (clientUuid.isEmpty()) {
+                throw new IllegalArgumentException("client mapping " + client.getKey() + " has no id");
+            }
+            for (JsonNode role : client.getValue().path("mappings")) {
+                out.println(client.getKey() + "\t" + clientUuid + "\t" + roleColumns(role));
+            }
+        }
+    }
+
+    private static String roleColumns(JsonNode role) {
+        String id = role.path("id").asText();
+        String name = role.path("name").asText();
+        if (id.isEmpty() || name.isEmpty()) {
+            throw new IllegalArgumentException("every mapped role needs an id and a name");
+        }
+        return id + "\t" + name;
     }
 
     // ------------------------------------------------------------------ field

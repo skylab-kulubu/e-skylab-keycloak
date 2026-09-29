@@ -12,17 +12,30 @@ import org.keycloak.models.KeycloakSession;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
+/**
+ * Publishes the events of one Keycloak session after its transaction. A channel is opened for each
+ * message and closed right after it: Keycloak's admin event builder creates its listeners with
+ * {@code factory.create(session)} and never closes them, so a channel held by the provider would
+ * leak once per admin request until the connection reaches its channel limit (2047) and every
+ * later event is dropped.
+ */
 final class RabbitMqEventListenerProvider implements EventListenerProvider {
 
     private static final Logger LOG = Logger.getLogger(RabbitMqEventListenerProvider.class);
 
+    /** Opens a channel on the shared connection; null when none can be opened (already logged). */
+    @FunctionalInterface
+    interface Channels {
+        Channel open();
+    }
+
     private final RabbitMqConfig config;
-    private final Channel channel;
+    private final Channels channels;
     private final KeycloakSession session;
     private final EventListenerTransaction transaction;
 
-    RabbitMqEventListenerProvider(Channel channel, KeycloakSession session, RabbitMqConfig config) {
-        this.channel = channel;
+    RabbitMqEventListenerProvider(Channels channels, KeycloakSession session, RabbitMqConfig config) {
+        this.channels = channels;
         this.session = session;
         this.config = config;
         this.transaction = new EventListenerTransaction(this::publishAdminEvent, this::publishEvent);
@@ -60,8 +73,10 @@ final class RabbitMqEventListenerProvider implements EventListenerProvider {
     }
 
     private void publish(String body, AMQP.BasicProperties properties, String routingKey) {
+        Channel channel = channels.open();
         if (channel == null || !channel.isOpen()) {
             LOG.errorf("keycloak-to-rabbitmq skipped event because no channel is available: %s", routingKey);
+            closeQuietly(channel);
             return;
         }
         try {
@@ -74,6 +89,20 @@ final class RabbitMqEventListenerProvider implements EventListenerProvider {
             LOG.tracef("keycloak-to-rabbitmq published event: %s", routingKey);
         } catch (Exception exception) {
             LOG.errorf(exception, "keycloak-to-rabbitmq failed to publish event: %s", routingKey);
+        } finally {
+            closeQuietly(channel);
+        }
+    }
+
+    /** The broker may already have closed it (a missing exchange closes the channel). */
+    private static void closeQuietly(Channel channel) {
+        if (channel == null) {
+            return;
+        }
+        try {
+            channel.close();
+        } catch (Exception exception) {
+            LOG.debug("Could not close RabbitMQ channel", exception);
         }
     }
 
@@ -89,14 +118,7 @@ final class RabbitMqEventListenerProvider implements EventListenerProvider {
 
     @Override
     public void close() {
-        if (channel == null) {
-            return;
-        }
-        try {
-            channel.close();
-        } catch (Exception exception) {
-            LOG.debug("Could not close RabbitMQ channel", exception);
-        }
+        // Nothing is held between messages.
     }
 }
 

@@ -40,9 +40,9 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.13.2`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.14.0`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
-  sağlayıcısı (`3.1.0`) bulunur.
+  sağlayıcısı (`3.1.1`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
   etkinleştirilir.
 - Realm ve istemci ayarları `config/reconcile-account-center.sh` ile sürekli
@@ -153,6 +153,17 @@ yönetilmez. `attributes` taşımayan realm PUT'larında Keycloak CIBA ve PAR
 sürelerini varsayılana sıfırlar (önceden de böyleydi; SKY LAB ikisini de
 varsayılan dışında kullanmaz).
 
+Parolalı girişte kullanıcı adı alanı kullanıcı adını, birincil e-postayı, YTÜ bağlantılı
+hesabın okul e-postasını ya da kodla kanıtlanmış kişisel e-postayı alır (K4). Bunu SPI'daki
+`sky-username-password-form` (`com.skylab.authenticator.SkyUsernamePasswordFormFactory`) yapar:
+Keycloak'ın `UsernamePasswordForm`'u, yalnız araması değişmiş; parola denetimi, brute force,
+devre dışı hesap, hata mesajları ve passkey yolu Keycloak'ındır. İki kişiyi gösteren ya da
+kanıtlanmamış bir adres, yanlış parolayla aynı cevabı alır. Uzlaştırıcı onu realm tarayıcı
+akışı `browser plus passkey`'de `auth-username-password-form`'un yerine, aynı alt akışa ve
+aynı önceliğe koyar; `KEYCLOAK_PASSWORD_FORM=auth-username-password-form` geri alır. Ayrıntı ve
+geri dönüş sırası:
+[`docs/v2-identity-reconcile-runbook.md`](docs/v2-identity-reconcile-runbook.md) §15.
+
 User Profile (`config/account-center-user-profile.json`) canlı yapısını
 koruyarak uzlaştırılır: `firstName`, `lastName`, `email` kişi için salt
 okunur olur, `username` izinlerine dokunulmaz, `schoolEmail`, `personalEmail`
@@ -229,6 +240,34 @@ ya da grupta CMS rolünü sorun sayar. `--post-cutover` (yalnız geçiş gecesi)
 yolsuz `groups` yayıcısını raporlar, dokunmaz. Uzlaştırıcı bunu doğrulamaz. Üretimde
 sky_lab_genel'deki `ops/wizards/inscribed-keycloak-roles-wizard.sh` koşar; harness
 `tests/inscribed-cms-roles.sh` tek başına çalışır (runbook §12).
+
+Sandbox realm'inde (`e-skylab-sandbox`) site istemcisi yoktu; sandbox arge girişsiz
+çalışıyor, editörü denenemiyordu. Operatör `frontend-arge`'ı imajdaki idempotent
+`config/sandbox-site-clients.sh` ile kurar (varsayılan `--check`, `--apply`; kcadm prompt
+düzeni ya da `--kcadm-config`). İstemci production'dakinin biçimindedir: gizli, standard
+flow ve service account açık, implicit ve direct grant kapalı, `fullScopeAllowed=true`;
+redirect `https://sandbox-arge.yildizskylab.com/*`, web origin ve post-logout adresi aynı
+host (istemcideki başka adresler korunur). Access token'a `skycms` audience'ı, realm'de
+`core` istemcisi varsa uzlaştırıcının biçimindeki `frontend-arge-core-audience` kapsamı ve
+tam yollu `groups` gelir. `e-skylab-sandbox` dışındaki her realm'i girişten önce reddeder;
+`skycms` istemcisi yoksa hiçbir şey yazmaz. `frontend-main` kurulmaz: sandbox'ta ana site
+uygulaması yok. CMS rolleri ardından `inscribed-cms-roles.sh` ile gelir. Sunucuda
+sky_lab_genel'deki `ops/wizards/sandbox-arge-keycloak-wizard.sh` ikisini koşar; secret'ı
+OpenBao'ya `ops/wizards/arge-dokploy-wizard.sh --sandbox-kc` taşır. Harness
+`tests/sandbox-site-clients.sh` tek başına çalışır (runbook §13).
+
+Place'in backend'i (ADR-0060) e-skylab girişini kendisi yürütür: realm `e-skylab`'ın gizli
+istemcisi `place`'tir. Operatör istemciyi idempotent `config/create-place-client.sh` ile kurar
+(varsayılan `--check`, `--apply`; kcadm prompt düzeni ya da `--kcadm-config`): yalnız standard
+flow, PKCE `S256` zorunlu, `fullScopeAllowed=false`, front-channel logout kapalı, dönüş adresi
+tam olarak `https://api.place.yildizskylab.com/api/auth/eskylab/callback`, web origin yok;
+`place:admin` ve `place:moderator` client rolleri (kimseye verilmez, admin panelinden verilir);
+`schoolEmail`'den `school_email` claim'i ve `resource_access.place.roles` (ID token, access token,
+userinfo). Place grup okumaz (ADR-0059): grup verisi yazan varsayılan ya da isteğe bağlı
+kapsamlar (`microprofile-jwt` dahil) istemciden ayrılır. `e-skylab` dışındaki her realm'i
+girişten önce reddeder. Uzlaştırıcı bu istemciyi yönetmez; imaj yayını gerekmez. Sunucuda
+sky_lab_genel'deki `ops/wizards/place-keycloak-client-wizard.sh` betiği koşar ve secret'ı
+doğrudan OpenBao'ya taşır. Harness `tests/place-client.sh` tek başına çalışır (runbook §14).
 
 `account-center` realm'in etkin tarayıcı akışını kullanır; böylece
 production'a özel parola, OTP ve passkey davranışı olduğu gibi geçerlidir ve

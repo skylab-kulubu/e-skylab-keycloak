@@ -29,6 +29,7 @@ entegrasyon testi bunu doğrular.
 | `account-center` istemcisi | v1 sözleşmesi, `fullScopeAllowed=false` **kalır**: Keycloak Admin REST `AdminAuth.hasAppRole = user.hasRole && client.hasScope` ile yetkilendirir ve tam kapsam açıkken `client.hasScope` her rol için doğrudur; `realm-management` rolü olan bir kişinin `my.` token'ı Admin REST'te geçerli olurdu. `sky_authorization` bu yüzden kapsamdan bağımsız SPI mapper'ından gelir ve token'ın yetkisini genişletmez (harness: `view-users` sahibinin `account-center` token'ı ile `GET /admin/realms/{realm}/users` → 403; tam kapsamla 200 alırdı). Token'daki `resource_access` yalnız `account` rollerini içerir, `core` rolü taşımaz (test edilir). `account` istemci rolü scope mapping izin listesi: `manage-account`, `view-profile`, `manage-account-links` (AIA `idp_link` `client.hasScope` denetimi için). |
 | `keycloak-mailer` istemcisi (K5) | Uzlaştırıcı **yalnız doğrular**: istemci yoksa uyarı ve çalıştırılacak komut; bayraklar (gizli, yalnız service account, standard flow / direct grant / implicit kapalı, `fullScopeAllowed=false`, `roles` varsayılan kapsamı) yanlışsa koşu hata ile durur; service account rolleri uzlaştırıcı kimliğiyle okunamadığından (kullanıcı yetkisi yok) uyarı olarak raporlanır. İstemciyi ve rolleri operatör `config/create-mailer-client.sh` ile oluşturur (§6). Gizli anahtarı Keycloak üretir, hiçbir betik yazdırmaz. |
 | `core-erasure` istemcisi (hesap silme, ADR-0051) | Uzlaştırıcı **yalnız doğrular** (`keycloak-mailer` gibi): istemci yoksa uyarı ve çalıştırılacak komut. Şunlardan biri sözleşmeden farklıysa koşu hata ile durur ve operatör komutunu yazar: bayraklar (gizli, yalnız service account, standard flow / direct grant / implicit kapalı, `fullScopeAllowed=false`), varsayılan kapsamlar (tam olarak `basic` ve `roles`; Keycloak'ın eklediği `service_account` hoş görülür), isteğe bağlı kapsamlar (tam olarak üç `account-erase-*`), doğrudan scope mapping (olmamalı), her erase kapsamının tek audience mapper'ı ve tek rolü, servis istemcilerinin (`skymail`, `skycms`, `forms`) varlığı. Service account rolleri uzlaştırıcı kimliğiyle okunamadığından uyarı olarak raporlanır. İstemciyi, kapsamları ve rolleri operatör `config/create-erasure-client.sh` ile kurar (§11). |
+| Parola formu (K4, §15) | Realm tarayıcı akışı `browser plus passkey`'deki `auth-username-password-form`'un yerine aynı alt akışta, aynı öncelik ve `REQUIRED` ile `sky-username-password-form` konur; akışın geri kalanına dokunulmaz. İki formdan tam olarak biri yoksa, form `REQUIRED` değilse ya da yanındaki bir yürütmeyle aynı önceliği paylaşıyorsa koşu hiçbir şey yazmadan durur. `KEYCLOAK_PASSWORD_FORM=auth-username-password-form` Keycloak'ın formunu geri koyar. |
 | Kimlik korumaları: core sertifika rolleri, OBS `department mapper`, core'un `manage-clients` rolü | Uzlaştırıcı **dokunmaz**: kimliğinin kullanıcı ve kimlik sağlayıcısı yetkisi yoktur. Operatör `config/identity-guardrails.sh` ile uygular (§8). |
 
 Ortam değişkenleri: `KEYCLOAK_PASSKEY_RP_ID` (varsayılan `yildizskylab.com`) ve
@@ -377,6 +378,11 @@ kalır. `keycloak-mailer` service account'ının yalnız `skymail:access` ve
 doğrulanır (entegrasyon testi aynı kontrolü yapar).
 
 ## 7. Geri dönüş
+
+Parola formunun (K4) geri dönüşü imajdan **önce** yapılır: §15'teki
+`KEYCLOAK_PASSWORD_FORM=auth-username-password-form` koşusu. Akış
+`sky-username-password-form`'u gösterirken 1.14.0'dan eski bir imaja dönülürse realm'in
+bütün parolalı girişleri durur.
 
 Realm ayarları için ayrı bir geri dönüş yolu yoktur; önceki imaj digest'i ile
 eski uzlaştırıcı çalıştırıldığında RP ID yeniden boşalır (Keycloak passwordless
@@ -935,3 +941,351 @@ yabancı bir `roles` ya da düz `groups` mapper'ında `PROBLEM`'i,
 `frontend-arge-core-audience` ile arge token'ının `aud`'unda `core` ve `skycms`'i ve
 `e-skylab-sandbox`'ta `superadmin`'in yalnız yetenek rollerini aldığını, eksik site
 istemcilerinin `NOTE` ile atlandığını doğrular.
+
+## 13. Sandbox realm'inde site istemcisi: `frontend-arge`
+
+`e-skylab-sandbox`'ta site istemcisi yoktu. `https://sandbox-arge.yildizskylab.com`
+girişsiz çalışıyor, arge'nin editörü sandbox'ta denenemiyordu. Production'daki
+`frontend-arge` elle kurulmuştu ve uzlaştırıcı onu yönetmez (§0.1 yalnız audience
+kapsamını yönetir). Sandbox'takini `config/sandbox-site-clients.sh` kurar. Betik §12'deki
+betiklerin düzenindedir: varsayılanı `--check`'tir, `--apply` yazar, ikinci koşu hiçbir
+şey yazmaz. Yönetici parolası kcadm'ın kendi prompt'una yazılır ya da `--kcadm-config`
+kullanılır.
+
+**Yalnız `e-skylab-sandbox`.** `KEYCLOAK_REALM` başka bir şeyse (`e-skylab` dahil) betik
+girişten önce `refusing realm …` yazar ve 2 ile çıkar. Realm ya da `skycms` istemcisi
+yoksa 1 ile çıkar ve hiçbir şey yazmaz.
+
+Kurduğu istemci `frontend-arge`, production'dakinin biçimindedir:
+
+- gizli (`client-secret`; secret'ı Keycloak üretir, hiçbir betik basmaz);
+- standard flow açık: NextAuth'un Keycloak sağlayıcısı, dönüş adresi
+  `/api/auth/callback/keycloak`;
+- implicit ve direct grant kapalı;
+- service account açık: site içeriği sunucu tarafında okur ve `cms-sync` ile koleksiyon
+  şemalarını gönderir;
+- `fullScopeAllowed=true`;
+- redirect `https://sandbox-arge.yildizskylab.com/*`, web origin
+  `https://sandbox-arge.yildizskylab.com`, post-logout `https://sandbox-arge.yildizskylab.com/*`.
+  İstemcide başka adres varsa korunur ve `NOTE` ile listelenir (örneğin bir geliştiricinin
+  `localhost`'u).
+
+Access token'a şunlar girer:
+
+1. `aud` içinde `skycms` (inscribed denetler). İstemcide ya da varsayılan kapsamlarından
+   birinde bunu yapan bir audience mapper'ı varsa yeterlidir. Yoksa istemci mapper'ı
+   `skycms-audience` eklenir: access token ve introspection'a yazar, ID token'a yazmaz.
+2. Realm'de `core` istemcisi varsa `aud` içinde `core`. arge'nin CMS yüklemeleri editörün
+   token'ıyla core `POST /v1/media`'ya gider. Kapsam `frontend-arge-core-audience`,
+   uzlaştırıcının production'da kurduğu biçimin aynısıdır
+   (`config/frontend-arge-core-audience-mappers.json`, §0.1; harness karşılaştırır). İstemcinin
+   varsayılan kapsamı yapılır. `core` yoksa `NOTE` yazılır ve bu kalem atlanır.
+3. Tam yollu `groups`: inscribed'ın koleksiyonları okur. İstemcide ya da varsayılan
+   kapsamlarında tam yollu bir Group Membership mapper'ı varsa yeterlidir. Yoksa realm'in
+   `groups` kapsamı varsayılan kapsam yapılır; bu, production'daki biçimdir ve yalnız kapsam
+   sadece tam yollu Group Membership mapper'ları taşıyorsa yapılır. O da yoksa istemci mapper'ı
+   `groups` eklenir. `groups`'u başka biçimde (düz adlarla) yazan bir mapper `PROBLEM`'dir;
+   dokunulmaz.
+
+`frontend-main` kurulmaz: bugün sandbox'ta ana site uygulaması yok. Olunca aynı betiğe eklenir.
+
+CMS rolleri, düz `roles` claim'i ve service account'un `content:read` + `schema:sync`'i bu
+betiğin işi değil. Ardından §12'deki betik koşar:
+`KEYCLOAK_REALM=e-skylab-sandbox inscribed-cms-roles.sh --client frontend-arge`. O betik bu
+betiğin kurduğu tam yollu `groups`'u bulur, ikinci bir groups mapper'ı eklemez. Hiçbir betik
+bir gruba ya da kişiye rol vermez. Sandbox'ta editör yetkisi (`frontend-arge` · `cms:access`)
+sandbox admin panelinden bir gruba verilir; wizard isterse tek bir gruba kendisi verir.
+
+`fullScopeAllowed` notu: production olguları 2026-09-28'de `true` olarak iletildi. #47'nin
+açıklaması ve §12'nin harness'i ise production `frontend-arge`'ı `false` diye anlatıyor. Site
+iki durumda da çalışır: CMS rolleri istemcinin kendi rolleridir ve token her zaman
+istemcinin kendi rollerini taşır. Production'daki değer
+`kcadm get clients -r e-skylab -q clientId=frontend-arge --fields fullScopeAllowed` ile
+görülür. Farklıysa betikteki `FLAG_*` satırları değiştirilir.
+
+### Sandbox sırası
+
+1. sky_lab_genel'deki `ops/wizards/sandbox-arge-keycloak-wizard.sh` sunucuda koşar
+   (kopyalama komutları başında):
+   - Keycloak konteynerini bulur. Bu betiğin ve `inscribed-cms-roles.sh`'ın sha256'larını
+     denetleyip onları konteynerin `/tmp`'sine koyar.
+   - kcadm girişi yapar.
+   - Bu betiği sırayla koşar: `--check`, plan, onay, `--apply`, yeniden `--check`.
+   - Rol betiğini `frontend-arge` için aynı sırayla koşar.
+   - İsteğe bağlı olarak tek bir gruba `cms:access` verir.
+   - Evaluate ile örnek token'lara bakar ve giriş sayfasını dener.
+   - İstenirse service account'la gerçek bir `client_credentials` token'ı alır. Secret
+     belleğe okunur, basılmaz.
+2. Elle koşmak gerekirse:
+
+   ```bash
+   kc=$(docker ps -q -f name=sky-lab-production-keycloak | head -n 1)
+   docker exec -it -e KEYCLOAK_ADMIN_URL=http://127.0.0.1:8080 -e KEYCLOAK_REALM=e-skylab-sandbox "$kc" \
+     /opt/keycloak/config/sandbox-site-clients.sh --admin-user <yönetici>            # --check
+   docker exec -it -e KEYCLOAK_ADMIN_URL=http://127.0.0.1:8080 -e KEYCLOAK_REALM=e-skylab-sandbox "$kc" \
+     /opt/keycloak/config/sandbox-site-clients.sh --admin-user <yönetici> --apply
+   ```
+
+   Hiç kurulmamış bir sandbox'ta, realm'de `core` varken beklenen: `check: 6 change(s)
+   pending`. Bunlar istemci, `skycms-audience`, kapsam, mapper'ı, kapsam bağlantısı ve
+   `groups`'tur. `core` yoksa `check: 3 change(s) pending` ve bir `NOTE` beklenir.
+   Uygulamadan sonra beklenen: `check: 0 change(s) pending`.
+3. Mac'te `ops/wizards/arge-dokploy-wizard.sh --sandbox-kc` koşar:
+   - secret'ı sunucuda kcadm'le okur, doğrudan
+     `kv/sandbox/<sandbox arge appName>/KEYCLOAK_CLIENT_SECRET`'a yazar;
+   - sandbox arge'nin Dokploy ortamına `KEYCLOAK_CLIENT_SECRET` referansını ekler;
+   - deploy eder ve girişi dener.
+
+Geri dönüş: Admin Console → `e-skylab-sandbox` → Clients → `frontend-arge` silinir. Client
+scopes → `frontend-arge-core-audience` da silinir; başka istemci onu kullanmaz. Sandbox arge
+yeniden girişsiz çalışır. Dokploy ortamındaki `KEYCLOAK_CLIENT_SECRET` satırı ve OpenBao'daki
+yol kaldırılır. Production'a hiçbir adımda dokunulmaz.
+
+Harness: `tests/sandbox-site-clients.sh` tek başına çalışır. Dockerfile'daki Keycloak imajını
+`docker run --rm` ile dev modunda açar; sonda `docker rm -fv`. Şunları doğrular:
+
+- `e-skylab`, `master` ve başka bir realm girişten önce reddedilir.
+- `skycms` yokken hiçbir şey yazılmaz.
+- `--check` yazmaz (admin olayları).
+- `--apply` yalnız planı yazar ve kimseye rol vermez. İstemcinin bayrakları ve adresleri
+  beklenen biçimdedir; `core-audience` mapper'ı uzlaştırıcının JSON'uyla aynıdır.
+- İkinci koşu yazmaz.
+- Rol betiği sonradan ikinci bir groups mapper'ı eklemez.
+- Gerçek authorization code akışı çalışır: giriş sayfası, dönüş adresine `code`, secret ile
+  takas. Bir `/UYELER/ADMIN` editörünün access token'ında `aud` ⊇ {`skycms`, `core`},
+  `groups` = [`/UYELER/ADMIN`], `roles` ⊇ {`cms:access`, `content:read`, `content:write`}
+  bulunur; ID token'da rol, grup ve API audience'ı yoktur.
+- Sıradan üye CMS rolü almaz.
+- Production'ın dönüş adresi reddedilir (400).
+- Service account token'ında `content:read` + `schema:sync` bulunur.
+- Kaymalar onarılır; geliştiricinin ek adresi korunur.
+- Düz `groups` bir `PROBLEM`'dir.
+- Realm'in `groups` kapsamı varken o kapsam bağlanır.
+- `core` yokken `NOTE` yazılır.
+- Hiçbir çıktıda secret görünmez.
+
+## 14. Place: `place` istemcisi, roller ve `school_email` claim'i (ADR-0060)
+
+Place'in backend'i (`api.place.yildizskylab.com`) e-skylab girişini kendisi yürütür: realm
+`e-skylab`'ın gizli istemcisi `place`'tir (BFF; Authorization Code + PKCE). Keycloak token'ları
+tarayıcıya gitmez, Place kendi oturum cookie'sini verir (ADR-0058'in yönü). İstemciyi
+`config/create-place-client.sh` kurar. Betik §13'teki betiğin düzenindedir: varsayılanı
+`--check`'tir, `--apply` yazar, ikinci koşu hiçbir şey yazmaz. Yönetici parolası kcadm'ın
+kendi prompt'una yazılır ya da `--kcadm-config` kullanılır. Uzlaştırıcı bu istemciyi
+yönetmez ve doğrulamaz; imaj yayını gerekmez, betik çalışan konteynerde koşar.
+
+**Yalnız `e-skylab`.** Place'in sandbox'ı yok. `KEYCLOAK_REALM` başka bir şeyse betik girişten
+önce `refusing realm …` yazar ve 2 ile çıkar. Realm yoksa 1 ile çıkar ve hiçbir şey yazmaz.
+
+Kurduğu istemci `place`:
+
+- gizli (`client-secret`; secret'ı Keycloak üretir, betik basmaz);
+- yalnız standard flow: implicit, direct grant, service account, device grant, CIBA ve
+  standard token exchange kapalı; PKCE `S256` zorunlu;
+- `fullScopeAllowed=false`: token yalnız Place'in kendi rollerini taşır, `realm_access` ve başka
+  istemcilerin rolleri gelmez (tam kapsam açık olsaydı `realm-management` rolü olan bir
+  yetkilinin token'ı Admin REST'te de geçerli olurdu, §0'daki `account-center` notu);
+- consent ve front-channel logout kapalı (Place'ten çıkış e-skylab oturumunu kapatmaz);
+- dönüş adresi tam olarak `https://api.place.yildizskylab.com/api/auth/eskylab/callback`; web
+  origin yok (tarayıcı Keycloak'ın uçlarını çağırmaz). İstemcide başka adres varsa silinir ve
+  satırda listelenir.
+
+Roller: `place:admin` ve `place:moderator` (ADR-0059: uygulama geneli izin client rolüdür).
+Betik hiçbir kişiye ya da gruba rol vermez; roller SKY LAB admin panelinin "Rol ekle"sinden
+verilir (core'un rol kataloğu bütün istemcilerin rollerini listeler). Betik rolleri kimin
+taşıdığını raporlar: doğrudan taşıyan kişi sayısı ve grup yolları.
+
+Token'a girenler (ID token, access token, userinfo ve introspection):
+
+1. `school_email`: istemci mapper'ı `school-email`, `schoolEmail` özniteliğinden (User Profile'da
+   §0'daki biçimde). Place hesabı bununla eşler; kişinin birincil adresi (`email`, kişisel
+   olabilir, ADR-0044) eşlemede kullanılmaz. Öznitelik yoksa claim de yoktur ve Place girişi
+   reddeder. User Profile `schoolEmail`'i tanımlamıyorsa `WARNING` yazılır.
+2. `resource_access.place.roles`: istemci mapper'ı `place-roles`. Realm'in `roles` kapsamı bu
+   claim'i yalnız access token'a yazar; Place ID token'ı doğruladığı için ID token'a ve userinfo'ya
+   da bu mapper yazar.
+
+Grup yok (ADR-0059: Place grup okumaz). Keycloak yeni istemciye realm'in varsayılan ve isteğe
+bağlı kapsamlarını bağlar. Bunlardan grup verisi yazan (Group Membership mapper'ı ya da claim'i
+`groups` olan herhangi bir mapper; Keycloak'ın `microprofile-jwt`'si realm rollerini `groups`
+adıyla yazar) `place`'ten ayrılır. Ayrılan kapsam istenirse Keycloak isteği `invalid_scope` ile
+reddeder. İstemcinin kendi üzerinde grup yazan bir mapper, `school_email` yazan ikinci bir
+mapper ya da `school-email`/`place-roles` adında başka türde bir mapper `PROBLEM`'dir; dokunulmaz.
+
+### Üretim sırası
+
+1. e-skylab-keycloak PR'ı `main`'e birleşir. İmaj yayını gerekmez.
+2. sky_lab_genel'deki `ops/wizards/place-keycloak-client-wizard.sh` sunucuda koşar
+   (kopyalama komutları başında):
+   - Keycloak konteynerini bulur, realm'i ve istemcinin durumunu okur. Betiğin sha256'sını
+     wizard'daki sabitle karşılaştırır, betiği konteynerin `/tmp`'sine koyar.
+   - kcadm girişi yapar. Betiği sırayla koşar: `--check`, plan, onay, `--apply`, yeniden `--check`.
+   - Secret'ı konteynerde kcadm ile okur ve borudan doğrudan OpenBao'ya yazar:
+     `kv/etkinlik/<Place appName>/KEYCLOAK_CLIENT_SECRET` (`cas=0`). Değer ekrana, dosyaya ya da bir
+     komut satırına girmez. OpenBao'daki değerin sha256'sını Keycloak'takiyle karşılaştırır.
+   - Place backend'inin ortamına girecek sır olmayan değerleri basar: issuer, client id, dönüş
+     adresi ve secret'ın OpenBao referansı. Ortama yazmak Place'in yayın biletinin işidir.
+3. Elle koşmak gerekirse:
+
+   ```bash
+   kc=$(docker ps -q -f name=sky-lab-production-keycloak | head -n 1)
+   docker exec -i "$kc" sh -c 'cat > /tmp/create-place-client.sh' < create-place-client.sh
+   docker exec -it -e KEYCLOAK_ADMIN_URL=http://127.0.0.1:8080 "$kc" \
+     bash /tmp/create-place-client.sh --admin-user <yönetici>            # --check
+   docker exec -it -e KEYCLOAK_ADMIN_URL=http://127.0.0.1:8080 "$kc" \
+     bash /tmp/create-place-client.sh --admin-user <yönetici> --apply
+   ```
+
+   İlk koşuda beklenen en az `check: 5 change(s) pending` (istemci, iki rol, iki mapper) ve realm'in
+   grup yazan her varsayılan ya da isteğe bağlı kapsamı için bir `detach` (Keycloak'ın
+   varsayılanlarında `microprofile-jwt`). Uygulamadan sonra: `check: 0 change(s) pending`.
+
+Geri dönüş: Admin Console → `e-skylab` → Clients → `place` silinir (rolleri ve mapper'ları
+birlikte gider; realm kapsamlarına dokunulmamıştır). OpenBao'daki yol kaldırılır. Place
+backend'i `mail` modunda e-skylab'ı kullanmaz.
+
+Harness: `tests/place-client.sh` tek başına çalışır. Dockerfile'daki Keycloak imajını
+`docker run --rm` ile dev modunda açar; sonda `docker rm -fv`. Fixture realm'inde `groups`
+kapsamı realm'in varsayılan kapsamıdır (en kötü durum). Şunları doğrular:
+
+- `e-skylab` dışındaki realm'ler girişten önce reddedilir; realm yokken hiçbir şey yazılmaz.
+- `--check` yazmaz (admin olayları); `--apply` yalnız planı yazar ve kimseye rol vermez. İstemcinin
+  bayrakları, PKCE'si, adresleri, rolleri, mapper'ları ve kapsamları beklenen biçimdedir.
+- İkinci koşu yazmaz.
+- Admin panelinin yaptığı gibi bir kişiye `place:moderator`, bir gruba `place:admin` verilince
+  gerçek authorization code akışı (PKCE S256, state, nonce, giriş sayfası, dönüş adresine
+  `code`, secret ve verifier ile takas) çalışır. ID token'da (aud `place`, nonce), access token'da
+  ve userinfo'da `school_email` (okul adresi; `email` kişisel adres olarak kalır) ve
+  `resource_access.place.roles` bulunur; `groups`, `realm_access` ve başka istemcinin rolü
+  (kişinin `core` rolü) bulunmaz. Grupla verilen rol gelir; okul adresi olmayan kişide
+  `school_email` ve rol yoktur.
+- `groups` ve `microprofile-jwt` kapsamları `invalid_scope` ile, PKCE'siz ve `plain` istek,
+  `response_type=token`, yabancı dönüş adresi (400), password ve client_credentials grant'leri
+  reddedilir.
+- Kaymalar onarılır (bayraklar, PKCE, adresler, web origin, iki mapper, iki kapsam).
+- Grup yazan bir istemci mapper'ı ve ikinci bir `school_email` mapper'ı `PROBLEM`'dir; dokunulmaz.
+- User Profile `schoolEmail`'i tanımlamıyorsa `WARNING` yazılır.
+- Hiçbir çıktıda secret görünmez.
+
+## 15. Okul ya da kişisel e-postayla parolalı giriş (K4)
+
+Parolalı girişte kullanıcı adı alanı artık dört şeyden birini alır: kullanıcı adı, birincil
+e-posta (Keycloak `email`), YTÜ bağlantılı hesabın okul e-postası ya da kanıtlanmış kişisel
+e-posta (CONTEXT.md, Primary e-mail: "Either address signs in"). Bunu SPI 1.14.0'daki
+`sky-username-password-form` (`com.skylab.authenticator.SkyUsernamePasswordFormFactory`) yapar.
+Uzlaştırıcı onu realm tarayıcı akışına koyar.
+
+### Hangi adres giriş tanımlayıcısıdır
+
+- `schoolEmail`: yalnız hesabın YTÜ Microsoft bağlantısı (`OBS`) varken. Değeri OBS'nin
+  `school-email-importer` mapper'ı (Keycloak'ın `microsoft-user-attribute-mapper`'ı, FORCE)
+  her YTÜ girişinde Microsoft'un verdiği gibi yazar: kırpılır, küçük harfe çevrilmez,
+  benzersizlik denetlenmez. Bağlantısız bir hesapta içe aktarılmış ya da yönetici yazmış bir
+  değer kanıt sayılmaz (Verified YTÜ account).
+- `personalEmail`: yalnız `personalEmailVerifiedAt` damgası okunabilir bir ISO-8601 anken
+  (`IdentityResource.isPersonalEmailVerified`, SPI'ın birincil seçiminde kullandığı kural).
+  Değeri yalnız `email/confirm` (kod doğru girildikten sonra) ve A1c devralması yazar, ikisi de
+  `PersonalEmailProof` ile: kırpılmış, `Locale.ROOT` ile küçük harf. Bekleyen değişiklik
+  özniteliğe hiç girmez; tek kullanımlık depoda kodunu bekler. Benzersizlik yazılırken
+  denetlenir: `change-request` ve `confirm` adresi başka birinin `email`, `schoolEmail` ya da
+  `personalEmail`'inde bulursa `email_taken` döner.
+- `email` ve kullanıcı adı: Keycloak'ın kendi araması (`KeycloakModelUtils.findUserByNameOrEmail`),
+  büyük/küçük harf duyarsız. Realm `duplicateEmailsAllowed=false`, `loginWithEmailAllowed=true`
+  (uzlaştırıcı bunu doğrular), `registrationEmailAsUsername=false` (üretim olgusu, 2026-09-21;
+  uzlaştırıcı yönetmez).
+
+İki öznitelik de büyük/küçük harf duyarsız karşılaştırılır (Keycloak'ın tam öznitelik araması
+iki yanı da küçültür, sonra değer SPI'da bir kez daha denetlenir). `loginWithEmailAllowed`
+kapalıysa ya da girdide `@` yoksa yalnız kullanıcı adı aranır.
+
+### Belirsizlik ve hata cevabı
+
+Her yol her girişte sorulur. Girdi iki farklı kişiyi gösteriyorsa (örneğin birinin `email`'i,
+ötekinin okul e-postası) kimse seçilmez ve cevap, bilinmeyen bir kullanıcı adınınkiyle aynıdır:
+Keycloak'ın `testInvalidUser`'ı, yani sabit süreli sahte parola özeti, `user_not_found` olayı
+ve yanlış parolayla aynı "Geçersiz kullanıcı adı veya şifre" mesajı. Kanıtlanmamış bir adres de
+hiç kimseyi göstermez; cevabı yazım hatasınınkidir. Kullanıcı adı `@` içeren eski bir hesap o
+adresi taşıyan başka birine çözülüyorsa kişi aynı cevabı alır.
+
+### Keycloak'ın davranışı nasıl korunuyor
+
+`SkyUsernamePasswordForm`, Keycloak'ın `UsernamePasswordForm`'unu genişletir ve yalnız
+`validateForm`'u değiştirir. Keycloak'ın kendi aramasının bulduğu girdi, hiç kimseyi göstermeyen
+girdi ve formdan önce kişisi belli olan akış Keycloak'ın koduna hiç değiştirilmeden gider. Yalnız
+okul ya da kişisel e-postayla bulunan kişi için Keycloak'ın formu o kişinin kullanıcı adıyla
+çalışır. Parola denetimi, brute force, devre dışı hesap, zorunlu eylemler, hata mesajları ve
+passkey (conditional UI) yolu Keycloak'ındır. İki ayrıntı:
+
+- Keycloak brute force için kişiyi `ATTEMPTED_USERNAME` notundan bulur; giriş ve parola
+  sıfırlama sayfaları da bu notu geri gösterir. Not, form çalıştıktan sonra yazılan adrese
+  geri çevrilir; bir adres kimsenin kullanıcı adını açığa vurmaz. Not artık kişiye çözülmediği
+  için yanlış parola burada Keycloak'ın akışının yaptığı çağrıyla (`BruteForceProtector
+  .failedLogin`, bu yürütmenin `password` kategorisiyle) bir kez sayılır.
+- Hata olayı (`LOGIN_ERROR`, `invalid_user_credentials`) adresle girişte `username` ayrıntısı
+  olarak kullanıcı adını taşır; başarılı giriş olayı ve oturum yazılan adresi taşır.
+
+Belirsiz bir girdi, Keycloak'ın her girdide yaptığı gibi, kendi aramasının bulduğu kişiye
+(varsa, `email`'in ya da kullanıcı adının sahibi) brute-force hatası yazar; okul ya da kişisel
+e-posta sahibine yazmaz.
+
+### Uzlaştırıcı
+
+`reconcile_password_form 'browser plus passkey'`, `account-center-browser` emekliye ayrılıp
+silindikten hemen sonra koşar (o akış artık yoktur, değiştirilecek formu da yoktur). Admin REST
+bir yürütmenin sağlayıcısını değiştiremediği için yeni form aynı alt akışa aynı öncelikle
+eklenir (Keycloak yürütmeleri yalnız önceliğe göre sıralar), sonra eskisi silinir. O kısa anda
+akış parolayı iki kez sorar; parolasız bir an hiç olmaz. `ReconcileJson password-form` şu
+durumlarda hiçbir şey yazmadan durdurur: iki formdan tam olarak biri yok, form `REQUIRED`
+değil, bir authenticator config'i var ya da yanındaki bir yürütme aynı önceliği paylaşıyor.
+İki yazma arasında kesilmiş bir koşu iki formu yan yana, aynı öncelikte bırakır; sonraki koşu
+eskisini silip tamamlar. Satırlar:
+
+- `[reconcile] password form of flow 'browser plus passkey': updated (auth-username-password-form -> sky-username-password-form in subflow 'password flow', priority 0, REQUIRED)`
+- `[reconcile] password form of flow 'browser plus passkey': unchanged (sky-username-password-form)`
+
+Geri dönüş bayrağı `KEYCLOAK_PASSWORD_FORM` (varsayılan `sky-username-password-form`;
+`auth-username-password-form` Keycloak'ın formunu aynı yere geri koyar; başka değer koşuyu
+durdurur). Geri dönülen akışta adreslerle giriş durur, kullanıcı adı ve birincil e-posta çalışır.
+Bayraksız sonraki koşu SKY LAB formunu yeniden koyar.
+
+### Üretim sırası
+
+1. SPI 1.14.0'ı taşıyan Keycloak sürümü yayımlanır (`main` → `production` tek squash,
+   `keycloak-production` Touch ID onayı o commit'e bağlanır, `/health/ready` yeşil).
+2. Uzlaştırıcı §9'daki `docker exec` komutuyla bir kez koşar. Beklenen tek yeni değişiklik
+   satırı yukarıdaki `updated (auth-username-password-form -> sky-username-password-form in
+   subflow 'password flow', priority 0, REQUIRED)` satırıdır (üretim olguları: forms →
+   passwordless WebAuthn ALT / `password flow` alt akışı, formun önceliği 0, yanında
+   `conditional 2fa` 1 ve `Passkey Offer` 2).
+3. Aynı komut ikinci kez koşar; hiçbir satır `updated` dememelidir.
+4. Admin Console → Authentication → `browser plus passkey`: `password flow` alt akışının ilk
+   satırı "SKY LAB Username Password Form" (REQUIRED) olmalıdır.
+5. Deneme: okul e-postası birincil olmayan bir hesapla kişisel e-posta, YTÜ bağlantılı bir
+   hesapla okul e-postası girişi; bir yazım hatası "Geçersiz kullanıcı adı veya şifre" almalı.
+
+Geri dönüş: aynı `docker exec` komutuna `export KEYCLOAK_PASSWORD_FORM=auth-username-password-form`
+eklenip bir kez koşulur (beklenen satır `updated (sky-username-password-form ->
+auth-username-password-form ...)`), sonra gerekirse eski imaja dönülür. Sıra önemlidir: eski
+imajda `sky-username-password-form` bulunmadığından o akışla parolalı giriş de, Admin Console'da
+akışın yürütme listesi de hata verir. Eski imaj zaten çalışıyorsa önce 1.14.0 imajı yeniden
+dağıtılır, bayraklı koşu yapılır, sonra geri dönülür.
+
+### Kapsam dışı: parola sıfırlama ve direct grant
+
+`reset credentials` akışının `reset-credentials-choose-user`'ı kişiyi hâlâ yalnız kullanıcı
+adı ve `email`'le bulur. Okul ya da kişisel e-postasını yazan kişi "e-posta gönderildi"
+cevabını alır ama posta gitmez. Aynı aramaya geçmesi mantıklıdır (bağlantı yine birincil adrese
+gider, yazılan adrese değil; bulunamayan adres için cevap zaten aynıdır), ama ayrı bir
+authenticator ve akış değişikliği ister; ayrı bilet. `direct grant` akışı
+(`direct-grant-validate-username`; üretimde `admin-cli` ve `skycloud`) de değişmedi.
+
+Harness: `tests/login-by-either-email.sh` (`run-integration.sh` içinden). İlk uzlaştırmadan
+sonra akışın yalnız formu değişmiş olmalı. Kullanıcı adı, birincil, okul (karışık harfli
+kayıt, boşluklu ve büyük harfli girdi) ve kişisel e-postayla giriş doğru `sub`'ı verir. Yazım
+hatası, iki kişide olan adres (ikisinin doğru parolasıyla bile), kanıtsız kişisel e-posta ve
+bağlantısız okul e-postası yanlış parolayla aynı cevabı alır ve kullanıcı adını hiçbir sayfada
+göstermez; parola sıfırlama sayfası yazılan adresi taşır, kullanıcı adını değil. Adresle her
+yanlış parola bir kez sayılır, 10. yanlış parola hesabı kilitler, kilit adreslerle de geçerlidir;
+devre dışı hesap adresle de kullanıcı adıyla aldığı cevabı alır. Uzlaştırıcı tarafında: geçersiz
+bayrak, ikinci form (durur, yazmaz), yarıda kalmış değişim (tamamlar), geri dönüş ve yeniden
+ileri, her biri ikinci koşuda sessiz.

@@ -40,7 +40,7 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.13.2`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.14.0`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.1.0`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
@@ -152,6 +152,17 @@ kaydeder; öznitelik haritası canlı halinin üstüne birleştirilerek yazılı
 yönetilmez. `attributes` taşımayan realm PUT'larında Keycloak CIBA ve PAR
 sürelerini varsayılana sıfırlar (önceden de böyleydi; SKY LAB ikisini de
 varsayılan dışında kullanmaz).
+
+Parolalı girişte kullanıcı adı alanı kullanıcı adını, birincil e-postayı, YTÜ bağlantılı
+hesabın okul e-postasını ya da kodla kanıtlanmış kişisel e-postayı alır (K4). Bunu SPI'daki
+`sky-username-password-form` (`com.skylab.authenticator.SkyUsernamePasswordFormFactory`) yapar:
+Keycloak'ın `UsernamePasswordForm`'u, yalnız araması değişmiş; parola denetimi, brute force,
+devre dışı hesap, hata mesajları ve passkey yolu Keycloak'ındır. İki kişiyi gösteren ya da
+kanıtlanmamış bir adres, yanlış parolayla aynı cevabı alır. Uzlaştırıcı onu realm tarayıcı
+akışı `browser plus passkey`'de `auth-username-password-form`'un yerine, aynı alt akışa ve
+aynı önceliğe koyar; `KEYCLOAK_PASSWORD_FORM=auth-username-password-form` geri alır. Ayrıntı ve
+geri dönüş sırası:
+[`docs/v2-identity-reconcile-runbook.md`](docs/v2-identity-reconcile-runbook.md) §15.
 
 User Profile (`config/account-center-user-profile.json`) canlı yapısını
 koruyarak uzlaştırılır: `firstName`, `lastName`, `email` kişi için salt

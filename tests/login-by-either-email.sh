@@ -334,6 +334,7 @@ stage_password_form_reconciler() {
   fi
   grep -Fq 'KEYCLOAK_PASSWORD_FORM must be sky-username-password-form (default) or auth-username-password-form (rollback), not bogus-form' "$log_file" \
     || { cat "$log_file" >&2; fail 'K4: the reconciler did not explain the refused KEYCLOAK_PASSWORD_FORM'; }
+  rbe_bogus_flag
 
   # A second password form in the flow: refused, nothing written.
   kcadm create "$parent_path" -r "$V2_REALM" \
@@ -362,16 +363,18 @@ stage_password_form_reconciler() {
   [[ $(lbe_flow | lbe_flow_shape) == "$shape_before" ]] || fail 'K4: finishing the swap left the flow different'
 
   # Rollback: Keycloak's own form back in the same place; addresses stop signing in, the
-  # username does not.
+  # username does not. The same runs roll K4b's reset step back and forward (one reconciler run
+  # takes minutes; tests/reset-by-either-email.sh).
   log_file="$TEST_STATE_DIR/reconcile-password-form-rollback.log"
-  lbe_run_reconciler "$log_file" -e "KEYCLOAK_PASSWORD_FORM=$LBE_STOCK_FORM" \
+  lbe_run_reconciler "$log_file" -e "KEYCLOAK_PASSWORD_FORM=$LBE_STOCK_FORM" -e "KEYCLOAK_RESET_CHOOSE_USER=$RBE_STOCK_STEP" \
     || { cat "$log_file" >&2; fail 'K4: the rollback reconciliation failed'; }
   grep -Eq "^\[reconcile\] password form of flow 'browser plus passkey': updated \($LBE_SKY_FORM -> $LBE_STOCK_FORM in subflow '[^']+', priority $priority, REQUIRED\)$" "$log_file" \
     || { cat "$log_file" >&2; fail 'K4: the rollback did not report swapping the form back'; }
   [[ $(lbe_form_census) == "1 0 REQUIRED" ]] || fail "K4: the rollback left $(lbe_form_census)"
   [[ $(lbe_flow | lbe_flow_shape) == "$shape_before" ]] || fail 'K4: the rollback changed the flow beyond the form'
+  rbe_after_rollback "$log_file" "$client_secret" "$person"
   log_file="$TEST_STATE_DIR/reconcile-password-form-rollback-again.log"
-  lbe_run_reconciler "$log_file" -e "KEYCLOAK_PASSWORD_FORM=$LBE_STOCK_FORM" \
+  lbe_run_reconciler "$log_file" -e "KEYCLOAK_PASSWORD_FORM=$LBE_STOCK_FORM" -e "KEYCLOAK_RESET_CHOOSE_USER=$RBE_STOCK_STEP" \
     || { cat "$log_file" >&2; fail 'K4: the second rollback reconciliation failed'; }
   v2_reconcile_log_must_be_quiet "$log_file"
   lbe_expect_signed_in_as k4-rollback-username k4-person "$client_secret" "$person"
@@ -384,6 +387,7 @@ stage_password_form_reconciler() {
   lbe_run_reconciler "$log_file" || { cat "$log_file" >&2; fail 'K4: the forward reconciliation failed'; }
   grep -Fq "[reconcile] password form of flow 'browser plus passkey': updated ($LBE_STOCK_FORM -> $LBE_SKY_FORM" "$log_file" \
     || { cat "$log_file" >&2; fail 'K4: the forward reconciliation did not swap the form in'; }
+  rbe_after_forward "$log_file" "$client_secret" "$person"
   log_file="$TEST_STATE_DIR/reconcile-password-form-noop.log"
   lbe_run_reconciler "$log_file" || { cat "$log_file" >&2; fail 'K4: the no-op reconciliation failed'; }
   v2_reconcile_log_must_be_quiet "$log_file"

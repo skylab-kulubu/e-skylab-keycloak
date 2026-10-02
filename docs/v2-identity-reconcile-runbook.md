@@ -30,6 +30,7 @@ entegrasyon testi bunu doğrular.
 | `keycloak-mailer` istemcisi (K5) | Uzlaştırıcı **yalnız doğrular**: istemci yoksa uyarı ve çalıştırılacak komut; bayraklar (gizli, yalnız service account, standard flow / direct grant / implicit kapalı, `fullScopeAllowed=false`, `roles` varsayılan kapsamı) yanlışsa koşu hata ile durur; service account rolleri uzlaştırıcı kimliğiyle okunamadığından (kullanıcı yetkisi yok) uyarı olarak raporlanır. İstemciyi ve rolleri operatör `config/create-mailer-client.sh` ile oluşturur (§6). Gizli anahtarı Keycloak üretir, hiçbir betik yazdırmaz. |
 | `core-erasure` istemcisi (hesap silme, ADR-0051) | Uzlaştırıcı **yalnız doğrular** (`keycloak-mailer` gibi): istemci yoksa uyarı ve çalıştırılacak komut. Şunlardan biri sözleşmeden farklıysa koşu hata ile durur ve operatör komutunu yazar: bayraklar (gizli, yalnız service account, standard flow / direct grant / implicit kapalı, `fullScopeAllowed=false`), varsayılan kapsamlar (tam olarak `basic` ve `roles`; Keycloak'ın eklediği `service_account` hoş görülür), isteğe bağlı kapsamlar (tam olarak üç `account-erase-*`), doğrudan scope mapping (olmamalı), her erase kapsamının tek audience mapper'ı ve tek rolü, servis istemcilerinin (`skymail`, `skycms`, `forms`) varlığı. Service account rolleri uzlaştırıcı kimliğiyle okunamadığından uyarı olarak raporlanır. İstemciyi, kapsamları ve rolleri operatör `config/create-erasure-client.sh` ile kurar (§11). |
 | Parola formu (K4, §15) | Realm tarayıcı akışı `browser plus passkey`'deki `auth-username-password-form`'un yerine aynı alt akışta, aynı öncelik ve `REQUIRED` ile `sky-username-password-form` konur; akışın geri kalanına dokunulmaz. İki formdan tam olarak biri yoksa, form `REQUIRED` değilse ya da yanındaki bir yürütmeyle aynı önceliği paylaşıyorsa koşu hiçbir şey yazmadan durur. `KEYCLOAK_PASSWORD_FORM=auth-username-password-form` Keycloak'ın formunu geri koyar. |
+| Parola sıfırlamanın kişi seçme adımı (K4b, §17) | Realm'in `reset credentials` akışındaki `reset-credentials-choose-user`'ın yerine aynı öncelik ve `REQUIRED` ile `sky-reset-credentials-choose-user` konur. Keycloak'ın yerleşik akışı değiştirilemediği için realm yerleşik bir akışa bağlıysa akış bir kez `sky reset credentials` adıyla kopyalanır, adım kopyada değiştirilir, realm ancak ondan sonra kopyaya bağlanır. Durdurma kuralları parola formununkiyle aynıdır. `KEYCLOAK_RESET_CHOOSE_USER=reset-credentials-choose-user` Keycloak'ın adımını bağlı akışa geri koyar. |
 | Kimlik korumaları: core sertifika rolleri, OBS `department mapper`, core'un `manage-clients` rolü | Uzlaştırıcı **dokunmaz**: kimliğinin kullanıcı ve kimlik sağlayıcısı yetkisi yoktur. Operatör `config/identity-guardrails.sh` ile uygular (§8). |
 
 Ortam değişkenleri: `KEYCLOAK_PASSKEY_RP_ID` (varsayılan `yildizskylab.com`) ve
@@ -383,6 +384,12 @@ Parola formunun (K4) geri dönüşü imajdan **önce** yapılır: §15'teki
 `KEYCLOAK_PASSWORD_FORM=auth-username-password-form` koşusu. Akış
 `sky-username-password-form`'u gösterirken 1.14.0'dan eski bir imaja dönülürse realm'in
 bütün parolalı girişleri durur.
+
+Parola sıfırlama adımının (K4b) geri dönüşü de imajdan **önce** yapılır: §17'deki
+`KEYCLOAK_RESET_CHOOSE_USER=reset-credentials-choose-user` koşusu. Bağlı akış
+`sky-reset-credentials-choose-user`'ı gösterirken 1.15.0'dan eski bir imaja dönülürse
+"Şifremi unuttum" isteklerinin hepsi hata verir. 1.14.0'a dönülecekse yalnız bu bayrak,
+1.14.0'dan da eskiye dönülecekse iki bayrak aynı koşuda verilir.
 
 Realm ayarları için ayrı bir geri dönüş yolu yoktur; önceki imaj digest'i ile
 eski uzlaştırıcı çalıştırıldığında RP ID yeniden boşalır (Keycloak passwordless
@@ -1290,12 +1297,8 @@ dağıtılır, bayraklı koşu yapılır, sonra geri dönülür.
 
 ### Kapsam dışı: parola sıfırlama ve direct grant
 
-`reset credentials` akışının `reset-credentials-choose-user`'ı kişiyi hâlâ yalnız kullanıcı
-adı ve `email`'le bulur. Okul ya da kişisel e-postasını yazan kişi "e-posta gönderildi"
-cevabını alır ama posta gitmez. Aynı aramaya geçmesi mantıklıdır (bağlantı yine birincil adrese
-gider, yazılan adrese değil; bulunamayan adres için cevap zaten aynıdır), ama ayrı bir
-authenticator ve akış değişikliği ister; ayrı bilet. `direct grant` akışı
-(`direct-grant-validate-username`; üretimde `admin-cli` ve `skycloud`) de değişmedi.
+Parola sıfırlama aynı aramaya K4b'de geçti (§17). `direct grant` akışı
+(`direct-grant-validate-username`; üretimde `admin-cli` ve `skycloud`) değişmedi.
 
 Harness: `tests/login-by-either-email.sh` (`run-integration.sh` içinden). İlk uzlaştırmadan
 sonra akışın yalnız formu değişmiş olmalı. Kullanıcı adı, birincil, okul (karışık harfli
@@ -1307,3 +1310,123 @@ yanlış parola bir kez sayılır, 10. yanlış parola hesabı kilitler, kilit a
 devre dışı hesap adresle de kullanıcı adıyla aldığı cevabı alır. Uzlaştırıcı tarafında: geçersiz
 bayrak, ikinci form (durur, yazmaz), yarıda kalmış değişim (tamamlar), geri dönüş ve yeniden
 ileri, her biri ikinci koşuda sessiz.
+
+## 17. Parola sıfırlamada okul ya da kişisel e-posta (K4b)
+
+(§16 admin panelinin istemcisine ayrıldı, skylab-kulubu/e-skylab-keycloak#52.)
+
+K4'ten önce "Şifremi unuttum" sayfası kişiyi yalnız kullanıcı adı ve birincil e-postayla
+buluyordu: okul ya da kişisel e-postasını yazan kişi "e-posta gönderildi" cevabını alıyor ama
+posta gitmiyordu. SPI 1.15.0'daki `sky-reset-credentials-choose-user`
+(`com.skylab.authenticator.SkyResetCredentialChooseUser`), Keycloak'ın
+`reset-credentials-choose-user`'ını genişletir ve yalnız aramasını değiştirir: alan, parolalı
+girişin aldığı dört şeyi alır (§15, aynı `LoginIdentifiers` kodu ve kuralları). Uzlaştırıcı onu
+realm'in parola sıfırlama akışına koyar.
+
+### Cevap ve olaylar
+
+Sayfa her girdide aynı "e-posta gönderildi" cevabını verir; bir adresin kimseye ait olup
+olmadığı sayfadan anlaşılmaz. Kullanıcı adı ve birincil e-posta Keycloak'ın adımına
+değiştirilmeden gider. Yalnız okul ya da kişisel e-postayla bulunan kişi Keycloak'ın bulduğu kişi
+gibi seçilir; devre dışıysa Keycloak'ın devre dışı kullanıcı adındaki gibi seçilmez
+(`RESET_PASSWORD_ERROR`, `user_disabled`) ve posta gitmez. İki kişiyi gösteren girdi (Keycloak'ın
+kendi araması birini bulsa bile), kanıtlanmamış adres ve bilinmeyen adres bulunamayan kullanıcı
+adı gibi işlenir: kimse seçilmez, `RESET_PASSWORD_ERROR` `user_not_found`, posta gitmez.
+`ATTEMPTED_USERNAME` yazılan girdidir; hiçbir sayfa kişinin başka bir tanımlayıcısını
+göstermez. Keycloak'ın bu adımında brute force denetimi yoktur, eklenmedi.
+
+### Posta nereye gider
+
+Bağlantı her zaman kişinin birincil e-postasına (Keycloak `email`) gider, yazılan adrese
+değil. Bunu Keycloak'ın sonraki adımı `reset-credential-email` yapar; K4b ona dokunmaz.
+
+- Birincil e-posta, kişinin okul ve kişisel e-postasından posta almak için seçtiği adrestir
+  (CONTEXT.md, Primary e-mail); token'lar, core, SkyMail ve bildirimler de onu görür.
+- Keycloak bağlantının action token'ını bu adrese bağlar (`eml`): birincil adres değişirse
+  bağlantı geçersizleşir. Bağlantı izlenince `emailVerified=true` yazar; bu, bağlantının gittiği
+  adres için doğrudur. Yazılan adrese göndermek iki güvenceyi de bozardı ve bu adımın da
+  değiştirilmesini gerektirirdi.
+- Kıyas: Microsoft hesabı kodu kayıtlı güvenlik bilgisine (yedek e-posta ya da telefon), Google
+  kurtarma adresine yollar; ikisi de yazılan takma ada değil, hesabın kayıtlı adresine yollar
+  (aynı). GitHub sıfırlamayı yalnız birincil ya da yedek adresle (varsayılan olarak her
+  doğrulanmış adres) istetir ve bağlantıyı istenen adrese yollar (fark: burada yalnız birincil).
+- Bilinen sınır: birincil adresi okul e-postası olan ve okul posta kutusunu kaybeden kişi (mezun)
+  bağlantıyı alamaz; kişisel e-postasını yazsa da posta okul adresine gider. Microsoft ile hâlâ
+  girebiliyorsa Hesap Merkezi'nden birincil adresi kişisel e-postaya çevirir; giremiyorsa
+  destek gerekir. Bu durum için ürün kararı bekleniyor (K4b bileti).
+
+### Uzlaştırıcı
+
+`reconcile_reset_choose_user`, `reconcile_password_form`'dan hemen sonra koşar. Realm'in
+`resetCredentialsFlow` bağlantısını okur. Keycloak yerleşik (`builtIn`) akışlara yürütme
+eklemeyi ve silmeyi reddeder; realm yerleşik bir akışa bağlıysa (fixture'da ve büyük olasılıkla
+üretimde `reset credentials`) akış bir kez `sky reset credentials` adıyla kopyalanır. Adım,
+parola formunun değişimindeki yolla (`swap_flow_execution`, `ReconcileJson password-form`
+planlayıcısı, aynı durdurma kuralları) kopyada değiştirilir. Realm kopyaya ancak bundan sonra
+bağlanır; hiçbir istek yarım akışa denk gelmez. Bağlama, yalnız bu alanı taşıyan bir realm
+PUT'udur (realm adımlarının yazımı gibi; §0'daki CIBA/PAR notu geçerli). Kopyadan sonra kesilmiş
+bir koşu kopyayı bırakır; sonraki koşu yenisini yapmaz, onu kullanır. Realm zaten yerleşik
+olmayan bir akışa bağlıysa kopya yapılmaz, değişim o akışta olur. Yerleşik akıştaki üretim
+olgusu bilinmiyor: wizard ilk koşunun satırlarını gösterir.
+
+Realm yerleşik `reset credentials`'a bağlıyken ilk koşunun satırları:
+
+- `[reconcile] authentication flow 'sky reset credentials': created (an editable copy of the built-in 'reset credentials')`
+- `[reconcile] choose-user step of flow 'sky reset credentials': updated (reset-credentials-choose-user -> sky-reset-credentials-choose-user in subflow 'sky reset credentials', priority 10, REQUIRED)`
+- `[reconcile] realm reset credentials flow binding: updated (reset credentials -> sky reset credentials)`
+
+İkinci koşu:
+
+- `[reconcile] choose-user step of flow 'sky reset credentials': unchanged (sky-reset-credentials-choose-user)`
+- `[reconcile] realm reset credentials flow binding: unchanged (sky reset credentials)`
+
+Öncelik Keycloak 26'nın yerleşik akışında 10'dur; eski bir sürümde kurulmuş realm'de farklı
+olabilir, değişim neyse onu korur.
+
+Geri dönüş bayrağı `KEYCLOAK_RESET_CHOOSE_USER` (varsayılan `sky-reset-credentials-choose-user`;
+`reset-credentials-choose-user` Keycloak'ın adımını bağlı akışta aynı yere geri koyar; başka
+değer koşuyu hiçbir şey okumadan durdurur). Geri dönüş bağlantıyı değiştirmez: realm
+`sky reset credentials`'a bağlı kalır, kopya artık yalnız Keycloak'ın adımlarını taşır.
+Yerleşik akışa bağlı bir realm'de geri dönüşün yapacağı bir şey yoktur. Bayraksız sonraki koşu
+SKY LAB adımını yeniden koyar.
+
+### Üretim sırası
+
+1. SPI 1.15.0'ı taşıyan Keycloak sürümü yayımlanır (`main` → `production` tek squash,
+   `keycloak-production` Touch ID onayı o commit'e bağlanır, `/health/ready` yeşil). İmaj tek
+   başına davranışı değiştirmez; akış uzlaştırıcıyla değişir.
+2. Uzlaştırıcı bir kez koşar: sky_lab_genel `ops/wizards/keycloak-k4b-release-wizard.sh`
+   (sunucuda) ya da §9'daki `docker exec` komutu. Beklenen yeni değişiklik satırları
+   yukarıdaki üç satırdır (realm yerleşik olmayan bir akışa bağlıysa yalnız `choose-user step`
+   satırı). Geri kalan her satır `unchanged` olmalıdır.
+3. Aynı komut ikinci kez koşar; hiçbir satır `updated` dememelidir.
+4. Admin Console → Authentication: `sky reset credentials` "Used by: Reset credentials flow"
+   göstermeli, ilk satırı "SKY LAB Choose User" (REQUIRED) olmalıdır.
+5. Deneme (gizli pencere, `https://my.yildizskylab.com` → "Şifremi unuttum"): birincil adresi
+   kişisel e-posta olan YTÜ bağlantılı bir hesabın okul e-postası ve birincil adresi okul
+   e-postası olan bir hesabın kişisel e-postası; ikisinde de posta birincil adrese gelir.
+   Var olmayan bir adres aynı cevabı alır, posta gitmez.
+
+Geri dönüş: aynı komuta `export KEYCLOAK_RESET_CHOOSE_USER=reset-credentials-choose-user`
+eklenip bir kez koşulur (beklenen satır `choose-user step of flow 'sky reset credentials':
+updated (sky-reset-credentials-choose-user -> reset-credentials-choose-user …)`), sonra gerekirse
+eski imaja dönülür. Sıra önemlidir: 1.15.0'dan eski imajda `sky-reset-credentials-choose-user`
+bulunmadığından o akışla her parola sıfırlama isteği ve Admin Console'da akışın yürütme listesi
+hata verir. Eski imaj zaten çalışıyorsa önce 1.15.0 imajı yeniden dağıtılır, bayraklı koşu
+yapılır, sonra geri dönülür. 1.14.0'dan da eskiye dönülecekse aynı koşuya
+`KEYCLOAK_PASSWORD_FORM=auth-username-password-form` da eklenir (§15). Realm'i yerleşik
+`reset credentials`'a geri bağlamak gerekmez; istenirse Admin Console'dan yapılır (Authentication
+→ `reset credentials` → Bind flow).
+
+Harness: `tests/reset-by-either-email.sh` (`run-integration.sh` içinden). İlk uzlaştırmada
+yerleşik akış değişmez; kopya, yerleşik akıştan yalnız adımıyla ayrılır ve realm ona bağlanır.
+Yarıda kalmış bir koşu (realm yerleşik akışa geri bağlı, kopyada Keycloak'ın adımı) ikinci
+uzlaştırmada aynı kopyayla tamamlanır; no-op koşu sessizdir. Geri dönüş ve yeniden ileri, K4'ün
+koşularıyla birlikte (`tests/login-by-either-email.sh`): geri dönüşte kişisel e-posta kimseyi
+bulmaz, kullanıcı adı bulur; ileride kişisel e-posta birincil adrese posta başlatır; geçersiz
+bayrak durdurulur. K5'ten sonra, postalar SkyMail'den çıkarken: okul e-postası (karışık harfli
+kayıt, boşluklu ve büyük harfli girdi) ve kişisel e-posta sıfırlama postasını birincil adrese
+yollatır; kullanıcı adı Keycloak'ın yoluyla çalışır; bilinmeyen, iki kişide olan, kanıtsız
+kişisel, bağlantısız okul e-postası ve devre dışı hesap aynı sayfayı alır, posta gitmez ve olayları
+Keycloak'ınki gibidir; SkyMail tam olarak üç posta alır. Postadaki bağlantı, isteyen tarayıcıda
+yeni parolayı kurar ve kişi okul e-postası ile yeni parolasıyla girer; adresleri değişmez.

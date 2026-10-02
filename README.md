@@ -40,7 +40,7 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.14.0`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.15.0`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.1.1`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
@@ -163,6 +163,15 @@ akışı `browser plus passkey`'de `auth-username-password-form`'un yerine, ayn�
 aynı önceliğe koyar; `KEYCLOAK_PASSWORD_FORM=auth-username-password-form` geri alır. Ayrıntı ve
 geri dönüş sırası:
 [`docs/v2-identity-reconcile-runbook.md`](docs/v2-identity-reconcile-runbook.md) §15.
+
+Parola sıfırlamada ("Şifremi unuttum") da aynı dört tanımlayıcı geçer (K4b). Bunu SPI'daki
+`sky-reset-credentials-choose-user` (`com.skylab.authenticator.SkyResetCredentialChooseUser`)
+yapar: Keycloak'ın `reset-credentials-choose-user`'ı, yalnız araması K4'ünki. Sayfa her girdide
+aynı "e-posta gönderildi" cevabını verir; bağlantı her zaman kişinin birincil e-postasına gider,
+yazılan adrese değil. Keycloak'ın yerleşik `reset credentials` akışı değiştirilemediği için
+uzlaştırıcı onu bir kez `sky reset credentials` adıyla kopyalar, adımı kopyada değiştirir, sonra
+realm'i kopyaya bağlar; `KEYCLOAK_RESET_CHOOSE_USER=reset-credentials-choose-user` Keycloak'ın
+adımını geri koyar. Ayrıntı ve geri dönüş sırası: runbook §17.
 
 User Profile (`config/account-center-user-profile.json`) canlı yapısını
 koruyarak uzlaştırılır: `firstName`, `lastName`, `email` kişi için salt

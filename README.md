@@ -40,9 +40,9 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.13.2`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.14.0`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
-  sağlayıcısı (`3.1.0`) bulunur.
+  sağlayıcısı (`3.1.1`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
   etkinleştirilir.
 - Realm ve istemci ayarları `config/reconcile-account-center.sh` ile sürekli
@@ -153,6 +153,17 @@ yönetilmez. `attributes` taşımayan realm PUT'larında Keycloak CIBA ve PAR
 sürelerini varsayılana sıfırlar (önceden de böyleydi; SKY LAB ikisini de
 varsayılan dışında kullanmaz).
 
+Parolalı girişte kullanıcı adı alanı kullanıcı adını, birincil e-postayı, YTÜ bağlantılı
+hesabın okul e-postasını ya da kodla kanıtlanmış kişisel e-postayı alır (K4). Bunu SPI'daki
+`sky-username-password-form` (`com.skylab.authenticator.SkyUsernamePasswordFormFactory`) yapar:
+Keycloak'ın `UsernamePasswordForm`'u, yalnız araması değişmiş; parola denetimi, brute force,
+devre dışı hesap, hata mesajları ve passkey yolu Keycloak'ındır. İki kişiyi gösteren ya da
+kanıtlanmamış bir adres, yanlış parolayla aynı cevabı alır. Uzlaştırıcı onu realm tarayıcı
+akışı `browser plus passkey`'de `auth-username-password-form`'un yerine, aynı alt akışa ve
+aynı önceliğe koyar; `KEYCLOAK_PASSWORD_FORM=auth-username-password-form` geri alır. Ayrıntı ve
+geri dönüş sırası:
+[`docs/v2-identity-reconcile-runbook.md`](docs/v2-identity-reconcile-runbook.md) §15.
+
 User Profile (`config/account-center-user-profile.json`) canlı yapısını
 koruyarak uzlaştırılır: `firstName`, `lastName`, `email` kişi için salt
 okunur olur, `username` izinlerine dokunulmaz, `schoolEmail`, `personalEmail`
@@ -253,10 +264,13 @@ tam olarak `https://api.place.yildizskylab.com/api/auth/eskylab/callback`, web o
 `place:admin` ve `place:moderator` client rolleri (kimseye verilmez, admin panelinden verilir);
 `schoolEmail`'den `school_email` claim'i ve `resource_access.place.roles` (ID token, access token,
 userinfo). Place grup okumaz (ADR-0059): grup verisi yazan varsayılan ya da isteğe bağlı
-kapsamlar (`microprofile-jwt` dahil) istemciden ayrılır. `e-skylab` dışındaki her realm'i
-girişten önce reddeder. Uzlaştırıcı bu istemciyi yönetmez; imaj yayını gerekmez. Sunucuda
-sky_lab_genel'deki `ops/wizards/place-keycloak-client-wizard.sh` betiği koşar ve secret'ı
-doğrudan OpenBao'ya taşır. Harness `tests/place-client.sh` tek başına çalışır (runbook §14).
+kapsamlar (`microprofile-jwt` dahil) istemciden ayrılır. `school_email`'in tek kaynağı
+istemcinin kendi mapper'ıdır: bu claim'i yazan kapsamlar da (production'da elle eklenmiş
+mapper'ıyla `profile`) yalnız `place`'ten ayrılır; realm kapsamı ve öteki istemciler
+değişmez. `e-skylab` dışındaki her realm'i girişten önce reddeder. Uzlaştırıcı bu istemciyi
+yönetmez; imaj yayını gerekmez. Sunucuda sky_lab_genel'deki
+`ops/wizards/place-keycloak-client-wizard.sh` betiği koşar ve secret'ı doğrudan OpenBao'ya taşır.
+Harness `tests/place-client.sh` tek başına çalışır (runbook §14).
 
 Admin panelinin istemcisini (`admin`, sandbox'ta `superadmin`; ADR-0058) uzlaştırıcı daraltır.
 İstemci iki realm'de de elle kurulmuş ve gizlidir; uzlaştırıcı onu yerinde benimser, id'sine,
@@ -275,7 +289,7 @@ secret'la girmesini gerektirir; o panelin işidir). Sandbox realm'inde uzlaştı
 kendi kcadm oturumuyla tek başına koşar (`KEYCLOAK_RECONCILE_KCADM_CONFIG` +
 `KEYCLOAK_RECONCILE_ONLY=admin-panel-client`; tam uzlaştırma operatör oturumuyla koşmaz).
 Sunucuda sky_lab_genel'deki `ops/wizards/admin-panel-keycloak-sandbox-wizard.sh` koşar
-(runbook §15).
+(runbook §16).
 
 `account-center` realm'in etkin tarayıcı akışını kullanır; böylece
 production'a özel parola, OTP ve passkey davranışı olduğu gibi geçerlidir ve

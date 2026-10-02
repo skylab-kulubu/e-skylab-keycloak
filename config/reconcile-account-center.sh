@@ -21,6 +21,14 @@ PASSKEY_SWITCH_ATTRIBUTE=skylab.passkeyRpIdSwitchedAt
 CLIENT_ID=account-center
 # The retired client-specific browser flow of the native handoff (ADR-0048); removed on sight.
 LEGACY_FLOW_ALIAS=account-center-browser
+# K4: the realm browser flow signs in with the SKY LAB username/password form, which also takes
+# the School and Personal e-mail. KEYCLOAK_PASSWORD_FORM=auth-username-password-form puts
+# Keycloak's own form back (the rollback; run it before going back to an image without the
+# SKY LAB form, or every password login of the realm fails).
+BROWSER_FLOW_ALIAS='browser plus passkey'
+STOCK_PASSWORD_FORM=auth-username-password-form
+SKY_PASSWORD_FORM=sky-username-password-form
+PASSWORD_FORM=${KEYCLOAK_PASSWORD_FORM:-$SKY_PASSWORD_FORM}
 SCOPE_NAME=account-center-account-api
 CORE_SCOPE_NAME=account-center-core-claims
 SKYAPP_CLIENT_ID=skyapp
@@ -122,6 +130,15 @@ require() {
 if [[ -z $OPERATOR_KCADM_CONFIG ]]; then
   require KEYCLOAK_CONFIG_CLIENT_SECRET
 fi
+
+case $PASSWORD_FORM in
+  "$SKY_PASSWORD_FORM" | "$STOCK_PASSWORD_FORM") ;;
+  *)
+    printf 'KEYCLOAK_PASSWORD_FORM must be %s (default) or %s (rollback), not %s\n' \
+      "$SKY_PASSWORD_FORM" "$STOCK_PASSWORD_FORM" "$PASSWORD_FORM" >&2
+    exit 1
+    ;;
+esac
 
 BASE_URL=$(normalize_account_center_base_url \
   "$BASE_URL" \
@@ -345,6 +362,88 @@ retire_account_center_browser_flow() {
   fi
   kcadm delete "authentication/flows/$flow_id" -r "$TARGET_REALM" >/dev/null
   log "authentication flow $LEGACY_FLOW_ALIAS: deleted (with its retired native handoff subflow)"
+}
+
+# Kcadm path segment for a flow alias. Aliases outside this conservative set are refused
+# rather than encoded, so an unexpected name can never address another resource.
+flow_alias_path() {
+  local alias=$1
+  if [[ ! $alias =~ ^[A-Za-z0-9._\ -]+$ ]]; then
+    printf 'Unsupported characters in authentication flow alias: %s\n' "$alias" >&2
+    return 1
+  fi
+  printf '%s\n' "${alias// /%20}"
+}
+
+# K4: puts PASSWORD_FORM in the place of the other username/password form in FLOW_ALIAS
+# (default: the SKY LAB form replaces Keycloak's; the rollback swaps it back). Admin REST cannot
+# change the provider of an execution, so the new one is added under the same parent flow with
+# the same priority (Keycloak orders executions by priority alone) and REQUIRED (the only
+# requirement either factory offers), then the old one is deleted. For that moment the flow asks
+# for the password twice; there is never a moment without a password form. ReconcileJson
+# refuses, and nothing is written, unless the flow holds exactly one of the two forms, REQUIRED,
+# without an authenticator config and with a priority none of its siblings shares. A run cut
+# between the two writes leaves both side by side, which the next run finishes. The flow's
+# other executions (passkey, OTP, passkey offer, organization) are never touched.
+reconcile_password_form() {
+  local flow_alias=$1
+  local from to flow_path live_file plan_file status action execution_id parent_id priority parent_alias parent_path
+  if [[ $PASSWORD_FORM == "$SKY_PASSWORD_FORM" ]]; then
+    from=$STOCK_PASSWORD_FORM
+  else
+    from=$SKY_PASSWORD_FORM
+  fi
+  to=$PASSWORD_FORM
+  flow_path=$(flow_alias_path "$flow_alias")
+  live_file=$(mktemp "$WORK_DIR/password-form.XXXXXX")
+  plan_file=$(mktemp "$WORK_DIR/password-form-plan.XXXXXX")
+  kcadm_json "authentication/flows/$flow_path/executions" -r "$TARGET_REALM" >"$live_file"
+  if json_tool password-form "$from" "$to" <"$live_file" >"$plan_file"; then
+    status=0
+  else
+    status=$?
+  fi
+  if [[ $status == 4 ]]; then
+    printf "Password form of flow '%s' was not changed: the step above explains why\n" "$flow_alias" >&2
+    return 1
+  elif [[ $status != 0 ]]; then
+    printf "Could not plan the password form of flow '%s' (status %s)\n" "$flow_alias" "$status" >&2
+    return 1
+  fi
+  IFS=$'\t' read -r action execution_id parent_id priority <"$plan_file"
+  case $action in
+    unchanged)
+      log "password form of flow '$flow_alias': unchanged ($to)"
+      return 0
+      ;;
+    finish)
+      kcadm delete "authentication/executions/$execution_id" -r "$TARGET_REALM" >/dev/null
+      log "password form of flow '$flow_alias': updated (finished an interrupted swap: removed $from next to $to)"
+      ;;
+    swap)
+      if [[ $parent_id == - ]]; then
+        parent_alias=$flow_alias
+      else
+        parent_alias=$(kcadm_json "authentication/flows/$parent_id" -r "$TARGET_REALM" | json_tool field alias)
+      fi
+      parent_path=$(flow_alias_path "$parent_alias")
+      kcadm create "authentication/flows/$parent_path/executions/execution" -r "$TARGET_REALM" \
+        -b "{\"provider\":\"$to\",\"priority\":$priority}" >/dev/null
+      kcadm delete "authentication/executions/$execution_id" -r "$TARGET_REALM" >/dev/null
+      log "password form of flow '$flow_alias': updated ($from -> $to in subflow '$parent_alias', priority $priority, REQUIRED)"
+      ;;
+    *)
+      printf "Unexpected password form plan for flow '%s': %s\n" "$flow_alias" "$action" >&2
+      return 1
+      ;;
+  esac
+  kcadm_json "authentication/flows/$flow_path/executions" -r "$TARGET_REALM" >"$live_file"
+  if ! json_tool password-form "$from" "$to" <"$live_file" >"$plan_file" \
+    || [[ $(cut -f1 "$plan_file") != unchanged ]]; then
+    printf "Password form of flow '%s' is not in place after the swap; inspect it in the Admin Console\n" \
+      "$flow_alias" >&2
+    return 1
+  fi
 }
 
 # Reads ENDPOINT, compares the desired fields against it and writes only when at least one
@@ -1161,6 +1260,9 @@ reconcile_user_profile
 
 ensure_account_center_client
 retire_account_center_browser_flow
+# account-center-browser, the other flow that held a username/password form, is retired and
+# deleted just above; the realm browser flow is the only one left to swap.
+reconcile_password_form "$BROWSER_FLOW_ALIAS"
 reconcile_account_center_client
 
 ensure_client_scope "$SCOPE_NAME" \

@@ -46,13 +46,23 @@ import java.util.TreeMap;
  *   user-profile SPEC.json      merges the User Profile specification into the live config on
  *                               stdin, prints the merged config and exits 3 when it differs
  *                               from the live one (0 when nothing has to change).
+ *   password-form FROM TO       stdin is the flat execution list of one authentication flow
+ *                               (GET authentication/flows/{alias}/executions); plans putting
+ *                               authenticator TO in the place of FROM. Prints one line:
+ *                               "unchanged<TAB>id" (TO is there, FROM is not),
+ *                               "swap<TAB>id<TAB>parentFlowId|-<TAB>priority" (FROM is there: add
+ *                               TO under the same parent with the same priority, then delete id),
+ *                               or "finish<TAB>id" (an interrupted swap left both side by side:
+ *                               delete id). Anything else is refused with exit status 4.
  *
- * Exit status 0 means "printed successfully", 3 means "changed" (user-profile only) and 1 an
- * invalid input. Nothing here prints secrets: all inputs are configuration documents.
+ * Exit status 0 means "printed successfully", 3 means "changed" (user-profile only), 4 "refused"
+ * (password-form only) and 1 an invalid input. Nothing here prints secrets: all inputs are
+ * configuration documents.
  */
 public final class ReconcileJson {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final int EXIT_CHANGED = 3;
+    private static final int EXIT_REFUSED = 4;
     private static final String ADMIN = "admin";
     private static final String USER = "user";
 
@@ -73,6 +83,7 @@ public final class ReconcileJson {
             case "field" -> field(args, readStdin(), out);
             case "realm-attribute" -> realmAttribute(args, readStdin(), out);
             case "user-profile" -> System.exit(userProfile(requireFile(args), readStdin(), out));
+            case "password-form" -> System.exit(passwordForm(args, readStdin(), out));
             default -> usage();
         }
     }
@@ -80,7 +91,8 @@ public final class ReconcileJson {
     private static void usage() {
         System.err.println("usage: ReconcileJson diff-fields|mapper-diff|user-profile FILE"
                 + "  |  ReconcileJson merge BASE EXTRA  |  ReconcileJson names|scope-mappings"
-                + "  |  ReconcileJson field NAME  |  ReconcileJson realm-attribute NAME VALUE");
+                + "  |  ReconcileJson field NAME  |  ReconcileJson realm-attribute NAME VALUE"
+                + "  |  ReconcileJson password-form FROM TO");
         System.exit(1);
     }
 
@@ -343,6 +355,90 @@ public final class ReconcileJson {
         ObjectNode body = MAPPER.createObjectNode();
         body.set("attributes", attributes);
         out.println(MAPPER.writeValueAsString(body));
+    }
+
+    // ------------------------------------------------------------------ password-form
+
+    /** One authenticator execution of the flat list, with the flow it sits in. */
+    private record Execution(String id, String parent, int priority, String requirement, boolean configured) {
+    }
+
+    private static int passwordForm(String[] args, JsonNode executions, PrintStream out) {
+        if (args.length != 3 || !executions.isArray()) {
+            usage();
+        }
+        String from = args[1];
+        String to = args[2];
+        List<Execution> all = new ArrayList<>();
+        List<Execution> fromList = new ArrayList<>();
+        List<Execution> toList = new ArrayList<>();
+        Map<Integer, String> flowAtLevel = new TreeMap<>();
+        for (JsonNode node : executions) {
+            int level = node.path("level").asInt();
+            String parent = level == 0 ? "-" : flowAtLevel.getOrDefault(level - 1, "?");
+            if (node.path("authenticationFlow").asBoolean(false)) {
+                flowAtLevel.put(level, node.path("flowId").asText());
+            }
+            JsonNode config = node.path("authenticationConfig");
+            Execution execution = new Execution(
+                    node.path("id").asText(),
+                    parent,
+                    node.path("priority").asInt(),
+                    node.path("requirement").asText(),
+                    !config.isMissingNode() && !config.isNull() && !config.asText().isEmpty());
+            all.add(execution);
+            String provider = node.path("providerId").asText("");
+            if (from.equals(provider)) {
+                fromList.add(execution);
+            } else if (to.equals(provider)) {
+                toList.add(execution);
+            }
+        }
+
+        if (fromList.isEmpty() && toList.size() == 1) {
+            Execution present = toList.get(0);
+            if (!"REQUIRED".equals(present.requirement())) {
+                return refuse(to + " is " + present.requirement() + ", expected REQUIRED");
+            }
+            out.println("unchanged\t" + present.id());
+            return 0;
+        }
+        if (fromList.size() == 1 && toList.isEmpty()) {
+            Execution old = fromList.get(0);
+            if (!"REQUIRED".equals(old.requirement())) {
+                return refuse(from + " is " + old.requirement() + ", expected REQUIRED");
+            }
+            if (old.configured()) {
+                return refuse(from + " carries an authenticator config");
+            }
+            if ("?".equals(old.parent())) {
+                return refuse("the flow that holds " + from + " could not be determined");
+            }
+            for (Execution sibling : all) {
+                if (sibling != old && sibling.parent().equals(old.parent()) && sibling.priority() == old.priority()) {
+                    return refuse("another execution next to " + from + " has the same priority "
+                            + old.priority() + ", so its place could not be kept");
+                }
+            }
+            out.println("swap\t" + old.id() + "\t" + old.parent() + "\t" + old.priority());
+            return 0;
+        }
+        if (fromList.size() == 1 && toList.size() == 1) {
+            Execution old = fromList.get(0);
+            Execution added = toList.get(0);
+            if (old.parent().equals(added.parent()) && old.priority() == added.priority()
+                    && "REQUIRED".equals(old.requirement()) && "REQUIRED".equals(added.requirement())) {
+                out.println("finish\t" + old.id());
+                return 0;
+            }
+        }
+        return refuse("expected exactly one of " + from + " and " + to + ", found "
+                + fromList.size() + " " + from + " and " + toList.size() + " " + to);
+    }
+
+    private static int refuse(String message) {
+        System.err.println(message);
+        return EXIT_REFUSED;
     }
 
     // ------------------------------------------------------------------ user-profile

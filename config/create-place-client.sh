@@ -20,14 +20,20 @@
 #   - the client mapper place-roles: the person's place roles as resource_access.place.roles in the
 #     ID token, access token, userinfo and introspection (the realm's roles scope reaches the access
 #     token only; Place validates the ID token);
-#   - no groups (ADR-0059: Place reads no groups). A default or optional client scope of the client
-#     that writes group data (a Group Membership mapper, or any mapper whose claim is groups) is
-#     detached from the client: Keycloak attaches the realm's default scopes to a new client, among
-#     them microprofile-jwt, whose mapper "groups" writes the realm roles. Such a mapper on the
-#     client itself is a PROBLEM and is left as is.
-# Another mapper writing school_email on the client or a default scope, or a mapper named
-# school-email or place-roles of another type, is a PROBLEM (never changed). A User Profile that
-# does not declare schoolEmail is a WARNING (reconcile-account-center.sh declares it).
+#   - no groups (ADR-0059: Place reads no groups) and one source of school_email (the mapper
+#     school-email). A default or optional client scope of the client that writes group data (a
+#     Group Membership mapper, or any mapper whose claim is groups) or the claim school_email is
+#     detached from the client, and from the client only: the realm scope, the realm's default
+#     scopes and every other client keep it. Keycloak attaches the realm's default scopes to a new
+#     client, among them microprofile-jwt, whose mapper "groups" writes the realm roles, and
+#     profile, which in production carries a hand-made school_email mapper that core reads. Place
+#     reads nothing from profile (only school_email, resource_access.place.roles, sub and the
+#     standard ID token fields; it asks for the scope openid only). A detached scope stays detached:
+#     a second run finds nothing to do.
+# A mapper on the client itself that writes group data or school_email (other than school-email),
+# or a mapper named school-email or place-roles of another type, is a PROBLEM (never changed). A
+# User Profile that does not declare schoolEmail is a WARNING (reconcile-account-center.sh
+# declares it).
 #
 # It refuses every realm but e-skylab, before it logs in. Without the realm it stops and writes
 # nothing.
@@ -446,7 +452,7 @@ ensure_own_mapper "$SCHOOL_MAPPER" "$own_school_line" "$SCHOOL_SHAPE" school_map
 ensure_own_mapper "$ROLES_MAPPER" "$own_roles_line" "$ROLES_SHAPE" roles_mapper_body \
   "$CLIENT_ID roles -> resource_access.$CLIENT_ID.roles; ID token, access token, userinfo, introspection"
 
-# --- 3b. the client's scopes: none may write group data ------------------------------------------
+# --- 3b. the client's scopes: none may write group data or school_email --------------------------
 # One read of every client scope of the realm: its id, then (mapper type, claim) pairs.
 declare -A scope_groups=() scope_school=()
 while IFS= read -r line; do
@@ -458,28 +464,32 @@ while IFS= read -r line; do
       scope_groups[${cells[0]}]+="${scope_groups[${cells[0]}]:+, }${cells[i + 1]:-?} (${cells[i]})"
     fi
     if writes_school "$pair"; then
-      scope_school[${cells[0]}]=1
+      scope_school[${cells[0]}]+="${scope_school[${cells[0]}]:+, }${cells[i]}"
     fi
   done
 done < <(csv client-scopes 'id,protocolMappers(protocolMapper,config(claim.name))')
 
-# check_scopes KIND: KIND is default or optional. Detaches every such scope that writes group data.
+# check_scopes KIND: KIND is default or optional. Detaches from the client every such scope that
+# writes group data or school_email. Only the client's link to the scope is deleted
+# (clients/<place>/<kind>-client-scopes/<scope>); the scope, the realm's default scopes and the
+# other clients are never written.
 detached=0
 check_scopes() {
-  local kind=$1 scope_name scope_id writers
+  local kind=$1 scope_name scope_id groups school reasons
   local -n scopes=${kind}_scope_by_name
   while IFS= read -r scope_name; do
     [[ -n $scope_name ]] || continue
     scope_id=${scopes[$scope_name]}
-    if [[ $kind == default && -n ${scope_school[$scope_id]:-} ]]; then
-      problem "$CLIENT_ID: default scope $scope_name also writes $SCHOOL_CLAIM; detach the scope or remove its mapper by hand"
-    fi
-    writers=${scope_groups[$scope_id]:-}
-    if [[ -z $writers ]]; then
+    groups=${scope_groups[$scope_id]:-}
+    school=${scope_school[$scope_id]:-}
+    if [[ -z $groups && -z $school ]]; then
       continue
     fi
+    reasons=''
+    [[ -z $groups ]] || reasons="it writes group data: $groups; ADR-0059"
+    [[ -z $school ]] || reasons+="${reasons:+; }it writes $SCHOOL_CLAIM ($school), which only the mapper $SCHOOL_MAPPER on $CLIENT_ID may write; the scope itself and other clients are not changed"
     detached=$((detached + 1))
-    change "detach the $kind scope $scope_name from $CLIENT_ID (it writes group data: $writers; ADR-0059)"
+    change "detach the $kind scope $scope_name from $CLIENT_ID ($reasons)"
     if [[ $MODE == apply ]]; then
       kcadm_write delete "clients/$client_uuid/$kind-client-scopes/$scope_id" -r "$TARGET_REALM"
     fi
@@ -488,7 +498,7 @@ check_scopes() {
 check_scopes default
 check_scopes optional
 if [[ $detached == 0 ]]; then
-  log "$CLIENT_ID: no default or optional scope writes group data (default: $(printf '%s\n' "${!default_scope_by_name[@]}" | sort | paste -sd' ' -))"
+  log "$CLIENT_ID: no default or optional scope writes group data or $SCHOOL_CLAIM (default: $(printf '%s\n' "${!default_scope_by_name[@]}" | sort | paste -sd' ' -))"
 fi
 
 # --- 4. who holds the roles (read-only) ----------------------------------------------------------

@@ -1109,8 +1109,19 @@ Grup yok (ADR-0059: Place grup okumaz). Keycloak yeni istemciye realm'in varsay�
 bağlı kapsamlarını bağlar. Bunlardan grup verisi yazan (Group Membership mapper'ı ya da claim'i
 `groups` olan herhangi bir mapper; Keycloak'ın `microprofile-jwt`'si realm rollerini `groups`
 adıyla yazar) `place`'ten ayrılır. Ayrılan kapsam istenirse Keycloak isteği `invalid_scope` ile
-reddeder. İstemcinin kendi üzerinde grup yazan bir mapper, `school_email` yazan ikinci bir
-mapper ya da `school-email`/`place-roles` adında başka türde bir mapper `PROBLEM`'dir; dokunulmaz.
+reddeder.
+
+`school_email`'in tek kaynağı `school-email` mapper'ıdır. Bu claim'i yazan varsayılan ya da
+isteğe bağlı kapsam da (claim adına bakılır) `place`'ten ayrılır. Production'da realm'in
+varsayılan `profile` kapsamında elle eklenmiş bir `school_email` mapper'ı var ve core claim'i
+oradan okur; bu yüzden `profile` `place`'ten ayrılır. Yalnız istemcinin kapsam bağı silinir:
+realm kapsamı, mapper'ları, realm'in varsayılan kapsamları ve öteki istemciler değişmez. Place
+`profile`'dan bir şey okumaz (yalnız `school_email`, `resource_access.place.roles`, `sub` ve ID
+token'ın standart alanları; yalnız `openid` kapsamını ister). Ayrılmış kapsam ikinci koşuda
+değişiklik üretmez.
+
+İstemcinin kendi üzerinde grup yazan bir mapper, `school_email` yazan ikinci bir mapper ya da
+`school-email`/`place-roles` adında başka türde bir mapper `PROBLEM`'dir; dokunulmaz.
 
 ### Üretim sırası
 
@@ -1137,8 +1148,9 @@ mapper ya da `school-email`/`place-roles` adında başka türde bir mapper `PROB
    ```
 
    İlk koşuda beklenen en az `check: 5 change(s) pending` (istemci, iki rol, iki mapper) ve realm'in
-   grup yazan her varsayılan ya da isteğe bağlı kapsamı için bir `detach` (Keycloak'ın
-   varsayılanlarında `microprofile-jwt`). Uygulamadan sonra: `check: 0 change(s) pending`.
+   grup ya da `school_email` yazan her varsayılan ya da isteğe bağlı kapsamı için bir `detach`
+   (Keycloak'ın varsayılanlarında `microprofile-jwt`; production'da `profile` de). Uygulamadan
+   sonra: `check: 0 change(s) pending`.
 
 Geri dönüş: Admin Console → `e-skylab` → Clients → `place` silinir (rolleri ve mapper'ları
 birlikte gider; realm kapsamlarına dokunulmamıştır). OpenBao'daki yol kaldırılır. Place
@@ -1146,11 +1158,14 @@ backend'i `mail` modunda e-skylab'ı kullanmaz.
 
 Harness: `tests/place-client.sh` tek başına çalışır. Dockerfile'daki Keycloak imajını
 `docker run --rm` ile dev modunda açar; sonda `docker rm -fv`. Fixture realm'inde `groups`
-kapsamı realm'in varsayılan kapsamıdır (en kötü durum). Şunları doğrular:
+kapsamı realm'in varsayılan kapsamıdır (en kötü durum); realm'in varsayılan `profile` kapsamında,
+production'daki gibi, `schoolEmail`'den `school_email` yazan bir mapper vardır. Şunları doğrular:
 
 - `e-skylab` dışındaki realm'ler girişten önce reddedilir; realm yokken hiçbir şey yazılmaz.
 - `--check` yazmaz (admin olayları); `--apply` yalnız planı yazar ve kimseye rol vermez. İstemcinin
   bayrakları, PKCE'si, adresleri, rolleri, mapper'ları ve kapsamları beklenen biçimdedir.
+- `profile` yalnız `place`'ten ayrılır: koşunun her admin olayı `place` üzerindedir; realm
+  kapsamının mapper'ları, realm'in varsayılan kapsamları ve `core`'un `profile`'ı yerindedir.
 - İkinci koşu yazmaz.
 - Admin panelinin yaptığı gibi bir kişiye `place:moderator`, bir gruba `place:admin` verilince
   gerçek authorization code akışı (PKCE S256, state, nonce, giriş sayfası, dönüş adresine
@@ -1158,11 +1173,14 @@ kapsamı realm'in varsayılan kapsamıdır (en kötü durum). Şunları doğrula
   ve userinfo'da `school_email` (okul adresi; `email` kişisel adres olarak kalır) ve
   `resource_access.place.roles` bulunur; `groups`, `realm_access` ve başka istemcinin rolü
   (kişinin `core` rolü) bulunmaz. Grupla verilen rol gelir; okul adresi olmayan kişide
-  `school_email` ve rol yoktur.
-- `groups` ve `microprofile-jwt` kapsamları `invalid_scope` ile, PKCE'siz ve `plain` istek,
+  `school_email` ve rol yoktur. Place token'larında `profile`'ın claim'leri (`preferred_username`,
+  `given_name` …) yoktur, yani `school_email` istemcinin kendi mapper'ından gelir; `core`'un
+  token'ında (Evaluate) `profile`'ın claim'leri ve `school_email` durur.
+- `groups`, `microprofile-jwt` ve `profile` kapsamları `invalid_scope` ile, PKCE'siz ve `plain` istek,
   `response_type=token`, yabancı dönüş adresi (400), password ve client_credentials grant'leri
   reddedilir.
-- Kaymalar onarılır (bayraklar, PKCE, adresler, web origin, iki mapper, iki kapsam).
+- Kaymalar onarılır (bayraklar, PKCE, adresler, web origin, iki mapper, grup yazan iki kapsam,
+  isteğe bağlı kapsam olarak geri bağlanan `profile`).
 - Grup yazan bir istemci mapper'ı ve ikinci bir `school_email` mapper'ı `PROBLEM`'dir; dokunulmaz.
 - User Profile `schoolEmail`'i tanımlamıyorsa `WARNING` yazılır.
 - Hiçbir çıktıda secret görünmez.

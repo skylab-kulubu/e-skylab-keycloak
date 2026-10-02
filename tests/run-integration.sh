@@ -1166,13 +1166,14 @@ stage_v2_passkey_cleanup() {
 CURRENT_STAGE='Keycloak readiness'
 wait_for_url http://localhost:19000/health/ready
 
-# The event exchange exists before the first event, as it does in production. Without it every
-# publish fails with 404 and RabbitMQ closes that channel while the provider closes it too
-# ("Received a frame on an unknown channel"). A long run then ends with the provider's connection
-# out of channels: createChannel returns null and every later event is skipped ("no channel is
-# available"), so the RabbitMQ provider contract at the end failed once the harness grew. The
-# contract stage declares the exchange again (idempotent) and still proves that an admin event
-# reaches a bound queue.
+# The event exchange exists before the first event, as it does in production. Every publish of the
+# run then succeeds and its channel stays open until the provider closes it, so a provider that
+# leaks channels runs its connection out of them (2047) within this run and the RabbitMQ provider
+# contract at the end fails. keycloak-to-rabbit 3.1.0 did: Keycloak never closes the listeners of
+# admin events, and each held a channel; 3.1.1 (#50) opens and closes one per message. Without
+# the exchange, RabbitMQ would close every publishing channel itself (404) and hide most of such a
+# leak. The contract stage declares the exchange again (idempotent) and still proves that an admin
+# event reaches a bound queue.
 CURRENT_STAGE='RabbitMQ event exchange'
 curl --fail --silent --show-error --retry 10 --retry-delay 2 --retry-all-errors \
   --user keycloak:integration-rabbit-password \

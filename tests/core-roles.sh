@@ -151,7 +151,7 @@ stage_core_roles_seeded_by_operator() {
   output=$(cr_operator_reconcile) || { printf '%s\n' "$output" >&2; fail 'the second operator step failed'; }
   grep -Fq '[reconcile] group mappings of the core resource roles: unchanged' <<<"$output" \
     || { printf '%s\n' "$output" >&2; fail 'the second operator step did not leave the mappings alone'; }
-  ! grep -Fq 'seeded once' <<<"$output" || fail 'the second operator step seeded again'
+  ! grep -Eq '^\[reconcile\] core role .*: seeded once' <<<"$output" || fail 'the second operator step seeded again'
   json_assert "$(cr_group_roles /UYELER/YK)" 'index("event:manage") == null' \
     'a mapping removed after seeding came back'
   json_assert "$(cr_group_roles /ADMIN/handoff-admin-subgroup-fixture)" '. == ["ticket:validate"]' \
@@ -164,7 +164,8 @@ stage_core_roles_seeded_by_operator() {
   output=$(cr_operator_reconcile) || { printf '%s\n' "$output" >&2; fail 'the third operator step failed'; }
   grep -Fq '[reconcile] core role season:manage: seeded once to /ADMIN,/UYELER/YK (granted to: /ADMIN)' <<<"$output" \
     || { printf '%s\n' "$output" >&2; fail 'an unmarked role was not seeded on its own'; }
-  [[ $(grep -c 'seeded once' <<<"$output") == 1 ]] || fail 'the third operator step seeded more than the unmarked role'
+  [[ $(grep -Ec '^\[reconcile\] core role .*: seeded once' <<<"$output") == 1 ]] \
+    || fail 'the third operator step seeded more than the unmarked role'
   json_assert "$(cr_group_roles /UYELER/YK)" 'index("event:manage") == null' \
     'seeding a new role restored a mapping removed after seeding'
 

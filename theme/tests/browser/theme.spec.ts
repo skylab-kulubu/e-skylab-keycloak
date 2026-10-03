@@ -179,7 +179,7 @@ test("after a reset request the confirmation is the first thing on the login car
 
   const message = page.locator("#sl-page-message");
   await expect(message).toHaveAttribute("role", "status");
-  await expect(message).toContainText("e-posta almalısınız");
+  await expect(message).toContainText("birincil e-posta adresine bir bağlantı gönderdik");
   await expect(message).toBeVisible();
   await expect(message).toBeFocused();
 
@@ -203,7 +203,7 @@ test("after a reset request the confirmation is the first thing on the login car
 
 test("a page-wide login error is an alert on the first screen; wrong credentials stay on the fields", async ({ page }) => {
   await page.goto("/?page=login.ftl&state=idp-error");
-  await expect(page.getByRole("alert")).toContainText("beklenmeyen bir hata");
+  await expect(page.getByRole("alert")).toContainText("beklenmeyen bir sorun");
   await expect(page.getByRole("link", { name: "YTÜ Öğrencisiyim" })).toBeVisible();
 
   await page.goto("/?page=login.ftl&state=invalid-credentials");

@@ -8,8 +8,10 @@
 # The fixture realm (e-skylab): its User Profile declares schoolEmail as
 # config/account-center-user-profile.json does; a realm scope "groups" (full-path Group Membership
 # into every token) is a realm DEFAULT scope, so a new client gets it (the worst case; Keycloak's
-# own microprofile-jwt, a realm optional scope, carries a "groups" mapper too); a client core with
-# a role events:manage; groups /UYELER, /UYELER/YK and /UYELER/ETKINLIK; people ayse (school
+# own microprofile-jwt, a realm optional scope, carries a "groups" mapper too); the realm's default
+# scope profile carries a user-attribute mapper schoolEmail -> school_email, as in production, where
+# core reads the claim from there; a client core with a role events:manage (made before place, so
+# it has profile); groups /UYELER, /UYELER/YK and /UYELER/ETKINLIK; people ayse (school
 # e-mail, a personal primary e-mail, in /UYELER/YK, holds core events:manage), zeynep (school
 # e-mail, in /UYELER/ETKINLIK) and mehmet (no school e-mail, in /UYELER). A realm e-skylab-sandbox
 # stands for a realm the script must refuse.
@@ -17,24 +19,30 @@
 # What it proves:
 #   - every realm but e-skylab is refused before a login (exit 2); without the realm nothing is
 #     written (exit 1);
-#   - --check writes nothing (admin events) and plans the client, the two roles, the two mappers and
-#     the detachment of the two scopes that write groups; --apply writes exactly that and grants no
-#     role to anyone; the client is confidential, standard flow only, PKCE S256, fullScopeAllowed
-#     off, front-channel logout off, redirect URI exactly Place's callback, no web origin; the
-#     secret is never printed; a second --check plans nothing and a second --apply writes nothing;
+#   - --check writes nothing (admin events) and plans the client, the two roles, the two mappers, the
+#     detachment of the two scopes that write groups and of profile (it writes school_email); --apply
+#     writes exactly that, every admin event of the run is on place (profile is detached from place
+#     only: the realm scope keeps its mapper, the realm's default scopes and core keep profile) and
+#     grants no role to anyone; the client is confidential, standard flow only, PKCE S256,
+#     fullScopeAllowed off, front-channel logout off, redirect URI exactly Place's callback, no web
+#     origin; the secret is never printed; a second --check plans nothing and a second --apply
+#     writes nothing;
 #   - with place:moderator granted to ayse and place:admin to /UYELER/ETKINLIK the way the SKY LAB
 #     admin panel does it, a real authorization code flow with PKCE S256 and a nonce through the
 #     client (login page, credentials, redirect to https://api.place.yildizskylab.com/api/auth/eskylab/callback,
 #     code exchanged with the secret and the verifier, as Place's backend does) gives an ID token
 #     (aud place, the nonce), an access token and a userinfo response that carry school_email (the
-#     school address, not the primary e-mail) and resource_access.place.roles, and no groups, no
-#     realm_access and no other client's roles; zeynep's come through her group; mehmet gets no
-#     school_email and no Place role; asking for the groups or microprofile-jwt scope is refused;
+#     school address, not the primary e-mail; from the client's own mapper: no claim of profile,
+#     such as preferred_username or given_name, is there) and resource_access.place.roles, and no
+#     groups, no realm_access and no other client's roles; zeynep's come through her group; mehmet
+#     gets no school_email and no Place role; asking for the groups, microprofile-jwt or profile
+#     scope is refused; core's token (Evaluate) still has profile's claims and its school_email;
 #   - an authorization request without PKCE, with the plain method, with response_type=token or
 #     with a foreign redirect URI is refused; so are the password and client_credentials grants;
-#   - drift (flags, PKCE, the redirect URIs, a web origin, both mappers, the two scopes) is
-#     repaired; a groups mapper and a second school_email mapper on the client are PROBLEMs (exit
-#     1) and are left as is; a User Profile without schoolEmail is a WARNING.
+#   - drift (flags, PKCE, the redirect URIs, a web origin, both mappers, the two groups scopes,
+#     profile attached back as an optional scope) is repaired; a groups mapper and a second
+#     school_email mapper on the client are PROBLEMs (exit 1) and are left as is; a User Profile
+#     without schoolEmail is a WARNING.
 # Requirements on the host: docker, curl, jq, openssl, base64. PLACE_CLIENT_TEST_PORT (default
 # 18093), PLACE_CLIENT_TEST_CONTAINER (default place-client-test-<pid>).
 # The jq programs name jq variables ($s, $t, $want), not shell ones:
@@ -207,6 +215,8 @@ token_error() {
 AUD='(.aud // []) | if type == "array" then . else [.] end'
 # What must not be in a Place token: groups in any form, realm roles, another client's roles.
 NO_GROUPS='(has("groups") | not) and (has("realm_access") | not) and ((.resource_access // {}) | keys - ["place"] | length == 0)'
+# Nothing of the scope profile (its mappers write these): school_email comes from the client's own mapper.
+NO_PROFILE='(has("preferred_username") | not) and (has("given_name") | not) and (has("family_name") | not) and (has("name") | not)'
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='Keycloak start'
@@ -257,6 +267,12 @@ kcadm create "client-scopes/$groups_scope/protocol-mappers/models" -r "$REALM" -
 kcadm update "default-default-client-scopes/$groups_scope" -r "$REALM" -n >/dev/null
 json_assert "$(kcadm get default-optional-client-scopes -r "$REALM")" 'any(.[]; .name == "microprofile-jwt")' \
   'microprofile-jwt is not a realm optional scope'
+# As in production: the realm's default scope profile writes school_email too (core reads it there).
+profile_scope=$(scope_uuid profile)
+json_assert "$(kcadm get default-default-client-scopes -r "$REALM")" 'any(.[]; .id == $id)' 'profile is not a realm default scope' \
+  --arg id "$profile_scope"
+kcadm create "client-scopes/$profile_scope/protocol-mappers/models" -r "$REALM" -b '{"name":"school email","protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper","config":{"user.attribute":"schoolEmail","claim.name":"school_email","jsonType.label":"String","multivalued":"false","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true","introspection.token.claim":"true"}}' >/dev/null
+profile_mappers_before=$(kcadm get "client-scopes/$profile_scope/protocol-mappers/models" -r "$REALM" | jq -c 'sort_by(.name)')
 kcadm create clients -r "$REALM" -s clientId=core -s publicClient=false -s standardFlowEnabled=false >/dev/null
 kcadm create "clients/$(client_uuid core)/roles" -r "$REALM" -s name=events:manage >/dev/null
 uyeler=$(kcadm create groups -r "$REALM" -i -s name=UYELER)
@@ -295,7 +311,8 @@ expect_line "$check" 'would add mapper school-email to place (user attribute sch
 expect_line "$check" 'would add mapper place-roles to place (place roles -> resource_access.place.roles' 'place-roles not planned'
 expect_line "$check" 'would detach the default scope groups from place (it writes group data: groups (oidc-group-membership-mapper)' 'groups scope not planned'
 expect_line "$check" 'would detach the optional scope microprofile-jwt from place (it writes group data: groups (oidc-usermodel-realm-role-mapper)' 'microprofile-jwt not planned'
-expect_line "$check" 'check: 7 change(s) pending, 0 warning(s), 0 problem(s)' 'unexpected plan size'
+expect_line "$check" 'would detach the default scope profile from place (it writes school_email (oidc-usermodel-attribute-mapper), which only the mapper school-email on place may write; the scope itself and other clients are not changed)' 'profile not planned'
+expect_line "$check" 'check: 8 change(s) pending, 0 warning(s), 0 problem(s)' 'unexpected plan size'
 [[ -z $(client_uuid "$CLIENT") ]] || fail '--check made the client'
 
 # ---------------------------------------------------------------------------------------------
@@ -303,7 +320,7 @@ CURRENT_STAGE='--apply'
 event_before=$(newest_admin_event)
 apply=$(run_script --apply) || { printf '%s\n' "$apply" >&2; fail '--apply failed'; }
 printf '%s\n' "$apply" | sed 's/^/    /'
-expect_line "$apply" 'applied 7 change(s), 0 warning(s), 0 problem(s)' 'apply did not write the plan'
+expect_line "$apply" 'applied 8 change(s), 0 warning(s), 0 problem(s)' 'apply did not write the plan'
 place=$(client_uuid "$CLIENT")
 [[ -n $place ]] || fail 'the client was not made'
 live=$(kcadm get "clients/$place" -r "$REALM")
@@ -315,8 +332,9 @@ json_assert "$live" '.attributes["pkce.code.challenge.method"] == "S256"
   and .attributes["oauth2.device.authorization.grant.enabled"] == "false" and .attributes["oidc.ciba.grant.enabled"] == "false"
   and .attributes["standard.token.exchange.enabled"] == "false"' 'PKCE or the other grants are not the contract'
 json_assert "$live" '.redirectUris == [$c] and .webOrigins == []' 'the client URIs are not Place'"'"'s callback only' --arg c "$CALLBACK"
-json_assert "$live" '(.defaultClientScopes | index("groups") == null) and (.optionalClientScopes | index("microprofile-jwt") == null)
-  and (.defaultClientScopes | index("basic") != null and index("roles") != null)' 'the client scopes are not the contract'
+json_assert "$live" '(.defaultClientScopes | index("groups") == null and index("profile") == null)
+  and (.optionalClientScopes | index("microprofile-jwt") == null and index("profile") == null)
+  and (.defaultClientScopes | index("basic") != null and index("roles") != null and index("email") != null)' 'the client scopes are not the contract'
 printf '    client: %s\n' "$(jq -c '{publicClient, standardFlowEnabled, implicitFlowEnabled, directAccessGrantsEnabled, serviceAccountsEnabled, fullScopeAllowed, frontchannelLogout, pkce: .attributes["pkce.code.challenge.method"], redirectUris, webOrigins, defaultClientScopes, optionalClientScopes}' <<<"$live")"
 json_assert "$(kcadm get "clients/$place/roles" -r "$REALM")" 'map(.name) | sort == ["place:admin", "place:moderator"]' 'unexpected client roles'
 mappers=$(kcadm get "clients/$place/protocol-mappers/models" -r "$REALM")
@@ -330,9 +348,20 @@ json_assert "$mappers" '.[] | select(.name == "place-roles") | .protocolMapper =
   and .config["id.token.claim"] == "true" and .config["access.token.claim"] == "true" and .config["userinfo.token.claim"] == "true"' \
   'place-roles is not shaped as expected'
 # Nothing is granted: no role mapping among the admin events of the run.
-json_assert "$(kcadm get admin-events -r "$REALM" -q max=1000)" \
-  '[.[] | select(.time > $t and (.resourceType == "CLIENT_ROLE_MAPPING" or .resourceType == "REALM_ROLE_MAPPING"))] | length == 0' \
-  'the script granted a role' --argjson t "$event_before"
+run_events=$(kcadm get admin-events -r "$REALM" -q max=1000 | jq -c --argjson t "$event_before" '[.[] | select(.time > $t)]')
+json_assert "$run_events" '[.[] | select(.resourceType == "CLIENT_ROLE_MAPPING" or .resourceType == "REALM_ROLE_MAPPING")] | length == 0' \
+  'the script granted a role'
+# profile is detached from place only: every write of the run is on place, one of them that link.
+json_assert "$run_events" 'length > 0 and all(.[]; .resourcePath == ("clients/" + $p) or (.resourcePath | startswith("clients/" + $p + "/")))' \
+  'the run wrote outside the client place' --arg p "$place"
+json_assert "$run_events" 'any(.[]; .operationType == "DELETE" and .resourcePath == ("clients/" + $p + "/default-client-scopes/" + $s))' \
+  'the run did not detach profile from place' --arg p "$place" --arg s "$profile_scope"
+[[ $(kcadm get "client-scopes/$profile_scope/protocol-mappers/models" -r "$REALM" | jq -c 'sort_by(.name)') == "$profile_mappers_before" ]] \
+  || fail 'the realm scope profile was changed'
+json_assert "$(kcadm get default-default-client-scopes -r "$REALM")" 'any(.[]; .id == $id)' 'profile is no longer a realm default scope' \
+  --arg id "$profile_scope"
+json_assert "$(kcadm get "clients/$(client_uuid core)" -r "$REALM")" '.defaultClientScopes | index("profile") != null' 'core lost profile'
+printf '    profile: detached from place only (every admin event on place); the realm scope, its mappers, the realm default and core keep it\n'
 
 CURRENT_STAGE='second run is a no-op'
 event_before=$(newest_admin_event)
@@ -341,7 +370,7 @@ again=$(run_script --check) || { printf '%s\n' "$again" >&2; fail 'second --chec
 expect_line "$again" 'check: 0 change(s) pending, 0 warning(s), 0 problem(s)' 'second --check plans changes'
 expect_line "$again" "place: redirect URI exactly $CALLBACK" 'the redirect URI not recognised'
 expect_line "$again" 'place: mapper school-email unchanged' 'own school-email mapper not recognised'
-expect_line "$again" 'place: no default or optional scope writes group data' 'scopes not recognised'
+expect_line "$again" 'place: no default or optional scope writes group data or school_email' 'scopes not recognised'
 expect_line "$again" 'place: role place:admin held directly by 0 person(s); groups: none' 'role holders not reported'
 again=$(run_script --apply) || { printf '%s\n' "$again" >&2; fail 'second --apply failed'; }
 expect_line "$again" 'applied 0 change(s)' 'second --apply wrote'
@@ -367,6 +396,7 @@ for payload in "$id_token" "$access" "$info"; do
     'school_email is not the school address (or email was replaced)'
   json_assert "$payload" '.resource_access.place.roles == ["place:moderator"]' 'resource_access.place.roles is not place:moderator'
   json_assert "$payload" "$NO_GROUPS" 'a Place token carries groups, realm roles or another client'"'"'s roles'
+  json_assert "$payload" "$NO_PROFILE" 'a Place token carries claims of the scope profile'
 done
 printf '    ayse   id token: aud=%s school_email=%s roles=%s groups=%s\n' "$(jq -c "$AUD" <<<"$id_token")" \
   "$(jq -r .school_email <<<"$id_token")" "$(jq -c .resource_access.place.roles <<<"$id_token")" "$(jq -c '.groups // "none"' <<<"$id_token")"
@@ -374,6 +404,15 @@ printf '    ayse   access token: school_email=%s resource_access=%s realm_access
   "$(jq -c .resource_access <<<"$access")" "$(jq -c '.realm_access // "none"' <<<"$access")" "$(jq -c '.groups // "none"' <<<"$access")"
 printf '    ayse   userinfo: school_email=%s roles=%s groups=%s\n' "$(jq -r .school_email <<<"$info")" \
   "$(jq -c .resource_access.place.roles <<<"$info")" "$(jq -c '.groups // "none"' <<<"$info")"
+printf '    ayse   id token without profile: preferred_username=%s given_name=%s (school_email from the mapper school-email)\n' \
+  "$(jq -c '.preferred_username // "none"' <<<"$id_token")" "$(jq -c '.given_name // "none"' <<<"$id_token")"
+# Another client keeps profile, with its school_email: core's ID token for ayse (Evaluate, unsigned).
+core_token=$(kcadm get "clients/$(client_uuid core)/evaluate-scopes/generate-example-id-token" -r "$REALM" -q scope=openid \
+  -q "userId=$(kcadm get users -r "$REALM" -q username=ayse -q exact=true | jq -r '.[0].id')")
+json_assert "$core_token" '.preferred_username == "ayse" and .given_name == "Harness" and .school_email == "ayse.yilmaz@std.yildiz.edu.tr"' \
+  'core no longer gets profile (or its school_email)'
+printf '    core   id token (Evaluate): preferred_username=%s school_email=%s (profile still attached)\n' \
+  "$(jq -r .preferred_username <<<"$core_token")" "$(jq -r .school_email <<<"$core_token")"
 response=$(code_flow_response zeynep)
 for token in id_token access_token; do
   payload=$(jwt_payload "$(jq -r ".$token" <<<"$response")")
@@ -391,7 +430,7 @@ done
 printf '    mehmet id+access: no school_email, no Place role (Place refuses this login)\n'
 
 CURRENT_STAGE='refused requests'
-for scope in 'openid groups' 'openid microprofile-jwt'; do
+for scope in 'openid groups' 'openid microprofile-jwt' 'openid profile'; do
   location=$(authorize_location response_type=code "scope=$scope" state=s nonce=n code_challenge=abcdefghijabcdefghijabcdefghijabcdefghij123 code_challenge_method=S256)
   [[ $location == "302 $CALLBACK?error=invalid_scope"* ]] || fail "the scope $scope was not refused ($location)"
 done
@@ -408,7 +447,7 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -G "$BASE_URL/realms/$REALM/protoc
 [[ $code == 400 ]] || fail "a foreign redirect URI was not refused (HTTP $code)"
 [[ $(token_error password username=ayse "password=$PERSON_PASSWORD" scope=openid) == unauthorized_client ]] || fail 'the password grant was not refused'
 [[ $(token_error client_credentials) == unauthorized_client ]] || fail 'the client_credentials grant was not refused'
-printf '    refused: the groups and microprofile-jwt scopes (invalid_scope), no PKCE, plain PKCE, response_type=token,\n'
+printf '    refused: the groups, microprofile-jwt and profile scopes (invalid_scope), no PKCE, plain PKCE, response_type=token,\n'
 printf '    a foreign redirect URI (HTTP 400), the password and client_credentials grants (unauthorized_client)\n'
 
 CURRENT_STAGE='the secret is never printed'
@@ -429,6 +468,7 @@ kcadm get "clients/$place/protocol-mappers/models/$roles_mapper" -r "$REALM" \
   | kcadm update "clients/$place/protocol-mappers/models/$roles_mapper" -r "$REALM" -f - >/dev/null
 kcadm update "clients/$place/default-client-scopes/$groups_scope" -r "$REALM" -n >/dev/null
 kcadm update "clients/$place/optional-client-scopes/$(scope_uuid microprofile-jwt)" -r "$REALM" -n >/dev/null
+kcadm update "clients/$place/optional-client-scopes/$profile_scope" -r "$REALM" -n >/dev/null
 drift=$(run_script --check) || { printf '%s\n' "$drift" >&2; fail 'drift --check failed'; }
 grep -E 'would|check:' <<<"$drift" | sed 's/^/    /'
 expect_line "$drift" 'would update place flags' 'flag drift not found'
@@ -438,19 +478,22 @@ expect_line "$drift" 'would add mapper school-email to place' 'the missing schoo
 expect_line "$drift" 'would repair mapper place-roles on place' 'place-roles drift not found'
 expect_line "$drift" 'would detach the default scope groups from place' 'the groups scope not found'
 expect_line "$drift" 'would detach the optional scope microprofile-jwt from place' 'microprofile-jwt not found'
-expect_line "$drift" 'check: 7 change(s) pending, 0 warning(s), 0 problem(s)' 'unexpected drift plan'
+expect_line "$drift" 'would detach the optional scope profile from place (it writes school_email (oidc-usermodel-attribute-mapper)' 'profile as an optional scope not found'
+expect_line "$drift" 'check: 8 change(s) pending, 0 warning(s), 0 problem(s)' 'unexpected drift plan'
 repair=$(run_script --apply) || { printf '%s\n' "$repair" >&2; fail 'drift --apply failed'; }
-expect_line "$repair" 'applied 7 change(s)' 'drift not repaired'
+expect_line "$repair" 'applied 8 change(s)' 'drift not repaired'
 again=$(run_script --check) || { printf '%s\n' "$again" >&2; fail 'post-repair --check failed'; }
 expect_line "$again" 'check: 0 change(s) pending' 'a repair did not hold'
 live=$(kcadm get "clients/$place" -r "$REALM")
 json_assert "$live" '(.directAccessGrantsEnabled | not) and .attributes["pkce.code.challenge.method"] == "S256" and .redirectUris == [$c]
-  and .webOrigins == [] and (.defaultClientScopes | index("groups") == null) and (.optionalClientScopes | index("microprofile-jwt") == null)' \
+  and .webOrigins == [] and (.defaultClientScopes | index("groups") == null)
+  and (.optionalClientScopes | index("microprofile-jwt") == null and index("profile") == null)' \
   'the repair did not restore the contract' --arg c "$CALLBACK"
 payload=$(jwt_payload "$(code_flow_response ayse | jq -r .id_token)")
-json_assert "$payload" ".school_email == \"ayse.yilmaz@std.yildiz.edu.tr\" and .resource_access.place.roles == [\"place:moderator\"] and ($NO_GROUPS)" \
+json_assert "$payload" ".school_email == \"ayse.yilmaz@std.yildiz.edu.tr\" and .resource_access.place.roles == [\"place:moderator\"] and ($NO_GROUPS) and ($NO_PROFILE)" \
   'the repaired client lost a claim'
-printf '    repaired; the ID token carries school_email and place:moderator again, no groups\n'
+json_assert "$(kcadm get "clients/$(client_uuid core)" -r "$REALM")" '.defaultClientScopes | index("profile") != null' 'the repair took profile from core'
+printf '    repaired; the ID token carries school_email and place:moderator again, no groups, nothing of profile\n'
 
 CURRENT_STAGE='a groups or a second school_email mapper is a PROBLEM'
 kcadm create "clients/$place/protocol-mappers/models" -r "$REALM" -b '{"name":"hand-groups","protocol":"openid-connect","protocolMapper":"oidc-group-membership-mapper","config":{"full.path":"true","claim.name":"groups","access.token.claim":"true","id.token.claim":"true"}}' >/dev/null

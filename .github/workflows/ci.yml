@@ -86,7 +86,8 @@ jobs:
 
   integration:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # The full harness takes 56-83 minutes depending on the runner (2026-10); 120 leaves headroom.
+    timeout-minutes: 120
     needs: theme
     env:
       KEYCLOAK_TEST_IMAGE: account-keycloak:ci

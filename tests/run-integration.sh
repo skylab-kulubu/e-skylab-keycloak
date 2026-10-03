@@ -76,6 +76,9 @@ source "$SCRIPT_DIR/event-retention.sh"
 # stages called below.
 # shellcheck source=login-by-either-email.sh
 source "$SCRIPT_DIR/login-by-either-email.sh"
+# K4b: reset password by the same identifiers and the choose-user step swap; stages called below.
+# shellcheck source=reset-by-either-email.sh
+source "$SCRIPT_DIR/reset-by-either-email.sh"
 
 # ---------------------------------------------------------------------------
 # v2 identity reconcile stages (passkey relying party id, realm login and brute
@@ -1199,6 +1202,10 @@ active_browser_flow=$(kcadm get realms/e-skylab-test -c | jq -r '.browserFlow')
 active_browser_flow_before=$(kcadm get \
   'authentication/flows/browser%20plus%20passkey/executions' \
   -r e-skylab-test -c | jq -S -c '.')
+# The fixture realm, like production, runs Keycloak's built-in reset credentials flow (K4b).
+[[ $(rbe_bound_flow) == "$RBE_BUILT_IN" ]] \
+  || fail "the fixture realm is not bound to the built-in '$RBE_BUILT_IN' flow"
+reset_flow_before=$(rbe_flow "$RBE_BUILT_IN" | jq -S -c '.')
 
 # Reproduce the production drift that originally caused every Account REST
 # request to return 403. Client scope mappings only limit roles which may enter
@@ -1259,6 +1266,7 @@ grep -Fq '[reconcile] authentication flow account-center-browser: unchanged (abs
 # The one change reconciliation makes to the realm browser flow is K4's: the SKY LAB
 # username/password form in the place of Keycloak's. Everything else stays as it was.
 stage_password_form_after_first_reconciliation "$active_browser_flow_before"
+stage_reset_choose_user_after_first_reconciliation "$reset_flow_before"
 
 stage_v2_after_first_reconciliation
 stage_login_audiences_after_first_reconciliation
@@ -1376,6 +1384,7 @@ kcadm update authentication/required-actions/UPDATE_PASSWORD \
   -r e-skylab-test -s enabled=false >/dev/null
 stage_v2_inject_drift
 stage_event_retention_inject_drift
+stage_reset_choose_user_inject_drift
 
 # The state production had before the Web handoff: account-center bound to
 # account-center-browser, a copy of the realm browser flow with the native handoff
@@ -1583,6 +1592,7 @@ json_assert "$config_roles" \
 
 stage_v2_assert_realm_identity
 stage_event_retention_after_second_reconciliation
+stage_reset_choose_user_after_second_reconciliation
 stage_v2_assert_user_profile
 stage_v2_assert_account_api_scope
 stage_v2_assert_mailer_client
@@ -1599,6 +1609,7 @@ ERASURE_COMPOSE_FILE="$COMPOSE_FILE" \
 
 stage_v2_reconcile_noop
 stage_event_retention_after_noop_reconciliation
+stage_reset_choose_user_after_noop_reconciliation
 stage_v2_identity_guardrails
 
 # A1c: the operator adoption of verified legacy primaries as the Personal e-mail, in a throwaway
@@ -1889,6 +1900,8 @@ stage_v2_passkey_cleanup "$client_secret"
 # it there; run later, the sender still holds the placeholder, falls back to SMTP, and the
 # contract would only prove the fallback.
 stage_k5_system_mail_through_skymail
+# K4b after K5: its reset mails leave through SkyMail and the stage reads them there.
+stage_reset_by_either_email "$client_secret"
 
 # The sky-account SPI contract runs against the same realm: bearer guard, Verified
 # YTÜ lock, brute force, sudo binding, password/TOTP/username flows and events.

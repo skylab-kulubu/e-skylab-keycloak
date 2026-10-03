@@ -21,12 +21,18 @@ Only the two original brand image assets were carried forward.
   `cancel-aia` control. `delete-credential.ftl` is the only credential-delete
   surface; the built-in delete-account action is not an Account Center
   destination.
-- One design system: `src/login/legacy-login.css` is the only stylesheet and
-  the only token set (accent `#e0c8e5`, background `#08070b`, blue submit with
-  pink hover, Inter stack). `Template.tsx` renders every Keycloakify
-  `DefaultPage` inside the same `LegacyFrame` chrome as `Login.tsx` and
-  `PasskeyOffer.tsx`: animated SKY LAB logo, glass card, KVKK footer and the
-  language menu. The `sl-*` class contract handed out by `KcPage.tsx` is
+- One design system: the colours, radius and type come from the
+  `@skylab-kulubu/skylcn-ui` tokens (`tokens.css`, ADR 0055), and
+  `src/login/legacy-login.css` is the theme's only stylesheet, mapping them
+  onto the login roles (lilac submit, Space Grotesk bundled from
+  `@fontsource-variable/space-grotesk`, no external font request).
+  `Template.tsx` renders every Keycloakify `DefaultPage` inside the same
+  `LegacyFrame` chrome as `Login.tsx` and `PasskeyOffer.tsx`: a glass card
+  with the page on the left and, on wide screens, a brand panel on the right
+  (animated SKY LAB logo, what one account gives and a faint watermark in
+  its corner) over a canvas grid of
+  blinking squares (`GridBackdrop.tsx`), the KVKK footer and the language
+  menu. On a phone the panel shrinks to the logo. The `sl-*` class contract handed out by `KcPage.tsx` is
   styled with the login tokens; `login-page-expired.ftl` is the only custom
   page body because Keycloak's markup cannot be phrased in Turkish.
 - `sky-handoff-failed.ftl` is the SPI's Web handoff failure page

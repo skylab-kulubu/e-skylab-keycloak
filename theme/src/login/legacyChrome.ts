@@ -20,6 +20,15 @@ export function getLegacyChromeProps(i18n: I18n, options: LegacyChromeOptions = 
     kvkkPrefix: msgStr(kvkk === "login" ? "kvkkPrefix" : "kvkkActionPrefix"),
     kvkkSuffix: msgStr(kvkk === "login" ? "kvkkSuffix" : "kvkkActionSuffix"),
     languageMenu: languageMenu ? getLegacyLanguageMenu(i18n) : undefined,
+    brand: {
+      title: msgStr("skylabBrandTitle"),
+      text: msgStr("skylabBrandText"),
+      features: {
+        sites: msgStr("skylabBrandSites"),
+        ytu: msgStr("skylabBrandYtu"),
+        passkey: msgStr("skylabBrandPasskey")
+      }
+    },
     skipToContent: msgStr("skipToContent"),
     translationsReady: !i18n.isFetchingTranslations
   };

@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import skyLabWatermarkUrl from "../assets/skylab-watermark.svg";
 import AnimatedSkyLabLogo from "./AnimatedSkyLabLogo";
+import GridBackdrop from "./GridBackdrop";
+import YtuMark from "./YtuMark";
 
 export type LegacyFrameLanguage = {
   href: string;
@@ -14,7 +16,15 @@ export type LegacyFrameLanguageMenu = {
   languages: LegacyFrameLanguage[];
 };
 
+/** The panel beside the card on wide screens: what one SKY LAB account gives. */
+export type LegacyFrameBrand = {
+  title: string;
+  text: string;
+  features: { sites: string; ytu: string; passkey: string };
+};
+
 type LegacyFrameProps = {
+  brand?: LegacyFrameBrand;
   /** Rendered between the title and the card body; can be empty for pages whose body is the message. */
   children: ReactNode;
   description?: ReactNode;
@@ -34,6 +44,7 @@ type LegacyFrameProps = {
 
 export default function LegacyFrame(props: LegacyFrameProps) {
   const {
+    brand,
     children,
     description,
     headerExtras,
@@ -65,29 +76,65 @@ export default function LegacyFrame(props: LegacyFrameProps) {
 
       <div className="sl-legacy-background" aria-hidden="true">
         <span className="sl-legacy-background__layers" />
+        <GridBackdrop />
         <span className="sl-legacy-background__iris" />
         <span className="sl-legacy-background__stars" />
-        <img className="sl-legacy-background__mark" src={skyLabWatermarkUrl} alt="" />
         <span className="sl-legacy-background__grain" />
       </div>
 
       <main id={mainId} className="sl-legacy-main" tabIndex={-1}>
         <div className="sl-legacy-stack">
-          <header className="sl-legacy-logo">
-            <AnimatedSkyLabLogo />
-          </header>
-
           <section className="sl-legacy-card" aria-labelledby={titleId}>
-            <div className="sl-legacy-intro">
-              <h1 id={titleId}>{title}</h1>
-              {description !== undefined && description !== null && description !== "" && (
-                <p>{description}</p>
-              )}
+            <div className="sl-legacy-card__body">
+              <div className="sl-legacy-intro">
+                <h1 id={titleId}>{title}</h1>
+                {description !== undefined && description !== null && description !== "" && (
+                  <p>{description}</p>
+                )}
+              </div>
+
+              {headerExtras}
+
+              {children}
             </div>
 
-            {headerExtras}
-
-            {children}
+            <aside className="sl-legacy-brand">
+              <img className="sl-legacy-brand__mark" src={skyLabWatermarkUrl} alt="" />
+              <header className="sl-legacy-logo">
+                <AnimatedSkyLabLogo />
+              </header>
+              {brand !== undefined && (
+                <div className="sl-legacy-brand__copy">
+                  <p className="sl-legacy-brand__title">{brand.title}</p>
+                  <p className="sl-legacy-brand__text">{brand.text}</p>
+                  <ul className="sl-legacy-brand__features">
+                    <li>
+                      <span className="sl-legacy-brand__icon">
+                        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="3" y="3" width="7" height="7" rx="1.5" />
+                          <rect x="14" y="3" width="7" height="7" rx="1.5" />
+                          <rect x="3" y="14" width="7" height="7" rx="1.5" />
+                          <rect x="14" y="14" width="7" height="7" rx="1.5" />
+                        </svg>
+                      </span>
+                      {brand.features.sites}
+                    </li>
+                    <li>
+                      <span className="sl-legacy-brand__icon">
+                        <YtuMark />
+                      </span>
+                      {brand.features.ytu}
+                    </li>
+                    <li>
+                      <span className="sl-legacy-brand__icon">
+                        <span className="sl-key-icon" aria-hidden="true" />
+                      </span>
+                      {brand.features.passkey}
+                    </li>
+                  </ul>
+                </div>
+              )}
+            </aside>
           </section>
 
           <footer className="sl-legacy-footer" role="contentinfo">

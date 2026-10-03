@@ -1,9 +1,9 @@
-import { kcSanitize } from "keycloakify/lib/kcSanitize";
 import type { TemplateProps } from "keycloakify/login/TemplateProps";
 import { useInitialize } from "keycloakify/login/Template.useInitialize";
 import type { KcContext } from "./KcContext";
 import type { I18n } from "./i18n";
 import LegacyFrame from "./LegacyFrame";
+import PageMessage from "./PageMessage";
 import { getLegacyChromeProps, getLegacyPageDescription, reactNodeToText, useLegacyChrome } from "./legacyChrome";
 
 /**
@@ -69,14 +69,7 @@ export default function Template(props: TemplateProps<KcContext, I18n>) {
             </p>
           )}
 
-          {messageIsVisible && (
-            <div
-              className={`sl-legacy-alert sl-legacy-alert--${message.type}`}
-              role={message.type === "error" ? "alert" : "status"}
-              aria-live={message.type === "error" ? "assertive" : "polite"}
-              dangerouslySetInnerHTML={{ __html: kcSanitize(message.summary) }}
-            />
-          )}
+          {messageIsVisible && <PageMessage message={message} />}
         </>
       }
     >

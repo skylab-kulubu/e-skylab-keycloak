@@ -6,6 +6,7 @@ import ytuLogoUrl from "../assets/ytu-logo.png";
 import type { KcContext } from "./KcContext";
 import type { I18n } from "./i18n";
 import LegacyFrame from "./LegacyFrame";
+import PageMessage from "./PageMessage";
 import { getLegacyChromeProps, useLegacyChrome } from "./legacyChrome";
 
 type LoginProps = PageProps<Extract<KcContext, { pageId: "login.ftl" }>, I18n>;
@@ -29,9 +30,11 @@ export default function Login(props: LoginProps) {
     enableWebAuthnConditionalUI === true ||
     (authenticators !== undefined && authenticators.authenticators.length > 0);
   const microsoftProvider = social?.providers?.find(provider => provider.providerId === "microsoft");
-  const [view, setView] = useState<"choice" | "password">(
-    messagesPerField.existsError("username", "password") ? "password" : "choice"
-  );
+  const hasCredentialsError = messagesPerField.existsError("username", "password");
+  // Wrong credentials belong to the fields (shown once, under them); every other message is page-wide.
+  const pageMessage = hasCredentialsError ? undefined : kcContext.message;
+  const resetPasswordUrl = realm.password && realm.resetPasswordAllowed ? url.loginResetCredentialsUrl : undefined;
+  const [view, setView] = useState<"choice" | "password">(hasCredentialsError ? "password" : "choice");
   const [isLoginButtonDisabled, setIsLoginButtonDisabled] = useState(false);
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
 
@@ -45,6 +48,7 @@ export default function Login(props: LoginProps) {
       titleId="sl-legacy-title"
       title={msgStr("skylabTitle")}
       description={msgStr("skylabDesc")}
+      headerExtras={pageMessage !== undefined && <PageMessage message={pageMessage} />}
     >
             {view === "choice" && (
               <>
@@ -85,6 +89,12 @@ export default function Login(props: LoginProps) {
                     </button>
                   </div>
                 )}
+
+                {resetPasswordUrl !== undefined && (
+                  <p className="sl-legacy-choice-help">
+                    <a href={resetPasswordUrl}>{msg("doForgotPassword")}</a>
+                  </p>
+                )}
               </>
             )}
 
@@ -106,14 +116,6 @@ export default function Login(props: LoginProps) {
                   </svg>
                   {msgStr("goBack")}
                 </button>
-
-                {kcContext.message !== undefined && kcContext.message.type !== "warning" && (
-                  <div
-                    className={`sl-legacy-alert sl-legacy-alert--${kcContext.message.type}`}
-                    role={kcContext.message.type === "error" ? "alert" : "status"}
-                    dangerouslySetInnerHTML={{ __html: kcSanitize(kcContext.message.summary) }}
-                  />
-                )}
 
                 <form
                   id="kc-form-login"
@@ -138,19 +140,15 @@ export default function Login(props: LoginProps) {
                         autoFocus
                         autoComplete={enableWebAuthnConditionalUI ? "username webauthn" : "username"}
                         defaultValue={login.username ?? ""}
-                        aria-invalid={messagesPerField.existsError("username", "password")}
+                        aria-invalid={hasCredentialsError}
+                        aria-describedby={hasCredentialsError ? "input-error" : undefined}
                       />
                     </div>
                   )}
 
                   {realm.password && (
                     <div className="sl-legacy-field">
-                      <div className="sl-legacy-field__heading">
-                        <label htmlFor="password">{msg("password")}</label>
-                        {realm.resetPasswordAllowed && (
-                          <a href={url.loginResetCredentialsUrl}>{msg("doForgotPassword")}</a>
-                        )}
-                      </div>
+                      <label htmlFor="password">{msg("password")}</label>
                       <div className="sl-legacy-password-input">
                         <input
                           id="password"
@@ -158,7 +156,8 @@ export default function Login(props: LoginProps) {
                           name="password"
                           type={isPasswordVisible ? "text" : "password"}
                           autoComplete="current-password"
-                          aria-invalid={messagesPerField.existsError("username", "password")}
+                          aria-invalid={hasCredentialsError}
+                          aria-describedby={hasCredentialsError ? "input-error" : undefined}
                         />
                         <button
                           className="sl-legacy-password-toggle"
@@ -173,7 +172,7 @@ export default function Login(props: LoginProps) {
                     </div>
                   )}
 
-                  {messagesPerField.existsError("username", "password") && (
+                  {hasCredentialsError && (
                     <p
                       id="input-error"
                       className="sl-legacy-field-error sl-legacy-field-error--after-field"
@@ -184,16 +183,26 @@ export default function Login(props: LoginProps) {
                     />
                   )}
 
-                  {realm.rememberMe && !usernameHidden && (
-                    <label className="sl-legacy-remember" htmlFor="rememberMe">
-                      <input
-                        id="rememberMe"
-                        name="rememberMe"
-                        type="checkbox"
-                        defaultChecked={Boolean(login.rememberMe)}
-                      />
-                      <span>{msg("rememberMe")}</span>
-                    </label>
+                  {/* Directly below the password field: remember me on the left, the reset link on the right. */}
+                  {((realm.rememberMe && !usernameHidden) || resetPasswordUrl !== undefined) && (
+                    <div className="sl-legacy-form-options">
+                      {realm.rememberMe && !usernameHidden && (
+                        <label className="sl-legacy-remember" htmlFor="rememberMe">
+                          <input
+                            id="rememberMe"
+                            name="rememberMe"
+                            type="checkbox"
+                            defaultChecked={Boolean(login.rememberMe)}
+                          />
+                          <span>{msg("rememberMe")}</span>
+                        </label>
+                      )}
+                      {resetPasswordUrl !== undefined && (
+                        <a className="sl-legacy-forgot" href={resetPasswordUrl}>
+                          {msg("doForgotPassword")}
+                        </a>
+                      )}
+                    </div>
                   )}
 
                   <input

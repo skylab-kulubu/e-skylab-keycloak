@@ -29,6 +29,15 @@ BROWSER_FLOW_ALIAS='browser plus passkey'
 STOCK_PASSWORD_FORM=auth-username-password-form
 SKY_PASSWORD_FORM=sky-username-password-form
 PASSWORD_FORM=${KEYCLOAK_PASSWORD_FORM:-$SKY_PASSWORD_FORM}
+# K4b: the first step of the realm's reset credentials flow ("Şifremi unuttum") finds the person by
+# the same identifiers as the password form; the mail still goes to the Primary e-mail.
+# KEYCLOAK_RESET_CHOOSE_USER=reset-credentials-choose-user puts Keycloak's own step back (the
+# rollback; run it before going back to an image without the SKY LAB step, or every reset-password
+# request of the realm fails). A realm bound to Keycloak's built-in flow moves to an editable copy.
+RESET_FLOW_COPY_ALIAS='sky reset credentials'
+STOCK_RESET_CHOOSE_USER=reset-credentials-choose-user
+SKY_RESET_CHOOSE_USER=sky-reset-credentials-choose-user
+RESET_CHOOSE_USER=${KEYCLOAK_RESET_CHOOSE_USER:-$SKY_RESET_CHOOSE_USER}
 SCOPE_NAME=account-center-account-api
 CORE_SCOPE_NAME=account-center-core-claims
 SKYAPP_CLIENT_ID=skyapp
@@ -96,6 +105,14 @@ case $PASSWORD_FORM in
   *)
     printf 'KEYCLOAK_PASSWORD_FORM must be %s (default) or %s (rollback), not %s\n' \
       "$SKY_PASSWORD_FORM" "$STOCK_PASSWORD_FORM" "$PASSWORD_FORM" >&2
+    exit 1
+    ;;
+esac
+case $RESET_CHOOSE_USER in
+  "$SKY_RESET_CHOOSE_USER" | "$STOCK_RESET_CHOOSE_USER") ;;
+  *)
+    printf 'KEYCLOAK_RESET_CHOOSE_USER must be %s (default) or %s (rollback), not %s\n' \
+      "$SKY_RESET_CHOOSE_USER" "$STOCK_RESET_CHOOSE_USER" "$RESET_CHOOSE_USER" >&2
     exit 1
     ;;
 esac
@@ -335,28 +352,23 @@ flow_alias_path() {
   printf '%s\n' "${alias// /%20}"
 }
 
-# K4: puts PASSWORD_FORM in the place of the other username/password form in FLOW_ALIAS
-# (default: the SKY LAB form replaces Keycloak's; the rollback swaps it back). Admin REST cannot
-# change the provider of an execution, so the new one is added under the same parent flow with
-# the same priority (Keycloak orders executions by priority alone) and REQUIRED (the only
-# requirement either factory offers), then the old one is deleted. For that moment the flow asks
-# for the password twice; there is never a moment without a password form. ReconcileJson
-# refuses, and nothing is written, unless the flow holds exactly one of the two forms, REQUIRED,
-# without an authenticator config and with a priority none of its siblings shares. A run cut
-# between the two writes leaves both side by side, which the next run finishes. The flow's
-# other executions (passkey, OTP, passkey offer, organization) are never touched.
-reconcile_password_form() {
-  local flow_alias=$1
-  local from to flow_path live_file plan_file status action execution_id parent_id priority parent_alias parent_path
-  if [[ $PASSWORD_FORM == "$SKY_PASSWORD_FORM" ]]; then
-    from=$STOCK_PASSWORD_FORM
-  else
-    from=$SKY_PASSWORD_FORM
-  fi
-  to=$PASSWORD_FORM
+# Puts authenticator TO in the place of authenticator FROM in FLOW_ALIAS and logs one line
+# "NOUN of flow 'FLOW_ALIAS': unchanged|updated (...)" (K4's password form, K4b's choose-user step).
+# Admin REST cannot change the provider of an execution, so the new one is added under the same
+# parent flow with the same priority (Keycloak orders executions by priority alone) and REQUIRED
+# (the only requirement either factory offers), then the old one is deleted. For that moment the
+# flow runs the step twice; there is never a moment without it. ReconcileJson (its password-form
+# planner, which names no provider of its own) refuses, and nothing is written, unless the flow
+# holds exactly one of the two, REQUIRED, without an authenticator config and with a priority none
+# of its siblings shares. A run cut between the two writes leaves both side by side, which the next
+# run finishes. The flow's other executions are never touched. Keycloak refuses any change to a
+# built-in flow, so FLOW_ALIAS must name an editable one.
+swap_flow_execution() {
+  local flow_alias=$1 from=$2 to=$3 noun=$4
+  local flow_path live_file plan_file status action execution_id parent_id priority parent_alias parent_path
   flow_path=$(flow_alias_path "$flow_alias")
-  live_file=$(mktemp "$WORK_DIR/password-form.XXXXXX")
-  plan_file=$(mktemp "$WORK_DIR/password-form-plan.XXXXXX")
+  live_file=$(mktemp "$WORK_DIR/flow-execution.XXXXXX")
+  plan_file=$(mktemp "$WORK_DIR/flow-execution-plan.XXXXXX")
   kcadm_json "authentication/flows/$flow_path/executions" -r "$TARGET_REALM" >"$live_file"
   if json_tool password-form "$from" "$to" <"$live_file" >"$plan_file"; then
     status=0
@@ -364,21 +376,21 @@ reconcile_password_form() {
     status=$?
   fi
   if [[ $status == 4 ]]; then
-    printf "Password form of flow '%s' was not changed: the step above explains why\n" "$flow_alias" >&2
+    printf "%s of flow '%s' was not changed: the step above explains why\n" "${noun^}" "$flow_alias" >&2
     return 1
   elif [[ $status != 0 ]]; then
-    printf "Could not plan the password form of flow '%s' (status %s)\n" "$flow_alias" "$status" >&2
+    printf "Could not plan the %s of flow '%s' (status %s)\n" "$noun" "$flow_alias" "$status" >&2
     return 1
   fi
   IFS=$'\t' read -r action execution_id parent_id priority <"$plan_file"
   case $action in
     unchanged)
-      log "password form of flow '$flow_alias': unchanged ($to)"
+      log "$noun of flow '$flow_alias': unchanged ($to)"
       return 0
       ;;
     finish)
       kcadm delete "authentication/executions/$execution_id" -r "$TARGET_REALM" >/dev/null
-      log "password form of flow '$flow_alias': updated (finished an interrupted swap: removed $from next to $to)"
+      log "$noun of flow '$flow_alias': updated (finished an interrupted swap: removed $from next to $to)"
       ;;
     swap)
       if [[ $parent_id == - ]]; then
@@ -390,20 +402,94 @@ reconcile_password_form() {
       kcadm create "authentication/flows/$parent_path/executions/execution" -r "$TARGET_REALM" \
         -b "{\"provider\":\"$to\",\"priority\":$priority}" >/dev/null
       kcadm delete "authentication/executions/$execution_id" -r "$TARGET_REALM" >/dev/null
-      log "password form of flow '$flow_alias': updated ($from -> $to in subflow '$parent_alias', priority $priority, REQUIRED)"
+      log "$noun of flow '$flow_alias': updated ($from -> $to in subflow '$parent_alias', priority $priority, REQUIRED)"
       ;;
     *)
-      printf "Unexpected password form plan for flow '%s': %s\n" "$flow_alias" "$action" >&2
+      printf "Unexpected %s plan for flow '%s': %s\n" "$noun" "$flow_alias" "$action" >&2
       return 1
       ;;
   esac
   kcadm_json "authentication/flows/$flow_path/executions" -r "$TARGET_REALM" >"$live_file"
   if ! json_tool password-form "$from" "$to" <"$live_file" >"$plan_file" \
     || [[ $(cut -f1 "$plan_file") != unchanged ]]; then
-    printf "Password form of flow '%s' is not in place after the swap; inspect it in the Admin Console\n" \
-      "$flow_alias" >&2
+    printf "%s of flow '%s' is not in place after the swap; inspect it in the Admin Console\n" \
+      "${noun^}" "$flow_alias" >&2
     return 1
   fi
+}
+
+# K4: puts PASSWORD_FORM in the place of the other username/password form in FLOW_ALIAS
+# (default: the SKY LAB form replaces Keycloak's; the rollback swaps it back). The flow's other
+# executions (passkey, OTP, passkey offer, organization) are never touched.
+reconcile_password_form() {
+  local flow_alias=$1 from
+  if [[ $PASSWORD_FORM == "$SKY_PASSWORD_FORM" ]]; then
+    from=$STOCK_PASSWORD_FORM
+  else
+    from=$SKY_PASSWORD_FORM
+  fi
+  swap_flow_execution "$flow_alias" "$from" "$PASSWORD_FORM" 'password form'
+}
+
+# K4b: puts RESET_CHOOSE_USER in the place of the other choose-user step in the realm's reset
+# credentials flow (default: the SKY LAB step replaces Keycloak's; the rollback swaps it back),
+# with swap_flow_execution. Keycloak's built-in "reset credentials" flow cannot be edited: a realm
+# still bound to a built-in flow gets an editable copy of it (RESET_FLOW_COPY_ALIAS, made once and
+# reused afterwards, even by a run cut short), the swap happens in the copy, and only then is the
+# realm bound to the copy, so no request ever meets a half-made flow. The rollback swaps back in
+# whichever flow is bound and keeps that binding: the copy then holds exactly Keycloak's steps.
+# A realm bound to a built-in flow already runs Keycloak's own step, which the rollback leaves as
+# it is. Binding the copy is a realm PUT of that one field, the same kind every realm step makes.
+reconcile_reset_choose_user() {
+  local from bound bound_path flow_id built_in target rebound
+  if [[ $RESET_CHOOSE_USER == "$SKY_RESET_CHOOSE_USER" ]]; then
+    from=$STOCK_RESET_CHOOSE_USER
+  else
+    from=$SKY_RESET_CHOOSE_USER
+  fi
+  bound=$(kcadm_json "realms/$TARGET_REALM" --fields resetCredentialsFlow | json_tool field resetCredentialsFlow)
+  if [[ -z $bound ]]; then
+    printf 'The realm has no reset credentials flow binding; nothing was changed\n' >&2
+    return 1
+  fi
+  if flow_id=$(optional_lookup flow_id_by_alias "$bound"); then
+    :
+  else
+    return $?
+  fi
+  if [[ -z $flow_id ]]; then
+    printf "The realm's reset credentials flow '%s' does not exist; nothing was changed\n" "$bound" >&2
+    return 1
+  fi
+  built_in=$(kcadm_json "authentication/flows/$flow_id" -r "$TARGET_REALM" | json_tool field builtIn)
+  target=$bound
+  if [[ $built_in == true && $RESET_CHOOSE_USER == "$SKY_RESET_CHOOSE_USER" ]]; then
+    target=$RESET_FLOW_COPY_ALIAS
+    if flow_id=$(optional_lookup flow_id_by_alias "$target"); then
+      :
+    else
+      return $?
+    fi
+    if [[ -z $flow_id ]]; then
+      bound_path=$(flow_alias_path "$bound")
+      kcadm create "authentication/flows/$bound_path/copy" -r "$TARGET_REALM" \
+        -s "newName=$target" >/dev/null
+      log "authentication flow '$target': created (an editable copy of the built-in '$bound')"
+    fi
+  fi
+  swap_flow_execution "$target" "$from" "$RESET_CHOOSE_USER" 'choose-user step'
+  if [[ $target == "$bound" ]]; then
+    log "realm reset credentials flow binding: unchanged ($bound)"
+    return 0
+  fi
+  kcadm update "realms/$TARGET_REALM" -n -b "{\"resetCredentialsFlow\":\"$target\"}" >/dev/null
+  rebound=$(kcadm_json "realms/$TARGET_REALM" --fields resetCredentialsFlow | json_tool field resetCredentialsFlow)
+  if [[ $rebound != "$target" ]]; then
+    printf "The realm's reset credentials flow is '%s', not '%s', after binding it; inspect it in the Admin Console\n" \
+      "$rebound" "$target" >&2
+    return 1
+  fi
+  log "realm reset credentials flow binding: updated ($bound -> $target)"
 }
 
 # Reads ENDPOINT, compares the desired fields against it and writes only when at least one
@@ -1095,6 +1181,7 @@ retire_account_center_browser_flow
 # account-center-browser, the other flow that held a username/password form, is retired and
 # deleted just above; the realm browser flow is the only one left to swap.
 reconcile_password_form "$BROWSER_FLOW_ALIAS"
+reconcile_reset_choose_user
 reconcile_account_center_client
 
 ensure_client_scope "$SCOPE_NAME" \

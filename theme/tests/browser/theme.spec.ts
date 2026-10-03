@@ -83,10 +83,10 @@ test("reduced motion and secondary-button contrast survive hover", async ({ brow
   const logoPath = page.locator('[data-skylab-logo-animation="draw"] path').first();
   await expect(logoPath).toHaveCSS("animation-name", "none");
   await expect(logoPath).toHaveCSS("fill-opacity", "1");
+  await expect(page.locator(".sl-legacy-brand__mark")).toHaveCSS("animation-name", "none");
 
   await page.goto("/?page=login-update-password.ftl");
 
-  await expect(page.locator(".sl-legacy-brand__mark")).toHaveCSS("animation-name", "none");
   await expect(page.locator('[data-skylab-logo-animation="draw"] path').first()).toHaveCSS("animation-name", "none");
 
   const secondary = page.locator('button[name="cancel-aia"].sl-legacy-choice');
@@ -252,3 +252,17 @@ for (const viewport of [
     await context.close();
   });
 }
+
+test("fields keep a visible focus indicator in forced colors (WCAG 2.4.7)", async ({ page }) => {
+  await page.emulateMedia({ forcedColors: "active" });
+  await page.goto("/?page=login.ftl");
+  await page.getByRole("button", { name: "YTÜ Öğrencisi Değilim" }).click();
+
+  const username = page.locator("#username");
+  await username.focus();
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Tab");
+  await expect(username).toBeFocused();
+  await expect(username).not.toHaveCSS("outline-style", "none");
+  await expect(username).toHaveCSS("outline-width", "2px");
+});

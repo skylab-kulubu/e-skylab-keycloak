@@ -85,8 +85,8 @@ export default function LegacyFrame(props: LegacyFrameProps) {
 
       <main id={mainId} className="sl-legacy-main" tabIndex={-1}>
         <TeamMarquee direction="left" />
-        <div className="sl-legacy-stack">
-          <section className="sl-legacy-card" aria-labelledby={titleId}>
+        <div className={brand === undefined ? "sl-legacy-stack" : "sl-legacy-stack sl-legacy-stack--wide"}>
+          <section className={brand === undefined ? "sl-legacy-card" : "sl-legacy-card sl-legacy-card--brand"} aria-labelledby={titleId}>
             <div className="sl-legacy-card__body">
               <div className="sl-legacy-intro">
                 <h1 id={titleId}>{title}</h1>
@@ -100,8 +100,8 @@ export default function LegacyFrame(props: LegacyFrameProps) {
               {children}
             </div>
 
-            <aside className="sl-legacy-brand">
-              <img className="sl-legacy-brand__mark" src={skyLabWatermarkUrl} alt="" />
+            <div className="sl-legacy-brand">
+              {brand !== undefined && <img className="sl-legacy-brand__mark" src={skyLabWatermarkUrl} alt="" />}
               <header className="sl-legacy-logo">
                 <AnimatedSkyLabLogo />
               </header>
@@ -136,7 +136,7 @@ export default function LegacyFrame(props: LegacyFrameProps) {
                   </ul>
                 </div>
               )}
-            </aside>
+            </div>
           </section>
 
           <footer className="sl-legacy-footer" role="contentinfo">

@@ -8,11 +8,13 @@ type LegacyChromeOptions = {
   kvkk?: "login" | "action";
   /** False for a page that offers nothing to do, not even switching the language. */
   languageMenu?: boolean;
+  /** True on the login page only: the panel saying what one account gives. Every other page shows just the logo. */
+  brand?: boolean;
 };
 
 /** Props shared by every page rendered inside `LegacyFrame` (skip link, KVKK footer, language menu). */
 export function getLegacyChromeProps(i18n: I18n, options: LegacyChromeOptions = {}) {
-  const { kvkk = "login", languageMenu = true } = options;
+  const { kvkk = "login", languageMenu = true, brand = false } = options;
   const { msgStr } = i18n;
 
   return {
@@ -20,15 +22,17 @@ export function getLegacyChromeProps(i18n: I18n, options: LegacyChromeOptions = 
     kvkkPrefix: msgStr(kvkk === "login" ? "kvkkPrefix" : "kvkkActionPrefix"),
     kvkkSuffix: msgStr(kvkk === "login" ? "kvkkSuffix" : "kvkkActionSuffix"),
     languageMenu: languageMenu ? getLegacyLanguageMenu(i18n) : undefined,
-    brand: {
-      title: msgStr("skylabBrandTitle"),
-      text: msgStr("skylabBrandText"),
-      features: {
-        sites: msgStr("skylabBrandSites"),
-        ytu: msgStr("skylabBrandYtu"),
-        passkey: msgStr("skylabBrandPasskey")
-      }
-    },
+    brand: brand
+      ? {
+          title: msgStr("skylabBrandTitle"),
+          text: msgStr("skylabBrandText"),
+          features: {
+            sites: msgStr("skylabBrandSites"),
+            ytu: msgStr("skylabBrandYtu"),
+            passkey: msgStr("skylabBrandPasskey")
+          }
+        }
+      : undefined,
     skipToContent: msgStr("skipToContent"),
     translationsReady: !i18n.isFetchingTranslations
   };

@@ -25,14 +25,20 @@ Only the two original brand image assets were carried forward.
   `@skylab-kulubu/skylcn-ui` tokens (`tokens.css`, ADR 0055), and
   `src/login/legacy-login.css` is the theme's only stylesheet, mapping them
   onto the login roles (lilac submit, Space Grotesk bundled from
-  `@fontsource-variable/space-grotesk`, no external font request).
+  `@fontsource-variable/space-grotesk`, no external font request). Space
+  Grotesk is © The Space Grotesk Project Authors under the SIL Open Font
+  License 1.1, which allows bundling it in the theme JAR; the licence text
+  ships with the package (`node_modules/@fontsource-variable/space-grotesk/LICENSE`).
   `Template.tsx` renders every Keycloakify `DefaultPage` inside the same
   `LegacyFrame` chrome as `Login.tsx` and `PasskeyOffer.tsx`: a glass card
-  with the page on the left and, on wide screens, a brand panel on the right
-  (animated SKY LAB logo, what one account gives and a faint watermark in
-  its corner) over a canvas grid of
-  blinking squares (`GridBackdrop.tsx`), the KVKK footer and the language
-  menu. On a phone the panel shrinks to the logo.
+  with the animated SKY LAB logo, the KVKK footer and the language menu, over
+  a grid of blinking squares (`GridBackdrop.tsx`: lines in CSS, lit cells on
+  a canvas at about 15 fps, still on touch screens, small CPUs, data saver
+  and reduced motion). On wide screens the login page alone
+  (`getLegacyChromeProps(i18n, { brand: true })`) splits the card: the form
+  on the left, a brand panel on the right (the logo, what one account gives,
+  a faint watermark in its corner). Every other page keeps one column with
+  the logo on top, as every page does on a phone.
 - Team strips: `TeamMarquee.tsx` runs two slow rows of SKY LAB team logos
   above and below the card (one row on a phone; still with reduced motion,
   hidden in forced colors, `aria-hidden`). Which teams, in what order, comes

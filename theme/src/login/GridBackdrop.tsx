@@ -1,22 +1,29 @@
 import { useEffect, useRef } from "react";
 
 const CELL = 48;
-const LINE = "rgba(255, 255, 255, 0.05)";
 const WHITE = "255, 255, 255";
 const LILAC = "224, 200, 229";
 /** How many cells glow at once, per 100 cells on screen */
 const DENSITY = 1.6;
 /** Cells within this many cell widths of the pointer light up */
 const POINTER_REACH = 3.5;
+/** The cells fade over seconds, so about 15 frames a second is plenty */
+const FRAME_MS = 66;
 
 type Blink = { col: number; row: number; born: number; life: number; peak: number; tint: string };
+
+type NetworkInformation = { saveData?: boolean };
 
 /**
  * A grid of squares behind the login card. Random cells fade in and out, a few
  * of them in the brand lilac, and the cells around a mouse pointer light up.
- * Decoration only: hidden from assistive technology. With reduced motion the
- * grid holds still with a handful of lit cells; without a 2D canvas it is
- * simply absent.
+ * Decoration only: hidden from assistive technology.
+ *
+ * The lines are the canvas's CSS background, drawn once; the canvas itself only
+ * paints the lit cells, at about 15 frames a second, because the glass card
+ * above it re-blurs whatever changes underneath. Touch screens, small CPUs,
+ * data saver and reduced motion get the grid once, still. A hidden canvas
+ * (forced colors) never starts the loop.
  */
 export default function GridBackdrop() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -33,9 +40,13 @@ export default function GridBackdrop() {
       return;
     }
     const ctx = context;
-    const media = (query: string) => typeof window.matchMedia === "function" && window.matchMedia(query).matches;
-    const still = media("(prefers-reduced-motion: reduce)");
-    const tracksPointer = media("(hover: hover) and (pointer: fine)");
+    const query = (text: string) => (typeof window.matchMedia === "function" ? window.matchMedia(text) : null);
+    const reducedMotion = query("(prefers-reduced-motion: reduce)");
+    const forcedColors = query("(forced-colors: active)");
+    const finePointer = query("(hover: hover) and (pointer: fine)");
+    const lowPower =
+      (navigator.hardwareConcurrency !== undefined && navigator.hardwareConcurrency <= 4) ||
+      (navigator as Navigator & { connection?: NetworkInformation }).connection?.saveData === true;
 
     let width = 0;
     let height = 0;
@@ -44,17 +55,24 @@ export default function GridBackdrop() {
     let blinks: Blink[] = [];
     let pointer: { x: number; y: number } | null = null;
     let frame = 0;
+    let lastDraw = 0;
+    let running = false;
 
-    const spawn = (now: number, age = 0): Blink => ({
+    const animated = () => !reducedMotion?.matches && finePointer?.matches === true && !lowPower;
+    const hidden = () => getComputedStyle(canvas).display === "none" || document.visibilityState !== "visible";
+
+    const spawn = (now: number): Blink => ({
       col: Math.floor(Math.random() * cols),
       row: Math.floor(Math.random() * rows),
-      born: now - age,
+      born: now,
       life: 2200 + Math.random() * 2600,
       peak: 0.05 + Math.random() * 0.06,
       tint: Math.random() < 0.3 ? LILAC : WHITE
     });
 
-    const target = () => Math.max(4, Math.round(((cols * rows) / 100) * DENSITY));
+    // The grid is centred, so the card sits on the same lines at any width
+    const offsetX = () => ((width / 2) % CELL) - CELL;
+    const offsetY = () => ((height / 2) % CELL) - CELL;
 
     const resize = () => {
       const ratio = Math.min(window.devicePixelRatio || 1, 2);
@@ -63,20 +81,23 @@ export default function GridBackdrop() {
       canvas.width = Math.round(width * ratio);
       canvas.height = Math.round(height * ratio);
       ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-      cols = Math.ceil(width / CELL) + 1;
-      rows = Math.ceil(height / CELL) + 1;
+      canvas.style.backgroundPosition = `${offsetX()}px ${offsetY()}px`;
+
+      const nextCols = Math.ceil(width / CELL) + 1;
+      const nextRows = Math.ceil(height / CELL) + 1;
+      // A browser bar sliding in and out resizes the page without changing the grid
+      if (nextCols === cols && nextRows === rows) return;
+      cols = nextCols;
+      rows = nextRows;
       const now = performance.now();
+      const count = Math.max(4, Math.round(((cols * rows) / 100) * DENSITY));
       // Start mid-life so the first frame already shows a scattered grid
-      blinks = Array.from({ length: target() }, () => {
+      blinks = Array.from({ length: count }, () => {
         const blink = spawn(now);
         blink.born = now - Math.random() * blink.life;
         return blink;
       });
     };
-
-    // The grid is centred, so the card sits on the same lines at any width
-    const offsetX = () => ((width / 2) % CELL) - CELL;
-    const offsetY = () => ((height / 2) % CELL) - CELL;
 
     const fill = (col: number, row: number, alpha: number, tint: string) => {
       if (alpha <= 0.002) return;
@@ -85,26 +106,12 @@ export default function GridBackdrop() {
     };
 
     const draw = (now: number) => {
+      lastDraw = now;
       ctx.clearRect(0, 0, width, height);
-
-      ctx.strokeStyle = LINE;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      for (let x = offsetX() + 0.5; x < width; x += CELL) {
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, height);
-      }
-      for (let y = offsetY() + 0.5; y < height; y += CELL) {
-        ctx.moveTo(0, y);
-        ctx.lineTo(width, y);
-      }
-      ctx.stroke();
-
       for (const blink of blinks) {
         const t = Math.min(1, (now - blink.born) / blink.life);
         fill(blink.col, blink.row, blink.peak * Math.sin(Math.PI * t), blink.tint);
       }
-
       if (pointer !== null) {
         const pointerCol = (pointer.x - offsetX()) / CELL;
         const pointerRow = (pointer.y - offsetY()) / CELL;
@@ -119,41 +126,54 @@ export default function GridBackdrop() {
     };
 
     const tick = (now: number) => {
+      frame = requestAnimationFrame(tick);
+      if (now - lastDraw < FRAME_MS) return;
       blinks = blinks.map(blink => (now - blink.born >= blink.life ? spawn(now) : blink));
       draw(now);
-      frame = requestAnimationFrame(tick);
+    };
+
+    // Start or stop the loop to match the current preferences and visibility
+    const update = () => {
+      const run = animated() && !hidden();
+      if (run && !running) {
+        running = true;
+        frame = requestAnimationFrame(tick);
+      } else if (!run && running) {
+        running = false;
+        cancelAnimationFrame(frame);
+      }
+      if (!running && !hidden()) draw(performance.now());
     };
 
     const onPointerMove = (event: PointerEvent) => {
       pointer = { x: event.clientX, y: event.clientY };
-      if (still) draw(performance.now());
+      if (!running) draw(performance.now());
     };
     const onPointerLeave = () => {
       pointer = null;
-      if (still) draw(performance.now());
+      if (!running) draw(performance.now());
     };
     const onResize = () => {
       resize();
       draw(performance.now());
     };
-    const onVisibility = () => {
-      cancelAnimationFrame(frame);
-      if (!still && document.visibilityState === "visible") frame = requestAnimationFrame(tick);
-    };
 
     resize();
-    draw(performance.now());
-    if (!still) frame = requestAnimationFrame(tick);
+    update();
     window.addEventListener("resize", onResize);
-    document.addEventListener("visibilitychange", onVisibility);
-    if (tracksPointer) {
+    document.addEventListener("visibilitychange", update);
+    reducedMotion?.addEventListener("change", update);
+    forcedColors?.addEventListener("change", update);
+    if (finePointer?.matches) {
       window.addEventListener("pointermove", onPointerMove, { passive: true });
       document.documentElement.addEventListener("pointerleave", onPointerLeave);
     }
     return () => {
       cancelAnimationFrame(frame);
       window.removeEventListener("resize", onResize);
-      document.removeEventListener("visibilitychange", onVisibility);
+      document.removeEventListener("visibilitychange", update);
+      reducedMotion?.removeEventListener("change", update);
+      forcedColors?.removeEventListener("change", update);
       window.removeEventListener("pointermove", onPointerMove);
       document.documentElement.removeEventListener("pointerleave", onPointerLeave);
     };

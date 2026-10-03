@@ -43,7 +43,7 @@ export default function Login(props: LoginProps) {
 
   return (
     <LegacyFrame
-      {...getLegacyChromeProps(i18n)}
+      {...getLegacyChromeProps(i18n, { brand: true })}
       mainId="sl-legacy-main"
       titleId="sl-legacy-title"
       title={msgStr("skylabTitle")}

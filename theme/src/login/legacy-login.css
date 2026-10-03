@@ -44,7 +44,8 @@
   --sl-legacy-surface-active: rgba(255, 255, 255, 0.15);
   --sl-legacy-input-bg: var(--input-background);
   --sl-legacy-input-border: var(--input);
-  --sl-legacy-ring: var(--ring);
+  /* skylcn-ui's ring at 60% instead of 40%, so the field focus ring clears 3:1 on the card (WCAG 1.4.11) */
+  --sl-legacy-ring: rgba(235, 213, 238, 0.6);
   /* skylcn-ui's primary button: a lilac wash and outline around near-white lilac text. */
   --sl-legacy-brand-text: var(--skylab-300);
   --sl-legacy-brand-wash: rgba(224, 200, 229, 0.14);
@@ -182,6 +183,11 @@ a:hover {
   z-index: 1;
   width: 100%;
   height: 100%;
+  /* The lines, drawn once here; GridBackdrop.tsx centres them and paints only the lit cells */
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 48px 48px;
   -webkit-mask-image: radial-gradient(ellipse 95% 95% at 50% 50%, black 60%, transparent 100%);
   mask-image: radial-gradient(ellipse 95% 95% at 50% 50%, black 60%, transparent 100%);
 }
@@ -409,24 +415,25 @@ a:hover {
   animation: sl-legacy-mark 3.4s cubic-bezier(0.2, 0.7, 0.3, 1) 0.4s forwards;
 }
 
-/* Wide screens: the form on the left, what the account gives on the right. */
+/* Wide screens, login page only: the form on the left, what the account gives
+   on the right. Every other page keeps one column with the logo on top. */
 @media (min-width: 56rem) {
-  .sl-legacy-stack {
+  .sl-legacy-stack--wide {
     max-width: 56rem;
   }
 
-  .sl-legacy-card {
+  .sl-legacy-card--brand {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 
-  .sl-legacy-card__body {
+  .sl-legacy-card--brand .sl-legacy-card__body {
     display: flex;
     flex-direction: column;
     justify-content: center;
     padding: 2.5rem;
   }
 
-  .sl-legacy-brand {
+  .sl-legacy-card--brand .sl-legacy-brand {
     order: 0;
     display: flex;
     flex-direction: column;
@@ -439,12 +446,12 @@ a:hover {
       rgba(255, 255, 255, 0.015);
   }
 
-  .sl-legacy-brand .sl-legacy-logo {
+  .sl-legacy-card--brand .sl-legacy-logo {
     margin-bottom: 1.5rem;
   }
 
-  .sl-legacy-brand__copy,
-  .sl-legacy-brand__mark {
+  .sl-legacy-card--brand .sl-legacy-brand__copy,
+  .sl-legacy-card--brand .sl-legacy-brand__mark {
     display: block;
   }
 }
@@ -809,11 +816,14 @@ textarea.sl-legacy-input {
   border-color: var(--sl-legacy-brand-line);
 }
 
-/* The ring is the focus indicator for fields, so the shared outline would double it. */
+/* The ring is the focus indicator for fields, so the shared outline would double
+   it. The outline stays, transparent: forced colors drop the box-shadow ring and
+   paint this outline in the system colour instead (WCAG 2.4.7). */
 .sl-legacy-input:focus,
 .sl-legacy-shell .sl-legacy-input:focus-visible {
   border-color: var(--sl-legacy-brand-line-hover);
-  outline: none;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
   box-shadow: 0 0 0 2px var(--sl-legacy-ring);
 }
 
@@ -1743,7 +1753,7 @@ i.sl-auth-item__arrow-mark {
     background: CanvasText;
   }
 
-  .sl-legacy-input:focus-visible {
+  .sl-legacy-shell .sl-legacy-input:focus-visible {
     outline: 2px solid Highlight;
   }
 }

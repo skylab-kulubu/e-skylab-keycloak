@@ -12,7 +12,7 @@ export const translations = {
   tr: {
     // Login page and shared chrome
     skylabTitle: "SKY LAB'e Hoş Geldin!",
-    skylabDesc: "YTÜ öğrencisiysen okul mailinle, değilsen hesabını açtığın e-posta ve şifrenle giriş yap.",
+    skylabDesc: "YTÜ öğrencisiysen okul hesabınla, değilsen e-posta adresin ve parolanla giriş yap.",
     microsoft: "YTÜ Öğrencisiyim",
     notYtuStudent: "YTÜ Öğrencisi Değilim",
     goBack: "Geri dön",
@@ -26,11 +26,11 @@ export const translations = {
     languages: "Dil seçimi",
     skylabLoading: "Yükleniyor…",
     // The brand panel beside the card on wide screens
-    skylabBrandTitle: "Tek hesap, tüm SKY LAB",
-    skylabBrandText: "Kulübün sitelerine ve uygulamalarına aynı hesapla girersin.",
-    skylabBrandSites: "SKY LAB'in bütün siteleri tek hesapta",
-    skylabBrandYtu: "YTÜ öğrenci mailinle hızlı giriş",
-    skylabBrandPasskey: "Erişim anahtarıyla şifresiz giriş",
+    skylabBrandTitle: "Tek hesap, tek giriş",
+    skylabBrandText: "Hesap Merkezi, SkyForms ve kulübün hesap isteyen öteki sitelerine aynı hesapla girersin.",
+    skylabBrandSites: "Hesap isteyen kulüp sitelerinde tek hesap",
+    skylabBrandYtu: "YTÜ öğrenci hesabınla hızlı giriş",
+    skylabBrandPasskey: "Erişim anahtarıyla parolasız giriş",
     // The KVKK sentence outside the login and passkey offer pages
     kvkkActionPrefix: "Bu işlemi yaparak ",
     kvkkActionSuffix: "'ni okuduğunu ve kabul ettiğini onaylıyorsun.",
@@ -213,7 +213,7 @@ export const translations = {
   en: {
     // Login page and shared chrome
     skylabTitle: "Welcome to SKY LAB!",
-    skylabDesc: "Sign in with your YTÜ student email, or with the email and password you registered if you're not a YTÜ student.",
+    skylabDesc: "Sign in with your YTÜ student account, or with your email and password if you're not a YTÜ student.",
     microsoft: "I'm a YTÜ Student",
     notYtuStudent: "I'm not a YTÜ Student",
     goBack: "Go back",
@@ -227,10 +227,10 @@ export const translations = {
     languages: "Language",
     skylabLoading: "Loading…",
     // The brand panel beside the card on wide screens
-    skylabBrandTitle: "One account for all of SKY LAB",
-    skylabBrandText: "The same account opens every club site and app.",
-    skylabBrandSites: "Every SKY LAB site on one account",
-    skylabBrandYtu: "Quick sign-in with your YTÜ student email",
+    skylabBrandTitle: "One account, one sign-in",
+    skylabBrandText: "The same account opens the Account Center, SkyForms and the club's other member sites.",
+    skylabBrandSites: "One account for the club's member sites",
+    skylabBrandYtu: "Quick sign-in with your YTÜ student account",
     skylabBrandPasskey: "Passwordless sign-in with a passkey",
     // The KVKK sentence outside the login and passkey offer pages
     kvkkActionPrefix: "By continuing, you confirm that you have read and accept the ",

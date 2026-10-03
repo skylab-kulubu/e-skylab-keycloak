@@ -203,16 +203,63 @@ a:hover {
   transform: translateY(0);
 }
 
+/* A column: team strip, the card and footer in the middle, team strip. The
+   strips sit in the flow, so at no height do they run over the card. */
 .sl-legacy-main {
   position: relative;
   z-index: 10;
   min-height: 100vh;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
+}
+
+.sl-legacy-teams {
+  width: 100%;
+  padding: 1rem 0;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to right, transparent, black 15%, black 85%, transparent);
+  mask-image: linear-gradient(to right, transparent, black 15%, black 85%, transparent);
+  pointer-events: none;
+}
+
+.sl-legacy-teams__track {
+  display: flex;
+  width: max-content;
+  animation: sl-legacy-teams 70s linear infinite;
+}
+
+.sl-legacy-teams--right .sl-legacy-teams__track {
+  animation-direction: reverse;
+}
+
+/* Spacing as a trailing margin, not a gap, so both copies are the same width */
+.sl-legacy-teams__item {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  height: 1.625rem;
+  margin-right: 3.5rem;
+  color: var(--sl-legacy-muted);
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  opacity: 0.3;
+}
+
+/* Every logo in one tone, whatever colours its file carries */
+.sl-legacy-teams__item img {
+  height: 100%;
+  width: auto;
+  max-width: 7rem;
+  object-fit: contain;
+  filter: brightness(0) invert(1);
 }
 
 .sl-legacy-stack {
+  margin-block: auto;
   width: 100%;
   max-width: 28rem;
   padding: 1.5rem 1rem;
@@ -1531,6 +1578,12 @@ i.sl-auth-item__arrow-mark {
   }
 }
 
+@keyframes sl-legacy-teams {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
 @keyframes sl-legacy-grain {
   to {
     opacity: 0.55;
@@ -1566,6 +1619,19 @@ i.sl-auth-item__arrow-mark {
 }
 
 @media (max-width: 39.999rem) {
+  .sl-legacy-teams {
+    padding: 1rem 0;
+  }
+
+  .sl-legacy-teams--right {
+    display: none;
+  }
+
+  .sl-legacy-teams__item {
+    height: 1.5rem;
+    margin-right: 2.5rem;
+  }
+
   .sl-legacy-stack {
     max-width: 24rem;
   }
@@ -1610,7 +1676,8 @@ i.sl-auth-item__arrow-mark {
   .sl-legacy-background__iris,
   .sl-legacy-background__stars,
   .sl-legacy-background__grain,
-  .sl-legacy-brand__mark {
+  .sl-legacy-brand__mark,
+  .sl-legacy-teams__track {
     animation: none;
   }
 
@@ -1651,6 +1718,10 @@ i.sl-auth-item__arrow-mark {
 }
 
 @media (forced-colors: active) {
+  .sl-legacy-teams {
+    display: none;
+  }
+
   .sl-legacy-grid {
     display: none;
   }

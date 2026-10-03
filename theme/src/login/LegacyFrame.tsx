@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import skyLabWatermarkUrl from "../assets/skylab-watermark.svg";
 import AnimatedSkyLabLogo from "./AnimatedSkyLabLogo";
 import GridBackdrop from "./GridBackdrop";
+import TeamMarquee from "./TeamMarquee";
 import YtuMark from "./YtuMark";
 
 export type LegacyFrameLanguage = {
@@ -83,6 +84,7 @@ export default function LegacyFrame(props: LegacyFrameProps) {
       </div>
 
       <main id={mainId} className="sl-legacy-main" tabIndex={-1}>
+        <TeamMarquee direction="left" />
         <div className="sl-legacy-stack">
           <section className="sl-legacy-card" aria-labelledby={titleId}>
             <div className="sl-legacy-card__body">
@@ -168,6 +170,7 @@ export default function LegacyFrame(props: LegacyFrameProps) {
             )}
           </footer>
         </div>
+        <TeamMarquee direction="right" />
       </main>
     </div>
   );

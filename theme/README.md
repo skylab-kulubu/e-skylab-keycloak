@@ -32,7 +32,18 @@ Only the two original brand image assets were carried forward.
   (animated SKY LAB logo, what one account gives and a faint watermark in
   its corner) over a canvas grid of
   blinking squares (`GridBackdrop.tsx`), the KVKK footer and the language
-  menu. On a phone the panel shrinks to the logo. The `sl-*` class contract handed out by `KcPage.tsx` is
+  menu. On a phone the panel shrinks to the logo.
+- Team strips: `TeamMarquee.tsx` runs two slow rows of SKY LAB team logos
+  above and below the card (one row on a phone; still with reduced motion,
+  hidden in forced colors, `aria-hidden`). Which teams, in what order, comes
+  from the main site's CMS `teams` collection: `scripts/fetch-teams.mjs` runs
+  before every build and writes `src/login/teams.json` (committed, so a build
+  that cannot reach the CMS keeps the last list and only warns; override the
+  source with `SKYLAB_TEAMS_URL` / `SKYLAB_TEAMS_CLIENT_ID`). GDG, SKY MEDYA and
+  SKY LAB, and the club's Gece Kodu and BİZ BİZE, are not in that collection
+  and are added in `teams.ts`. The logos
+  live in `src/assets/teams/<slug>.(svg|webp)`, drawn in one tone; a team with
+  no file shows its name. The `sl-*` class contract handed out by `KcPage.tsx` is
   styled with the login tokens; `login-page-expired.ftl` is the only custom
   page body because Keycloak's markup cannot be phrased in Turkish.
 - `sky-handoff-failed.ftl` is the SPI's Web handoff failure page

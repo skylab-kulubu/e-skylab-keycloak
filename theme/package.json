@@ -7,13 +7,14 @@
     "node": ">=20"
   },
   "scripts": {
-    "prebuild": "keycloakify update-kc-gen",
+    "prebuild": "keycloakify update-kc-gen && node ./scripts/fetch-teams.mjs",
     "build": "tsc --noEmit && vite build",
     "build-keycloak-theme": "npm run build && npm run clean-keycloak-theme && keycloakify build",
     "clean-keycloak-theme": "node ./scripts/clean-keycloak-output.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test",
+    "teams": "node ./scripts/fetch-teams.mjs"
   },
   "dependencies": {
     "@fontsource-variable/space-grotesk": "5.3.0",

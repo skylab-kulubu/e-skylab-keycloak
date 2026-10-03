@@ -208,7 +208,7 @@ test("a page-wide login error is an alert on the first screen; wrong credentials
 
   await page.goto("/?page=login.ftl&state=invalid-credentials");
   await expect(page.locator(".sl-legacy-alert")).toHaveCount(0);
-  await expect(page.locator("#input-error")).toHaveText("Geçersiz kullanıcı adı veya şifre.");
+  await expect(page.locator("#input-error")).toHaveText("Kullanıcı adı, e-posta veya parola hatalı.");
   await expect(page.locator("#password")).toHaveAttribute("aria-describedby", "input-error");
   await expect(page.getByRole("link", { name: "Parolanı mı unuttun?" })).toBeVisible();
 });

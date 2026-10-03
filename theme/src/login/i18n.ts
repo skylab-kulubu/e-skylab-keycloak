@@ -7,8 +7,14 @@ import type { ThemeName } from "../kc.gen";
  * missing or formal in Keycloakify's default set; the login page speaks
  * informally, so every page does. "Erişim anahtarı" is the approved Turkish
  * term for a passkey; "(passkey)" appears only where a first mention needs it.
+ *
+ * The translations stay one object literal written inside withCustomTranslations: `keycloakify
+ * build` evaluates that argument on its own to write messages_*.properties, the only copy
+ * Keycloak reads for the messages it renders on the server (page-wide notices, field errors,
+ * info pages). A variable, import or spread there cannot be evaluated, and the build then
+ * silently ships Keycloak's defaults (i18n.test.ts, tests/check-theme-contract.sh).
  */
-export const translations = {
+const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCustomTranslations({
   tr: {
     // Login page and shared chrome
     skylabTitle: "SKY LAB'e Hoş Geldin!",
@@ -203,7 +209,86 @@ export const translations = {
     emailLinkIdp2: "E-posta gelmedi mi?",
     emailLinkIdp3: "ve yeniden gönderelim.",
     emailLinkIdp4: "E-postayı başka bir tarayıcıda zaten doğruladın mı?",
-    emailLinkIdp5: "ve devam et."
+    emailLinkIdp5: "ve devam et.",
+
+    // Messages Keycloak renders on the server from this bundle (i18n.test.ts serverMessageKeys).
+    // Reset password: shown whatever was typed, and the link goes to the Primary e-mail.
+    emailSentMessage:
+      "Bu bilgiler bir hesaba aitse hesabın birincil e-posta adresine bir bağlantı gönderdik. Gelen kutunu kontrol et; birkaç dakika içinde gelmezse istenmeyen (spam) klasörüne de bak.",
+    emailSendErrorMessage: "E-posta gönderilemedi. Birkaç dakika sonra tekrar dene.",
+    emailVerifySendCooldown: "Yeni bir e-posta istemeden önce {0} saniye beklemen gerekiyor.",
+    emailVerifiedMessage: "E-posta adresin doğrulandı.",
+    emailVerifiedMessageHeader: "E-posta adresin doğrulandı",
+    emailVerifiedAlreadyMessage: "E-posta adresin zaten doğrulanmış.",
+    emailVerifiedAlreadyMessageHeader: "E-posta adresin zaten doğrulanmış",
+    staleEmailVerificationLink:
+      "Bu bağlantı artık geçerli değil. E-posta adresini daha önce doğrulamış olabilirsin.",
+    confirmEmailAddressVerification: "{0} adresinin sana ait olduğunu onayla.",
+    confirmEmailAddressVerificationHeader: "E-posta adresini doğrula",
+    // Sign-in: a locked or disabled account reads like a wrong password.
+    invalidUserMessage: "Kullanıcı adı, e-posta veya parola hatalı.",
+    invalidUsernameMessage: "Kullanıcı adı veya e-posta hatalı.",
+    invalidUsernameOrEmailMessage: "Kullanıcı adı veya e-posta hatalı.",
+    invalidPasswordMessage: "Parola hatalı.",
+    missingUsernameMessage: "Kullanıcı adını veya e-postanı yaz.",
+    missingPasswordMessage: "Parolanı yaz.",
+    accountDisabledMessage: "Hesabın kullanıma kapalı. Yardım için kulüp yönetimiyle iletişime geç.",
+    accountTemporarilyDisabledMessage:
+      "Çok fazla hatalı deneme yapıldı; hesabın bir süreliğine kilitlendi. Biraz sonra tekrar dene.",
+    accountPermanentlyDisabledMessage: "Kullanıcı adı, e-posta veya parola hatalı.",
+    resetCredentialNotAllowedMessage: "Parola yenileme şu an kullanılamıyor.",
+    invalidTotpMessage: "Doğrulama kodu hatalı.",
+    missingTotpMessage: "Doğrulama kodunu yaz.",
+    missingTotpDeviceNameMessage: "Bir cihaz adı yaz.",
+    // New password and the password policy (Account Center shows the same sentences)
+    notMatchPasswordMessage: "Parolalar eşleşmiyor.",
+    invalidPasswordConfirmMessage: "Parolalar eşleşmiyor.",
+    invalidPasswordExistingMessage: "Mevcut parola hatalı.",
+    accountPasswordUpdatedMessage: "Parolan güncellendi.",
+    invalidPasswordMinLengthMessage: "Parola en az {0} karakter olmalı.",
+    invalidPasswordMaxLengthMessage: "Parola en fazla {0} karakter olabilir.",
+    invalidPasswordMinDigitsMessage: "Parola en az {0} rakam içermeli.",
+    invalidPasswordMinLowerCaseCharsMessage: "Parola en az {0} küçük harf içermeli.",
+    invalidPasswordMinUpperCaseCharsMessage: "Parola en az {0} büyük harf içermeli.",
+    invalidPasswordMinSpecialCharsMessage: "Parola en az {0} özel karakter içermeli.",
+    invalidPasswordNotUsernameMessage: "Parola kullanıcı adınla aynı olamaz.",
+    invalidPasswordNotContainsUsernameMessage: "Parola kullanıcı adını içeremez.",
+    invalidPasswordNotEmailMessage: "Parola e-posta adresinle aynı olamaz.",
+    invalidPasswordRegexPatternMessage: "Parola istenen biçime uymuyor.",
+    invalidPasswordHistoryMessage: "Yeni parola son {0} parolandan biri olamaz.",
+    invalidPasswordBlacklistedMessage: "Bu parola çok yaygın; başka bir parola seç.",
+    invalidPasswordGenericMessage: "Yeni parola, parola politikasına uymuyor.",
+    // Required actions
+    updatePasswordMessage: "Devam etmek için yeni bir parola belirlemen gerekiyor.",
+    verifyEmailMessage: "Devam etmek için e-posta adresini doğrulaman gerekiyor.",
+    updateEmailMessage: "Devam etmek için e-posta adresini güncellemen gerekiyor.",
+    configureTotpMessage: "Devam etmek için bir doğrulama uygulaması ayarlaman gerekiyor.",
+    updateProfileMessage: "Devam etmek için hesap bilgilerini güncellemen gerekiyor.",
+    confirmExecutionOfActions: "Devam etmek için şunları yapman gerekiyor:",
+    "requiredAction.UPDATE_PASSWORD": "Parolanı yenile",
+    "requiredAction.VERIFY_EMAIL": "E-posta adresini doğrula",
+    "requiredAction.CONFIGURE_TOTP": "Doğrulama uygulamasını ayarla",
+    "requiredAction.UPDATE_PROFILE": "Hesap bilgilerini güncelle",
+    "requiredAction.UPDATE_EMAIL": "E-posta adresini güncelle",
+    "requiredAction.TERMS_AND_CONDITIONS": "Şartları kabul et",
+    // Expired links, sessions and sign-in errors
+    expiredCodeMessage: "Giriş için ayrılan süre doldu. Yeniden giriş yap.",
+    expiredActionMessage: "Bu işlemin süresi doldu. Girişe devam edebilirsin.",
+    expiredActionTokenNoSessionMessage: "Bu bağlantının süresi doldu.",
+    expiredActionTokenSessionExistsMessage: "Bu bağlantının süresi doldu. İşlemi baştan başlat.",
+    loginTimeout: "Giriş çok uzun sürdü; baştan başlıyoruz.",
+    staleCodeMessage: "Bu sayfa artık geçerli değil. Uygulamaya dönüp yeniden giriş yap.",
+    invalidCodeMessage: "Bir sorun oluştu. Uygulamaya dönüp yeniden giriş yap.",
+    cookieNotFoundMessage:
+      "Giriş çerezi bulunamadı. Tarayıcında çerezlerin açık olduğundan emin ol ve yeniden dene.",
+    alreadyLoggedIn: "Zaten giriş yapmışsın.",
+    sessionNotActiveMessage: "Giriş oturumun sona erdi. Yeniden giriş yap.",
+    successLogout: "Çıkış yaptın.",
+    failedLogout: "Çıkış yapılamadı.",
+    identityProviderUnexpectedErrorMessage:
+      "YTÜ hesabınla giriş sırasında beklenmeyen bir sorun oluştu. Tekrar dene.",
+    identityProviderAuthenticationFailedMessage: "YTÜ hesabınla giriş tamamlanamadı. Tekrar dene.",
+    identityProviderAlreadyLinkedMessage: "Bu YTÜ hesabı zaten başka bir SKY LAB hesabına bağlı."
   },
   en: {
     // Login page and shared chrome
@@ -399,14 +484,88 @@ export const translations = {
     emailLinkIdp2: "Did the e-mail not arrive?",
     emailLinkIdp3: "and we will send it again.",
     emailLinkIdp4: "Already verified the e-mail in another browser?",
-    emailLinkIdp5: "to continue."
-  }
-};
+    emailLinkIdp5: "to continue.",
 
-const { useI18n, ofTypeI18n } = i18nBuilder
-  .withThemeName<ThemeName>()
-  .withCustomTranslations(translations)
-  .build();
+    // Messages Keycloak renders on the server from this bundle (i18n.test.ts serverMessageKeys).
+    // Reset password: shown whatever was typed, and the link goes to the Primary e-mail.
+    emailSentMessage:
+      "If these details belong to an account, we sent a link to its primary e-mail address. Check your inbox; if nothing arrives within a few minutes, look in your spam folder too.",
+    emailSendErrorMessage: "The e-mail could not be sent. Try again in a few minutes.",
+    emailVerifySendCooldown: "Wait {0} seconds before asking for another e-mail.",
+    emailVerifiedMessage: "Your e-mail address is verified.",
+    emailVerifiedMessageHeader: "E-mail address verified",
+    emailVerifiedAlreadyMessage: "Your e-mail address is already verified.",
+    emailVerifiedAlreadyMessageHeader: "E-mail address already verified",
+    staleEmailVerificationLink:
+      "This link is no longer valid. You may have verified your e-mail address already.",
+    confirmEmailAddressVerification: "Confirm that {0} is your e-mail address.",
+    confirmEmailAddressVerificationHeader: "Verify your e-mail address",
+    // Sign-in: a locked or disabled account reads like a wrong password.
+    invalidUserMessage: "The username, e-mail or password is incorrect.",
+    invalidUsernameMessage: "The username or e-mail is incorrect.",
+    invalidUsernameOrEmailMessage: "The username or e-mail is incorrect.",
+    invalidPasswordMessage: "The password is incorrect.",
+    missingUsernameMessage: "Enter your username or e-mail.",
+    missingPasswordMessage: "Enter your password.",
+    accountDisabledMessage: "Your account is disabled. Contact the club team for help.",
+    accountTemporarilyDisabledMessage:
+      "Too many failed attempts; your account is locked for a while. Try again later.",
+    accountPermanentlyDisabledMessage: "The username, e-mail or password is incorrect.",
+    resetCredentialNotAllowedMessage: "Password reset is not available right now.",
+    invalidTotpMessage: "The verification code is incorrect.",
+    missingTotpMessage: "Enter the verification code.",
+    missingTotpDeviceNameMessage: "Enter a device name.",
+    // New password and the password policy (Account Center shows the same sentences)
+    notMatchPasswordMessage: "The passwords do not match.",
+    invalidPasswordConfirmMessage: "The passwords do not match.",
+    invalidPasswordExistingMessage: "The current password is incorrect.",
+    accountPasswordUpdatedMessage: "Your password has been updated.",
+    invalidPasswordMinLengthMessage: "The password must be at least {0} characters long.",
+    invalidPasswordMaxLengthMessage: "The password can be at most {0} characters long.",
+    invalidPasswordMinDigitsMessage: "The password must contain at least {0} digits.",
+    invalidPasswordMinLowerCaseCharsMessage: "The password must contain at least {0} lowercase letters.",
+    invalidPasswordMinUpperCaseCharsMessage: "The password must contain at least {0} uppercase letters.",
+    invalidPasswordMinSpecialCharsMessage: "The password must contain at least {0} special characters.",
+    invalidPasswordNotUsernameMessage: "The password cannot be the same as your username.",
+    invalidPasswordNotContainsUsernameMessage: "The password cannot contain your username.",
+    invalidPasswordNotEmailMessage: "The password cannot be the same as your e-mail address.",
+    invalidPasswordRegexPatternMessage: "The password does not match the required format.",
+    invalidPasswordHistoryMessage: "The new password cannot be one of your last {0} passwords.",
+    invalidPasswordBlacklistedMessage: "This password is too common; choose another one.",
+    invalidPasswordGenericMessage: "The new password does not meet the password policy.",
+    // Required actions
+    updatePasswordMessage: "Choose a new password to continue.",
+    verifyEmailMessage: "Verify your e-mail address to continue.",
+    updateEmailMessage: "Update your e-mail address to continue.",
+    configureTotpMessage: "Set up an authenticator app to continue.",
+    updateProfileMessage: "Update your account details to continue.",
+    confirmExecutionOfActions: "To continue, you need to:",
+    "requiredAction.UPDATE_PASSWORD": "Update your password",
+    "requiredAction.VERIFY_EMAIL": "Verify your e-mail address",
+    "requiredAction.CONFIGURE_TOTP": "Set up an authenticator app",
+    "requiredAction.UPDATE_PROFILE": "Update your account details",
+    "requiredAction.UPDATE_EMAIL": "Update your e-mail address",
+    "requiredAction.TERMS_AND_CONDITIONS": "Accept the terms",
+    // Expired links, sessions and sign-in errors
+    expiredCodeMessage: "The time for signing in ran out. Please sign in again.",
+    expiredActionMessage: "This action has expired. You can continue signing in.",
+    expiredActionTokenNoSessionMessage: "This link has expired.",
+    expiredActionTokenSessionExistsMessage: "This link has expired. Please start again.",
+    loginTimeout: "Signing in took too long, so it starts over.",
+    staleCodeMessage: "This page is no longer valid. Go back to the app and sign in again.",
+    invalidCodeMessage: "Something went wrong. Go back to the app and sign in again.",
+    cookieNotFoundMessage:
+      "The sign-in cookie was not found. Make sure cookies are enabled in your browser and try again.",
+    alreadyLoggedIn: "You are already signed in.",
+    sessionNotActiveMessage: "Your sign-in session has ended. Please sign in again.",
+    successLogout: "You are signed out.",
+    failedLogout: "Signing out failed.",
+    identityProviderUnexpectedErrorMessage:
+      "Something unexpected went wrong while signing in with your YTÜ account. Please try again.",
+    identityProviderAuthenticationFailedMessage: "Signing in with your YTÜ account could not be completed. Please try again.",
+    identityProviderAlreadyLinkedMessage: "This YTÜ account is already linked to another SKY LAB account."
+  }
+}).build();
 
 export type I18n = typeof ofTypeI18n;
 export { useI18n };

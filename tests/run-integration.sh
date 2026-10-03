@@ -69,6 +69,9 @@ json_assert() {
 # The audience scopes of the skyforms and frontend-main login clients; stages called below.
 # shellcheck source=login-client-audiences.sh
 source "$SCRIPT_DIR/login-client-audiences.sh"
+# The admin panel's narrowed token and Standard Token Exchange (ADR-0058); stages called below.
+# shellcheck source=admin-panel-client.sh
+source "$SCRIPT_DIR/admin-panel-client.sh"
 # The realm's user and admin event retention (account erasure ticket 09); stages called below.
 # shellcheck source=event-retention.sh
 source "$SCRIPT_DIR/event-retention.sh"
@@ -733,6 +736,7 @@ v2_state_snapshot() {
       kcadm get "client-scopes/$scope_uuid/protocol-mappers/models" -r "$V2_REALM" -c
     done
     lca_state_snapshot
+    ap_state_snapshot
     kcadm get authentication/flows -r "$V2_REALM" -c
   } | jq -S -c '.'
 }
@@ -1165,6 +1169,21 @@ stage_v2_passkey_cleanup() {
 CURRENT_STAGE='Keycloak readiness'
 wait_for_url http://localhost:19000/health/ready
 
+# The event exchange exists before the first event, as it does in production. Every publish of the
+# run then succeeds and its channel stays open until the provider closes it, so a provider that
+# leaks channels runs its connection out of them (2047) within this run and the RabbitMQ provider
+# contract at the end fails. keycloak-to-rabbit 3.1.0 did: Keycloak never closes the listeners of
+# admin events, and each held a channel; 3.1.1 (#50) opens and closes one per message. Without
+# the exchange, RabbitMQ would close every publishing channel itself (404) and hide most of such a
+# leak. The contract stage declares the exchange again (idempotent) and still proves that an admin
+# event reaches a bound queue.
+CURRENT_STAGE='RabbitMQ event exchange'
+curl --fail --silent --show-error --retry 10 --retry-delay 2 --retry-all-errors \
+  --user keycloak:integration-rabbit-password \
+  -X PUT -H 'content-type: application/json' \
+  -d '{"type":"topic","durable":true,"auto_delete":false,"internal":false,"arguments":{}}' \
+  http://localhost:15673/api/exchanges/%2F/keycloak.events >/dev/null
+
 "${KCADM[@]}" config credentials \
   --config "$ADMIN_CONFIG" \
   --server http://localhost:8080 \
@@ -1238,6 +1257,7 @@ built_in_scope_snapshot=$(kcadm get client-scopes -r e-skylab-test -c \
   | jq -c '[.[] | {id, name}] | sort_by(.id)')
 
 stage_login_audiences_hand_made
+stage_admin_panel_hand_made
 stage_event_retention_before_first_reconciliation
 
 CURRENT_STAGE='first reconciliation'
@@ -1270,6 +1290,7 @@ stage_reset_choose_user_after_first_reconciliation "$reset_flow_before"
 
 stage_v2_after_first_reconciliation
 stage_login_audiences_after_first_reconciliation
+stage_admin_panel_after_first_reconciliation
 stage_event_retention_after_first_reconciliation
 
 # Inject drift before the second pass. Reconciliation must repair the existing
@@ -1470,7 +1491,7 @@ skyapp_scope_count=$(kcadm get client-scopes -r e-skylab-test -c \
 [[ $skyapp_scope_count == 1 ]] || fail "skyapp audience scope is missing or duplicated"
 
 built_in_scope_after=$(kcadm get client-scopes -r e-skylab-test -c \
-  | jq -c '[.[] | select(.name != "account-center-account-api" and .name != "account-center-core-claims" and .name != "skyapp-account-center-audience" and .name != "skyforms-forms-audience" and .name != "frontend-main-core-audience" and .name != "frontend-arge-core-audience") | {id, name}] | sort_by(.id)')
+  | jq -c '[.[] | select(.name != "account-center-account-api" and .name != "account-center-core-claims" and .name != "skyapp-account-center-audience" and .name != "skyforms-forms-audience" and .name != "frontend-main-core-audience" and .name != "frontend-arge-core-audience" and .name != "admin-panel-api-audience") | {id, name}] | sort_by(.id)')
 [[ $built_in_scope_after == "$built_in_scope_snapshot" ]] \
   || fail "a built-in client scope id or name was mutated"
 
@@ -1550,6 +1571,7 @@ json_assert "$skyapp_default_scopes" \
   'skyapp audience scope is not attached as a default scope' \
   --arg scope "$skyapp_scope_uuid"
 stage_login_audiences_after_second_reconciliation
+stage_admin_panel_after_second_reconciliation
 
 default_scopes=$(kcadm get "clients/$client_uuid/default-client-scopes" -r e-skylab-test -c)
 json_assert "$default_scopes" \
@@ -1606,6 +1628,10 @@ ERASURE_COMPOSE_FILE="$COMPOSE_FILE" \
   ERASURE_ADMIN_CONFIG="$ADMIN_CONFIG" \
   ERASURE_REALM="$V2_REALM" \
   "$SCRIPT_DIR/core-erasure-client.sh"
+
+# After core-erasure-client.sh made forms and skycms: the admin panel's token and token exchange,
+# before the no-op reconciliation so that run proves the step writes nothing more.
+stage_admin_panel_tokens
 
 stage_v2_reconcile_noop
 stage_event_retention_after_noop_reconciliation

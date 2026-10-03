@@ -1,0 +1,38 @@
+[
+  {
+    "name": "core-audience",
+    "protocol": "openid-connect",
+    "protocolMapper": "oidc-audience-mapper",
+    "consentRequired": false,
+    "config": {
+      "included.client.audience": "core",
+      "id.token.claim": "false",
+      "access.token.claim": "true",
+      "introspection.token.claim": "true"
+    }
+  },
+  {
+    "name": "forms-audience",
+    "protocol": "openid-connect",
+    "protocolMapper": "oidc-audience-mapper",
+    "consentRequired": false,
+    "config": {
+      "included.client.audience": "forms",
+      "id.token.claim": "false",
+      "access.token.claim": "true",
+      "introspection.token.claim": "true"
+    }
+  },
+  {
+    "name": "skycms-audience",
+    "protocol": "openid-connect",
+    "protocolMapper": "oidc-audience-mapper",
+    "consentRequired": false,
+    "config": {
+      "included.client.audience": "skycms",
+      "id.token.claim": "false",
+      "access.token.claim": "true",
+      "introspection.token.claim": "true"
+    }
+  }
+]

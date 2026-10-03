@@ -46,10 +46,24 @@ Only the two original brand image assets were carried forward.
   " · SKY LAB"), visible focus treatment, WCAG AA contrast including the blue
   and pink submit states (`themeContract.test.ts`) and `prefers-reduced-motion`
   behavior.
+- Keycloak's page-wide message (`message` that is not a field error: the
+  reset e-mail confirmation, a failed YTÜ Microsoft sign-in, an expired
+  action) is rendered by `PageMessage.tsx` as the first element under the card
+  heading on every page, the login page's first screen included: `role="alert"`
+  for errors, `role="status"` otherwise, focused on load unless the page
+  autofocused a field. Wrong credentials stay on the fields, once (Keycloak's
+  own `displayMessage` rules).
+- "Parolanı mı unuttun?" (`url.loginResetCredentialsUrl`, when the realm allows
+  resetting) is on the login page's first screen under the sign-in choices and,
+  in the password form, directly below the password field, right-aligned,
+  beside "Beni hatırla".
 - `src/login/pageIds.ts` lists every themed page id; `src/devKcContext.ts`
   serves realistic Turkish mock data for each of them at `?page=<id>.ftl`
   (`&lang=en` switches locale; `&reason=<code>` picks the Web handoff failure
-  reason of `sky-handoff-failed.ftl`).
+  reason of `sky-handoff-failed.ftl`; `&state=<name>` previews a server-side
+  state from `previewStates`: `login.ftl` `reset-email-sent`,
+  `invalid-credentials`, `idp-error`; `login-reset-password.ftl`
+  `missing-username`).
 
 ## Account Center boundary
 
@@ -89,9 +103,11 @@ bash ../tests/check-theme-contract.sh
 
 Vitest covers the remember-me bridge, the stylesheet contract and, through
 `Template.test.tsx`, that every page id renders the animated logo, the glass
-card, the KVKK footer and Keycloak's element ids. The theme Chromium suite
+card, the KVKK footer and Keycloak's element ids; `Login.test.tsx` covers where
+page-wide messages and the forgot-password link sit. The theme Chromium suite
 covers deterministic rendered-page contracts. `tests/browser/visual.spec.ts`
-compares a desktop (1280×800) and mobile (390×844) screenshot of every page,
+compares a desktop (1280×800) and mobile (390×844) screenshot of every page
+(plus the login page's password form and its `&state=` previews),
 Turkish locale, reduced motion (plus every Web handoff failure reason on mobile
 with the phone in light and in dark mode), against the committed baselines in
 `tests/browser/visual.spec.ts-snapshots/` (at most 1% of pixels may differ).

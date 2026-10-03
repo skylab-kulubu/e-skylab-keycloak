@@ -5,7 +5,9 @@ import { themedPageIds } from "../../src/login/pageIds";
 
 /**
  * Screenshot baselines for every Keycloak page in Turkish, desktop and mobile,
- * with reduced motion, plus every Web handoff failure reason on mobile in light
+ * with reduced motion, plus the login page's password form and its server-side
+ * states (reset e-mail sent, wrong credentials, failed Microsoft sign-in), plus
+ * every Web handoff failure reason on mobile in light
  * and dark mode. Baselines live in visual.spec.ts-snapshots/ and are
  * rendered inside the Playwright Linux image so they match the CI runner:
  * `theme/scripts/update-visual-baselines.sh` regenerates them, `--check` compares.
@@ -87,6 +89,15 @@ test.describe("visual baselines", () => {
         await expect(page.locator("#kc-login")).toBeVisible();
         await expect(page).toHaveScreenshot(`login-password-view-${viewportName}.png`, screenshotOptions);
       });
+
+      // Server-side states of the login page (devKcContext previewStates).
+      for (const state of ["reset-email-sent", "invalid-credentials", "idp-error"] as const) {
+        test(`login-${state}`, async ({ page }) => {
+          await page.goto(`/?page=login.ftl&state=${state}`);
+          await stabilise(page, "login.ftl");
+          await expect(page).toHaveScreenshot(`login-${state}-${viewportName}.png`, screenshotOptions);
+        });
+      }
     });
   }
 

@@ -40,7 +40,7 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.14.0`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.15.0`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.1.1`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
@@ -164,6 +164,15 @@ aynı önceliğe koyar; `KEYCLOAK_PASSWORD_FORM=auth-username-password-form` ger
 geri dönüş sırası:
 [`docs/v2-identity-reconcile-runbook.md`](docs/v2-identity-reconcile-runbook.md) §15.
 
+Parola sıfırlamada ("Şifremi unuttum") da aynı dört tanımlayıcı geçer (K4b). Bunu SPI'daki
+`sky-reset-credentials-choose-user` (`com.skylab.authenticator.SkyResetCredentialChooseUser`)
+yapar: Keycloak'ın `reset-credentials-choose-user`'ı, yalnız araması K4'ünki. Sayfa her girdide
+aynı "e-posta gönderildi" cevabını verir; bağlantı her zaman kişinin birincil e-postasına gider,
+yazılan adrese değil. Keycloak'ın yerleşik `reset credentials` akışı değiştirilemediği için
+uzlaştırıcı onu bir kez `sky reset credentials` adıyla kopyalar, adımı kopyada değiştirir, sonra
+realm'i kopyaya bağlar; `KEYCLOAK_RESET_CHOOSE_USER=reset-credentials-choose-user` Keycloak'ın
+adımını geri koyar. Ayrıntı ve geri dönüş sırası: runbook §17.
+
 User Profile (`config/account-center-user-profile.json`) canlı yapısını
 koruyarak uzlaştırılır: `firstName`, `lastName`, `email` kişi için salt
 okunur olur, `username` izinlerine dokunulmaz, `schoolEmail`, `personalEmail`
@@ -264,10 +273,13 @@ tam olarak `https://api.place.yildizskylab.com/api/auth/eskylab/callback`, web o
 `place:admin` ve `place:moderator` client rolleri (kimseye verilmez, admin panelinden verilir);
 `schoolEmail`'den `school_email` claim'i ve `resource_access.place.roles` (ID token, access token,
 userinfo). Place grup okumaz (ADR-0059): grup verisi yazan varsayılan ya da isteğe bağlı
-kapsamlar (`microprofile-jwt` dahil) istemciden ayrılır. `e-skylab` dışındaki her realm'i
-girişten önce reddeder. Uzlaştırıcı bu istemciyi yönetmez; imaj yayını gerekmez. Sunucuda
-sky_lab_genel'deki `ops/wizards/place-keycloak-client-wizard.sh` betiği koşar ve secret'ı
-doğrudan OpenBao'ya taşır. Harness `tests/place-client.sh` tek başına çalışır (runbook §14).
+kapsamlar (`microprofile-jwt` dahil) istemciden ayrılır. `school_email`'in tek kaynağı
+istemcinin kendi mapper'ıdır: bu claim'i yazan kapsamlar da (production'da elle eklenmiş
+mapper'ıyla `profile`) yalnız `place`'ten ayrılır; realm kapsamı ve öteki istemciler
+değişmez. `e-skylab` dışındaki her realm'i girişten önce reddeder. Uzlaştırıcı bu istemciyi
+yönetmez; imaj yayını gerekmez. Sunucuda sky_lab_genel'deki
+`ops/wizards/place-keycloak-client-wizard.sh` betiği koşar ve secret'ı doğrudan OpenBao'ya taşır.
+Harness `tests/place-client.sh` tek başına çalışır (runbook §14).
 
 `account-center` realm'in etkin tarayıcı akışını kullanır; böylece
 production'a özel parola, OTP ve passkey davranışı olduğu gibi geçerlidir ve

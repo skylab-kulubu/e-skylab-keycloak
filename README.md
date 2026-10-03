@@ -298,6 +298,21 @@ yalnız `ADMIN`'e verir; kişiye vermez, hiçbir şeyi geri almaz. sky_lab_genel
 `ops/wizards/site-cms-setup-wizard.sh` üçünü koşar, secret'ı OpenBao'ya taşır. Harness
 `tests/site-clients.sh` tek başına çalışır (runbook §18).
 
+SkyApp de ana sitenin haber ve takım sayfalarını düzenler (ADR-0056 eki, 2026-10-03): uygulama
+inscribed'ın ortak `news`/`teams` koleksiyonlarına kişinin kendi `skyapp` token'ıyla doğrudan
+yazar; köprü sunucu ve SkyApp tenant'ı yoktur. İdempotent `config/skyapp-cms-editor.sh`
+(`KEYCLOAK_REALM` açıkça; varsayılan `--check`, `--apply`) `skyapp`'te `content:read`,
+`content:write`, `cms:access` (ilk ikisinin composite'i; uygulamanın düğmeleri
+`resource_access.skyapp.roles`'e bakar) ve `client:admin` rollerini kurar; bunları hiçbir gruba
+vermez, `frontend-main`'in `cms:access`'ine ve `client:admin`'ine composite olarak bağlar. Böylece
+Site editor tek yerden (panelde `frontend-main`) atanır. `skyapp`'e ortak `skycms-audience`
+kapsamını ve `inscribed-roles` mapper'ını ekler; tam yollu `groups`'u doğrular. `skyapp`'in
+bayraklarına, adreslerine ve öteki kapsamlarına dokunmaz; `skyapp` rolünün doğrudan atanmasını
+uyarır. `--revoke` yalnız iki composite bağını alır (sonraki token yenilemesinde kimse SkyApp'ten
+yazamaz). `--editors-from frontend-<site>` kaynağı değiştirir (ana sitesi olmayan sandbox için).
+Önce `inscribed-cms-roles.sh --client frontend-main` gerekir; eksik önkoşulda hiçbir şey yazmaz.
+Harness `tests/skyapp-cms-editor.sh` tek başına çalışır.
+
 `account-center` realm'in etkin tarayıcı akışını kullanır; böylece
 production'a özel parola, OTP ve passkey davranışı olduğu gibi geçerlidir ve
 uzlaştırıcı o akışa hiç yazmaz. Native handoff döneminden kalan kurulumda

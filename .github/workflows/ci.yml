@@ -96,6 +96,18 @@ jobs:
       - name: event site clients and editor grants against a throwaway Keycloak
         run: bash tests/site-clients.sh
 
+  # config/skyapp-cms-editor.sh (SkyApp edits the main site's News and Teams, ADR-0056 addendum of
+  # 2026-10-03), with inscribed-cms-roles.sh before it, against the stock Keycloak image in dev mode,
+  # with SkyApp's real public-client login (PKCE) and refresh; needs no build of this repository's image.
+  skyapp-cms-editor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: SkyApp CMS editing against a throwaway Keycloak
+        run: bash tests/skyapp-cms-editor.sh
+
   integration:
     runs-on: ubuntu-latest
     # The full harness takes 56-83 minutes depending on the runner (2026-10); 120 leaves headroom.

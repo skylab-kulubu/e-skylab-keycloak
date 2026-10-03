@@ -389,7 +389,9 @@ Parola sıfırlama adımının (K4b) geri dönüşü de imajdan **önce** yapıl
 `KEYCLOAK_RESET_CHOOSE_USER=reset-credentials-choose-user` koşusu. Bağlı akış
 `sky-reset-credentials-choose-user`'ı gösterirken 1.15.0'dan eski bir imaja dönülürse
 "Şifremi unuttum" isteklerinin hepsi hata verir. 1.14.0'a dönülecekse yalnız bu bayrak,
-1.14.0'dan da eskiye dönülecekse iki bayrak aynı koşuda verilir.
+1.14.0'dan da eskiye dönülecekse iki bayrak aynı koşuda verilir. Her imajda çalışan acil yol:
+Admin Console'dan realm'in Reset credentials flow bağlantısını yerleşik `reset credentials`'a
+geri almak (§17).
 
 Realm ayarları için ayrı bir geri dönüş yolu yoktur; önceki imaj digest'i ile
 eski uzlaştırıcı çalıştırıldığında RP ID yeniden boşalır (Keycloak passwordless
@@ -1415,8 +1417,17 @@ bulunmadığından o akışla her parola sıfırlama isteği ve Admin Console'da
 hata verir. Eski imaj zaten çalışıyorsa önce 1.15.0 imajı yeniden dağıtılır, bayraklı koşu
 yapılır, sonra geri dönülür. 1.14.0'dan da eskiye dönülecekse aynı koşuya
 `KEYCLOAK_PASSWORD_FORM=auth-username-password-form` da eklenir (§15). Realm'i yerleşik
-`reset credentials`'a geri bağlamak gerekmez; istenirse Admin Console'dan yapılır (Authentication
-→ `reset credentials` → Bind flow).
+`reset credentials`'a geri bağlamak gerekmez; sky_lab_genel'deki wizard'ın `--rollback`'i bunu da
+yapar.
+
+**Acil yol (her imajda çalışır, uzlaştırıcı gerekmez):** Admin Console → `e-skylab` realm'i →
+Authentication → listede `reset credentials` (yerleşik akış) satırının ⋮ menüsü (ya da akışı açıp sağ
+üstteki Action menüsü) → **Bind flow** → **Reset credentials flow** → Save. Realm o anda Keycloak'ın kendi akışına döner ve K4b'den önceki
+duruma gelir; `sky reset credentials` kopyası bağlantısız kalır, silinmesi gerekmez. 1.15.0'dan eski
+bir imaj zaten çalışıyorsa ve parola sıfırlama hata veriyorsa önce bu yapılır. Bundan sonra
+bayraksız bir uzlaştırıcı koşusu realm'i yeniden kopyaya bağlar; geri dönüşte kalınacaksa
+uzlaştırıcı `KEYCLOAK_RESET_CHOOSE_USER=reset-credentials-choose-user` ile koşulur (yerleşik akışa
+bağlı realm'de hiçbir şey yazmaz).
 
 Harness: `tests/reset-by-either-email.sh` (`run-integration.sh` içinden). İlk uzlaştırmada
 yerleşik akış değişmez; kopya, yerleşik akıştan yalnız adımıyla ayrılır ve realm ona bağlanır.

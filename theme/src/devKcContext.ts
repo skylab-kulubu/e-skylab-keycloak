@@ -298,8 +298,102 @@ const { getKcContextMock } = createGetKcContextMock({
 
 export { themedPageIds };
 
-export function getDevKcContextForPage(pageId: ThemedPageId, languageTag: "tr" | "en" = "tr"): KcContext {
-  return getKcContextMock({
+type PreviewLanguageTag = "tr" | "en";
+type PreviewMessage = { type: "success" | "warning" | "error" | "info"; summary: Record<PreviewLanguageTag, string> };
+type PreviewState = { message: PreviewMessage; fieldErrors?: Record<string, PreviewMessage["summary"]>; username?: string };
+
+// Keycloak's own wording for each state (its tr/en message bundles), so the preview shows what the server sends.
+const invalidUserMessage = { tr: "Geçersiz kullanıcı adı veya şifre.", en: "Invalid username or password." };
+const missingUsernameMessage = { tr: "Lütfen kullanıcı adını belirtin.", en: "Please specify username." };
+
+/**
+ * Server-side states of a page, previewed with `?page=<id>&state=<name>`: the page-wide
+ * message Keycloak sends and, for a failed form, the field errors it attaches.
+ */
+export const previewStates = {
+  "login.ftl": {
+    // reset-credential-email forks back to the login page with this success message.
+    "reset-email-sent": {
+      message: {
+        type: "success",
+        summary: {
+          tr: "Daha fazla talimatla kısa sürede bir e-posta almalısınız.",
+          en: "You should receive an email shortly with further instructions."
+        }
+      }
+    },
+    "invalid-credentials": {
+      message: { type: "error", summary: invalidUserMessage },
+      fieldErrors: { username: invalidUserMessage },
+      username: previewUser.username
+    },
+    // A failed YTÜ Microsoft sign-in comes back to the login page with a page-wide error.
+    "idp-error": {
+      message: {
+        type: "error",
+        summary: {
+          tr: "Kimlik sağlayıcıyla kimlik doğrulaması yapılırken beklenmeyen bir hata oluştu",
+          en: "Unexpected error when authenticating with identity provider"
+        }
+      }
+    }
+  },
+  "login-reset-password.ftl": {
+    "missing-username": {
+      message: { type: "error", summary: missingUsernameMessage },
+      fieldErrors: { username: missingUsernameMessage }
+    }
+  }
+} satisfies Partial<Record<ThemedPageId, Record<string, PreviewState>>>;
+
+export type PreviewStateName<PageId extends keyof typeof previewStates> = keyof (typeof previewStates)[PageId];
+
+function previewMessagesPerField(fieldErrors: Record<string, string>): KcContext["messagesPerField"] {
+  const get = (fieldName: string) => fieldErrors[fieldName] ?? "";
+  const existsError = (...fieldNames: string[]) => fieldNames.some(fieldName => fieldErrors[fieldName] !== undefined);
+
+  return {
+    get,
+    existsError,
+    exists: fieldName => fieldErrors[fieldName] !== undefined,
+    printIfExists: (fieldName, text) => (fieldErrors[fieldName] !== undefined ? text : undefined),
+    getFirstError: (...fieldNames) => {
+      const fieldName = fieldNames.find(name => fieldErrors[name] !== undefined);
+      return fieldName === undefined ? "" : get(fieldName);
+    }
+  };
+}
+
+function applyPreviewState(kcContext: KcContext, state: string | null, languageTag: PreviewLanguageTag): KcContext {
+  const states: Record<string, PreviewState> | undefined = (
+    previewStates as Partial<Record<string, Record<string, PreviewState>>>
+  )[kcContext.pageId];
+  const previewState = state === null ? undefined : states?.[state];
+  if (previewState === undefined) {
+    return kcContext;
+  }
+
+  const fieldErrors = Object.fromEntries(
+    Object.entries(previewState.fieldErrors ?? {}).map(([fieldName, summary]) => [fieldName, summary[languageTag]])
+  );
+  const withState = {
+    ...kcContext,
+    message: { type: previewState.message.type, summary: previewState.message.summary[languageTag] },
+    messagesPerField: previewMessagesPerField(fieldErrors)
+  } as KcContext;
+  if (previewState.username !== undefined && withState.pageId === "login.ftl") {
+    withState.login = { ...withState.login, username: previewState.username };
+  }
+
+  return withState;
+}
+
+export function getDevKcContextForPage(
+  pageId: ThemedPageId,
+  languageTag: PreviewLanguageTag = "tr",
+  state: string | null = null
+): KcContext {
+  const kcContext = getKcContextMock({
     pageId,
     overrides: {
       locale: {
@@ -311,6 +405,8 @@ export function getDevKcContextForPage(pageId: ThemedPageId, languageTag: "tr" |
       }
     }
   }) as KcContext;
+
+  return applyPreviewState(kcContext, state, languageTag);
 }
 
 export function getDevKcContext(): KcContext {
@@ -318,7 +414,7 @@ export function getDevKcContext(): KcContext {
   const requestedPage = searchParams.get("page");
   const pageId = requestedPage !== null && isThemedPageId(requestedPage) ? requestedPage : "login.ftl";
   const languageTag = searchParams.get("lang") === "en" ? "en" : "tr";
-  const kcContext = getDevKcContextForPage(pageId, languageTag);
+  const kcContext = getDevKcContextForPage(pageId, languageTag, searchParams.get("state"));
 
   // `?page=sky-handoff-failed.ftl&reason=used` previews one failure reason; the value is passed
   // on unchecked, as the SPI would, so the page's own handling of unknown reasons is exercised.

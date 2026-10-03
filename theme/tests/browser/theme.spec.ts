@@ -173,3 +173,83 @@ test("Web handoff failure page shows one sentence per reason in light and dark, 
     await expect(page.locator(".sl-body")).toHaveCSS("background-color", "rgb(8, 7, 11)");
   }
 });
+
+test("after a reset request the confirmation is the first thing on the login card and takes focus", async ({ page }) => {
+  await page.goto("/?page=login.ftl&state=reset-email-sent");
+
+  const message = page.locator("#sl-page-message");
+  await expect(message).toHaveAttribute("role", "status");
+  await expect(message).toContainText("e-posta almalısınız");
+  await expect(message).toBeVisible();
+  await expect(message).toBeFocused();
+
+  // Above the sign-in choices, without opening the password form first.
+  const microsoft = page.getByRole("link", { name: "YTÜ Öğrencisiyim" });
+  const messageBox = await message.boundingBox();
+  const microsoftBox = await microsoft.boundingBox();
+  expect(messageBox).not.toBeNull();
+  expect(microsoftBox).not.toBeNull();
+  expect((messageBox?.y ?? 0) + (messageBox?.height ?? 0)).toBeLessThanOrEqual(microsoftBox?.y ?? 0);
+
+  // Keyboard users continue from the message into the choices.
+  await page.keyboard.press("Tab");
+  await expect(microsoft).toBeFocused();
+
+  // The message stays on the card in the password form.
+  await page.getByRole("button", { name: "YTÜ Öğrencisi Değilim" }).click();
+  await expect(message).toBeVisible();
+  await expect(page.locator("#username")).toBeFocused();
+});
+
+test("a page-wide login error is an alert on the first screen; wrong credentials stay on the fields", async ({ page }) => {
+  await page.goto("/?page=login.ftl&state=idp-error");
+  await expect(page.getByRole("alert")).toContainText("beklenmeyen bir hata");
+  await expect(page.getByRole("link", { name: "YTÜ Öğrencisiyim" })).toBeVisible();
+
+  await page.goto("/?page=login.ftl&state=invalid-credentials");
+  await expect(page.locator(".sl-legacy-alert")).toHaveCount(0);
+  await expect(page.locator("#input-error")).toHaveText("Geçersiz kullanıcı adı veya şifre.");
+  await expect(page.locator("#password")).toHaveAttribute("aria-describedby", "input-error");
+  await expect(page.getByRole("link", { name: "Parolanı mı unuttun?" })).toBeVisible();
+});
+
+for (const viewport of [
+  { width: 1280, height: 800 },
+  { width: 390, height: 844 }
+]) {
+  test(`forgot password is on the first screen and right below the password field (${viewport.width}px)`, async ({ browser }) => {
+    const context = await browser.newContext({ viewport, locale: "tr-TR" });
+    const page = await context.newPage();
+    await page.goto("/?page=login.ftl");
+
+    const firstScreenLink = page.getByRole("link", { name: "Parolanı mı unuttun?" });
+    await expect(firstScreenLink).toBeVisible();
+    await expect(firstScreenLink).toBeInViewport();
+
+    await page.getByRole("button", { name: "YTÜ Öğrencisi Değilim" }).click();
+    const link = page.locator("#kc-form-login").getByRole("link", { name: "Parolanı mı unuttun?" });
+    await expect(link).toBeVisible();
+
+    const password = await page.locator("#password").boundingBox();
+    const linkBox = await link.boundingBox();
+    const submit = await page.locator("#kc-login").boundingBox();
+    expect(password).not.toBeNull();
+    expect(linkBox).not.toBeNull();
+    expect(submit).not.toBeNull();
+    if (password === null || linkBox === null || submit === null) {
+      return;
+    }
+    // Below the password field, above the submit button, right-aligned with the field.
+    expect(linkBox.y).toBeGreaterThanOrEqual(password.y + password.height);
+    expect(linkBox.y - (password.y + password.height)).toBeLessThan(48);
+    expect(linkBox.y + linkBox.height).toBeLessThanOrEqual(submit.y);
+    expect(Math.abs(linkBox.x + linkBox.width - (password.x + password.width))).toBeLessThanOrEqual(1);
+
+    // Keyboard order: password, show password, remember me, then the link.
+    await page.locator("#rememberMe").focus();
+    await page.keyboard.press("Tab");
+    await expect(link).toBeFocused();
+
+    await context.close();
+  });
+}

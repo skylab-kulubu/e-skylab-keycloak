@@ -629,7 +629,8 @@ stage_v2_identity_guardrails() {
   if grep -Fq 'would create client role certificate:issue' <<<"$output"; then
     fail 'identity guardrails dry run planned an existing certificate role'
   fi
-  [[ $(kcadm get "clients/$core_uuid/roles" -r "$V2_REALM" -c | jq '[.[] | select(.name | startswith("certificate:"))] | length') == 1 ]] \
+  # certificate:manage is core's resource role (tests/core-roles.sh), not one of the guardrails' four.
+  [[ $(kcadm get "clients/$core_uuid/roles" -r "$V2_REALM" -c | jq '[.[] | select((.name | startswith("certificate:")) and .name != "certificate:manage")] | length') == 1 ]] \
     || fail 'identity guardrails dry run created a role'
   [[ $(kcadm get "identity-provider/instances/OBS/mappers/$department_id" -r "$V2_REALM" -c | jq -r .config.syncMode) == INHERIT ]] \
     || fail 'identity guardrails dry run changed the department mapper'
@@ -641,7 +642,7 @@ stage_v2_identity_guardrails() {
   grep -Fq 'applied 5 change(s)' <<<"$output" \
     || { printf '%s\n' "$output" >&2; fail 'identity guardrails apply did not perform the five planned changes'; }
   json_assert "$(kcadm get "clients/$core_uuid/roles" -r "$V2_REALM" -c)" \
-    '([.[] | select(.name | startswith("certificate:")) | .name] | sort) == ["certificate:binding:manage","certificate:issue","certificate:revoke","certificate:template:manage"] and ([.[] | select(.name | startswith("certificate:")) | .description // ""] | unique) == [""]' \
+    '[.[] | select((.name | startswith("certificate:")) and .name != "certificate:manage")] as $team | ([$team[].name] | sort) == ["certificate:binding:manage","certificate:issue","certificate:revoke","certificate:template:manage"] and ([$team[].description // ""] | unique) == [""]' \
     'core does not hold exactly the four certificate roles without descriptions, the way core created them'
   json_assert "$(kcadm get "identity-provider/instances/OBS/mappers/$department_id" -r "$V2_REALM" -c)" \
     '.name == "department mapper" and .identityProviderMapper == "microsoft-department-mapper" and .config == {"syncMode": "FORCE"}' \

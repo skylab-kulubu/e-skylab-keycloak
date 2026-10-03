@@ -13,7 +13,8 @@
 # e-skylab-sandbox), in this order, or the --client list. A client missing from the realm is skipped
 # with a NOTE (the sandbox realm may have no frontend-*). For every client
 #   1. creates the client roles content:read, content:write and schema:sync when they are missing;
-#      on the site editors (frontend-main, frontend-arge) also cms:access and client:admin:
+#      on the site editors (frontend-main, frontend-arge and the event sites frontend-artlab,
+#      frontend-yildizjam, frontend-skydays) also cms:access and client:admin:
 #        - cms:access is what the sites' editor UI checks (@skylab-kulubu/inscribed-auth 0.3.1 looks
 #          for it anywhere in the access token's resource_access; a site login's token carries only
 #          that site's roles when the client does not allow the full scope, as frontend-arge does);
@@ -86,8 +87,8 @@ else
   ADMIN_PANEL_CLIENT='admin'
 fi
 DEFAULT_CLIENTS=(frontend-main frontend-arge "$ADMIN_PANEL_CLIENT")
-# The sites whose editor UI opens on cms:access and on which team pages are edited.
-SITE_EDITOR_CLIENTS=(frontend-main frontend-arge)
+# The sites whose editor UI opens on cms:access (the event sites since 2026-10-03, ADR-0056 addendum).
+SITE_EDITOR_CLIENTS=(frontend-main frontend-arge frontend-artlab frontend-yildizjam frontend-skydays)
 LEGACY_ROLE=cms:access
 ADMIN_ROLE=client:admin
 CAPABILITY_ROLES=(content:read content:write schema:sync)

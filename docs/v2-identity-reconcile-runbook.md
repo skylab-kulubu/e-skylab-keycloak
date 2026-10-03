@@ -1441,3 +1441,56 @@ yollatır; kullanıcı adı Keycloak'ın yoluyla çalışır; bilinmeyen, iki ki
 kişisel, bağlantısız okul e-postası ve devre dışı hesap aynı sayfayı alır, posta gitmez ve olayları
 Keycloak'ınki gibidir; SkyMail tam olarak üç posta alır. Postadaki bağlantı, isteyen tarayıcıda
 yeni parolayı kurar ve kişi okul e-postası ile yeni parolasıyla girer; adresleri değişmez.
+
+## 18. Etkinlik sitelerinin site istemcileri ve editör grupları (ADR-0056 eki)
+
+ARTLAB, YıldızJam ve SkyDays canlıdaki inscribed'ın kendi tenant'larıdır; tenant sitenin Site
+client'ıdır. Üç betik sırayla koşar, hepsi §12'deki düzendedir (varsayılan `--check`, `--apply`
+yazar, ikinci koşu hiçbir şey yazmaz; kcadm prompt'u ya da `--kcadm-config`):
+
+1. `config/site-clients.sh [--site artlab|yildizjam|skydays]...` (varsayılan: üçü). `KEYCLOAK_REALM`
+   zorunludur ve yalnız `e-skylab` ya da `e-skylab-sandbox` olabilir; başka değer ya da boş değer
+   girişten önce `refusing realm …` ile 2 döner. Realm ya da `skycms` istemcisi yoksa 1 döner, hiçbir
+   şey yazmaz. Her istemci:
+   - gizli; standard flow açık ve PKCE `S256` zorunlu (NextAuth'un Keycloak sağlayıcısı PKCE gönderir);
+     implicit ve direct grant kapalı; servis hesabı açık; `fullScopeAllowed=false`; consent kapalı;
+   - redirect tam olarak `https://<site>.yildizskylab.com/api/auth/callback/keycloak` (sandbox'ta
+     `https://sandbox-<site>.yildizskylab.com/…`), web origin site kökeni, post-logout `<köken>/*`.
+     İstemcideki başka adresler (localhost dahil) silinir ve listelenir (karar D4);
+   - `aud` içinde `skycms`: ortak realm kapsamı `skycms-audience` (tek Audience mapper'ı, access token
+     ve introspection), varsayılan kapsam; yoksa kurulur;
+   - `aud` içinde `core`: `frontend-<site>-core-audience`, uzlaştırıcının `frontend-arge` için kurduğu
+     biçimde; realm'de `core` yoksa `NOTE` ile atlanır;
+   - tam yollu `groups`; `groups`'u başka biçimde yazan varsayılan ya da isteğe bağlı kapsam (Keycloak'ın
+     `microprofile-jwt`'si realm rollerini `groups`'a yazar) yalnız bu istemciden ayrılır. İstemcinin
+     kendi üzerindeki böyle bir mapper `PROBLEM`'dir.
+   `frontend-main` ve `frontend-arge` elle yapılmıştır; betik onları yalnız raporlar (Full scope,
+   redirect adresleri, `skycms`'in nereden geldiği).
+2. `config/inscribed-cms-roles.sh --client frontend-<site>`: §12. Etkinlik siteleri de editör sitesidir
+   (`cms:access`, `client:admin`); servis hesabı yalnız `content:read` + `schema:sync` alır. `cms-sync`
+   (`POST /cms/sync`) yalnız `schema:sync` ister; yazma yetkisi gerekmez.
+3. `config/site-editor-grants.sh [--site …]... [--team SITE=/YOL]...`: `cms:access` Privileged gruplara
+   (`ADMIN`, `YK`, `DK`; `/<AD>` ve `/UYELER/<AD>` hangisi varsa) ve sitenin iki takımının doğrudan
+   `LIDERLER`/`KOORDINATORLER` alt gruplarına: sahip lab takımı ve etkinliğin organizasyon takımı
+   (karar 2026-10-03, CONTEXT.md "Site editor"); `client:admin` yalnız `ADMIN` gruplarına. Takımlar:
+   ARTLAB → `/UYELER/ARGE/AIRLAB` + `/UYELER/ORGANIZASYON/ARTLAB`, YıldızJam → `/UYELER/ARGE/GAMELAB`
+   + `/UYELER/ORGANIZASYON/YILDIZJAM`, SkyDays → `/UYELER/ARGE/SKYSEC` + `/UYELER/ORGANIZASYON/SKYDAYS`.
+   Realm'de olmayan bir takım ya da `LIDERLER`/`KOORDINATORLER`'i olmayan bir takım `WARNING`'dir; öbür
+   yetkiler yine verilir. `--team` bir siteye bir takım daha ekler. Kişiye, `/UYELER`'e ya da bir
+   varsayılan grubu kapsayan gruba rol verilmez (`PROBLEM`). Hiçbir şey geri alınmaz: beklenmeyen bir
+   sahip `WARNING`'dir. İstemci ya da rolleri yoksa site `MISSING` ile atlanır, çıkış 1.
+
+Harness `tests/site-clients.sh` (Dockerfile'daki stok Keycloak, dev modu, `docker run --rm`): realm
+reddi, `--check`'in yazmadığı, planın tam boyu, istemci bayrakları ve adresleri, `microprofile-jwt`'nin
+yalnız istemciden ayrıldığı, `frontend-main`'e yazılmadığı, ikinci koşunun yazmadığı; grupların tam
+listesi; PKCE'li gerçek yetkilendirme kodu akışıyla AIRLAB liderinin token'ında `aud` ⊇ {skycms, core},
+tam yollu `groups`, `roles` ⊇ {cms:access, content:read, content:write}; ARTLAB organizasyon
+takımı liderinin de editör olduğu; organizasyon takımı yoksa `WARNING`; YıldızJam editörünün ARTLAB
+token'ında CMS rolü olmadığı (Full scope kapalı); PKCE'siz akışın, localhost'un ve başka adreslerin
+reddi; servis hesabının yalnız `content:read` + `schema:sync` taşıdığı; kaymanın onarımı; sandbox
+realm'inde köken, `core` yokluğu ve `/UYELER/ADMIN`; secret'ın hiç basılmadığı.
+
+Operatör: sky_lab_genel'deki `ops/wizards/site-cms-setup-wizard.sh --site <site> --sandbox|--production`
+üç betiği Keycloak konteynerinde koşar (git'ten okur, SHA-256 ile denetler), secret'ı sunucuda
+OpenBao'ya taşır, inscribed tenant'ını, Dokploy ortamını ve deploy hook'unu kurar. İmaj yayını
+gerekmez: betikler imaja girmeden kullanılır.

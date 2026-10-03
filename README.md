@@ -281,6 +281,23 @@ yönetmez; imaj yayını gerekmez. Sunucuda sky_lab_genel'deki
 `ops/wizards/place-keycloak-client-wizard.sh` betiği koşar ve secret'ı doğrudan OpenBao'ya taşır.
 Harness `tests/place-client.sh` tek başına çalışır (runbook §14).
 
+Etkinlik siteleri (ARTLAB, YıldızJam, SkyDays) da canlıdaki inscribed'ın tenant'larıdır (ADR-0056
+eki, 2026-10-03). Site istemcilerini (`frontend-artlab`, `frontend-yildizjam`, `frontend-skydays`)
+idempotent `config/site-clients.sh` kurar; realm açıkça verilir (`KEYCLOAK_REALM=e-skylab` ya da
+`e-skylab-sandbox`; başkası ve boş değer girişten önce reddedilir). İstemciler gizli, PKCE `S256`,
+`fullScopeAllowed=false`, servis hesabı açık; dönüş adresi birebir
+`https://<site>/api/auth/callback/keycloak` (sandbox'ta `sandbox-<site>`), localhost yok; `aud`'a
+`skycms` ortak `skycms-audience` kapsamından, `core` site başına `frontend-<site>-core-audience`
+kapsamından gelir; tam yollu `groups`, `groups`'u başka biçimde yazan kapsam (ör.
+`microprofile-jwt`) yalnız bu istemciden ayrılır. Elle yapılmış `frontend-main` ve `frontend-arge`
+yalnız raporlanır. Ardından `inscribed-cms-roles.sh --client frontend-<site>` rolleri kurar (servis
+hesabına yalnız `content:read` + `schema:sync`) ve `config/site-editor-grants.sh` `cms:access`'i
+Privileged gruplara, sahip lab takımının ve etkinliğin organizasyon takımının
+(`/UYELER/ORGANIZASYON/<ETKİNLİK>`) `LIDERLER`/`KOORDINATORLER` gruplarına, `client:admin`'i
+yalnız `ADMIN`'e verir; kişiye vermez, hiçbir şeyi geri almaz. sky_lab_genel'deki
+`ops/wizards/site-cms-setup-wizard.sh` üçünü koşar, secret'ı OpenBao'ya taşır. Harness
+`tests/site-clients.sh` tek başına çalışır (runbook §18).
+
 `account-center` realm'in etkin tarayıcı akışını kullanır; böylece
 production'a özel parola, OTP ve passkey davranışı olduğu gibi geçerlidir ve
 uzlaştırıcı o akışa hiç yazmaz. Native handoff döneminden kalan kurulumda

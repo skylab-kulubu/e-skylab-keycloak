@@ -10,7 +10,8 @@
 # Keycloak's own microprofile-jwt scope (its mapper writes realm roles into the claim groups) made a
 # realm default scope, groups /ADMIN, /UYELER, /UYELER/YK, /UYELER/DK,
 # /UYELER/ARGE/AIRLAB/{LIDERLER,KOORDINATORLER}, /UYELER/ARGE/GAMELAB/LIDERLER and
-# /UYELER/ORGANIZASYON/ARTLAB/LIDERLER, people in some of them. /UYELER is a default group.
+# /UYELER/ORGANIZASYON/ARTLAB/LIDERLER, /UYELER/ESKI-EDITORLER (nobody in it), people in some of
+# them. /UYELER is a default group.
 #
 # What it proves:
 #   - every realm but e-skylab and e-skylab-sandbox (and an unset KEYCLOAK_REALM) is refused before
@@ -22,18 +23,21 @@
 #     as a default scope and frontend-main is not written; a second run writes nothing;
 #   - inscribed-cms-roles.sh --client frontend-artlab makes cms:access and client:admin on the event
 #     site and gives the service account content:read + schema:sync only;
-#   - site-editor-grants.sh grants cms:access to /ADMIN, /UYELER/YK, /UYELER/DK and the owner team's
-#     Leader groups (plus a --team), client:admin to /ADMIN only, nothing to a person; a second run
-#     writes nothing; a site without roles is reported (exit 1);
+#   - site-editor-grants.sh grants cms:access to /ADMIN, /UYELER/YK, /UYELER/DK and, by default, the
+#     Leader groups of the owning lab team and of the event's organization team, client:admin to
+#     /ADMIN only, nothing to a person; a --team adds a team; a missing organization team is a
+#     WARNING; a holder outside the set is a WARNING and is not taken away; a second run writes
+#     nothing; a site without roles is reported (exit 1);
 #   - a real authorization code flow with PKCE (as NextAuth runs it) gives an AIRLAB leader an
 #     access token with azp frontend-artlab, aud ⊇ {skycms, core}, full-path groups, roles ⊇
 #     {cms:access, content:read, content:write} and the editor gate open; a GAMELAB leader who edits
-#     YıldızJam gets no CMS role and a shut gate on ARTLAB (Full scope off); the flow without PKCE,
+#     YıldızJam gets no CMS role and a shut gate on ARTLAB (Full scope off); a leader of the ARTLAB
+#     organization team is an editor; the flow without PKCE,
 #     a localhost and a foreign redirect URI are refused; the service account token carries
 #     content:read + schema:sync, no content:write;
 #   - drift (Full scope on, a localhost redirect) is repaired and the extra URI removed;
 #   - in the sandbox realm the origin is sandbox-<site>, a missing core client is a NOTE, the
-#     Privileged group /UYELER/ADMIN is found and a missing owner team is a WARNING;
+#     Privileged group /UYELER/ADMIN is found and missing teams are WARNINGs;
 #   - the client secret is never printed.
 # Requirements on the host: docker, curl, jq, openssl, base64. SITE_CLIENTS_TEST_PORT (default 18093).
 # The jq programs name jq variables ($s, $t), not shell ones:
@@ -222,6 +226,7 @@ gamelab_leaders=$(group "$gamelab" LIDERLER)
 organizasyon=$(group "$uyeler" ORGANIZASYON)
 org_artlab=$(group "$organizasyon" ARTLAB)
 org_artlab_leaders=$(group "$org_artlab" LIDERLER)
+stale_editors=$(group "$uyeler" ESKI-EDITORLER)
 person() {
   local uuid
   uuid=$(kcadm create users -r "$REALM" -i -s "username=$1" -s enabled=true -s "email=$1@example.invalid" \
@@ -338,16 +343,16 @@ missing=$(run_expecting 1 site-editor-grants.sh "$REALM" --check --site skydays)
 expect_line "$missing" 'MISSING: frontend-skydays has no cms:access or client:admin role' 'missing roles not reported'
 event_before=$(newest_admin_event)
 sleep 1
-check=$(grants --check --site artlab --team artlab=/UYELER/ORGANIZASYON/ARTLAB) || { printf '%s\n' "$check" >&2; fail 'grants --check failed'; }
+check=$(grants --check --site artlab) || { printf '%s\n' "$check" >&2; fail 'grants --check failed'; }
 printf '%s\n' "$check" | sed 's/^/    /'
 [[ $(newest_admin_event) == "$event_before" ]] || fail 'grants --check wrote'
 expect_line "$check" 'Privileged groups: /ADMIN /UYELER/YK /UYELER/DK' 'Privileged groups not found'
 expect_line "$check" 'would grant frontend-artlab/cms:access to the group /UYELER/ARGE/AIRLAB/KOORDINATORLER' 'owner team coordinators not planned'
-expect_line "$check" 'would grant frontend-artlab/cms:access to the group /UYELER/ORGANIZASYON/ARTLAB/LIDERLER' '--team not planned'
+expect_line "$check" 'would grant frontend-artlab/cms:access to the group /UYELER/ORGANIZASYON/ARTLAB/LIDERLER' 'organization team leaders not planned by default'
 expect_line "$check" 'would grant frontend-artlab/client:admin to the group /ADMIN' 'client:admin not planned'
 reject_line "$check" 'GAMELAB' 'another team planned'
 expect_line "$check" 'check: 7 change(s) pending, 0 warning(s), 0 problem(s)' 'unexpected grant plan'
-out=$(grants --apply --site artlab --team artlab=/UYELER/ORGANIZASYON/ARTLAB) || { printf '%s\n' "$out" >&2; fail 'grants --apply failed'; }
+out=$(grants --apply --site artlab) || { printf '%s\n' "$out" >&2; fail 'grants --apply failed'; }
 expect_line "$out" 'applied 7 change(s)' 'grants not applied'
 holders=$(kcadm get "clients/$artlab/roles/cms:access/groups" -r "$REALM" | jq -c '[.[].path] | sort')
 [[ $holders == '["/ADMIN","/UYELER/ARGE/AIRLAB/KOORDINATORLER","/UYELER/ARGE/AIRLAB/LIDERLER","/UYELER/DK","/UYELER/ORGANIZASYON/ARTLAB/LIDERLER","/UYELER/YK"]' ]] \
@@ -355,12 +360,21 @@ holders=$(kcadm get "clients/$artlab/roles/cms:access/groups" -r "$REALM" | jq -
 [[ $(kcadm get "clients/$artlab/roles/client:admin/groups" -r "$REALM" | jq -c '[.[].path]') == '["/ADMIN"]' ]] || fail 'client:admin not only on /ADMIN'
 [[ $(kcadm get "clients/$artlab/roles/cms:access/users" -r "$REALM" | jq 'length') == 0 ]] || fail 'a person got cms:access'
 printf '    cms:access <- %s\n' "$holders"
-again=$(grants --apply --site artlab --team artlab=/UYELER/ORGANIZASYON/ARTLAB) || { printf '%s\n' "$again" >&2; fail 'second grants failed'; }
+again=$(grants --apply --site artlab) || { printf '%s\n' "$again" >&2; fail 'second grants failed'; }
 expect_line "$again" 'applied 0 change(s), 0 warning(s), 0 problem(s)' 'second grants run wrote'
-again=$(grants --check --site artlab) || { printf '%s\n' "$again" >&2; fail 'grants without --team failed'; }
-expect_line "$again" 'WARNING: frontend-artlab/cms:access is also held by the group /UYELER/ORGANIZASYON/ARTLAB/LIDERLER (not taken away' 'extra holder not reported'
+again=$(grants --check --site artlab --team artlab=/UYELER/ARGE/GAMELAB --team artlab=/UYELER/ORGANIZASYON/ARTLAB) \
+  || { printf '%s\n' "$again" >&2; fail 'grants with --team failed'; }
+expect_line "$again" 'would grant frontend-artlab/cms:access to the group /UYELER/ARGE/GAMELAB/LIDERLER' '--team not planned'
+expect_line "$again" 'check: 1 change(s) pending, 0 warning(s), 0 problem(s)' 'a --team naming a default team was planned twice'
+editor_role=$(kcadm get "clients/$artlab/roles/cms:access" -r "$REALM" | jq -c '[{id, name}]')
+kcadm create "groups/$stale_editors/role-mappings/clients/$artlab" -r "$REALM" -b "$editor_role" >/dev/null
+again=$(grants --apply --site artlab) || { printf '%s\n' "$again" >&2; fail 'grants with an extra holder failed'; }
+expect_line "$again" 'WARNING: frontend-artlab/cms:access is also held by the group /UYELER/ESKI-EDITORLER (not taken away' 'extra holder not reported'
+expect_line "$again" 'applied 0 change(s), 1 warning(s), 0 problem(s)' 'the extra holder changed the plan'
+[[ $(kcadm get "groups/$stale_editors/role-mappings/clients/$artlab" -r "$REALM" | jq 'length') == 1 ]] || fail 'the extra holder was taken away'
 out=$(grants --apply --site yildizjam) || { printf '%s\n' "$out" >&2; fail 'yildizjam grants failed'; }
 expect_line "$out" 'grant frontend-yildizjam/cms:access to the group /UYELER/ARGE/GAMELAB/LIDERLER' 'GAMELAB not granted on yildizjam'
+expect_line "$out" 'WARNING: frontend-yildizjam: the team /UYELER/ORGANIZASYON/YILDIZJAM does not exist in realm e-skylab' 'missing organization team not a WARNING'
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='person tokens through the client (authorization code + PKCE)'
@@ -376,7 +390,7 @@ json_assert "$id_token" ".roles == null and .groups == null" 'the ID token carri
 printf '    airlead  @ %s: aud=%s groups=%s roles=%s editor=%s\n' "$CLIENT" "$(jq -c "$AUD" <<<"$access")" \
   "$(jq -c .groups <<<"$access")" "$(jq -c "$CMS_ROLES" <<<"$access")" "$(jq -c "$EDITOR_GATE" <<<"$access")"
 access=$(jwt_payload "$(code_flow_response "$CLIENT" orglead | jq -r .access_token)")
-json_assert "$access" "($CMS_ROLES) == [\"cms:access\", \"content:read\", \"content:write\"]" 'the --team leader is no editor'
+json_assert "$access" "($CMS_ROLES) == [\"cms:access\", \"content:read\", \"content:write\"]" 'the organization team leader is no editor'
 access=$(jwt_payload "$(code_flow_response "$CLIENT" boss | jq -r .access_token)")
 json_assert "$access" "($CMS_ROLES) == [\"client:admin\", \"cms:access\", \"content:read\", \"content:write\"]" 'ADMIN roles wrong'
 access=$(jwt_payload "$(code_flow_response "$CLIENT" gamelead | jq -r .access_token)")
@@ -439,6 +453,7 @@ out=$(RUN_REALM=$SANDBOX_REALM roles --apply --client "$CLIENT") || { printf '%s
 out=$(RUN_REALM=$SANDBOX_REALM grants --apply --site artlab) || { printf '%s\n' "$out" >&2; fail 'sandbox grants failed'; }
 expect_line "$out" 'Privileged groups: /UYELER/ADMIN' 'sandbox Privileged group not found'
 expect_line "$out" 'WARNING: frontend-artlab: the team /UYELER/ARGE/AIRLAB does not exist in realm e-skylab-sandbox' 'missing team not a WARNING'
+expect_line "$out" 'WARNING: frontend-artlab: the team /UYELER/ORGANIZASYON/ARTLAB does not exist in realm e-skylab-sandbox' 'missing organization team not a WARNING'
 expect_line "$out" 'grant frontend-artlab/client:admin to the group /UYELER/ADMIN' 'sandbox client:admin not granted'
 
 printf 'site-clients.sh and site-editor-grants.sh contract holds against %s.\n' "$IMAGE"

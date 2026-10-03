@@ -3,14 +3,13 @@
 # CONTEXT.md "Site editor"). For each Site client frontend-<site> it grants
 #   - cms:access to the Privileged groups (ADMIN, YK, DK: each at /<NAME> and/or /UYELER/<NAME>,
 #     whichever exist) and to the Leader groups (the direct subgroups LIDERLER and KOORDINATORLER)
-#     of the site's owner team(s);
+#     of the site's teams: the owning lab team and the event's organization team;
 #   - client:admin to the ADMIN group(s) only.
-# Owner teams (Kaan, 2026-10-03):
-#   artlab     /UYELER/ARGE/AIRLAB
-#   yildizjam  /UYELER/ARGE/GAMELAB
-#   skydays    /UYELER/ARGE/SKYSEC
-# --team SITE=PATH adds another team for one site (for example the event's organization team
-# /UYELER/ORGANIZASYON/ARTLAB, once that is decided); its Leader groups get cms:access too.
+# Teams of each site (decision of 2026-10-03, CONTEXT.md "Site editor"):
+#   artlab     /UYELER/ARGE/AIRLAB   and  /UYELER/ORGANIZASYON/ARTLAB
+#   yildizjam  /UYELER/ARGE/GAMELAB  and  /UYELER/ORGANIZASYON/YILDIZJAM
+#   skydays    /UYELER/ARGE/SKYSEC   and  /UYELER/ORGANIZASYON/SKYDAYS
+# --team SITE=PATH adds one more team for one site; its Leader groups get cms:access too.
 #
 # Grants go to groups only, never to a person, never to /UYELER, never to a group at or above a
 # default group (a planned grant to one is a PROBLEM and is not made). Nothing is ever taken away: a group or a
@@ -56,11 +55,13 @@ LEADER_GROUPS=(LIDERLER KOORDINATORLER)
 EDITOR_ROLE=cms:access
 ADMIN_ROLE=client:admin
 
-owner_team() {
+# site_teams SITE: the site's teams, one per line: the owning lab team, then the event's
+# organization team.
+site_teams() {
   case $1 in
-    artlab) printf '/UYELER/ARGE/AIRLAB' ;;
-    yildizjam) printf '/UYELER/ARGE/GAMELAB' ;;
-    skydays) printf '/UYELER/ARGE/SKYSEC' ;;
+    artlab) printf '%s\n' /UYELER/ARGE/AIRLAB /UYELER/ORGANIZASYON/ARTLAB ;;
+    yildizjam) printf '%s\n' /UYELER/ARGE/GAMELAB /UYELER/ORGANIZASYON/YILDIZJAM ;;
+    skydays) printf '%s\n' /UYELER/ARGE/SKYSEC /UYELER/ORGANIZASYON/SKYDAYS ;;
   esac
 }
 
@@ -305,9 +306,12 @@ for site in "${SITES[@]}"; do
     missing=$((missing + 1))
     continue
   fi
-  teams=("$(owner_team "$site")")
+  teams=()
+  while IFS= read -r team; do teams+=("$team"); done < <(site_teams "$site")
   for item in "${EXTRA_TEAMS[@]}"; do
-    [[ ${item%%=*} != "$site" ]] || teams+=("${item#*=}")
+    # A team named twice is planned once.
+    [[ ${item%%=*} == "$site" && " ${teams[*]} " != *" ${item#*=} "* ]] || continue
+    teams+=("${item#*=}")
   done
   editors=("${privileged[@]}")
   for team in "${teams[@]}"; do

@@ -292,8 +292,9 @@ kapsamından gelir; tam yollu `groups`, `groups`'u başka biçimde yazan kapsam 
 `microprofile-jwt`) yalnız bu istemciden ayrılır. Elle yapılmış `frontend-main` ve `frontend-arge`
 yalnız raporlanır. Ardından `inscribed-cms-roles.sh --client frontend-<site>` rolleri kurar (servis
 hesabına yalnız `content:read` + `schema:sync`) ve `config/site-editor-grants.sh` `cms:access`'i
-Privileged gruplara ve sahip takımın `LIDERLER`/`KOORDINATORLER` gruplarına, `client:admin`'i
-yalnız `ADMIN`'e verir; hiçbir şeyi geri almaz. sky_lab_genel'deki
+Privileged gruplara, sahip lab takımının ve etkinliğin organizasyon takımının
+(`/UYELER/ORGANIZASYON/<ETKİNLİK>`) `LIDERLER`/`KOORDINATORLER` gruplarına, `client:admin`'i
+yalnız `ADMIN`'e verir; kişiye vermez, hiçbir şeyi geri almaz. sky_lab_genel'deki
 `ops/wizards/site-cms-setup-wizard.sh` üçünü koşar, secret'ı OpenBao'ya taşır. Harness
 `tests/site-clients.sh` tek başına çalışır (runbook §18).
 

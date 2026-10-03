@@ -1470,18 +1470,22 @@ yazar, ikinci koşu hiçbir şey yazmaz; kcadm prompt'u ya da `--kcadm-config`):
    (`cms:access`, `client:admin`); servis hesabı yalnız `content:read` + `schema:sync` alır. `cms-sync`
    (`POST /cms/sync`) yalnız `schema:sync` ister; yazma yetkisi gerekmez.
 3. `config/site-editor-grants.sh [--site …]... [--team SITE=/YOL]...`: `cms:access` Privileged gruplara
-   (`ADMIN`, `YK`, `DK`; `/<AD>` ve `/UYELER/<AD>` hangisi varsa) ve sitenin sahip takımının doğrudan
-   `LIDERLER`/`KOORDINATORLER` alt gruplarına; `client:admin` yalnız `ADMIN` gruplarına. Sahip takımlar:
-   ARTLAB → `/UYELER/ARGE/AIRLAB`, YıldızJam → `/UYELER/ARGE/GAMELAB`, SkyDays → `/UYELER/ARGE/SKYSEC`.
-   `--team` bir siteye ek takım ekler (organizasyon ekibi kararı verilince). Kişiye, `/UYELER`'e ya da
-   bir varsayılan grubu kapsayan gruba rol verilmez (`PROBLEM`). Hiçbir şey geri alınmaz: beklenmeyen
-   bir sahip `WARNING`'dir. İstemci ya da rolleri yoksa site `MISSING` ile atlanır, çıkış 1.
+   (`ADMIN`, `YK`, `DK`; `/<AD>` ve `/UYELER/<AD>` hangisi varsa) ve sitenin iki takımının doğrudan
+   `LIDERLER`/`KOORDINATORLER` alt gruplarına: sahip lab takımı ve etkinliğin organizasyon takımı
+   (karar 2026-10-03, CONTEXT.md "Site editor"); `client:admin` yalnız `ADMIN` gruplarına. Takımlar:
+   ARTLAB → `/UYELER/ARGE/AIRLAB` + `/UYELER/ORGANIZASYON/ARTLAB`, YıldızJam → `/UYELER/ARGE/GAMELAB`
+   + `/UYELER/ORGANIZASYON/YILDIZJAM`, SkyDays → `/UYELER/ARGE/SKYSEC` + `/UYELER/ORGANIZASYON/SKYDAYS`.
+   Realm'de olmayan bir takım ya da `LIDERLER`/`KOORDINATORLER`'i olmayan bir takım `WARNING`'dir; öbür
+   yetkiler yine verilir. `--team` bir siteye bir takım daha ekler. Kişiye, `/UYELER`'e ya da bir
+   varsayılan grubu kapsayan gruba rol verilmez (`PROBLEM`). Hiçbir şey geri alınmaz: beklenmeyen bir
+   sahip `WARNING`'dir. İstemci ya da rolleri yoksa site `MISSING` ile atlanır, çıkış 1.
 
 Harness `tests/site-clients.sh` (Dockerfile'daki stok Keycloak, dev modu, `docker run --rm`): realm
 reddi, `--check`'in yazmadığı, planın tam boyu, istemci bayrakları ve adresleri, `microprofile-jwt`'nin
 yalnız istemciden ayrıldığı, `frontend-main`'e yazılmadığı, ikinci koşunun yazmadığı; grupların tam
 listesi; PKCE'li gerçek yetkilendirme kodu akışıyla AIRLAB liderinin token'ında `aud` ⊇ {skycms, core},
-tam yollu `groups`, `roles` ⊇ {cms:access, content:read, content:write}; YıldızJam editörünün ARTLAB
+tam yollu `groups`, `roles` ⊇ {cms:access, content:read, content:write}; ARTLAB organizasyon
+takımı liderinin de editör olduğu; organizasyon takımı yoksa `WARNING`; YıldızJam editörünün ARTLAB
 token'ında CMS rolü olmadığı (Full scope kapalı); PKCE'siz akışın, localhost'un ve başka adreslerin
 reddi; servis hesabının yalnız `content:read` + `schema:sync` taşıdığı; kaymanın onarımı; sandbox
 realm'inde köken, `core` yokluğu ve `/UYELER/ADMIN`; secret'ın hiç basılmadığı.

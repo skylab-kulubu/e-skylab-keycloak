@@ -69,6 +69,9 @@ json_assert() {
 # The audience scopes of the skyforms and frontend-main login clients; stages called below.
 # shellcheck source=login-client-audiences.sh
 source "$SCRIPT_DIR/login-client-audiences.sh"
+# Group overage: the SPI's sky-group-overage-mapper (ADR-0059); stage called below.
+# shellcheck source=group-overage-mapper.sh
+source "$SCRIPT_DIR/group-overage-mapper.sh"
 # The realm's user and admin event retention (account erasure ticket 09); stages called below.
 # shellcheck source=event-retention.sh
 source "$SCRIPT_DIR/event-retention.sh"
@@ -1628,6 +1631,8 @@ EVENT_PII_COMPOSE_FILE="$COMPOSE_FILE" \
   EVENT_PII_ADMIN_CONFIG="$ADMIN_CONFIG" \
   EVENT_PII_SOURCE_REALM="$V2_REALM" \
   "$SCRIPT_DIR/erasure-event-pii.sh"
+
+stage_group_overage_mapper
 
 CURRENT_STAGE='minimal openid PAR contract'
 discovery=$(curl --fail --silent --show-error \

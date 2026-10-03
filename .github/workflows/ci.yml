@@ -84,9 +84,22 @@ jobs:
       - name: Place client script against a throwaway Keycloak
         run: bash tests/place-client.sh
 
+  # config/site-clients.sh and config/site-editor-grants.sh (the event sites' Site clients, with
+  # inscribed-cms-roles.sh between them) against the stock Keycloak image in dev mode, with a real
+  # authorization code flow (PKCE); needs no build of this repository's image.
+  site-clients:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: event site clients and editor grants against a throwaway Keycloak
+        run: bash tests/site-clients.sh
+
   integration:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # The full harness takes 56-83 minutes depending on the runner (2026-10); 120 leaves headroom.
+    timeout-minutes: 120
     needs: theme
     env:
       KEYCLOAK_TEST_IMAGE: account-keycloak:ci

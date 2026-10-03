@@ -486,6 +486,12 @@ a:hover {
   line-height: 1.5;
 }
 
+/* PageMessage takes focus on load so screen readers read it first; it is not a control, so no ring. */
+.sl-legacy-shell .sl-legacy-alert[tabindex="-1"]:focus,
+.sl-legacy-shell .sl-legacy-alert[tabindex="-1"]:focus-visible {
+  outline: none;
+}
+
 .sl-legacy-alert--error {
   border-color: rgba(251, 44, 54, 0.2);
   color: var(--sl-legacy-danger);
@@ -514,7 +520,6 @@ a:hover {
 }
 
 .sl-legacy-field > label,
-.sl-legacy-field__heading label,
 .sl-legacy-label {
   display: block;
   margin-bottom: 0.25rem;
@@ -526,23 +531,6 @@ a:hover {
 /* DefaultPage places the required marker as a sibling of the label */
 .sl-legacy-label {
   display: inline-block;
-}
-
-.sl-legacy-field__heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 0.25rem;
-}
-
-.sl-legacy-field__heading label {
-  margin: 0;
-}
-
-.sl-legacy-field__heading a {
-  color: var(--sl-legacy-link);
-  font-size: 0.75rem;
 }
 
 .sl-legacy-input,
@@ -621,14 +609,50 @@ textarea.sl-legacy-input {
   margin: -0.5rem 0 1rem;
 }
 
+/* The row directly below the password field: remember me on the left, the reset link on the right. */
+.sl-legacy-form-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  margin: 0 0 1.25rem;
+}
+
 .sl-legacy-remember {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  margin: 0 0 1.25rem;
+  min-height: 1.5rem;
   color: var(--sl-legacy-label);
   font-size: 0.875rem;
   cursor: pointer;
+}
+
+/* Right-aligned even when remember me is off or wraps onto its own line. */
+.sl-legacy-forgot {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.5rem;
+  margin-left: auto;
+  color: var(--sl-legacy-link);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+/* The reset link on the first screen, under the sign-in choices. */
+.sl-legacy-choice-help {
+  margin: 1rem 0 0;
+  text-align: center;
+  font-size: 0.875rem;
+}
+
+.sl-legacy-choice-help a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.5rem;
+  color: var(--sl-legacy-link);
+  font-weight: 500;
 }
 
 .sl-legacy-remember input {

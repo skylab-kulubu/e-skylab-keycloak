@@ -40,7 +40,7 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.14.0`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.15.0`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.1.1`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
@@ -163,6 +163,15 @@ akışı `browser plus passkey`'de `auth-username-password-form`'un yerine, ayn�
 aynı önceliğe koyar; `KEYCLOAK_PASSWORD_FORM=auth-username-password-form` geri alır. Ayrıntı ve
 geri dönüş sırası:
 [`docs/v2-identity-reconcile-runbook.md`](docs/v2-identity-reconcile-runbook.md) §15.
+
+Parola sıfırlamada ("Şifremi unuttum") da aynı dört tanımlayıcı geçer (K4b). Bunu SPI'daki
+`sky-reset-credentials-choose-user` (`com.skylab.authenticator.SkyResetCredentialChooseUser`)
+yapar: Keycloak'ın `reset-credentials-choose-user`'ı, yalnız araması K4'ünki. Sayfa her girdide
+aynı "e-posta gönderildi" cevabını verir; bağlantı her zaman kişinin birincil e-postasına gider,
+yazılan adrese değil. Keycloak'ın yerleşik `reset credentials` akışı değiştirilemediği için
+uzlaştırıcı onu bir kez `sky reset credentials` adıyla kopyalar, adımı kopyada değiştirir, sonra
+realm'i kopyaya bağlar; `KEYCLOAK_RESET_CHOOSE_USER=reset-credentials-choose-user` Keycloak'ın
+adımını geri koyar. Ayrıntı ve geri dönüş sırası: runbook §17.
 
 User Profile (`config/account-center-user-profile.json`) canlı yapısını
 koruyarak uzlaştırılır: `firstName`, `lastName`, `email` kişi için salt
@@ -290,6 +299,23 @@ kendi kcadm oturumuyla tek başına koşar (`KEYCLOAK_RECONCILE_KCADM_CONFIG` +
 `KEYCLOAK_RECONCILE_ONLY=admin-panel-client`; tam uzlaştırma operatör oturumuyla koşmaz).
 Sunucuda sky_lab_genel'deki `ops/wizards/admin-panel-keycloak-sandbox-wizard.sh` koşar
 (runbook §16).
+
+Etkinlik siteleri (ARTLAB, YıldızJam, SkyDays) da canlıdaki inscribed'ın tenant'larıdır (ADR-0056
+eki, 2026-10-03). Site istemcilerini (`frontend-artlab`, `frontend-yildizjam`, `frontend-skydays`)
+idempotent `config/site-clients.sh` kurar; realm açıkça verilir (`KEYCLOAK_REALM=e-skylab` ya da
+`e-skylab-sandbox`; başkası ve boş değer girişten önce reddedilir). İstemciler gizli, PKCE `S256`,
+`fullScopeAllowed=false`, servis hesabı açık; dönüş adresi birebir
+`https://<site>/api/auth/callback/keycloak` (sandbox'ta `sandbox-<site>`), localhost yok; `aud`'a
+`skycms` ortak `skycms-audience` kapsamından, `core` site başına `frontend-<site>-core-audience`
+kapsamından gelir; tam yollu `groups`, `groups`'u başka biçimde yazan kapsam (ör.
+`microprofile-jwt`) yalnız bu istemciden ayrılır. Elle yapılmış `frontend-main` ve `frontend-arge`
+yalnız raporlanır. Ardından `inscribed-cms-roles.sh --client frontend-<site>` rolleri kurar (servis
+hesabına yalnız `content:read` + `schema:sync`) ve `config/site-editor-grants.sh` `cms:access`'i
+Privileged gruplara, sahip lab takımının ve etkinliğin organizasyon takımının
+(`/UYELER/ORGANIZASYON/<ETKİNLİK>`) `LIDERLER`/`KOORDINATORLER` gruplarına, `client:admin`'i
+yalnız `ADMIN`'e verir; kişiye vermez, hiçbir şeyi geri almaz. sky_lab_genel'deki
+`ops/wizards/site-cms-setup-wizard.sh` üçünü koşar, secret'ı OpenBao'ya taşır. Harness
+`tests/site-clients.sh` tek başına çalışır (runbook §18).
 
 `account-center` realm'in etkin tarayıcı akışını kullanır; böylece
 production'a özel parola, OTP ve passkey davranışı olduğu gibi geçerlidir ve
@@ -431,8 +457,17 @@ adımıyla (`theme/tests/integration/webauthn-passkey.spec.ts`,
 `tests/webauthn-page.mjs` üzerinden `http://localhost:18081`) sanal authenticator
 ile uçtan uca sınanır: seçenek → oluştur → kaydet → `GET identity`'de görünür →
 Keycloak'ın kendi giriş sayfasında o passkey ile giriş (RP ID uyumu) → passkey
-assertion ile sudo → yeniden oynatılan challenge, izinsiz origin ve gerileyen
-sayaç reddedilir.
+assertion ile sudo → yeniden oynatılan challenge, gerileyen sayaç, izinsiz
+origin'den assertion ve kayıt reddedilir. Ceremony iki kez koşar: önce her şey
+`localhost`'ta, sonra üretimdeki üst alan adı ilişkisiyle (K3b-t): passkey
+`http://my.yildizskylab.test:18081`'de kaydedilir, Keycloak'a
+`http://e.yildizskylab.test:18080`'den (yalnız bu koşuda realm frontend URL'si)
+girilir, RP ID `yildizskylab.test`'tir. Kardeş alt alan adı
+(`other.yildizskylab.test`) sunucuda, başka bir kayıtlı alan adındaki sayfa
+(`my.attacker.test`) tarayıcıda reddedilir. Bu adlar yalnız Chromium içinde
+`--host-resolver-rules` ile `127.0.0.1`'e çözülür ve güvenli bağlam sayılır
+(üretimde TLS var). Tek etiketli bir üst ad (`my.localtest` için RP ID
+`localtest`) olmaz: tarayıcı RP ID olarak yalnız kayıtlı bir alan adı kabul eder.
 
 ## Sistem e-postaları (SkyMail)
 

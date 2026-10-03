@@ -437,8 +437,17 @@ adımıyla (`theme/tests/integration/webauthn-passkey.spec.ts`,
 `tests/webauthn-page.mjs` üzerinden `http://localhost:18081`) sanal authenticator
 ile uçtan uca sınanır: seçenek → oluştur → kaydet → `GET identity`'de görünür →
 Keycloak'ın kendi giriş sayfasında o passkey ile giriş (RP ID uyumu) → passkey
-assertion ile sudo → yeniden oynatılan challenge, izinsiz origin ve gerileyen
-sayaç reddedilir.
+assertion ile sudo → yeniden oynatılan challenge, gerileyen sayaç, izinsiz
+origin'den assertion ve kayıt reddedilir. Ceremony iki kez koşar: önce her şey
+`localhost`'ta, sonra üretimdeki üst alan adı ilişkisiyle (K3b-t): passkey
+`http://my.yildizskylab.test:18081`'de kaydedilir, Keycloak'a
+`http://e.yildizskylab.test:18080`'den (yalnız bu koşuda realm frontend URL'si)
+girilir, RP ID `yildizskylab.test`'tir. Kardeş alt alan adı
+(`other.yildizskylab.test`) sunucuda, başka bir kayıtlı alan adındaki sayfa
+(`my.attacker.test`) tarayıcıda reddedilir. Bu adlar yalnız Chromium içinde
+`--host-resolver-rules` ile `127.0.0.1`'e çözülür ve güvenli bağlam sayılır
+(üretimde TLS var). Tek etiketli bir üst ad (`my.localtest` için RP ID
+`localtest`) olmaz: tarayıcı RP ID olarak yalnız kayıtlı bir alan adı kabul eder.
 
 ## Sistem e-postaları (SkyMail)
 

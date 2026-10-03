@@ -5,11 +5,23 @@ import { expect, test, type CDPSession, type Page, type Request } from "@playwri
 // End-to-end passkey (WebAuthn passwordless) ceremony against a real Keycloak: register a
 // passkey through the sky-account SPI from an allowed my.-like origin, see it in GET identity,
 // log in on Keycloak's own login page with it (proves RP-ID compatibility), sudo through a
-// passkey assertion, then prove the three refusals: a replayed challenge, a registration from
-// an origin the policy does not allow, and a signature-counter regression.
+// passkey assertion, then prove the refusals: a replayed challenge, a signature-counter
+// regression, an assertion and a registration from an origin the policy does not allow, and
+// (parent-domain run only) a page on another registrable domain that the browser itself stops.
+//
+// The harness runs this file twice. On localhost every party shares one host. The parent-domain
+// run reproduces production, where my.yildizskylab.com and e.yildizskylab.com share the RP ID
+// yildizskylab.com: the page is my.<parent>, Keycloak is e.<parent> (the realm frontend URL),
+// and the RP ID is <parent>. The parent is a two-label name under the reserved .test TLD:
+// browsers refuse a single-label RP ID such as "localtest" for my.localtest, because an RP ID
+// must be a registrable domain. Chromium resolves the test names to 127.0.0.1 through
+// --host-resolver-rules and treats them as secure contexts (production has TLS instead).
 
 type IntegrationConfig = {
+  /** Keycloak as the harness reaches it; every back-channel call (PAR, token, sky-account) uses it. */
   baseUrl: string;
+  /** Keycloak as the browser reaches it (the realm frontend URL); defaults to baseUrl. */
+  frontendUrl?: string;
   realm: string;
   callbackUrl: string;
   clientId: string;
@@ -18,6 +30,8 @@ type IntegrationConfig = {
   password: string;
   pageOrigin: string;
   disallowedOrigin: string;
+  /** A page on another registrable domain than the RP ID (parent-domain run only). */
+  foreignOrigin?: string;
   rpId: string;
   userId: string;
 };
@@ -28,11 +42,43 @@ if (configPath === undefined) {
 }
 const config = JSON.parse(readFileSync(configPath, "utf8")) as IntegrationConfig;
 const callback = new URL(config.callbackUrl);
+const frontendUrl = config.frontendUrl ?? config.baseUrl;
+const keycloakOrigin = new URL(frontendUrl).origin;
 const tokenUrl = `${config.baseUrl}/realms/${config.realm}/protocol/openid-connect/token`;
 const parUrl = `${config.baseUrl}/realms/${config.realm}/protocol/openid-connect/ext/par/request`;
-const authUrl = `${config.baseUrl}/realms/${config.realm}/protocol/openid-connect/auth`;
+const authUrl = `${frontendUrl}/realms/${config.realm}/protocol/openid-connect/auth`;
 const api = `${config.baseUrl}/realms/${config.realm}/sky-account/v1`;
 let requestSequence = 0;
+
+// Every origin the browser opens that is not localhost: resolved to 127.0.0.1 (where Keycloak
+// and the page server listen) and treated as a secure context, so the only rule left to refuse
+// anything is WebAuthn's own RP ID check. The RP ID itself does not resolve: no related-origins
+// list (/.well-known/webauthn) can vouch for the foreign page, so its refusal is deterministic.
+// chrome-headless-shell ignores --unsafely-treat-insecure-origin-as-secure, so these runs use
+// Chromium's new headless mode.
+const testHosts = [
+  ...new Set(
+    [frontendUrl, config.pageOrigin, config.disallowedOrigin, config.foreignOrigin]
+      .filter((origin): origin is string => origin !== undefined)
+      .map(origin => new URL(origin))
+      .filter(url => url.hostname !== "localhost")
+      .map(url => url.hostname)
+  )
+];
+if (testHosts.length > 0) {
+  const secureOrigins = [frontendUrl, config.pageOrigin, config.disallowedOrigin, config.foreignOrigin]
+    .filter((origin): origin is string => origin !== undefined)
+    .map(origin => new URL(origin).origin);
+  test.use({
+    channel: "chromium",
+    launchOptions: {
+      args: [
+        `--host-resolver-rules=${[...testHosts.map(host => `MAP ${host} 127.0.0.1`), `MAP ${config.rpId} ~NOTFOUND`].join(", ")}`,
+        `--unsafely-treat-insecure-origin-as-secure=${[...new Set(secureOrigins)].join(",")}`
+      ]
+    }
+  });
+}
 
 function base64UrlEncode(bytes: Buffer | Uint8Array): string {
   return Buffer.from(bytes).toString("base64url");
@@ -61,6 +107,27 @@ function waitForCallbackRequest(page: Page): Promise<string> {
       }
       page.off("request", onRequest);
       resolve(request.url());
+    };
+    page.on("request", onRequest);
+  });
+}
+
+/** The first login form post that carries a WebAuthn assertion, with its decoded clientDataJSON. */
+function waitForAssertionPost(page: Page): Promise<{ url: string; clientData: Record<string, unknown> }> {
+  return new Promise(resolve => {
+    const onRequest = (request: Request) => {
+      if (request.method() !== "POST") {
+        return;
+      }
+      const clientDataJSON = new URLSearchParams(request.postData() ?? "").get("clientDataJSON");
+      if (!clientDataJSON) {
+        return;
+      }
+      page.off("request", onRequest);
+      resolve({
+        url: request.url(),
+        clientData: JSON.parse(Buffer.from(clientDataJSON, "base64").toString("utf8")) as Record<string, unknown>
+      });
     };
     page.on("request", onRequest);
   });
@@ -179,8 +246,19 @@ async function passwordSudo(accessToken: string): Promise<string> {
   return result.body.sudoToken as string;
 }
 
-test("passkey registration, Keycloak login, sudo and the required refusals", async ({ browser }) => {
+test(`passkey registration, Keycloak login, sudo and the required refusals (rpId ${config.rpId})`, async ({ browser }) => {
   test.setTimeout(300_000);
+  // The page and Keycloak both sit at or under the RP ID. The parent-domain run must keep them
+  // two distinct subdomains of it, or it would silently fall back to the one-host case.
+  const pageHost = new URL(config.pageOrigin).hostname;
+  const keycloakHost = new URL(keycloakOrigin).hostname;
+  for (const host of [pageHost, keycloakHost]) {
+    expect(host === config.rpId || host.endsWith(`.${config.rpId}`), `${host} is not under ${config.rpId}`).toBe(true);
+  }
+  if (config.foreignOrigin !== undefined) {
+    expect(pageHost).not.toBe(keycloakHost);
+    expect([pageHost, keycloakHost]).not.toContain(config.rpId);
+  }
   const context = await browser.newContext();
   const page = await context.newPage();
   const cdp = await context.newCDPSession(page);
@@ -222,6 +300,10 @@ test("passkey registration, Keycloak login, sudo and the required refusals", asy
     expect(registered.body.type).toBe("webauthn-passwordless");
     expect(registered.body.label).toBe("CI virtual passkey");
     expect(Array.isArray(registered.body.transports)).toBe(true);
+    // The authenticator scoped the new passkey to the RP ID, not to the page's own host: on the
+    // parent-domain run that is the parent, which is what lets e.<parent> use it below.
+    const { credentials } = await cdp.send("WebAuthn.getCredentials", { authenticatorId });
+    expect(credentials.map(stored => stored.rpId)).toEqual([config.rpId]);
   });
 
   await test.step("the new passkey appears in GET identity", async () => {
@@ -240,6 +322,7 @@ test("passkey registration, Keycloak login, sudo and the required refusals", asy
     const credentialAsserted = new Promise<{ authenticatorId: string }>(resolve =>
       cdp.once("WebAuthn.credentialAsserted", payload => resolve(payload as { authenticatorId: string }))
     );
+    const assertionPosted = waitForAssertionPost(page);
     const authorization = await parAuthorizationUrl();
     await page.goto(authorization.url);
     // Keycloak's conditional (autofill) ceremony discovers the resident passkey by itself on a
@@ -259,6 +342,13 @@ test("passkey registration, Keycloak login, sudo and the required refusals", asy
     const callbackUrl = await withTimeout(callbackReached, "Keycloak's passkey login did not reach the callback");
     expect(asserted.authenticatorId).toBe(authenticatorId);
     expect(new URL(callbackUrl).searchParams.get("code")).toBeTruthy();
+    // The assertion Keycloak accepted was made on Keycloak's own origin (e.<parent> on the
+    // parent-domain run) for a passkey registered on the page origin (my.<parent>).
+    const posted = await withTimeout(assertionPosted, "Keycloak's login page did not post a passkey assertion");
+    expect(new URL(posted.url).origin).toBe(keycloakOrigin);
+    expect(posted.clientData.type).toBe("webauthn.get");
+    expect(posted.clientData.origin).toBe(keycloakOrigin);
+    expect(posted.clientData.origin).not.toBe(new URL(config.pageOrigin).origin);
     await page.goto("about:blank", { waitUntil: "commit" });
   });
 
@@ -294,6 +384,62 @@ test("passkey registration, Keycloak login, sudo and the required refusals", asy
     expect(refused.status, JSON.stringify(refused.body)).toBe(401);
     expect(refused.body.code).toBe("webauthn_invalid");
   });
+
+  await test.step("refuse an assertion made on an origin the policy does not allow", async () => {
+    const options = await sky("POST", "sudo/webauthn/options", { bearer: accessToken });
+    expect(options.status).toBe(200);
+    // Same RP ID, so the browser signs (on the parent-domain run this is a sibling subdomain
+    // such as other.<parent>); only the server's origin list can refuse it.
+    await page.goto(`${config.disallowedOrigin}/`);
+    const assertion = await page.evaluate(
+      opts => (window as unknown as { skyAuthenticate: (o: unknown) => Promise<unknown> }).skyAuthenticate(opts),
+      options.body
+    );
+    const refused = await sky("POST", "sudo/webauthn/verify", { bearer: accessToken, json: assertion });
+    expect(refused.status, JSON.stringify(refused.body)).toBe(401);
+    expect(refused.body.code).toBe("webauthn_origin_not_allowed");
+  });
+
+  if (config.foreignOrigin !== undefined) {
+    const foreignOrigin = config.foreignOrigin;
+    await test.step("a page on another registrable domain cannot use or create the passkey", async () => {
+      const before = await cdp.send("WebAuthn.getCredentials", { authenticatorId });
+      await page.goto(`${foreignOrigin}/`);
+      // A secure context like the allowed pages, so what refuses below is the RP ID rule alone.
+      expect(await page.evaluate(() => window.isSecureContext)).toBe(true);
+
+      const assertionOptions = await sky("POST", "sudo/webauthn/options", { bearer: accessToken });
+      expect(assertionOptions.status).toBe(200);
+      const asserted = await page.evaluate(async opts => {
+        try {
+          await (window as unknown as { skyAuthenticate: (o: unknown) => Promise<unknown> }).skyAuthenticate(opts);
+          return "asserted";
+        } catch (error) {
+          return `${(error as Error).name}: ${(error as Error).message}`;
+        }
+      }, assertionOptions.body);
+      expect(asserted).toMatch(/^SecurityError: /);
+
+      const sudo = await passwordSudo(accessToken);
+      const creationOptions = await sky("POST", "credentials/webauthn/options", { bearer: accessToken, sudo });
+      expect(creationOptions.status).toBe(200);
+      const created = await page.evaluate(async opts => {
+        try {
+          await (window as unknown as { skyRegister: (o: unknown) => Promise<unknown> }).skyRegister(opts);
+          return "created";
+        } catch (error) {
+          return `${(error as Error).name}: ${(error as Error).message}`;
+        }
+      }, { ...creationOptions.body, excludeCredentials: [] });
+      expect(created).toMatch(/^SecurityError: /);
+
+      // Nothing was signed or stored: same credentials, same signature counters.
+      const after = await cdp.send("WebAuthn.getCredentials", { authenticatorId });
+      const summary = (list: typeof before) =>
+        list.credentials.map(stored => `${stored.credentialId}:${stored.rpId}:${stored.signCount}`).sort();
+      expect(summary(after)).toEqual(summary(before));
+    });
+  }
 
   await test.step("refuse a registration attested on an origin the policy does not allow", async () => {
     const sudo = await passwordSudo(accessToken);

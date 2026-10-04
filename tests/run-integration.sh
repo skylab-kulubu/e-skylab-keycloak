@@ -72,6 +72,12 @@ source "$SCRIPT_DIR/login-client-audiences.sh"
 # The admin panel's narrowed token and Standard Token Exchange (ADR-0058); stages called below.
 # shellcheck source=admin-panel-client.sh
 source "$SCRIPT_DIR/admin-panel-client.sh"
+# Group overage: the SPI's sky-group-overage-mapper (ADR-0059); stage called below.
+# shellcheck source=group-overage-mapper.sh
+source "$SCRIPT_DIR/group-overage-mapper.sh"
+# core's per-resource client roles and their one-time seeding (ADR-0059); stages called below.
+# shellcheck source=core-roles.sh
+source "$SCRIPT_DIR/core-roles.sh"
 # The realm's user and admin event retention (account erasure ticket 09); stages called below.
 # shellcheck source=event-retention.sh
 source "$SCRIPT_DIR/event-retention.sh"
@@ -626,7 +632,8 @@ stage_v2_identity_guardrails() {
   if grep -Fq 'would create client role certificate:issue' <<<"$output"; then
     fail 'identity guardrails dry run planned an existing certificate role'
   fi
-  [[ $(kcadm get "clients/$core_uuid/roles" -r "$V2_REALM" -c | jq '[.[] | select(.name | startswith("certificate:"))] | length') == 1 ]] \
+  # certificate:manage is core's resource role (tests/core-roles.sh), not one of the guardrails' four.
+  [[ $(kcadm get "clients/$core_uuid/roles" -r "$V2_REALM" -c | jq '[.[] | select((.name | startswith("certificate:")) and .name != "certificate:manage")] | length') == 1 ]] \
     || fail 'identity guardrails dry run created a role'
   [[ $(kcadm get "identity-provider/instances/OBS/mappers/$department_id" -r "$V2_REALM" -c | jq -r .config.syncMode) == INHERIT ]] \
     || fail 'identity guardrails dry run changed the department mapper'
@@ -638,7 +645,7 @@ stage_v2_identity_guardrails() {
   grep -Fq 'applied 5 change(s)' <<<"$output" \
     || { printf '%s\n' "$output" >&2; fail 'identity guardrails apply did not perform the five planned changes'; }
   json_assert "$(kcadm get "clients/$core_uuid/roles" -r "$V2_REALM" -c)" \
-    '([.[] | select(.name | startswith("certificate:")) | .name] | sort) == ["certificate:binding:manage","certificate:issue","certificate:revoke","certificate:template:manage"] and ([.[] | select(.name | startswith("certificate:")) | .description // ""] | unique) == [""]' \
+    '[.[] | select((.name | startswith("certificate:")) and .name != "certificate:manage")] as $team | ([$team[].name] | sort) == ["certificate:binding:manage","certificate:issue","certificate:revoke","certificate:template:manage"] and ([$team[].description // ""] | unique) == [""]' \
     'core does not hold exactly the four certificate roles without descriptions, the way core created them'
   json_assert "$(kcadm get "identity-provider/instances/OBS/mappers/$department_id" -r "$V2_REALM" -c)" \
     '.name == "department mapper" and .identityProviderMapper == "microsoft-department-mapper" and .config == {"syncMode": "FORCE"}' \
@@ -737,6 +744,7 @@ v2_state_snapshot() {
     done
     lca_state_snapshot
     ap_state_snapshot
+    cr_state_snapshot
     kcadm get authentication/flows -r "$V2_REALM" -c
   } | jq -S -c '.'
 }
@@ -1291,6 +1299,7 @@ stage_reset_choose_user_after_first_reconciliation "$reset_flow_before"
 stage_v2_after_first_reconciliation
 stage_login_audiences_after_first_reconciliation
 stage_admin_panel_after_first_reconciliation
+stage_core_roles_after_first_reconciliation
 stage_event_retention_after_first_reconciliation
 
 # Inject drift before the second pass. Reconciliation must repair the existing
@@ -1632,6 +1641,8 @@ ERASURE_COMPOSE_FILE="$COMPOSE_FILE" \
 # After core-erasure-client.sh made forms and skycms: the admin panel's token and token exchange,
 # before the no-op reconciliation so that run proves the step writes nothing more.
 stage_admin_panel_tokens
+# The operator seeds core's resource roles; the no-op reconciliation after it must leave them.
+stage_core_roles_seeded_by_operator
 
 stage_v2_reconcile_noop
 stage_event_retention_after_noop_reconciliation
@@ -1654,6 +1665,8 @@ EVENT_PII_COMPOSE_FILE="$COMPOSE_FILE" \
   EVENT_PII_ADMIN_CONFIG="$ADMIN_CONFIG" \
   EVENT_PII_SOURCE_REALM="$V2_REALM" \
   "$SCRIPT_DIR/erasure-event-pii.sh"
+
+stage_group_overage_mapper
 
 CURRENT_STAGE='minimal openid PAR contract'
 discovery=$(curl --fail --silent --show-error \

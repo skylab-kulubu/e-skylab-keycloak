@@ -64,6 +64,15 @@ Only the two original brand image assets were carried forward.
   theme lacks it.
 - Every visible string comes from `src/login/i18n.ts` (Turkish first, English
   second); the Turkish keys that Keycloakify's default set lacks live there.
+- The translations are one object literal written inside
+  `withCustomTranslations(...)`: `keycloakify build` evaluates that argument on
+  its own to write `messages_*.properties`, the only copy Keycloak reads for
+  what it renders on the server (page-wide notices such as the reset e-mail
+  confirmation, field errors, info pages, the password policy sentences that
+  Account Center shows). A variable, import or spread there is dropped with a
+  warning. `i18n.test.ts` reads the file the way the build does, and
+  `tests/check-theme-contract.sh` runs `scripts/check-message-bundles.mjs`
+  against the built JAR.
 - The custom template owns the semantic main/content-info landmarks, the skip
   link, the plain-link language menu, the document title (page heading plus
   " · SKY LAB"), visible focus treatment, WCAG AA contrast including the blue

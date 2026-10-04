@@ -349,7 +349,9 @@ idempotent `config/site-clients.sh` kurar; realm açıkça verilir (`KEYCLOAK_RE
 `skycms` ortak `skycms-audience` kapsamından, `core` site başına `frontend-<site>-core-audience`
 kapsamından gelir; tam yollu `groups`, `groups`'u başka biçimde yazan kapsam (ör.
 `microprofile-jwt`) yalnız bu istemciden ayrılır. Elle yapılmış `frontend-main` ve `frontend-arge`
-yalnız raporlanır. Ardından `inscribed-cms-roles.sh --client frontend-<site>` rolleri kurar (servis
+yalnız raporlanır; tek istisna ana sitenin sandbox'ı: `--site main` yalnız `e-skylab-sandbox`'ta
+`frontend-main`'i aynı biçimde `https://sandbox.yildizskylab.com` için kurar (production'da reddedilir).
+Ardından `inscribed-cms-roles.sh --client frontend-<site>` rolleri kurar (servis
 hesabına yalnız `content:read` + `schema:sync`) ve `config/site-editor-grants.sh` `cms:access`'i
 Privileged gruplara, sahip lab takımının ve etkinliğin organizasyon takımının
 (`/UYELER/ORGANIZASYON/<ETKİNLİK>`) `LIDERLER`/`KOORDINATORLER` gruplarına, `client:admin`'i

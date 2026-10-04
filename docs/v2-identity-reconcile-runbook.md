@@ -1609,6 +1609,21 @@ Operatör: sky_lab_genel'deki `ops/wizards/site-cms-setup-wizard.sh --site <site
 OpenBao'ya taşır, inscribed tenant'ını, Dokploy ortamını ve deploy hook'unu kurar. İmaj yayını
 gerekmez: betikler imaja girmeden kullanılır.
 
+**Ana sitenin sandbox'ı (`--site main`, 2026-10-04).** Production'daki `frontend-main` elle yapılmıştır
+ve yalnız raporlanır; sandbox realm'inde ise yoktu. `site-clients.sh --site main` ve
+`site-editor-grants.sh --site main` yalnız `KEYCLOAK_REALM=e-skylab-sandbox` ile çalışır; `e-skylab`'da
+girişten önce `refusing --site main …` ile 2 döner. `--site main` varsayılana girmez, açıkça verilir.
+İstemci etkinlik sitelerininkiyle aynı biçimdedir (PKCE `S256`, `fullScopeAllowed=false`, ortak
+`skycms-audience`, `frontend-main-core-audience` (uzlaştırıcının adı ve biçimi), tam yollu `groups`);
+köken `https://sandbox.yildizskylab.com` (sitenin kodu `sandbox.` ve `sandbox-` ile başlayan
+`NEXTAUTH_URL`'yi sandbox sayar ve arama motorlarına kapatır), redirect birebir
+`https://sandbox.yildizskylab.com/api/auth/callback/keycloak`. Rolleri `inscribed-cms-roles.sh --client
+frontend-main` kurar (servis hesabı yalnız `content:read` + `schema:sync`); editörleri yalnız
+Privileged gruplardır (takım yok; `--team main=/YOL` eklenebilir), `client:admin` yalnız `ADMIN`'e.
+Harness bunu da dener: production reddi, istemcinin biçimi, ADMIN üyesinin token'ında `cms:access` +
+`client:admin`, düz üyede CMS rolü olmadığı, servis hesabının salt okuma kaldığı, ikinci koşunun
+yazmadığı. Operatör: `ops/wizards/site-cms-setup-wizard.sh --site main --sandbox`.
+
 ## 19. core'un kaynak rolleri ve Privileged gruplara bir kez verilmesi (ADR-0059)
 
 core bugün etkinlik, bilet, sertifika, kullanıcı, grup gibi işlerde "kişi `ADMIN`, `YK` ya da `DK`

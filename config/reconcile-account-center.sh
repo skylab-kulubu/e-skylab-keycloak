@@ -79,9 +79,9 @@ EVENT_RETENTION_SETTINGS="{\"eventsEnabled\":true,\"eventsExpiration\":$EVENT_RE
 ADMIN_EVENTS_EXPIRATION_ATTRIBUTE=adminEventsExpiration
 ACCOUNT_ROLE_ALLOWLIST=(manage-account view-profile manage-account-links)
 case $RECONCILE_ONLY in
-  '' | admin-panel-client | core-roles) ;;
+  '' | admin-panel-client | core-roles | media-attach) ;;
   *)
-    printf 'KEYCLOAK_RECONCILE_ONLY must be empty, admin-panel-client or core-roles, not %s\n' "$RECONCILE_ONLY" >&2
+    printf 'KEYCLOAK_RECONCILE_ONLY must be empty, admin-panel-client, core-roles or media-attach, not %s\n' "$RECONCILE_ONLY" >&2
     exit 2
     ;;
 esac
@@ -1344,6 +1344,193 @@ reconcile_core_roles() {
   done
 }
 
+# core's service attach role (media redesign ticket 03, ADR-0052; anonymous-form-uploads ticket 03):
+# POST/DELETE /v1/media/{id}/attachments on core accept only a client-credentials token whose azp
+# and client_id are a client listed in core's MEDIA_SERVICE_CLIENTS and whose
+# resource_access.core.roles holds media:attach; aud must contain core. The role is a client role
+# of core that only the listed products' service accounts hold: never a person, a group or a
+# default role (core refuses a person's token anyway: it has no client_id).
+#
+# Every run creates the role when it is missing (manage-clients) and, for a listed client whose
+# fullScopeAllowed is false, maps the role in the client's role scope, or it never reaches the
+# token. Granting it to the service account needs user permissions the reconciler identity
+# deliberately lacks (as for core-roles), so an operator runs this step alone with their own kcadm
+# session (KEYCLOAK_RECONCILE_ONLY=media-attach, runbook §20). The operator step reads everything
+# first and writes only when every read succeeded; a failed read is never taken for "absent". It
+# then grants the role to each listed service account that lacks it, records on the role (attribute
+# MEDIA_ATTACH_GRANT_ATTRIBUTE) when and to which service accounts, and reports, never removes, any
+# other holder: a user, a group or the realm's default role. aud core is not added here: Keycloak's
+# audience resolve mapper (default scope roles) puts core in aud once resource_access.core is in the
+# token; the step verifies that scope instead of adding a second audience mapper.
+MEDIA_ATTACH_ROLE=media:attach
+MEDIA_ATTACH_DESCRIPTION="Service attach API (media redesign ticket 03, ADR-0052): a product's service account links Media to its own records. Service accounts only; never a person or a group."
+# The clients whose service account holds the role. Keep it in step with core's
+# MEDIA_SERVICE_CLIENTS (product:client pairs; unset it is forms:forms): a CMS client is added in
+# both places together, once its service account exists.
+MEDIA_ATTACH_CLIENTS=(forms)
+MEDIA_ATTACH_GRANT_ATTRIBUTE=skylab.granted-service-accounts
+MEDIA_ATTACH_OPERATOR_STEP='run this step alone with an operator session: KEYCLOAK_RECONCILE_ONLY=media-attach (runbook §20)'
+
+# media_attach_read WHAT ARGS...: a kcadm read for the media-attach step; a failure names WHAT and
+# stops the step before it writes anything.
+media_attach_read() {
+  local what=$1 result
+  shift
+  if ! result=$(kcadm get "$@" -r "$TARGET_REALM" --format csv --noquotes); then
+    printf '%s could not be read in realm %s; nothing was granted\n' "$what" "$TARGET_REALM" >&2
+    return 1
+  fi
+  tr -d '\r' <<<"$result" | sed '/^$/d'
+}
+
+reconcile_media_attach() {
+  local core_uuid role_id roles_file marker='' marker_accounts='' role_name value client client_uuid flags
+  local sa_line sa_id sa_name full_scope scopes mapped held state stderr_file
+  local users groups defaults others='' account accounts stamp label marks line
+  local operator=false
+  local plan=()
+  [[ -z $OPERATOR_KCADM_CONFIG ]] || operator=true
+  if ! core_uuid=$(optional_lookup client_id_by_client_id "$CORE_CLIENT_ID"); then
+    return 2
+  fi
+  if [[ -z $core_uuid ]]; then
+    warn "client $CORE_CLIENT_ID does not exist in realm $TARGET_REALM; skipped $MEDIA_ATTACH_ROLE"
+    return 0
+  fi
+  label="client role $MEDIA_ATTACH_ROLE of $CORE_CLIENT_ID"
+  if ! role_id=$(optional_lookup client_role_id_by_name "$core_uuid" "$MEDIA_ATTACH_ROLE"); then
+    return 2
+  fi
+  if [[ -z $role_id ]]; then
+    kcadm_quiet create "clients/$core_uuid/roles" -r "$TARGET_REALM" \
+      -s "name=$MEDIA_ATTACH_ROLE" -s "description=$MEDIA_ATTACH_DESCRIPTION"
+    role_id=$(client_role_id_by_name "$core_uuid" "$MEDIA_ATTACH_ROLE")
+    log "$label: created"
+  else
+    log "$label: unchanged"
+  fi
+  roles_file=$(mktemp "$WORK_DIR/media-attach-roles.XXXXXX")
+  kcadm_json "clients/$core_uuid/roles" -r "$TARGET_REALM" -q briefRepresentation=false >"$roles_file"
+  # Into a variable first: a failure inside a process substitution would pass as "no record".
+  marks=$(json_tool role-attribute "$MEDIA_ATTACH_GRANT_ATTRIBUTE" <"$roles_file")
+  while IFS=$'\t' read -r role_name value; do
+    [[ $role_name == "$MEDIA_ATTACH_ROLE" ]] && marker=$value
+  done <<<"$marks"
+  # "<timestamp> <service account>,<service account>"
+  [[ -z $marker ]] || marker_accounts=${marker#* }
+
+  # Reads: one plan line per listed client that has a service account.
+  for client in "${MEDIA_ATTACH_CLIENTS[@]}"; do
+    if ! client_uuid=$(optional_lookup client_id_by_client_id "$client"); then
+      return 2
+    fi
+    if [[ -z $client_uuid ]]; then
+      warn "client $client does not exist in realm $TARGET_REALM; $MEDIA_ATTACH_ROLE is not granted to its service account"
+      continue
+    fi
+    flags=$(media_attach_read "Client $client" "clients/$client_uuid" --fields serviceAccountsEnabled,fullScopeAllowed)
+    if [[ ${flags%%,*} != true ]]; then
+      warn "client $client has no service account (serviceAccountsEnabled=${flags%%,*}); $MEDIA_ATTACH_ROLE is not granted and nothing was changed on the client"
+      continue
+    fi
+    full_scope=${flags#*,}
+    scopes=$(media_attach_read "The default client scopes of $client" "clients/$client_uuid/default-client-scopes" --fields name)
+    if grep -Fxq roles <<<"$scopes"; then
+      log "default client scope roles of $client: verified (it puts resource_access and, through audience resolve, aud $CORE_CLIENT_ID in the token)"
+    else
+      warn "client $client has no default client scope roles: its token carries neither resource_access.$CORE_CLIENT_ID nor aud $CORE_CLIENT_ID; nothing was changed on the client, add roles back to its default client scopes"
+    fi
+    mapped=-
+    if [[ $full_scope == false ]]; then
+      mapped=$(media_attach_read "The role scope of $client" "clients/$client_uuid/scope-mappings/clients/$core_uuid" --fields name)
+      if grep -Fxq -- "$MEDIA_ATTACH_ROLE" <<<"$mapped"; then mapped=yes; else mapped=no; fi
+    fi
+    sa_line=$(media_attach_read "The service account of $client" "clients/$client_uuid/service-account-user" --fields id,username)
+    sa_id=${sa_line%%,*}
+    sa_name=${sa_line#*,}
+    if [[ -z $sa_id || -z $sa_name || $sa_line != *,* || $sa_line == *$'\n'* ]]; then
+      printf 'The service account of %s could not be resolved in realm %s; nothing was granted\n' "$client" "$TARGET_REALM" >&2
+      return 1
+    fi
+    stderr_file=$(mktemp "$WORK_DIR/stderr.XXXXXX")
+    if held=$(kcadm get "users/$sa_id/role-mappings/clients/$core_uuid/composite" -r "$TARGET_REALM" \
+      --fields name --format csv --noquotes 2>"$stderr_file"); then
+      if grep -Fxq -- "$MEDIA_ATTACH_ROLE" <<<"$(tr -d '\r' <<<"$held")"; then state=held; else state=missing; fi
+    elif [[ $operator == true ]]; then
+      cat "$stderr_file" >&2
+      printf 'The %s roles of %s could not be read in realm %s; nothing was granted\n' "$CORE_CLIENT_ID" "$sa_name" "$TARGET_REALM" >&2
+      return 1
+    else
+      # The reconciler identity has no user permissions: expected, the operator step checks.
+      state=unreadable
+    fi
+    plan+=("$client|$client_uuid|$full_scope|$mapped|$sa_id|$sa_name|$state")
+  done
+
+  if [[ $operator == true ]]; then
+    users=$(media_attach_read "The users holding $MEDIA_ATTACH_ROLE" "clients/$core_uuid/roles/$MEDIA_ATTACH_ROLE/users" --fields username)
+    groups=$(media_attach_read "The groups holding $MEDIA_ATTACH_ROLE" "clients/$core_uuid/roles/$MEDIA_ATTACH_ROLE/groups" --fields path)
+    defaults=$(media_attach_read "The default role default-roles-${TARGET_REALM,,}" "roles/default-roles-${TARGET_REALM,,}/composites/clients/$core_uuid" --fields name)
+  fi
+
+  # Writes.
+  accounts=''
+  for line in ${plan[@]+"${plan[@]}"}; do
+    IFS='|' read -r client client_uuid full_scope mapped sa_id sa_name state <<<"$line"
+    case $mapped in
+      -) log "role scope of $client: unchanged (full scope: the roles of its service account reach its token)" ;;
+      yes) log "role scope of $client: unchanged ($CORE_CLIENT_ID/$MEDIA_ATTACH_ROLE is mapped)" ;;
+      no)
+        kcadm_quiet create "clients/$client_uuid/scope-mappings/clients/$core_uuid" -r "$TARGET_REALM" \
+          -b "[$(role_reference "$role_id" "$MEDIA_ATTACH_ROLE")]"
+        log "role scope of $client: updated (+$CORE_CLIENT_ID/$MEDIA_ATTACH_ROLE; fullScopeAllowed is false)"
+        ;;
+    esac
+    case $state in
+      held)
+        log "service account $sa_name: $MEDIA_ATTACH_ROLE unchanged (held)"
+        accounts+=",$sa_name"
+        ;;
+      missing)
+        if [[ $operator == true ]]; then
+          kcadm_quiet create "users/$sa_id/role-mappings/clients/$core_uuid" -r "$TARGET_REALM" \
+            -b "[$(role_reference "$role_id" "$MEDIA_ATTACH_ROLE")]"
+          log "service account $sa_name: $MEDIA_ATTACH_ROLE granted"
+          accounts+=",$sa_name"
+        else
+          warn "service account $sa_name lacks $MEDIA_ATTACH_ROLE; $MEDIA_ATTACH_OPERATOR_STEP"
+        fi
+        ;;
+      unreadable)
+        if [[ ,$marker_accounts, == *",$sa_name,"* ]]; then
+          log "service account $sa_name: $MEDIA_ATTACH_ROLE unchanged (granted by the operator step at ${marker%% *}; the reconciler identity cannot read service-account roles, the operator step re-checks them)"
+        else
+          warn "$MEDIA_ATTACH_ROLE is not yet granted to service account $sa_name by the operator step (the reconciler identity cannot read or grant service-account roles); $MEDIA_ATTACH_OPERATOR_STEP"
+        fi
+        ;;
+    esac
+  done
+  [[ $operator == true ]] || return 0
+
+  accounts=$(tr ',' '\n' <<<"${accounts#,}" | sed '/^$/d' | sort | paste -sd, -)
+  if [[ -n $accounts && $accounts != "$marker_accounts" ]]; then
+    stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    kcadm_quiet update "clients/$core_uuid/roles/$MEDIA_ATTACH_ROLE" -r "$TARGET_REALM" \
+      -s "attributes.\"$MEDIA_ATTACH_GRANT_ATTRIBUTE\"=[\"$stamp $accounts\"]"
+    log "$label: grant recorded ($MEDIA_ATTACH_GRANT_ATTRIBUTE=$stamp $accounts)"
+  fi
+  while IFS= read -r account; do
+    [[ -n $account && ,$accounts, != *",$account,"* ]] || continue
+    others+=", $account"
+  done <<<"$users"
+  [[ -z $others ]] \
+    || warn "$MEDIA_ATTACH_ROLE is also held by the users ${others#, } (nothing was removed; it is for the service accounts of ${MEDIA_ATTACH_CLIENTS[*]} only, remove it in the Admin Console)"
+  [[ -z $groups ]] \
+    || warn "$MEDIA_ATTACH_ROLE is held by the groups $(paste -sd, - <<<"$groups") (nothing was removed; every member holds it, remove it in the Admin Console)"
+  ! grep -Fxq -- "$MEDIA_ATTACH_ROLE" <<<"$defaults" \
+    || warn "$MEDIA_ATTACH_ROLE is in the default role default-roles-${TARGET_REALM,,} (nothing was removed; every user holds it, remove it in the Admin Console)"
+}
+
 # The keycloak-mailer service-account client (K5) is provisioned by the operator with
 # create-mailer-client.sh because assigning its SkyMail roles needs user permissions the
 # reconciler identity deliberately lacks. Here the client is verified only: a missing client
@@ -1508,6 +1695,11 @@ if [[ $RECONCILE_ONLY == core-roles ]]; then
   printf 'Core resource roles are reconciled.\n'
   exit 0
 fi
+if [[ $RECONCILE_ONLY == media-attach ]]; then
+  reconcile_media_attach
+  printf 'Media attach role is reconciled.\n'
+  exit 0
+fi
 
 reconcile_realm_settings
 reconcile_brute_force_and_password_policy
@@ -1543,6 +1735,8 @@ verify_mailer_client
 verify_erasure_client
 # Before the admin panel's step, so that a core role created here enters its scope in this run.
 reconcile_core_roles
+# Also before the admin panel's step: a media:attach created here enters its scope in this run.
+reconcile_media_attach
 # Last: a public admin panel client stops the run, and every other step is done by then; core and
 # forms roles made by earlier steps are already in place to enter the panel's scope.
 reconcile_admin_panel_client

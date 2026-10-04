@@ -78,6 +78,9 @@ source "$SCRIPT_DIR/group-overage-mapper.sh"
 # core's per-resource client roles and their one-time seeding (ADR-0059); stages called below.
 # shellcheck source=core-roles.sh
 source "$SCRIPT_DIR/core-roles.sh"
+# core's service attach role media:attach on the forms service account; stages called below.
+# shellcheck source=media-attach.sh
+source "$SCRIPT_DIR/media-attach.sh"
 # The realm's user and admin event retention (account erasure ticket 09); stages called below.
 # shellcheck source=event-retention.sh
 source "$SCRIPT_DIR/event-retention.sh"
@@ -745,6 +748,7 @@ v2_state_snapshot() {
     lca_state_snapshot
     ap_state_snapshot
     cr_state_snapshot
+    ma_state_snapshot
     kcadm get authentication/flows -r "$V2_REALM" -c
   } | jq -S -c '.'
 }
@@ -1300,6 +1304,7 @@ stage_v2_after_first_reconciliation
 stage_login_audiences_after_first_reconciliation
 stage_admin_panel_after_first_reconciliation
 stage_core_roles_after_first_reconciliation
+stage_media_attach_after_first_reconciliation
 stage_event_retention_after_first_reconciliation
 
 # Inject drift before the second pass. Reconciliation must repair the existing
@@ -1643,6 +1648,9 @@ ERASURE_COMPOSE_FILE="$COMPOSE_FILE" \
 stage_admin_panel_tokens
 # The operator seeds core's resource roles; the no-op reconciliation after it must leave them.
 stage_core_roles_seeded_by_operator
+# The operator grants media:attach to the forms service account (forms exists since
+# core-erasure-client.sh); the no-op reconciliation after it must only verify.
+stage_media_attach_granted_by_operator
 
 stage_v2_reconcile_noop
 stage_event_retention_after_noop_reconciliation

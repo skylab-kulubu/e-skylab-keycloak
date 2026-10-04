@@ -92,12 +92,51 @@
     },
     {
       "clientId": "admin",
-      "name": "SKY LAB superadmin (fixture)",
+      "name": "SKY LAB admin panel (fixture)",
       "enabled": true,
       "protocol": "openid-connect",
-      "publicClient": true,
-      "standardFlowEnabled": false,
-      "directAccessGrantsEnabled": true
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "rootUrl": "https://admin.yildizskylab.com",
+      "redirectUris": [
+        "https://admin.yildizskylab.com/api/auth/callback"
+      ],
+      "protocolMappers": [
+        {
+          "name": "inscribed-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-client-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "usermodel.clientRoleMapping.clientId": "admin",
+            "usermodel.clientRoleMapping.rolePrefix": "",
+            "claim.name": "roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "groups",
+            "full.path": "true",
+            "multivalued": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
     }
   ],
   "roles": {
@@ -120,6 +159,15 @@
           "name": "skymail:access",
           "description": "fixture SkyMail role; skymail:mails:send is created by the harness after the first reconciliation"
         }
+      ],
+      "admin": [
+        {
+          "name": "content:read",
+          "description": "fixture admin panel role (inscribed reads it from the flat roles claim)"
+        },
+        {
+          "name": "content:write"
+        }
       ]
     }
   },
@@ -129,6 +177,14 @@
       "subGroups": [
         {
           "name": "handoff-admin-subgroup-fixture"
+        }
+      ]
+    },
+    {
+      "name": "UYELER",
+      "subGroups": [
+        {
+          "name": "YK"
         }
       ]
     }
@@ -211,6 +267,39 @@
         {
           "type": "password",
           "value": "audience-fixture-password-change-me",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "id": "66666666-6666-4666-8666-666666666666",
+      "username": "admin-panel-fixture",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Admin",
+      "lastName": "Panel",
+      "email": "admin-panel-fixture@example.invalid",
+      "realmRoles": [
+        "offline_access"
+      ],
+      "clientRoles": {
+        "core": [
+          "url:create"
+        ],
+        "admin": [
+          "content:read"
+        ],
+        "skymail": [
+          "skymail:access"
+        ]
+      },
+      "groups": [
+        "/UYELER/YK"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin-panel-fixture-password-change-me",
           "temporary": false
         }
       ]

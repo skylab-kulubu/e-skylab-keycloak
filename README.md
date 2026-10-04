@@ -298,6 +298,25 @@ yönetmez; imaj yayını gerekmez. Sunucuda sky_lab_genel'deki
 `ops/wizards/place-keycloak-client-wizard.sh` betiği koşar ve secret'ı doğrudan OpenBao'ya taşır.
 Harness `tests/place-client.sh` tek başına çalışır (runbook §14).
 
+Admin panelinin istemcisini (`admin`, sandbox'ta `superadmin`; ADR-0058) uzlaştırıcı daraltır.
+İstemci iki realm'de de elle kurulmuş ve gizlidir; uzlaştırıcı onu yerinde benimser, id'sine,
+secret'ına, adreslerine ve kendi mapper'larına dokunmaz. Access token'ın `aud`'u tam olarak
+`core`, `forms`, `skycms` olur (üçü de `admin-panel-api-audience` varsayılan kapsamındaki sabit
+audience mapper'larından, `config/admin-panel-api-audience-mappers.json`), `realm_access`
+kalkar, `resource_access` yalnız `core`, `forms` ve istemcinin kendi rollerini taşır: "Full scope
+allowed" kapanır, rol kapsamında `core` ve `forms` istemcilerinin her rolü bulunur, başka istemci
+ya da realm rolü bulunmaz. `groups` ve inscribed'ın düz `roles` claim'i kalır. Standard Token
+Exchange açılır: panelin sunucusu token'ı `audience=core|forms|skycms` ile tek audience'lı bir
+token'a çevirebilir; başka bir audience reddedilir. Sıra canlı paneli bozmaz: önce audience ve
+API rolleri, en son tam kapsamın kapanması. `core` ya da `forms`'ta uzlaştırıcı dışında
+oluşturulan bir rol panelin token'ına bir sonraki koşuda girer. Adım en son koşar. İstemci yoksa
+uyarıyla atlanır; public ise koşu ona hiçbir şey yazmadan hata verir (gizliye çevirmek panelin
+secret'la girmesini gerektirir; o panelin işidir). Sandbox realm'inde uzlaştırıcı kimliği yoktur: operatör aynı adımı
+kendi kcadm oturumuyla tek başına koşar (`KEYCLOAK_RECONCILE_KCADM_CONFIG` +
+`KEYCLOAK_RECONCILE_ONLY=admin-panel-client`; tam uzlaştırma operatör oturumuyla koşmaz).
+Sunucuda sky_lab_genel'deki `ops/wizards/admin-panel-keycloak-sandbox-wizard.sh` koşar
+(runbook §16).
+
 Etkinlik siteleri (ARTLAB, YıldızJam, SkyDays) da canlıdaki inscribed'ın tenant'larıdır (ADR-0056
 eki, 2026-10-03). Site istemcilerini (`frontend-artlab`, `frontend-yildizjam`, `frontend-skydays`)
 idempotent `config/site-clients.sh` kurar; realm açıkça verilir (`KEYCLOAK_REALM=e-skylab` ya da
@@ -342,8 +361,9 @@ belgesindedir.
 
 Sürekli uzlaştırma yalnız servis amaçlı `account-center-config` istemcisiyle
 kimlik doğrular (`realm-management` rolleri yalnız `manage-clients`,
-`view-clients`, `manage-realm`, `view-realm`; kullanıcı yetkisi yoktur). Bu
-istemcinin oluşturulması veya gizli anahtarının döndürülmesi ayrı ve
+`view-clients`, `manage-realm`, `view-realm`; kullanıcı yetkisi yoktur). Tek istisna, operatörün
+kendi kcadm oturumuyla tek başına koştuğu admin paneli adımıdır (yukarıda).
+`account-center-config` istemcisinin oluşturulması veya gizli anahtarının döndürülmesi ayrı ve
 denetlenebilir bir başlangıç adımıdır; ana yönetici bilgileri normal Compose
 yığınına girmez.
 
@@ -619,7 +639,8 @@ Doğrulama sırası şu şekildedir:
    (passkey RP ID, brute force, parola politikası, User Profile, token
    `aud`/`sky_authorization`, Admin REST'in `account-center` token'ını
    reddetmesi, `keycloak-mailer`, `core-erasure` (erase kapsamı başına tek rol ve
-   `aud`, core token'larının değişmemesi), sapma onarımı, değişiklik üretmeyen üçüncü
+   `aud`, core token'larının değişmemesi), admin panelinin dar token'ı ve Standard
+   Token Exchange'i, sapma onarımı, değişiklik üretmeyen üçüncü
    koşu, relying party id geçişi etrafında passkey temizliği kuru koşusu ve
    `--apply` uygulaması) aynı koşuda doğrulanır.
 5. Commit'e bağlı fiziksel WebAuthn kanıtı doğrulanır.

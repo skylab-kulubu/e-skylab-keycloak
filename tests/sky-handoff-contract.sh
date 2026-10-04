@@ -23,11 +23,15 @@ FIXTURE_USERNAME=account-fixture
 FIXTURE_PASSWORD=fixture-password-change-me
 OTHER_USERNAME=handoff-other
 # The admin endpoints' fixture (tests/fixture-realm.json): a member of /ADMIN, an empty subgroup
-# of /ADMIN and superadmin's client admin (public, direct grants; fixture only).
+# of /ADMIN and the admin panel's client admin (confidential like production; direct grants are a
+# fixture-only shortcut, authenticated with the client secret read below). By the time this runs
+# the reconciler has narrowed admin's tokens (admin-panel-client.sh); the admin endpoints must still
+# accept them (azp admin, a live sid).
 ADMIN_FIXTURE_UUID=44444444-4444-4444-8444-444444444444
 ADMIN_USERNAME=handoff-admin-fixture
 ADMIN_PASSWORD=handoff-admin-password-change-me
 ADMIN_CLIENT=admin
+ADMIN_CLIENT_SECRET=''
 ADMIN_SUBGROUP=handoff-admin-subgroup-fixture
 PATH_MARKER=/web-handoff-path-marker-7f3a9c
 COMPOSE=(docker compose -f "$COMPOSE_FILE")
@@ -98,9 +102,10 @@ skyapp_tokens() {
 }
 
 # admin_tokens <username> <password> [scope] -> the token response of a direct grant of the
-# fixture's superadmin client
+# fixture's admin panel client (ADMIN_CLIENT_SECRET is read in the admin endpoints stage)
 admin_tokens() {
   curl --fail --silent --show-error \
+    --user "$ADMIN_CLIENT:$ADMIN_CLIENT_SECRET" \
     --data-urlencode grant_type=password \
     --data-urlencode "client_id=$ADMIN_CLIENT" \
     --data-urlencode "username=$1" \
@@ -677,6 +682,8 @@ admin_subgroup_id=$(kcadm get "group-by-path/ADMIN/$ADMIN_SUBGROUP" -r "$REALM" 
   || fail 'the fixture /ADMIN group or its subgroup is missing'
 admin_client_uuid=$(client_uuid "$ADMIN_CLIENT")
 [[ -n $admin_client_uuid ]] || fail 'the fixture admin client is missing'
+ADMIN_CLIENT_SECRET=$(kcadm get "clients/$admin_client_uuid/client-secret" -r "$REALM" -c | jq -r '.value // empty')
+[[ -n $ADMIN_CLIENT_SECRET ]] || fail 'the fixture admin client has no client secret'
 admin_token=$(admin_tokens "$ADMIN_USERNAME" "$ADMIN_PASSWORD" | jq -r .access_token)
 json_assert "$(jwt_payload "$admin_token")" '.azp == "admin" and .sub == $sub and (.sid | length) > 0' \
   'the fixture admin token is not an online admin-client token of the /ADMIN member' --arg sub "$ADMIN_FIXTURE_UUID"

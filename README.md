@@ -311,6 +311,18 @@ yönetmez; imaj yayını gerekmez. Sunucuda sky_lab_genel'deki
 `ops/wizards/place-keycloak-client-wizard.sh` betiği koşar ve secret'ı doğrudan OpenBao'ya taşır.
 Harness `tests/place-client.sh` tek başına çalışır (runbook §14).
 
+Forms (forms-backend) SkyMail'den tek tek posta gönderir (`POST /v1/mail_tasks/single`); SkyMail
+token'daki `resource_access.skymail.roles`'ta `skymail:access` ve `skymail:mails:send` (ya da daha
+geniş `skymail:mails:write`) arar. Bu yetki iki realm'de de elle verilmişti, sandbox'ta hiç
+yoktu: her sandbox Forms postası 403 `server.forbidden` aldı. Operatör `config/forms-skymail-grants.sh`
+ile `service-account-forms`'a eksik olanı verir (varsayılan `--check`, `--apply`; kcadm prompt
+düzeni ya da `--kcadm-config`; `KEYCLOAK_REALM` yalnız `e-skylab` ya da `e-skylab-sandbox`):
+`skymail:access`, ve `skymail:mails:write` tutmuyorsa `skymail:mails:send`; `forms`'un
+`fullScopeAllowed`'ı kapalıysa aynı roller kapsam eşlemesine. Hiçbir şey silinmez, SkyMail rolü
+oluşturulmaz; `skymail:mails:write` NOTE olarak kalır. Uzlaştırıcının kimliği kullanıcı yetkisi
+taşımadığı için bu bir operatör betiğidir; imaj yayını gerekmez (betik `--kcadm-config` ile
+dışarıdan da koşar). Harness `tests/forms-skymail-grants.sh` tek başına çalışır.
+
 Admin panelinin istemcisini (`admin`, sandbox'ta `superadmin`; ADR-0058) uzlaştırıcı daraltır.
 İstemci iki realm'de de elle kurulmuş ve gizlidir; uzlaştırıcı onu yerinde benimser, id'sine,
 secret'ına, adreslerine ve kendi mapper'larına dokunmaz. Access token'ın `aud`'u tam olarak

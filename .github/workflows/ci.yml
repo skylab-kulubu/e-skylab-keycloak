@@ -84,6 +84,18 @@ jobs:
       - name: Place client script against a throwaway Keycloak
         run: bash tests/place-client.sh
 
+  # config/forms-skymail-grants.sh (SkyMail's send permission for Forms' service account) against the
+  # stock Keycloak image in dev mode, with real client-credentials tokens and userinfo; needs no build
+  # of this repository's image.
+  forms-skymail-grants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Forms SkyMail grants script against a throwaway Keycloak
+        run: bash tests/forms-skymail-grants.sh
+
   # config/site-clients.sh and config/site-editor-grants.sh (the event sites' Site clients, with
   # inscribed-cms-roles.sh between them) against the stock Keycloak image in dev mode, with a real
   # authorization code flow (PKCE); needs no build of this repository's image.

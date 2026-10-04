@@ -7,7 +7,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "prebuild": "keycloakify update-kc-gen && node ./scripts/fetch-teams.mjs",
+    "prebuild": "keycloakify update-kc-gen",
     "build": "tsc --noEmit && vite build",
     "build-keycloak-theme": "npm run build && npm run clean-keycloak-theme && keycloakify build",
     "clean-keycloak-theme": "node ./scripts/clean-keycloak-output.mjs",

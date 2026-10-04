@@ -42,10 +42,12 @@ Only the two original brand image assets were carried forward.
 - Team strips: `TeamMarquee.tsx` runs two slow rows of SKY LAB team logos
   above and below the card (one row on a phone; still with reduced motion,
   hidden in forced colors, `aria-hidden`). Which teams, in what order, comes
-  from the main site's CMS `teams` collection: `scripts/fetch-teams.mjs` runs
-  before every build and writes `src/login/teams.json` (committed, so a build
-  that cannot reach the CMS keeps the last list and only warns; override the
-  source with `SKYLAB_TEAMS_URL` / `SKYLAB_TEAMS_CLIENT_ID`). GDG, SKY MEDYA and
+  from the main site's CMS `teams` collection: `npm run teams`
+  (`scripts/fetch-teams.mjs`) writes `src/login/teams.json`, which is
+  committed. Builds never call the CMS, so CI and the release image build only
+  what was reviewed; run `npm run teams` by hand when the club's teams change,
+  add the new logo, and commit both (`teams.test.ts` fails on a team without a
+  logo). Override the source with `SKYLAB_TEAMS_URL` / `SKYLAB_TEAMS_CLIENT_ID`. GDG, SKY MEDYA and
   SKY LAB, and the club's Gece Kodu and BİZ BİZE, are not in that collection
   and are added in `teams.ts`. The logos
   live in `src/assets/teams/<slug>.(svg|webp)`, drawn in one tone; a team with

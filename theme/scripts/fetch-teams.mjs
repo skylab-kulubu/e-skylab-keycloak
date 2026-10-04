@@ -1,7 +1,8 @@
-// Writes src/login/teams.json from the main site's CMS "teams" collection before
-// every build: which R&D teams the login page's logo strips show, in CMS order.
-// The file is committed, so a build that cannot reach the CMS keeps the last
-// list and only warns; it never fails the theme build.
+// Writes src/login/teams.json from the main site's CMS "teams" collection: which
+// R&D teams the login page's logo strips show, in CMS order. Run by hand
+// (`npm run teams`) and commit the result with any new logo; builds never call
+// the CMS, so CI and the release image only ship the reviewed list. When the CMS
+// cannot be reached the committed list stays and the script only warns.
 import { readFile, writeFile } from "node:fs/promises";
 
 const url = process.env.SKYLAB_TEAMS_URL ?? "https://api.yildizskylab.com/api/cms/collections/teams?limit=50";

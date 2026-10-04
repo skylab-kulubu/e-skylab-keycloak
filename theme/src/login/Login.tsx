@@ -2,9 +2,9 @@ import { useState } from "react";
 import { kcSanitize } from "keycloakify/lib/kcSanitize";
 import type { PageProps } from "keycloakify/login/pages/PageProps";
 import { useScript } from "keycloakify/login/pages/Login.useScript";
-import ytuLogoUrl from "../assets/ytu-logo.png";
 import type { KcContext } from "./KcContext";
 import type { I18n } from "./i18n";
+import YtuMark from "./YtuMark";
 import LegacyFrame from "./LegacyFrame";
 import PageMessage from "./PageMessage";
 import { getLegacyChromeProps, useLegacyChrome } from "./legacyChrome";
@@ -43,7 +43,7 @@ export default function Login(props: LoginProps) {
 
   return (
     <LegacyFrame
-      {...getLegacyChromeProps(i18n)}
+      {...getLegacyChromeProps(i18n, { brand: true })}
       mainId="sl-legacy-main"
       titleId="sl-legacy-title"
       title={msgStr("skylabTitle")}
@@ -54,27 +54,37 @@ export default function Login(props: LoginProps) {
               <>
                 <div className="sl-legacy-choices">
                   {microsoftProvider !== undefined && (
-                    <a className="sl-legacy-choice" href={microsoftProvider.loginUrl}>
-                      <img src={ytuLogoUrl} alt="" />
-                      <span>{msgStr("microsoft")}</span>
+                    <a className="sl-legacy-choice sl-legacy-choice--row sl-legacy-choice--primary" href={microsoftProvider.loginUrl}>
+                      <span className="sl-legacy-choice__icon">
+                        <YtuMark />
+                      </span>
+                      <span className="sl-legacy-choice__label">{msgStr("microsoft")}</span>
+                      <svg className="sl-legacy-choice__arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none">
+                        <path d="m9 6 6 6-6 6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                      </svg>
                     </a>
                   )}
 
                   <button
-                    className="sl-legacy-choice"
+                    className="sl-legacy-choice sl-legacy-choice--row"
                     type="button"
                     onClick={() => setView("password")}
                   >
-                    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
-                      <path
-                        d="M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0ZM12 14a7 7 0 0 0-7 7h14a7 7 0 0 0-7-7Z"
-                        stroke="currentColor"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth="2"
-                      />
+                    <span className="sl-legacy-choice__icon">
+                      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
+                        <path
+                          d="M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0ZM12 14a7 7 0 0 0-7 7h14a7 7 0 0 0-7-7Z"
+                          stroke="currentColor"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth="2"
+                        />
+                      </svg>
+                    </span>
+                    <span className="sl-legacy-choice__label">{msgStr("notYtuStudent")}</span>
+                    <svg className="sl-legacy-choice__arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none">
+                      <path d="m9 6 6 6-6 6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
                     </svg>
-                    <span>{msgStr("notYtuStudent")}</span>
                   </button>
                 </div>
 
@@ -85,6 +95,7 @@ export default function Login(props: LoginProps) {
                       className="sl-legacy-passkey"
                       type="button"
                     >
+                      <span className="sl-key-icon" aria-hidden="true" />
                       {msgStr("passkeyChoice")}
                     </button>
                   </div>
@@ -166,7 +177,7 @@ export default function Login(props: LoginProps) {
                           aria-controls="password"
                           onClick={() => setIsPasswordVisible(current => !current)}
                         >
-                          <span aria-hidden="true">{isPasswordVisible ? "⊘" : "◉"}</span>
+                          <span aria-hidden="true" className={`sl-eye sl-eye--${isPasswordVisible ? "hide" : "show"}`} />
                         </button>
                       </div>
                     </div>

@@ -18,8 +18,7 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
   tr: {
     // Login page and shared chrome
     skylabTitle: "SKY LAB'e Hoş Geldin!",
-    skylabDesc:
-      "Tüm SKY LAB sitelerine erişim için YTÜ öğrenci mailinle hesabına giriş yapabilirsin. Eğer YTÜ öğrencisi değilsen de hesabını oluşturduğun e-posta ve şifrenle girebilirsin.",
+    skylabDesc: "YTÜ öğrencisiysen okul hesabınla, değilsen e-posta adresin ve parolanla giriş yap.",
     microsoft: "YTÜ Öğrencisiyim",
     notYtuStudent: "YTÜ Öğrencisi Değilim",
     goBack: "Geri dön",
@@ -32,6 +31,12 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     skylabAttemptedUserLabel: "Giriş yapılan hesap",
     languages: "Dil seçimi",
     skylabLoading: "Yükleniyor…",
+    // The brand panel beside the card on wide screens
+    skylabBrandTitle: "Tek hesap, tek giriş",
+    skylabBrandText: "Hesap Merkezi, SkyForms ve kulübün hesap isteyen öteki sitelerine aynı hesapla girersin.",
+    skylabBrandSites: "Hesap isteyen kulüp sitelerinde tek hesap",
+    skylabBrandYtu: "YTÜ öğrenci hesabınla hızlı giriş",
+    skylabBrandPasskey: "Erişim anahtarıyla parolasız giriş",
     // The KVKK sentence outside the login and passkey offer pages
     kvkkActionPrefix: "Bu işlemi yaparak ",
     kvkkActionSuffix: "'ni okuduğunu ve kabul ettiğini onaylıyorsun.",
@@ -293,8 +298,7 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
   en: {
     // Login page and shared chrome
     skylabTitle: "Welcome to SKY LAB!",
-    skylabDesc:
-      "You can log in with your YTÜ student email to access all SKY LAB sites. If you are not a YTÜ student, you can log in with your registered email and password.",
+    skylabDesc: "Sign in with your YTÜ student account, or with your email and password if you're not a YTÜ student.",
     microsoft: "I'm a YTÜ Student",
     notYtuStudent: "I'm not a YTÜ Student",
     goBack: "Go back",
@@ -307,6 +311,12 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     skylabAttemptedUserLabel: "Signing in as",
     languages: "Language",
     skylabLoading: "Loading…",
+    // The brand panel beside the card on wide screens
+    skylabBrandTitle: "One account, one sign-in",
+    skylabBrandText: "The same account opens the Account Center, SkyForms and the club's other member sites.",
+    skylabBrandSites: "One account for the club's member sites",
+    skylabBrandYtu: "Quick sign-in with your YTÜ student account",
+    skylabBrandPasskey: "Passwordless sign-in with a passkey",
     // The KVKK sentence outside the login and passkey offer pages
     kvkkActionPrefix: "By continuing, you confirm that you have read and accept the ",
     kvkkActionSuffix: ".",

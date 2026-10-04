@@ -21,12 +21,38 @@ Only the two original brand image assets were carried forward.
   `cancel-aia` control. `delete-credential.ftl` is the only credential-delete
   surface; the built-in delete-account action is not an Account Center
   destination.
-- One design system: `src/login/legacy-login.css` is the only stylesheet and
-  the only token set (accent `#e0c8e5`, background `#08070b`, blue submit with
-  pink hover, Inter stack). `Template.tsx` renders every Keycloakify
-  `DefaultPage` inside the same `LegacyFrame` chrome as `Login.tsx` and
-  `PasskeyOffer.tsx`: animated SKY LAB logo, glass card, KVKK footer and the
-  language menu. The `sl-*` class contract handed out by `KcPage.tsx` is
+- One design system: the colours, radius and type come from the
+  `@skylab-kulubu/skylcn-ui` tokens (`tokens.css`, ADR 0055), and
+  `src/login/legacy-login.css` is the theme's only stylesheet, mapping them
+  onto the login roles (lilac submit, Space Grotesk bundled from
+  `@fontsource-variable/space-grotesk`, no external font request). Space
+  Grotesk is © The Space Grotesk Project Authors under the SIL Open Font
+  License 1.1, which allows bundling it in the theme JAR; the licence text
+  ships with the package (`node_modules/@fontsource-variable/space-grotesk/LICENSE`).
+  `Template.tsx` renders every Keycloakify `DefaultPage` inside the same
+  `LegacyFrame` chrome as `Login.tsx` and `PasskeyOffer.tsx`: a glass card
+  with the animated SKY LAB logo, the KVKK footer and the language menu, over
+  a grid of blinking squares (`GridBackdrop.tsx`: lines in CSS, lit cells on
+  a canvas at about 15 fps, still on touch screens, small CPUs, data saver
+  and reduced motion). On wide screens the login page alone
+  (`getLegacyChromeProps(i18n, { brand: true })`) splits the card: the form
+  on the left, a brand panel on the right (the logo, what one account gives,
+  a faint watermark in its corner). Every other page keeps one column with
+  the logo on top, as every page does on a phone.
+- Team strips: on the login page only (with the brand panel),
+  `TeamMarquee.tsx` runs two slow rows of SKY LAB team logos
+  above and below the card (one row on a phone; still with reduced motion,
+  hidden in forced colors, `aria-hidden`). Which teams, in what order, comes
+  from the main site's CMS `teams` collection: `npm run teams`
+  (`scripts/fetch-teams.mjs`) writes `src/login/teams.json`, which is
+  committed. Builds never call the CMS, so CI and the release image build only
+  what was reviewed; run `npm run teams` by hand when the club's teams change,
+  add the new logo, and commit both (`teams.test.ts` fails on a team without a
+  logo). Override the source with `SKYLAB_TEAMS_URL` / `SKYLAB_TEAMS_CLIENT_ID`. GDG, SKY MEDYA and
+  SKY LAB, and the club's Gece Kodu and BİZ BİZE, are not in that collection
+  and are added in `teams.ts`. The logos
+  live in `src/assets/teams/<slug>.(svg|webp)`, drawn in one tone; a team with
+  no file shows its name. The `sl-*` class contract handed out by `KcPage.tsx` is
   styled with the login tokens; `login-page-expired.ftl` is the only custom
   page body because Keycloak's markup cannot be phrased in Turkish.
 - `sky-handoff-failed.ftl` is the SPI's Web handoff failure page

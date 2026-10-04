@@ -109,8 +109,8 @@ Hata nedenleri (`303 …/v1/failed?reason=<neden>`):
 
 ## `GET failed?reason=<neden>`
 
-Realm'in giriş temasıyla çizilen sayfa: SKY LAB temasında LegacyFrame tasarımı (animasyonlu
-logo, cam kart, KVKK alt bilgisi), başlıkta nedenin cümlesi, altında "Uygulamaya dönüp tekrar
+Realm'in giriş temasıyla çizilen sayfa: SKY LAB temasında LegacyFrame tasarımı (cam kart,
+animasyonlu logolu tanıtım paneli, KVKK alt bilgisi), başlıkta nedenin cümlesi, altında "Uygulamaya dönüp tekrar
 dene." Metin kişinin diline göre gelir (Türkçe önce; realm İngilizce çözerse İngilizcesi). Giriş
 formu, `e.` giriş sayfasına bağlantı ve dil menüsü yoktur; tek bağlantı KVKK metnidir.
 Bilinmeyen ya da eksik neden `unavailable` gösterir ve sorgu değeri sayfaya hiç basılmaz (tema

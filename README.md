@@ -64,10 +64,11 @@ yeniden denemeyi, “beni hatırla” aktarımını, AIA ekranlarını, klavye k
 kontrastı ve azaltılmış hareket tercihlerini korur. Giriş sayfası, erişim
 anahtarı teklifi ve Keycloak'ın diğer bütün sayfaları (parola yenileme, doğrulama
 uygulaması, erişim anahtarı kaydı, hata, bilgi, çıkış onayı, kimlik sağlayıcı bağlama…)
-tek bir tasarım sistemini paylaşır: `theme/src/login/legacy-login.css` tek
-stil dosyası ve tek token kümesidir, `Template.tsx` her sayfayı giriş
-sayfasının `LegacyFrame` çerçevesinde (animasyonlu SKY LAB logosu, cam kart,
-KVKK altbilgisi, dil seçimi) çizer ve bütün metinler `i18n.ts` içinden gelir
+tek bir tasarım sistemini paylaşır: renkler, köşe yarıçapı ve yazı tipi
+`@skylab-kulubu/skylcn-ui` token'larından gelir, `theme/src/login/legacy-login.css`
+bunları giriş rollerine bağlayan tek stil dosyasıdır. `Template.tsx` her sayfayı
+giriş sayfasının `LegacyFrame` çerçevesinde (solda sayfa, geniş ekranda sağda
+animasyonlu SKY LAB logolu tanıtım paneli, KVKK altbilgisi, dil seçimi) çizer ve bütün metinler `i18n.ts` içinden gelir
 (önce Türkçe, sonra İngilizce).
 
 İlk fiziksel doğrulama Touch ID üzerinde tamamlanmıştır. Face ID, Android

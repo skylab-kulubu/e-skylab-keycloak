@@ -17,9 +17,9 @@ async function renderPage(pageId: ThemedPageId, state: string | null = null) {
   return { ...view, kcContext };
 }
 
-/** The card's own children in order: intro, page message, then the page body. */
+/** The page column's children in order: intro, page message, then the page body. */
 function cardChildren(container: HTMLElement): Element[] {
-  return Array.from(container.querySelector(".sl-legacy-card")?.children ?? []);
+  return Array.from(container.querySelector(".sl-legacy-card__body")?.children ?? []);
 }
 
 function loginContext(): Extract<KcContext, { pageId: "login.ftl" }> {

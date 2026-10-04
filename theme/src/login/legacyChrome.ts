@@ -8,7 +8,7 @@ type LegacyChromeOptions = {
   kvkk?: "login" | "action";
   /** False for a page that offers nothing to do, not even switching the language. */
   languageMenu?: boolean;
-  /** True on the login page only: the panel saying what one account gives. Every other page shows just the logo. */
+  /** True on the login page only: the panel saying what one account gives and the team logo strips. Every other page shows just the logo. */
   brand?: boolean;
 };
 
@@ -34,6 +34,7 @@ export function getLegacyChromeProps(i18n: I18n, options: LegacyChromeOptions = 
         }
       : undefined,
     skipToContent: msgStr("skipToContent"),
+    teams: brand,
     translationsReady: !i18n.isFetchingTranslations
   };
 }

@@ -265,4 +265,6 @@ test("fields keep a visible focus indicator in forced colors (WCAG 2.4.7)", asyn
   await expect(username).toBeFocused();
   await expect(username).not.toHaveCSS("outline-style", "none");
   await expect(username).toHaveCSS("outline-width", "2px");
+  // Outside forced colors the outline is transparent; it must take the system colour here.
+  await expect(username).not.toHaveCSS("outline-color", "rgba(0, 0, 0, 0)");
 });

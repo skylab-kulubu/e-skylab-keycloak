@@ -37,6 +37,8 @@ type LegacyFrameProps = {
   languageMenu?: LegacyFrameLanguageMenu;
   mainId: string;
   skipToContent: string;
+  /** The team logo strips above and below the card; the login page only, like `brand`. */
+  teams?: boolean;
   title: ReactNode;
   titleId: string;
   /** False while Keycloakify is still fetching the current locale's base messages. */
@@ -55,6 +57,7 @@ export default function LegacyFrame(props: LegacyFrameProps) {
     languageMenu,
     mainId,
     skipToContent,
+    teams = false,
     title,
     titleId,
     translationsReady = true
@@ -84,7 +87,7 @@ export default function LegacyFrame(props: LegacyFrameProps) {
       </div>
 
       <main id={mainId} className="sl-legacy-main" tabIndex={-1}>
-        <TeamMarquee direction="left" />
+        {teams && <TeamMarquee direction="left" />}
         <div className={brand === undefined ? "sl-legacy-stack" : "sl-legacy-stack sl-legacy-stack--wide"}>
           <section className={brand === undefined ? "sl-legacy-card" : "sl-legacy-card sl-legacy-card--brand"} aria-labelledby={titleId}>
             <div className="sl-legacy-card__body">
@@ -170,7 +173,7 @@ export default function LegacyFrame(props: LegacyFrameProps) {
             )}
           </footer>
         </div>
-        <TeamMarquee direction="right" />
+        {teams && <TeamMarquee direction="right" />}
       </main>
     </div>
   );

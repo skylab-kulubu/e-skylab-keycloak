@@ -199,4 +199,16 @@ describe("every Keycloak page renders inside the login page chrome", () => {
       view.unmount();
     }
   });
+
+  it("shows the team strips on the login page only, like the brand panel", async () => {
+    const login = await renderPage("login.ftl");
+    expect(login.container.querySelectorAll(".sl-legacy-teams")).toHaveLength(2);
+    login.unmount();
+
+    for (const pageId of ["login-otp.ftl", "error.ftl", "logout-confirm.ftl", "passkey-offer.ftl", "sky-handoff-failed.ftl"] as const) {
+      const view = await renderPage(pageId);
+      expect(view.container.querySelector(".sl-legacy-teams"), pageId).toBeNull();
+      view.unmount();
+    }
+  });
 });

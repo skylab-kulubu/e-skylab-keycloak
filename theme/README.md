@@ -39,7 +39,8 @@ Only the two original brand image assets were carried forward.
   on the left, a brand panel on the right (the logo, what one account gives,
   a faint watermark in its corner). Every other page keeps one column with
   the logo on top, as every page does on a phone.
-- Team strips: `TeamMarquee.tsx` runs two slow rows of SKY LAB team logos
+- Team strips: on the login page only (with the brand panel),
+  `TeamMarquee.tsx` runs two slow rows of SKY LAB team logos
   above and below the card (one row on a phone; still with reduced motion,
   hidden in forced colors, `aria-hidden`). Which teams, in what order, comes
   from the main site's CMS `teams` collection: `npm run teams`

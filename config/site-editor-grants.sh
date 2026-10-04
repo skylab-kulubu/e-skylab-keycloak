@@ -9,6 +9,9 @@
 #   artlab     /UYELER/ARGE/AIRLAB   and  /UYELER/ORGANIZASYON/ARTLAB
 #   yildizjam  /UYELER/ARGE/GAMELAB  and  /UYELER/ORGANIZASYON/YILDIZJAM
 #   skydays    /UYELER/ARGE/SKYSEC   and  /UYELER/ORGANIZASYON/SKYDAYS
+#   main       none: the main site's sandbox client (frontend-main in e-skylab-sandbox only, made by
+#              site-clients.sh --site main) gets the Privileged groups; production's frontend-main
+#              grants are made in the SKY LAB admin panel and --site main is refused in e-skylab
 # --team SITE=PATH adds one more team for one site; its Leader groups get cms:access too.
 #
 # Grants go to groups only, never to a person, never to /UYELER, never to a group at or above a
@@ -27,6 +30,7 @@
 #   KEYCLOAK_REALM=<realm> site-editor-grants.sh --admin-user <admin> --apply    # grants
 #   KEYCLOAK_REALM=<realm> site-editor-grants.sh --kcadm-config <file> [--apply]
 #   ... [--site artlab|yildizjam|skydays]... [--team SITE=/PATH]...
+#   KEYCLOAK_REALM=e-skylab-sandbox site-editor-grants.sh ... --site main [--team main=/PATH]...
 #
 # Environment: KEYCLOAK_ADMIN_URL (default http://keycloak:8080), KEYCLOAK_REALM (required),
 # KEYCLOAK_ADMIN_REALM (default master), KEYCLOAK_SITE_GRANTS_ADMIN_USERNAME (or --admin-user).
@@ -62,11 +66,12 @@ site_teams() {
     artlab) printf '%s\n' /UYELER/ARGE/AIRLAB /UYELER/ORGANIZASYON/ARTLAB ;;
     yildizjam) printf '%s\n' /UYELER/ARGE/GAMELAB /UYELER/ORGANIZASYON/YILDIZJAM ;;
     skydays) printf '%s\n' /UYELER/ARGE/SKYSEC /UYELER/ORGANIZASYON/SKYDAYS ;;
+    main) ;;
   esac
 }
 
 usage() {
-  printf 'usage: KEYCLOAK_REALM=(e-skylab|e-skylab-sandbox) %s (--admin-user <administrator> | --kcadm-config <file>) [--check | --apply] [--site artlab|yildizjam|skydays]... [--team SITE=/PATH]...\n' \
+  printf 'usage: KEYCLOAK_REALM=(e-skylab|e-skylab-sandbox) %s (--admin-user <administrator> | --kcadm-config <file>) [--check | --apply] [--site artlab|yildizjam|skydays|main]... [--team SITE=/PATH]...\n' \
     "${BASH_SOURCE[0]##*/}" >&2
   exit 2
 }
@@ -86,14 +91,14 @@ while [[ $# -gt 0 ]]; do
     --site)
       [[ $# -ge 2 ]] || usage
       case $2 in
-        artlab | yildizjam | skydays) SITES+=("$2") ;;
-        *) printf 'unknown site %s (artlab, yildizjam or skydays)\n' "$2" >&2; exit 2 ;;
+        artlab | yildizjam | skydays | main) SITES+=("$2") ;;
+        *) printf 'unknown site %s (artlab, yildizjam, skydays or main)\n' "$2" >&2; exit 2 ;;
       esac
       shift 2
       ;;
     --team)
       [[ $# -ge 2 ]] || usage
-      [[ $2 =~ ^(artlab|yildizjam|skydays)=/[A-Za-z0-9_./-]+$ && $2 != *//* && $2 != */ ]] \
+      [[ $2 =~ ^(artlab|yildizjam|skydays|main)=/[A-Za-z0-9_./-]+$ && $2 != *//* && $2 != */ ]] \
         || { printf 'bad --team %s (SITE=/GROUP/PATH)\n' "$2" >&2; exit 2; }
       EXTRA_TEAMS+=("$2")
       shift 2
@@ -118,6 +123,13 @@ if [[ $TARGET_REALM != e-skylab && $TARGET_REALM != e-skylab-sandbox ]]; then
     "${TARGET_REALM:-(unset)}" >&2
   exit 2
 fi
+for site in "${SITES[@]}"; do
+  if [[ $site == main && $TARGET_REALM != e-skylab-sandbox ]]; then
+    printf '[site-grants] refusing --site main in realm %s: production'"'"'s frontend-main grants are made in the SKY LAB admin panel; --site main is for e-skylab-sandbox; nothing was read or changed\n' \
+      "$TARGET_REALM" >&2
+    exit 2
+  fi
+done
 
 if [[ -z $KCADM_CONFIG ]]; then
   if [[ -z $ADMIN_USER ]]; then

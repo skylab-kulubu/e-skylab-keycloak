@@ -1723,3 +1723,99 @@ miras yoluyla var. Panelden kaldırılmış bir eşleme ikinci koşuda geri gelm
 bir eşleme silinmez; işareti kaldırılan rol (listeye yeni eklenmiş gibi) üçüncü koşuda yalnız eksik
 gruba verilir. Değişiklik üretmeyen tam koşu rolleri, işaretleri ve grupların eşlemelerini de
 karşılaştırır.
+
+## 20. Servis bağlama rolü `media:attach` (Forms servis hesabı; ADR-0052)
+
+core'un servis bağlama uçları (`POST /v1/media/{id}/attachments`,
+`DELETE /v1/media/{id}/attachments/{attachmentId}`) ve anonim form yüklemesinin kuralı yalnız şu
+token'ı kabul eder: `aud` içinde `core`; `azp` ve `client_id` core'un `MEDIA_SERVICE_CLIENTS`
+listesindeki bir istemci (ayarsızken `forms:forms`); `resource_access.core.roles` içinde
+`media:attach`. Kişinin token'ında `client_id` yoktur; rol ona verilse de reddedilir. Rol `core`
+istemcisinin bir rolüdür ve yalnız listedeki ürünlerin servis hesabında bulunur: kişide, grupta ya
+da varsayılan rolde (`default-roles-<realm>`) olmaz. Uzlaştırıcının listesi
+(`MEDIA_ATTACH_CLIENTS`, bugün `forms`) core'un `MEDIA_SERVICE_CLIENTS`'ıyla aynı tutulur; CMS'in
+servis istemcisi ikisine birlikte eklenir.
+
+**Ne yapılır** (`reconcile_media_attach`, core rollerinin adımından sonra, admin panelinin adımından
+önce):
+
+| Ne | Kim | Davranış |
+| --- | --- | --- |
+| `core` istemcisinde `media:attach` rolü | her koşu | yoksa açıklamasıyla oluşturulur (`manage-clients`); yeni rol aynı koşuda admin panelinin rol kapsamına girer (§16), kimse taşımadığı için panel token'ına girmez |
+| `forms`'un varsayılan kapsamı `roles` | her koşu | yalnız doğrulanır: `resource_access`'i ve audience resolve mapper'ı ile `aud: core`'u o verir. Yoksa uyarı; istemciye dokunulmaz. İkinci bir audience mapper **eklenmez** |
+| `forms`'un rol kapsamı | her koşu | `fullScopeAllowed=false` ise `core/media:attach` kapsam eşlemesine eklenir (yoksa rol token'a girmez); tam kapsamda bir şey yapılmaz |
+| `service-account-forms`'a rol | yalnız operatör | yoksa verilir; rolün `skylab.granted-service-accounts` özniteliğine zaman ve servis hesapları yazılır (ör. `2026-10-04T20:00:00Z service-account-forms`) |
+| Başka sahipler | yalnız operatör | rolü taşıyan kullanıcı, grup ya da varsayılan rol uyarıyla bildirilir; **hiçbir şey silinmez** |
+
+`forms` istemcisi yoksa ya da servis hesabı kapalıysa uyarı yazılır ve atlanır; istemcinin
+ayarları değiştirilmez. `core` yoksa adım atlanır.
+
+**Kim yazar.** Servis hesabına rol vermek ve onun rollerini okumak kullanıcı yetkisi ister;
+uzlaştırıcı kimliğinde yoktur (§19 ile aynı gerekçe). Uzlaştırıcı kimliği rolü ve kapsam eşlemesini
+kurar, servis hesabını okuyamaz: öznitelikte servis hesabı yazılıysa `service account
+service-account-forms: media:attach unchanged (granted by the operator step at …)`, yazılı
+değilse `WARNING: media:attach is not yet granted to service account service-account-forms by the
+operator step … KEYCLOAK_RECONCILE_ONLY=media-attach (runbook §20)` basar. Operatör adımı her
+koşuda servis hesabının rollerini yeniden okur.
+
+**Kapalı tarafta başarısızlık.** Operatör adımı önce her şeyi okur (istemci, bayraklar, varsayılan
+kapsamlar, rol kapsamı, servis hesabı ve rolleri, rolün kullanıcıları, grupları, varsayılan rol),
+sonra yazar. Bir okuma Keycloak'ın "yok" cevabı dışında başarısız olursa (`… could not be read in
+realm …; nothing was granted`) koşu hiçbir şey vermeden ve işaretlemeden hata verir; boş cevap
+"yok" sayılmaz. Rolün kendisinin oluşturulması (zararsız, hiçbir şey vermez) okumalardan önce gelir.
+İkinci operatör koşusu hiçbir şey yazmaz (`media:attach unchanged (held)`, admin olayı yok).
+
+Operatör adımı (Keycloak konteynerinde; kullanıcı adını `read` sorar, parola kcadm'ın kendi
+prompt'una girilir, config dosyası sonda silinir). Bu değişikliği içeren sürüm çıktıktan sonra
+(iki realm aynı Keycloak'tadır), önce sandbox, sonra production:
+
+```bash
+read -r -p 'master realm geçici yönetici: ' OPERATOR_USER
+/opt/keycloak/bin/kcadm.sh config credentials --config /tmp/kcadm-operator.config \
+  --server http://localhost:8080 --realm master --user "$OPERATOR_USER"
+KEYCLOAK_REALM=e-skylab-sandbox \
+KEYCLOAK_RECONCILE_KCADM_CONFIG=/tmp/kcadm-operator.config \
+KEYCLOAK_RECONCILE_ONLY=media-attach \
+  /opt/keycloak/config/reconcile-account-center.sh
+KEYCLOAK_REALM=e-skylab-sandbox \
+KEYCLOAK_RECONCILE_KCADM_CONFIG=/tmp/kcadm-operator.config \
+KEYCLOAK_RECONCILE_ONLY=admin-panel-client \
+  /opt/keycloak/config/reconcile-account-center.sh
+rm -f /tmp/kcadm-operator.config
+```
+
+Production için aynı iki komut `KEYCLOAK_REALM=e-skylab` ile koşar (production'da ikinci komut
+gerekmez: tam uzlaştırma panelin kapsamını zaten günceller). Beklenen ilk koşu: `client role
+media:attach of core: created` (ya da `unchanged`), `default client scope roles of forms:
+verified …`, `role scope of forms: unchanged (full scope …)`, `service account
+service-account-forms: media:attach granted`, `client role media:attach of core: grant recorded
+(…)`, son satır `Media attach role is reconciled.` İkinci koşuda `media:attach unchanged (held)`
+ve `grant recorded` satırı yok.
+
+**Doğrulama.** Admin Console → Clients → `forms` → Client scopes → Evaluate → kullanıcı
+`service-account-forms`: üretilen access token'da `aud` `core`'u, `resource_access.core.roles`
+`media:attach`'i içerir (`client_id` yalnız gerçek client-credentials token'ında görünür). Uçtan
+uca: sandbox core'a Forms konteynerinin kendi kimliğiyle `POST
+/v1/media/00000000-0000-4000-8000-000000000000/attachments`: `422 media_not_linkable` her kimlik
+denetiminin geçtiğini, `403 media_attach_forbidden` geçmediğini gösterir.
+
+Geri dönüş: Admin Console → Users → `service-account-forms` → Role mapping → `core`
+`media:attach` kaldırılır ve rolün `skylab.granted-service-accounts` özniteliği silinir (yoksa
+uzlaştırıcı "granted" der); operatör adımı bir sonraki koşusunda rolü yeniden verir, yani kalıcı
+geri dönüş `MEDIA_ATTACH_CLIENTS`'tan istemciyi çıkaran sürümdür. Rolün kendisi zararsızdır.
+
+Bilinen sınır: rolü bir bileşik rolün (composite) içinden taşıyan sahipler yalnız varsayılan rol
+için aranır; başka bir bileşik rolün içine konmuşsa bildirilmez.
+
+Harness (`tests/media-attach.sh`, `run-integration.sh` çağırır): ilk tam koşu rolü açıklamasıyla
+oluşturur, `forms` yokluğunu bildirir, kimse rolü taşımaz. `forms` oluştuktan (core-erasure) sonra:
+yetkisiz kontrol token'ında rol yok; uzlaştırıcı kimliğiyle adım vermez, işaretlemez ve operatör
+adımını söyler; dört okumadan (varsayılan kapsamlar, servis hesabının rolleri, rolün kullanıcıları,
+varsayılan rol) biri enjekte edilmiş kcadm hatasıyla başarısız olunca operatör adımı hiçbir şey
+yazmadan durur; elle rol verilmiş bir kişi ve `/ADMIN` grubu bildirilir ve silinmez; servis
+hesabı rolü alır, öznitelik yazılır. Gerçek client-credentials token'ında `azp` ve `client_id`
+`forms`, `aud` içinde `core`, `resource_access.core.roles` içinde `media:attach`; `core-erasure`'ın
+token'ında yok. İkinci operatör koşusu admin olayı üretmez. `fullScopeAllowed=false` yapılınca rol
+token'dan düşer (kontrol), uzlaştırıcı kimliği kapsam eşlemesini ekler ve rol `aud: core` ile geri
+gelir. Değişiklik üretmeyen tam koşu `forms`'un bayraklarını, rol kapsamını ve servis hesabının
+`core` rollerini de karşılaştırır.

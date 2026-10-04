@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # Sourced by run-integration.sh; uses its kcadm, fail, json_assert, v2_role_body, V2_REALM,
-# TEST_STATE_DIR, COMPOSE and ADMIN_CONFIG, lca_login / lca_client_uuid and LCA_USER from
+# TEST_STATE_DIR, SCRIPT_DIR, COMPOSE and ADMIN_CONFIG, lca_login / lca_client_uuid and LCA_USER from
 # login-client-audiences.sh, and the AP_* admin panel client of admin-panel-client.sh.
 #
 # core's per-resource client roles (ADR-0059, admin-token-authz ticket 03). The reconciler creates
@@ -38,13 +38,29 @@ cr_seed_marks() {
     | jq -c 'map({key: .name, value: ((.attributes // {})[$a][0] // "")}) | from_entries' --arg a "$CR_ATTRIBUTE"
 }
 
-# The step alone with the harness administrator's kcadm session (the operator path).
+# The step alone with the harness administrator's kcadm session (the operator path). Arguments are
+# extra `exec` options (environment).
 cr_operator_reconcile() {
   "${COMPOSE[@]}" exec -T \
     -e "KEYCLOAK_REALM=$V2_REALM" \
     -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$ADMIN_CONFIG" \
     -e KEYCLOAK_RECONCILE_ONLY=core-roles \
+    "$@" \
     keycloak /opt/keycloak/config/reconcile-account-center.sh 2>&1
+}
+
+# The step with one kcadm read failing for another reason than "not found" (KCADM_BIN injection):
+# it must stop before granting or marking anything. $1: the failing read, $2: the expected message.
+cr_injected_failure_refuses() {
+  local log="$TEST_STATE_DIR/core-roles-injected-failure.log"
+  if cr_operator_reconcile -e KCADM_BIN=/tmp/kcadm-core-roles-failure.sh -e "KCADM_INJECT_FAIL=$1" >"$log"; then
+    cat "$log" >&2
+    fail "the step seeded although reading $1 failed"
+  fi
+  grep -Fq "$2" "$log" || { cat "$log" >&2; fail "the step did not say why it stopped when reading $1 failed"; }
+  ! grep -Eq '^\[reconcile\] core role .*: seeded once' "$log" || fail "the step seeded after reading $1 failed"
+  json_assert "$(cr_seed_marks)" '[.[]] | all(. == "")' "the step marked a role after reading $1 failed"
+  json_assert "$(cr_group_roles /ADMIN)" '. == []' "the step granted a role after reading $1 failed"
 }
 
 # A real login through the admin panel's client; leaves the sorted core roles of its access token
@@ -105,6 +121,16 @@ stage_core_roles_seeded_by_operator() {
   kcadm delete "realms/$V2_REALM/default-groups/$yk_id" >/dev/null
   json_assert "$(cr_seed_marks)" '[.[]] | all(. == "")' 'the refused step marked a role'
   json_assert "$(cr_group_roles /ADMIN)" '. == []' 'the refused step granted a role'
+
+  # Fail closed: a failed default-group read is not "no default group", and a failed group lookup is
+  # not "group missing" (only Keycloak's not-found is; the missing DK below proves that path).
+  "${COMPOSE[@]}" exec -T keycloak bash -c \
+    'cat >/tmp/kcadm-core-roles-failure.sh && chmod 755 /tmp/kcadm-core-roles-failure.sh' \
+    <"$SCRIPT_DIR/kcadm-core-roles-failure.sh"
+  cr_injected_failure_refuses "realms/$V2_REALM/default-groups" \
+    "The default groups of realm $V2_REALM could not be read; nothing was granted"
+  cr_injected_failure_refuses group-by-path/UYELER/YK \
+    "The Privileged group /UYELER/YK could not be looked up in realm $V2_REALM; nothing was granted"
 
   output=$(cr_operator_reconcile) || { printf '%s\n' "$output" >&2; fail 'the operator step failed'; }
   grep -Fq 'Core resource roles are reconciled.' <<<"$output" || fail 'the operator step did not report completion'

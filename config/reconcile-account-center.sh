@@ -1210,13 +1210,26 @@ CORE_ROLE_DEFINITIONS=(
   'url:access|Kısa link oluşturur, kendi linklerini görür ve yönetir'
 )
 
-# The Privileged groups that exist, one "path<TAB>id" per line.
+# The Privileged groups that exist, one "path<TAB>id" per line. Only Keycloak's answer that the
+# path does not exist counts as a missing group; any other failed lookup (network, permission,
+# server error) fails the function, so the caller never seeds and marks a role without a group
+# that is in fact there.
 core_privileged_groups() {
-  local name path line id
+  local name path line id stderr_file
+  stderr_file=$(mktemp "$WORK_DIR/stderr.XXXXXX")
   for name in "${CORE_PRIVILEGED_NAMES[@]}"; do
     for path in "/$name" "/UYELER/$name"; do
-      line=$(kcadm get "group-by-path$path" -r "$TARGET_REALM" --fields id,path --format csv --noquotes 2>/dev/null \
-        | tr -d '\r' | sed '/^$/d' || true)
+      if line=$(kcadm get "group-by-path$path" -r "$TARGET_REALM" --fields id,path --format csv --noquotes \
+        2>"$stderr_file"); then
+        line=$(tr -d '\r' <<<"$line" | sed '/^$/d')
+      elif grep -Eqi 'not found|does not exist' "$stderr_file"; then
+        continue
+      else
+        cat "$stderr_file" >&2
+        printf 'The Privileged group %s could not be looked up in realm %s; nothing was granted\n' \
+          "$path" "$TARGET_REALM" >&2
+        return 1
+      fi
       id=${line%%,*}
       [[ -n $line && ${line#*,} == "$path" && -n $id ]] || continue
       printf '%s\t%s\n' "$path" "$id"
@@ -1227,7 +1240,7 @@ core_privileged_groups() {
 reconcile_core_roles() {
   local core_uuid roles_csv definition name description created='' roles_file seeds
   local unseeded=() role_name role_seed_value seed groups default path gid stamp granted held role_id paths
-  local role_ids body
+  local role_ids body defaults
   if ! core_uuid=$(optional_lookup client_id_by_client_id "$CORE_CLIENT_ID"); then
     return 2
   fi
@@ -1273,12 +1286,22 @@ reconcile_core_roles() {
   fi
 
   # Operator session: seed. Nothing is written unless every check passes.
-  groups=$(core_privileged_groups)
+  if ! groups=$(core_privileged_groups); then
+    return 1
+  fi
   if [[ -z $groups ]]; then
     warn "no Privileged group (/ADMIN, /YK, /DK or under /UYELER) exists in realm $TARGET_REALM; nothing was granted, the roles stay unseeded"
     return 0
   fi
+  # Read into a variable first: a failed read inside a process substitution would pass as "no
+  # default group" and seed anyway. This check is what keeps every new user from getting the roles.
+  if ! defaults=$(kcadm get "realms/$TARGET_REALM/default-groups" --fields path --format csv --noquotes); then
+    printf 'The default groups of realm %s could not be read; nothing was granted (a Privileged default group would give every new user the core resource roles)\n' \
+      "$TARGET_REALM" >&2
+    return 1
+  fi
   while IFS= read -r default; do
+    default=${default%$'\r'}
     [[ -n $default ]] || continue
     while IFS=$'\t' read -r path gid; do
       if [[ $default == "$path" || $default == "$path"/* ]]; then
@@ -1287,7 +1310,7 @@ reconcile_core_roles() {
         return 1
       fi
     done <<<"$groups"
-  done < <(kcadm get "realms/$TARGET_REALM/default-groups" --fields path --format csv --noquotes | tr -d '\r')
+  done <<<"$defaults"
   for name in "${CORE_PRIVILEGED_NAMES[@]}"; do
     grep -Eq "^(/UYELER)?/$name"$'\t' <<<"$groups" \
       || warn "no Privileged group $name (neither /$name nor /UYELER/$name) in realm $TARGET_REALM; it gets no core resource role"

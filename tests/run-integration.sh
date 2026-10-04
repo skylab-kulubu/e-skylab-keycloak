@@ -72,6 +72,9 @@ source "$SCRIPT_DIR/login-client-audiences.sh"
 # The admin panel's narrowed token and Standard Token Exchange (ADR-0058); stages called below.
 # shellcheck source=admin-panel-client.sh
 source "$SCRIPT_DIR/admin-panel-client.sh"
+# Group overage: the SPI's sky-group-overage-mapper (ADR-0059); stage called below.
+# shellcheck source=group-overage-mapper.sh
+source "$SCRIPT_DIR/group-overage-mapper.sh"
 # core's per-resource client roles and their one-time seeding (ADR-0059); stages called below.
 # shellcheck source=core-roles.sh
 source "$SCRIPT_DIR/core-roles.sh"
@@ -1662,6 +1665,8 @@ EVENT_PII_COMPOSE_FILE="$COMPOSE_FILE" \
   EVENT_PII_ADMIN_CONFIG="$ADMIN_CONFIG" \
   EVENT_PII_SOURCE_REALM="$V2_REALM" \
   "$SCRIPT_DIR/erasure-event-pii.sh"
+
+stage_group_overage_mapper
 
 CURRENT_STAGE='minimal openid PAR contract'
 discovery=$(curl --fail --silent --show-error \

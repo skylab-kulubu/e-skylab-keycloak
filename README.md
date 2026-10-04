@@ -40,7 +40,7 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.15.0`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.16.0`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.1.1`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
@@ -129,6 +129,36 @@ Uzlaştırıcı, gizli `account-center` istemcisini şu sözleşmeyle yönetir:
   üniversite, bölüm ve fakültesini yeniler (C2); ayrıntı
   [`docs/v2-identity-reconcile-runbook.md`](docs/v2-identity-reconcile-runbook.md) §9.
 - BFF'nin en küçük `openid` isteğine uygun biçimde isteğe bağlı kapsam yoktur.
+
+**Group overage mapper'ı** (ADR-0059; SPI'daki `sky-group-overage-mapper`,
+`com.skylab.mapper.SkyGroupOverageMapper`): Keycloak'ın Group Membership mapper'ının Microsoft Entra
+sınırlı hâli. Kişinin grup yolu sayısı eşiğe (`overage.threshold`, varsayılan 30) eşit ya da
+altındaysa claim'i (`claim.name`, varsayılan `groups`; `full.path`, varsayılan açık) Group Membership
+mapper'ı nasıl yazıyorsa öyle yazar (grubu yoksa claim yok). Üstündeyse liste yazılmaz, yerine
+Entra'nın işareti gelir: `"_claim_names": {"groups": "src1"}`,
+`"_claim_sources": {"src1": {"endpoint": "<kök>/admin/realms/<realm>/users/<id>/groups"}}`. Liste hiçbir
+zaman kısaltılmaz (eksik liste "o grupta değil" diye okunurdu). Servisler yalnız işaretin varlığına
+bakar (core `_claim_names.groups`; uç noktayı çağırmaz) ve grupları Keycloak'tan sorar; core
+`groups` adını okuduğu için `claim.name` varsayılanda kalmalı. Access token, ID token, userinfo ve
+introspection aynı kuralla, mapper'ın açık olduğu her yerde. Eşik tam sayı değilse Admin REST mapper'ı
+kaydetmez; çalışma anında okunamazsa 30 kullanılır.
+
+Yerleşik Group Membership mapper'ından iki bilinçli sapma (eşiğin altında bile):
+`full.path` ayarı **yoksa** tam yollar yazılır (yerleşik mapper ayar yokken yalnız grup adını
+yazar; kısa ad isteyen `full.path=false` verir) ve `claim.name` **yoksa** claim `groups` adıyla
+yazılır (yerleşik mapper claim adı yokken hiçbir şey yazmaz). Mapper bir istemcide yerleşik grup
+mapper'ının **yerini alır**, yanında çalışmaz: ikisi birden açıksa eşiğin üstünde yerleşik mapper
+tam listeyi yine yazar ve işaretin anlamı (liste yok) bozulur; açarken aynı claim'i yazan Group
+Membership mapper'ı (istemcide ya da varsayılan kapsamlarında) kaldırılır. Uç nokta yalnız bilgidir:
+tüketiciler işaretteki `endpoint`'e **hiçbir zaman kimlik bilgisi göndermez** (token, cookie,
+istemci secret'ı); grupları kendi yapılandırılmış Keycloak adreslerinden ve kendi yetkileriyle
+sorarlar.
+
+**Hiçbir istemcide açık değil**: `admin`'de
+Group Membership mapper'ının yerini alması admin-token-authz 14'ün işi (core'un yedeği, panelin
+token'dan grup okumayı bırakması ve News rolünden sonra); site istemcilerinde inscribed işareti
+anlayana kadar açılmaz. Harness: JUnit (`SkyGroupOverageMapperTest`) ve `tests/group-overage-mapper.sh`
+(gerçek imajda atılabilir bir realm: 30 grupta liste, 31'de işaret, grupsuz kişide ikisi de yok).
 
 Realm oturumu, giriş ayarları ve tema `config/account-center-realm.json`
 (`editUsernameAllowed=false`, `loginWithEmailAllowed=true`,

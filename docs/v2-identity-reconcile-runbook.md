@@ -395,6 +395,11 @@ Parola sıfırlama adımının (K4b) geri dönüşü de imajdan **önce** yapıl
 Admin Console'dan realm'in Reset credentials flow bağlantısını yerleşik `reset credentials`'a
 geri almak (§17).
 
+Group overage mapper'ı (`sky-group-overage-mapper`, SPI 1.16.0, ADR-0059) da imajdan **önce** geri
+alınır: 1.16.0'dan eski bir imaja dönmeden önce, onu kullanan her istemcide
+`sky-group-overage-mapper` yerleşik Group Membership mapper'ına geri çevrilir; yoksa Keycloak eksik
+mapper'ı sessizce atlar ve token'lar `groups` claim'ini kaybeder.
+
 Realm ayarları için ayrı bir geri dönüş yolu yoktur; önceki imaj digest'i ile
 eski uzlaştırıcı çalıştırıldığında RP ID yeniden boşalır (Keycloak passwordless
 politikayı her yazımda bütünüyle yeniden kurar) ve `account-center` istemcisi

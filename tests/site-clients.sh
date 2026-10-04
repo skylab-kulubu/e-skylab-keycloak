@@ -519,8 +519,8 @@ json_assert "$access" "(($CMS_ROLES) == []) and (($EDITOR_GATE) | not)" 'a plain
 access=$(jwt_payload "$(client_secret frontend-main "$SANDBOX_REALM" | curl -fsS "$BASE_URL/realms/$SANDBOX_REALM/protocol/openid-connect/token" \
   --data-urlencode grant_type=client_credentials --data-urlencode client_id=frontend-main \
   --data-urlencode 'client_secret@-' | jq -r .access_token)")
-json_assert "$access" '.azp == "frontend-main" and (($AUD) | index("skycms") != null)
-  and (($CMS_ROLES) == ["content:read", "schema:sync"])' 'the sandbox frontend-main service account is not read-only'
+json_assert "$access" ".azp == \"frontend-main\" and (($AUD) | index(\"skycms\") != null)
+  and (($CMS_ROLES) == [\"content:read\", \"schema:sync\"])" 'the sandbox frontend-main service account is not read-only'
 printf '    sandbox frontend-main: ADMIN member editor with client:admin, plain member none, service account %s\n' "$(jq -c "$CMS_ROLES" <<<"$access")"
 again=$(RUN_REALM=$SANDBOX_REALM clients --check --site main) || { printf '%s\n' "$again" >&2; fail 'second sandbox main --check failed'; }
 expect_line "$again" 'check: 0 change(s) pending, 0 warning(s), 0 problem(s)' 'second sandbox main --check plans changes'

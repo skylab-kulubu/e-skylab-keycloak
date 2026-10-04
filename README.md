@@ -300,6 +300,16 @@ kendi kcadm oturumuyla tek başına koşar (`KEYCLOAK_RECONCILE_KCADM_CONFIG` +
 Sunucuda sky_lab_genel'deki `ops/wizards/admin-panel-keycloak-sandbox-wizard.sh` koşar
 (runbook §16).
 
+core'un kaynak rollerini (ADR-0059: `event:manage`, `ticket:manage`, `certificate:manage`,
+`users:manage` gibi 11 yeni rol ve var olan `url:moderator`, `url:access`) uzlaştırıcı her koşuda
+`core` istemcisinde var eder ve admin panelinin adımından önce koşar. Roller Privileged gruplara
+(`ADMIN`, `YK`, `DK`; `/<AD>` ya da `/UYELER/<AD>`) **bir kez** verilir; rol özniteliği
+`skylab.seeded-group-mappings` bunu kaydeder ve sonraki koşular SKY LAB admin panelinde değişen
+eşlemelere dokunmaz, hiçbir eşlemeyi silmez. Gruba rol vermek kullanıcı yetkisi istediği için bunu
+uzlaştırıcı kimliği değil operatör yapar: `KEYCLOAK_RECONCILE_KCADM_CONFIG` +
+`KEYCLOAK_RECONCILE_ONLY=core-roles`; uzlaştırıcı işaretsiz rolleri uyarıyla bildirir. Rol listesi
+sky_lab_genel'deki admin-token-authz spec'inin sözleşme tablosudur (runbook §19).
+
 Etkinlik siteleri (ARTLAB, YıldızJam, SkyDays) da canlıdaki inscribed'ın tenant'larıdır (ADR-0056
 eki, 2026-10-03). Site istemcilerini (`frontend-artlab`, `frontend-yildizjam`, `frontend-skydays`)
 idempotent `config/site-clients.sh` kurar; realm açıkça verilir (`KEYCLOAK_REALM=e-skylab` ya da

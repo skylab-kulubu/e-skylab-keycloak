@@ -27,6 +27,7 @@ entegrasyon testi bunu doğrular.
 | `account-center-core-claims` kapsamı (`account-center-core-claims-mappers.json`) | `sub`, `auth_time`, `sky_session_lifetime` (`sky_session_started`/`sky_session_expires`), `sky_embed` (ayrıntı `docs/sky-handoff-api.md`) ve C2'den beri `university`, `department` (`oidc-usermodel-attribute-mapper`, aynı adlı kullanıcı özniteliğinden, `jsonType.label=String`, `multivalued=false`: realm'in `department_ve_university_to_jwt` kapsamıyla aynı biçim, düz metin; yalnız access token ve introspection; ID token/userinfo'da yok; öznitelik yoksa claim yok). core bu iki claim'i taşıyan her token'da kişinin üniversite, bölüm ve fakültesini yeniler ve `ytu_linked` yapar (§9). Kapsamdaki diğer mapper'lar silinir. |
 | `frontend-main-core-audience`, `frontend-arge-core-audience` ve `skyforms-forms-audience` kapsamları | `frontend-main`, `frontend-arge` ve `skyforms` giriş istemcilerinin varsayılan kapsamları; access token'ın `aud`'una `core`, `core` ve `forms` ekler. Üretimde elle kuruldular, uzlaştırıcı adlarıyla devralır. İstemci realm'de yoksa uyarı yazılır ve o kalem atlanır (§0.1). |
 | Admin panelinin istemcisi (`admin`, sandbox'ta `superadmin`; ADR-0058) | Elle kurulmuş gizli istemci yerinde daraltılır: `fullScopeAllowed=false`, `standard.token.exchange.enabled=true`, rol kapsamında yalnız `core` ve `forms`'un her rolü, varsayılan kapsam `admin-panel-api-audience` (sabit `core`, `forms`, `skycms` audience'ı). Adım en son koşar. İstemci yoksa uyarı; public ise koşu ona yazmadan hata verir (§16). |
+| core'un kaynak rolleri (ADR-0059, §19) | `core` istemcisinde 13 rol her koşuda var edilir (yoksa açıklamasıyla oluşturulur; varsa dokunulmaz). Privileged gruplara (`/ADMIN`, `/YK`, `/DK`, `/UYELER/` altındakiler, hangileri varsa) **bir kez** verilir ve rol özniteliği `skylab.seeded-group-mappings` bunu kaydeder; işaretli role sonraki koşular eşleme eklemez, hiçbir koşu eşleme ya da rol silmez. Gruba rol vermek kullanıcı yetkisi ister: uzlaştırıcı kimliği yalnız rolleri oluşturur ve işaretsiz rolleri uyarıyla bildirir; tohumlamayı operatör `KEYCLOAK_RECONCILE_ONLY=core-roles` ile yapar. Adım admin panelinin adımından önce koşar. |
 | `account-center` istemcisi | v1 sözleşmesi, `fullScopeAllowed=false` **kalır**: Keycloak Admin REST `AdminAuth.hasAppRole = user.hasRole && client.hasScope` ile yetkilendirir ve tam kapsam açıkken `client.hasScope` her rol için doğrudur; `realm-management` rolü olan bir kişinin `my.` token'ı Admin REST'te geçerli olurdu. `sky_authorization` bu yüzden kapsamdan bağımsız SPI mapper'ından gelir ve token'ın yetkisini genişletmez (harness: `view-users` sahibinin `account-center` token'ı ile `GET /admin/realms/{realm}/users` → 403; tam kapsamla 200 alırdı). Token'daki `resource_access` yalnız `account` rollerini içerir, `core` rolü taşımaz (test edilir). `account` istemci rolü scope mapping izin listesi: `manage-account`, `view-profile`, `manage-account-links` (AIA `idp_link` `client.hasScope` denetimi için). |
 | `keycloak-mailer` istemcisi (K5) | Uzlaştırıcı **yalnız doğrular**: istemci yoksa uyarı ve çalıştırılacak komut; bayraklar (gizli, yalnız service account, standard flow / direct grant / implicit kapalı, `fullScopeAllowed=false`, `roles` varsayılan kapsamı) yanlışsa koşu hata ile durur; service account rolleri uzlaştırıcı kimliğiyle okunamadığından (kullanıcı yetkisi yok) uyarı olarak raporlanır. İstemciyi ve rolleri operatör `config/create-mailer-client.sh` ile oluşturur (§6). Gizli anahtarı Keycloak üretir, hiçbir betik yazdırmaz. |
 | `core-erasure` istemcisi (hesap silme, ADR-0051) | Uzlaştırıcı **yalnız doğrular** (`keycloak-mailer` gibi): istemci yoksa uyarı ve çalıştırılacak komut. Şunlardan biri sözleşmeden farklıysa koşu hata ile durur ve operatör komutunu yazar: bayraklar (gizli, yalnız service account, standard flow / direct grant / implicit kapalı, `fullScopeAllowed=false`), varsayılan kapsamlar (tam olarak `basic` ve `roles`; Keycloak'ın eklediği `service_account` hoş görülür), isteğe bağlı kapsamlar (tam olarak üç `account-erase-*`), doğrudan scope mapping (olmamalı), her erase kapsamının tek audience mapper'ı ve tek rolü, servis istemcilerinin (`skymail`, `skycms`, `forms`) varlığı. Service account rolleri uzlaştırıcı kimliğiyle okunamadığından uyarı olarak raporlanır. İstemciyi, kapsamları ve rolleri operatör `config/create-erasure-client.sh` ile kurar (§11). |
@@ -1357,11 +1358,15 @@ Sandbox realm'inde uzlaştırıcı kimliği (`account-center-config`) yoktur ve 
 uygulanmaz. Operatör aynı adımı kendi kcadm oturumuyla tek başına koşar:
 
 ```bash
-# Keycloak konteynerinde, master realm'e kcadm ile giriş yapılmış bir config dosyasıyla
+# Keycloak konteynerinde; kullanıcı adını read sorar, parola kcadm'ın kendi prompt'una girilir
+read -r -p 'master realm geçici yönetici: ' OPERATOR_USER
+/opt/keycloak/bin/kcadm.sh config credentials --config /tmp/kcadm-operator.config \
+  --server http://localhost:8080 --realm master --user "$OPERATOR_USER"
 KEYCLOAK_REALM=e-skylab-sandbox \
-KEYCLOAK_RECONCILE_KCADM_CONFIG=/tmp/<kcadm-config> \
+KEYCLOAK_RECONCILE_KCADM_CONFIG=/tmp/kcadm-operator.config \
 KEYCLOAK_RECONCILE_ONLY=admin-panel-client \
   /opt/keycloak/config/reconcile-account-center.sh
+rm -f /tmp/kcadm-operator.config
 ```
 
 `KEYCLOAK_RECONCILE_KCADM_CONFIG` verilince uzlaştırıcı giriş yapmaz, config-client secret'ı
@@ -1598,3 +1603,103 @@ Operatör: sky_lab_genel'deki `ops/wizards/site-cms-setup-wizard.sh --site <site
 üç betiği Keycloak konteynerinde koşar (git'ten okur, SHA-256 ile denetler), secret'ı sunucuda
 OpenBao'ya taşır, inscribed tenant'ını, Dokploy ortamını ve deploy hook'unu kurar. İmaj yayını
 gerekmez: betikler imaja girmeden kullanılır.
+
+## 19. core'un kaynak rolleri ve Privileged gruplara bir kez verilmesi (ADR-0059)
+
+core bugün etkinlik, bilet, sertifika, kullanıcı, grup gibi işlerde "kişi `ADMIN`, `YK` ya da `DK`
+grubunda mı" diye bakar (Privileged). ADR-0059 bunu Microsoft'un uygulama rolleri modeline taşır:
+her kaynak için `core` istemcisinde bir rol, rollerin gruplara eşlemesi SKY LAB admin panelinden.
+Rol listesi ve her rolün core'da hangi denetimin yerini aldığı sky_lab_genel'deki
+`.scratch/admin-token-authz/spec.md`'nin "Sözleşme: core'un kaynak rolleri" tablosundadır (core
+04/05 aynı adları okur; adı değiştiren önce o tabloyu değiştirir):
+
+`event:manage`, `season:manage`, `ticket:manage`, `ticket:validate`, `competitor:manage`,
+`media:manage`, `media:private:read`, `certificate:manage`, `users:manage`, `groups:manage`,
+`github:activity:read` (yeni) ve `url:moderator`, `url:access` (var olan; kısa link ve form
+bağlantısında Privileged'ın yetkisini bugün de bu ikisi veriyor).
+
+Davranış değişmesin diye her rol bugünkü Privileged gruplara verilir: `ADMIN`, `YK`, `DK`; her biri
+`/<AD>` ve `/UYELER/<AD>` yollarından hangisi varsa (`site-editor-grants.sh` ile aynı kural).
+Keycloak'ta bir grubun rolleri alt gruplarının üyelerine de geçer; bu altı yoldan birinin alt
+grubundaki (ör. `/UYELER/YK/…`) kişi rolleri miras alır.
+
+**Birebir karşılık değildir.** core'un `isPrivileged`'ı adı `ADMIN`, `YK` ya da `DK` olan bir grubu
+ağacın **herhangi bir yerinde** Privileged sayar; tohumlama yalnız altı yolu kapsar: `/ADMIN`,
+`/YK`, `/DK`, `/UYELER/ADMIN`, `/UYELER/YK`, `/UYELER/DK`. Bu yolların dışında aynı adı taşıyan bir
+grubun (ör. `/TAKIMLAR/<takım>/YK`) üyeleri bugün core'da Privileged'dır ama bu rolleri almaz. Bu
+yüzden core `AUTHZ_ROLE_MODE`'u `roles`'a çevirmeden önce production'da bu altı yolun dışında
+`ADMIN`, `YK` ya da `DK` adlı gruplar listelenir (Admin Console → Groups arama kutusu, üç ad için);
+her biri ya SKY LAB admin panelinden rolleri alır ya da bilerek dışarıda bırakılır.
+
+**Bir kez.** Rol verildikten sonra rolün `skylab.seeded-group-mappings` özniteliğine zaman ve grup
+yolları yazılır (ör. `2026-10-04T09:00:00Z /ADMIN,/UYELER/YK,/UYELER/DK`). İşaretli bir role
+uzlaştırıcı bir daha eşleme eklemez; admin panelinden kaldırılan eşleme geri gelmez, eklenen
+eşleme silinmez. Hiçbir koşu eşleme ya da rol silmez. Listeye sonradan eklenen bir rol kendi ilk
+koşusunda (işaretsiz olduğu için) aynı gruplara verilir. Rolün kendisi silinirse bir sonraki koşu
+(uzlaştırıcı kimliğininki de) onu yeniden oluşturur; işaret rolle birlikte gittiği için rol
+işaretsizdir. Uzlaştırıcı kimliği onu gruplara **vermez**, yalnız uyarır; rolü yeniden veren
+yalnız operatörün `core-roles` koşusudur. Eşlemeler önce yazılır, işaret en son; yarıda kalan
+koşu sonraki koşuda tamamlanır (var olan eşleme yeniden yazılmaz).
+
+**Kim yazar.** Rolleri oluşturmak `manage-clients` ister, uzlaştırıcı kimliğinde var. Gruba rol
+vermek kullanıcı yetkisi (`manage-users`) ister; uzlaştırıcı kimliğinde yoktur ve ona verilmez
+(`keycloak-mailer` ve `core-erasure` ile aynı gerekçe). Bu yüzden:
+
+- Tam uzlaştırma (uzlaştırıcı kimliği) eksik rolleri oluşturur ve işaretsiz roller için
+  `WARNING: core roles not yet granted to the Privileged groups: … run this step alone with an
+  operator session: KEYCLOAK_RECONCILE_ONLY=core-roles` yazar. Hepsi işaretliyse iki satır da
+  `unchanged`'dir (`client roles of core (13 resource roles): unchanged`, `group mappings of the
+  core resource roles: unchanged (…)`).
+- Operatör aynı adımı kendi kcadm oturumuyla tek başına koşar ve tohumlar (Keycloak konteynerinde;
+  kullanıcı adını `read` sorar, parola kcadm'ın kendi prompt'una girilir, config dosyası sonda
+  silinir):
+
+```bash
+read -r -p 'master realm geçici yönetici: ' OPERATOR_USER
+/opt/keycloak/bin/kcadm.sh config credentials --config /tmp/kcadm-operator.config \
+  --server http://localhost:8080 --realm master --user "$OPERATOR_USER"
+KEYCLOAK_REALM=e-skylab \
+KEYCLOAK_RECONCILE_KCADM_CONFIG=/tmp/kcadm-operator.config \
+KEYCLOAK_RECONCILE_ONLY=core-roles \
+  /opt/keycloak/config/reconcile-account-center.sh
+rm -f /tmp/kcadm-operator.config
+```
+
+  Her işaretsiz rol için `core role <rol>: seeded once to <yollar> (granted to: <yeni eşlenenler>)`
+  satırı, sonunda `Core resource roles are reconciled.` basılır. Eksik bir Privileged grup (ör. `DK`
+  yoksa) uyarıdır, ona rol verilmez. Hiç Privileged grup yoksa hiçbir şey yazılmaz ve roller
+  işaretsiz kalır. Bir varsayılan grup (`default-groups`) bir Privileged grubun kendisi ya da altıysa
+  koşu hiçbir şey yazmadan hata verir: her yeni kişi bu rolleri alırdı. Denetimler kapalı tarafta
+  başarısız olur: varsayılan grupların okunması başarısız olursa (`The default groups of realm …
+  could not be read`) ya da bir Privileged grubun araması Keycloak'ın "yok" cevabı dışında bir
+  nedenle başarısız olursa (`The Privileged group … could not be looked up`) koşu hiçbir eşleme ve
+  işaret yazmadan hata verir; yalnız gerçek "yok" cevabı grubu eksik sayar.
+
+`core` istemcisinin adı `KEYCLOAK_CORE_CLIENT_ID` ile değişir (varsayılan `core`); istemci yoksa
+uyarıyla atlanır.
+
+**Sıra.** Adım admin panelinin adımından (§16) önce koşar; tam uzlaştırmada yeni roller aynı koşuda
+`admin` istemcisinin rol kapsamına girer. Operatör yolunda `core-roles`'tan sonra
+`admin-panel-client` adımı da koşulur. core'un rol denetimine geçen sürümü (admin-token-authz 04)
+production'a ancak bu adım production'da tohumlandıktan sonra çıkar.
+
+**Token boyutu.** Bir Privileged kişinin `core` rolleri olan her token'ı (bugün `admin`, ve tam
+kapsamlı giriş istemcileri) en çok 13 rol adı (~230 bayt) büyür. `admin` 02'de daraldığı için bu
+pay oradan geliyor; tam kapsamlı diğer istemciler admin-token-authz 16–19'da daralır.
+
+Geri dönüş: roller zararsızdır (core 04'e kadar okumaz). Eşlemeler Admin Console'dan ya da SKY LAB
+admin panelinden kaldırılabilir; işaret kaldığı için uzlaştırıcı onları geri koymaz. Yeniden
+tohumlamak için rolün özniteliği silinir ve operatör adımı koşulur.
+
+Harness (`tests/core-roles.sh`, `run-integration.sh` çağırır): ilk tam koşu 13 rolü açıklamalarıyla
+oluşturur, hiçbirini gruba vermez, işaretlemez ve operatör adımını söyleyen uyarıyı basar; admin
+panelinin kapsamı yeni rolleri içerir. Operatör adımı: Privileged bir varsayılan grup varken
+reddeder ve yazmaz; varsayılan grupların ya da `/UYELER/YK`'nın okunması (enjekte edilmiş bir
+kcadm hatasıyla, `tests/kcadm-core-roles-failure.sh`) başarısız olunca da reddeder ve yazmaz; sonra
+`/ADMIN` ve `/UYELER/YK`'ya her rolü verir, `DK` yokluğunu bildirir,
+her rolü işaretler (listede olmayan `url:create`'e dokunmaz). Gerçek authorization code girişinde
+YK üyesinin `admin` token'ında roller var; grupsuz kişide yok; YK'nın bir alt grubuna eklenen kişide
+miras yoluyla var. Panelden kaldırılmış bir eşleme ikinci koşuda geri gelmez, panelden eklenmiş
+bir eşleme silinmez; işareti kaldırılan rol (listeye yeni eklenmiş gibi) üçüncü koşuda yalnız eksik
+gruba verilir. Değişiklik üretmeyen tam koşu rolleri, işaretleri ve grupların eşlemelerini de
+karşılaştırır.

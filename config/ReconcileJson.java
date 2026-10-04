@@ -39,6 +39,9 @@ import java.util.TreeMap;
  *                               "clientId<TAB>clientUuid<TAB>roleId<TAB>roleName" for a client role.
  *   field NAME                  prints the value of top-level NAME of the object on stdin as text
  *                               (empty when absent or null, JSON for containers).
+ *   role-attribute NAME         stdin is a role list read with briefRepresentation=false; prints
+ *                               "roleName<TAB>value" per role, value being the first value of the
+ *                               role attribute NAME (empty when the role does not have it).
  *   realm-attribute NAME VALUE  prints {"attributes": {...}} with the complete "attributes" map of
  *                               the realm on stdin plus NAME=VALUE. Keycloak removes every realm
  *                               attribute absent from a PUT that carries "attributes", so the map
@@ -81,6 +84,7 @@ public final class ReconcileJson {
             case "names" -> names(readStdin(), out);
             case "scope-mappings" -> scopeMappings(readStdin(), out);
             case "field" -> field(args, readStdin(), out);
+            case "role-attribute" -> roleAttribute(args, readStdin(), out);
             case "realm-attribute" -> realmAttribute(args, readStdin(), out);
             case "user-profile" -> System.exit(userProfile(requireFile(args), readStdin(), out));
             case "password-form" -> System.exit(passwordForm(args, readStdin(), out));
@@ -91,7 +95,8 @@ public final class ReconcileJson {
     private static void usage() {
         System.err.println("usage: ReconcileJson diff-fields|mapper-diff|user-profile FILE"
                 + "  |  ReconcileJson merge BASE EXTRA  |  ReconcileJson names|scope-mappings"
-                + "  |  ReconcileJson field NAME  |  ReconcileJson realm-attribute NAME VALUE"
+                + "  |  ReconcileJson field NAME  |  ReconcileJson role-attribute NAME"
+                + "  |  ReconcileJson realm-attribute NAME VALUE"
                 + "  |  ReconcileJson password-form FROM TO");
         System.exit(1);
     }
@@ -336,6 +341,26 @@ public final class ReconcileJson {
             out.println(value.asText());
         } else {
             out.println(value.toString());
+        }
+    }
+
+    // ------------------------------------------------------------------ role-attribute
+
+    private static void roleAttribute(String[] args, JsonNode roles, PrintStream out) {
+        if (args.length != 2) {
+            usage();
+        }
+        if (!roles.isArray()) {
+            throw new IllegalArgumentException("role-attribute expects a JSON array of roles");
+        }
+        for (JsonNode role : roles) {
+            String name = role.path("name").asText();
+            if (name.isEmpty()) {
+                throw new IllegalArgumentException("every role needs a name");
+            }
+            JsonNode values = role.path("attributes").path(args[1]);
+            String value = values.isArray() && !values.isEmpty() ? values.get(0).asText() : "";
+            out.println(name + "\t" + value.replace('\t', ' ').replace('\n', ' '));
         }
     }
 

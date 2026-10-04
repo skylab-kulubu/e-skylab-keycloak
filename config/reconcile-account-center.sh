@@ -79,9 +79,9 @@ EVENT_RETENTION_SETTINGS="{\"eventsEnabled\":true,\"eventsExpiration\":$EVENT_RE
 ADMIN_EVENTS_EXPIRATION_ATTRIBUTE=adminEventsExpiration
 ACCOUNT_ROLE_ALLOWLIST=(manage-account view-profile manage-account-links)
 case $RECONCILE_ONLY in
-  '' | admin-panel-client) ;;
+  '' | admin-panel-client | core-roles) ;;
   *)
-    printf 'KEYCLOAK_RECONCILE_ONLY must be empty or admin-panel-client, not %s\n' "$RECONCILE_ONLY" >&2
+    printf 'KEYCLOAK_RECONCILE_ONLY must be empty, admin-panel-client or core-roles, not %s\n' "$RECONCILE_ONLY" >&2
     exit 2
     ;;
 esac
@@ -1177,6 +1177,173 @@ reconcile_admin_panel_role_scope() {
   fi
 }
 
+# core's per-resource client roles (ADR-0059, admin-token-authz ticket 03): what the Privileged
+# group check of core gave, one role per resource, so that it can be granted per resource from the
+# SKY LAB admin panel. The list is the contract table in sky_lab_genel
+# .scratch/admin-token-authz/spec.md ("Sözleşme: core'un kaynak rolleri"); core (tickets 04/05)
+# checks exactly these names. Every run creates a missing role (manage-clients). Each role is
+# granted to the Privileged groups (ADMIN, YK, DK at /<NAME> and /UYELER/<NAME>, whichever exist)
+# ONCE: the role attribute CORE_ROLE_SEED_ATTRIBUTE records when and to which groups, and a role
+# that carries it is never granted again, so a mapping changed or removed in the admin panel stays
+# that way. Nothing here ever removes a mapping or a role. A role added to the list later is seeded
+# on its own first run. Granting a client role to a group needs user permissions, which the
+# reconciler identity deliberately lacks (ADR-0048's reason for manage-clients): its runs create
+# the roles and warn about unseeded ones; an operator seeds them by running this step alone with
+# their own kcadm session (KEYCLOAK_RECONCILE_ONLY=core-roles, runbook §19).
+CORE_CLIENT_ID=${KEYCLOAK_CORE_CLIENT_ID:-core}
+CORE_ROLE_SEED_ATTRIBUTE=skylab.seeded-group-mappings
+CORE_PRIVILEGED_NAMES=(ADMIN YK DK)
+# name|description (the description is written only when the role is created)
+CORE_ROLE_DEFINITIONS=(
+  'event:manage|Her takımın etkinliklerini, etkinlik günlerini ve oturumlarını yönetir; kapı görevlisi atar (ADR-0059)'
+  'season:manage|Sezonları oluşturur, değiştirir, siler (ADR-0059)'
+  'ticket:manage|Her etkinliğin biletlerini görür ve atar (ADR-0059)'
+  'ticket:validate|Her etkinlikte kapı girişi yapar (bilet doğrulama; ADR-0059)'
+  'competitor:manage|Her yarışmacıyı görür ve yönetir (ADR-0059)'
+  'media:manage|Medyayı listeler ve siler (ADR-0059)'
+  'media:private:read|core uygulamasının özel medyasını açar (sertifika varlıkları; ADR-0059)'
+  'certificate:manage|Her takımın sertifikalarını ve sertifika şablonlarını yönetir (ADR-0059)'
+  'users:manage|Kullanıcıları görür ve yönetir (ADR-0059)'
+  'groups:manage|Grupları görür ve yönetir (ADR-0059)'
+  'github:activity:read|Kulübün GitHub etkinliğini (özel depolar dahil) görür (ADR-0059)'
+  'url:moderator|Her kısa linki ve form bağlantısını görür ve yönetir'
+  'url:access|Kısa link oluşturur, kendi linklerini görür ve yönetir'
+)
+
+# The Privileged groups that exist, one "path<TAB>id" per line. Only Keycloak's answer that the
+# path does not exist counts as a missing group; any other failed lookup (network, permission,
+# server error) fails the function, so the caller never seeds and marks a role without a group
+# that is in fact there.
+core_privileged_groups() {
+  local name path line id stderr_file
+  stderr_file=$(mktemp "$WORK_DIR/stderr.XXXXXX")
+  for name in "${CORE_PRIVILEGED_NAMES[@]}"; do
+    for path in "/$name" "/UYELER/$name"; do
+      if line=$(kcadm get "group-by-path$path" -r "$TARGET_REALM" --fields id,path --format csv --noquotes \
+        2>"$stderr_file"); then
+        line=$(tr -d '\r' <<<"$line" | sed '/^$/d')
+      elif grep -Eqi 'not found|does not exist' "$stderr_file"; then
+        continue
+      else
+        cat "$stderr_file" >&2
+        printf 'The Privileged group %s could not be looked up in realm %s; nothing was granted\n' \
+          "$path" "$TARGET_REALM" >&2
+        return 1
+      fi
+      id=${line%%,*}
+      [[ -n $line && ${line#*,} == "$path" && -n $id ]] || continue
+      printf '%s\t%s\n' "$path" "$id"
+    done
+  done
+}
+
+reconcile_core_roles() {
+  local core_uuid roles_csv definition name description created='' roles_file seeds
+  local unseeded=() role_name role_seed_value seed groups default path gid stamp granted held role_id paths
+  local role_ids body defaults
+  if ! core_uuid=$(optional_lookup client_id_by_client_id "$CORE_CLIENT_ID"); then
+    return 2
+  fi
+  if [[ -z $core_uuid ]]; then
+    warn "client $CORE_CLIENT_ID does not exist in realm $TARGET_REALM; skipped core's resource roles"
+    return 0
+  fi
+  roles_csv=$(kcadm get "clients/$core_uuid/roles" -r "$TARGET_REALM" --fields name --format csv --noquotes \
+    | tr -d '\r')
+  for definition in "${CORE_ROLE_DEFINITIONS[@]}"; do
+    name=${definition%%|*}
+    description=${definition#*|}
+    if ! grep -Fxq -- "$name" <<<"$roles_csv"; then
+      kcadm_quiet create "clients/$core_uuid/roles" -r "$TARGET_REALM" \
+        -s "name=$name" -s "description=$description"
+      created="$created, $name"
+    fi
+  done
+  if [[ -z $created ]]; then
+    log "client roles of $CORE_CLIENT_ID (${#CORE_ROLE_DEFINITIONS[@]} resource roles): unchanged"
+  else
+    log "client roles of $CORE_CLIENT_ID (${#CORE_ROLE_DEFINITIONS[@]} resource roles): created (${created#, })"
+  fi
+
+  roles_file=$(mktemp "$WORK_DIR/core-roles.XXXXXX")
+  kcadm_json "clients/$core_uuid/roles" -r "$TARGET_REALM" -q briefRepresentation=false >"$roles_file"
+  seeds=$(json_tool role-attribute "$CORE_ROLE_SEED_ATTRIBUTE" <"$roles_file")
+  for definition in "${CORE_ROLE_DEFINITIONS[@]}"; do
+    name=${definition%%|*}
+    seed=''
+    while IFS=$'\t' read -r role_name role_seed_value; do
+      [[ $role_name == "$name" ]] && seed=$role_seed_value
+    done <<<"$seeds"
+    [[ -n $seed ]] || unseeded+=("$name")
+  done
+  if [[ ${#unseeded[@]} == 0 ]]; then
+    log "group mappings of the $CORE_CLIENT_ID resource roles: unchanged (each seeded once; the SKY LAB admin panel owns them)"
+    return 0
+  fi
+  if [[ -z $OPERATOR_KCADM_CONFIG ]]; then
+    warn "core roles not yet granted to the Privileged groups: ${unseeded[*]} (granting a role to a group needs user permissions the reconciler identity does not have); run this step alone with an operator session: KEYCLOAK_RECONCILE_ONLY=core-roles (runbook §19)"
+    return 0
+  fi
+
+  # Operator session: seed. Nothing is written unless every check passes.
+  if ! groups=$(core_privileged_groups); then
+    return 1
+  fi
+  if [[ -z $groups ]]; then
+    warn "no Privileged group (/ADMIN, /YK, /DK or under /UYELER) exists in realm $TARGET_REALM; nothing was granted, the roles stay unseeded"
+    return 0
+  fi
+  # Read into a variable first: a failed read inside a process substitution would pass as "no
+  # default group" and seed anyway. This check is what keeps every new user from getting the roles.
+  if ! defaults=$(kcadm get "realms/$TARGET_REALM/default-groups" --fields path --format csv --noquotes); then
+    printf 'The default groups of realm %s could not be read; nothing was granted (a Privileged default group would give every new user the core resource roles)\n' \
+      "$TARGET_REALM" >&2
+    return 1
+  fi
+  while IFS= read -r default; do
+    default=${default%$'\r'}
+    [[ -n $default ]] || continue
+    while IFS=$'\t' read -r path gid; do
+      if [[ $default == "$path" || $default == "$path"/* ]]; then
+        printf 'The default group %s is at or under the Privileged group %s: every new user would get the core resource roles. Nothing was granted\n' \
+          "$default" "$path" >&2
+        return 1
+      fi
+    done <<<"$groups"
+  done <<<"$defaults"
+  for name in "${CORE_PRIVILEGED_NAMES[@]}"; do
+    grep -Eq "^(/UYELER)?/$name"$'\t' <<<"$groups" \
+      || warn "no Privileged group $name (neither /$name nor /UYELER/$name) in realm $TARGET_REALM; it gets no core resource role"
+  done
+  paths=$(cut -f1 <<<"$groups" | paste -sd, -)
+  stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  role_ids=$(kcadm get "clients/$core_uuid/roles" -r "$TARGET_REALM" --fields id,name --format csv --noquotes \
+    | tr -d '\r')
+  declare -A granted_to=()
+  # One read and at most one write per group.
+  while IFS=$'\t' read -r path gid; do
+    held=$(kcadm get "groups/$gid/role-mappings/clients/$core_uuid" -r "$TARGET_REALM" --fields name --format csv \
+      --noquotes | tr -d '\r')
+    body=''
+    for name in "${unseeded[@]}"; do
+      grep -Fxq -- "$name" <<<"$held" && continue
+      role_id=$(sed -n "s/^\([^,]*\),$name\$/\1/p" <<<"$role_ids")
+      [[ -n $role_id ]] || { printf 'core role %s could not be read back\n' "$name" >&2; return 1; }
+      body="$body,$(role_reference "$role_id" "$name")"
+      granted_to[$name]="${granted_to[$name]:-}, $path"
+    done
+    [[ -z $body ]] || kcadm_quiet create "groups/$gid/role-mappings/clients/$core_uuid" -r "$TARGET_REALM" \
+      -b "[${body#,}]"
+  done <<<"$groups"
+  # The mark comes last: a run cut before it grants the same (idempotently) next time.
+  for name in "${unseeded[@]}"; do
+    kcadm_quiet update "clients/$core_uuid/roles/$name" -r "$TARGET_REALM" \
+      -s "attributes.\"$CORE_ROLE_SEED_ATTRIBUTE\"=[\"$stamp $paths\"]"
+    granted=${granted_to[$name]:-, none (every group already held it)}
+    log "core role $name: seeded once to $paths (granted to: ${granted#, })"
+  done
+}
+
 # The keycloak-mailer service-account client (K5) is provisioned by the operator with
 # create-mailer-client.sh because assigning its SkyMail roles needs user permissions the
 # reconciler identity deliberately lacks. Here the client is verified only: a missing client
@@ -1336,6 +1503,11 @@ if [[ $RECONCILE_ONLY == admin-panel-client ]]; then
   printf 'Admin panel client configuration is reconciled.\n'
   exit 0
 fi
+if [[ $RECONCILE_ONLY == core-roles ]]; then
+  reconcile_core_roles
+  printf 'Core resource roles are reconciled.\n'
+  exit 0
+fi
 
 reconcile_realm_settings
 reconcile_brute_force_and_password_policy
@@ -1369,6 +1541,8 @@ reconcile_account_center_client_scopes "$scope_uuid" "$core_scope_uuid"
 reconcile_account_scope_mappings
 verify_mailer_client
 verify_erasure_client
+# Before the admin panel's step, so that a core role created here enters its scope in this run.
+reconcile_core_roles
 # Last: a public admin panel client stops the run, and every other step is done by then; core and
 # forms roles made by earlier steps are already in place to enter the panel's scope.
 reconcile_admin_panel_client

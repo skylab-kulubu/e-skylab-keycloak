@@ -141,7 +141,20 @@ zaman kısaltılmaz (eksik liste "o grupta değil" diye okunurdu). Servisler yal
 bakar (core `_claim_names.groups`; uç noktayı çağırmaz) ve grupları Keycloak'tan sorar; core
 `groups` adını okuduğu için `claim.name` varsayılanda kalmalı. Access token, ID token, userinfo ve
 introspection aynı kuralla, mapper'ın açık olduğu her yerde. Eşik tam sayı değilse Admin REST mapper'ı
-kaydetmez; çalışma anında okunamazsa 30 kullanılır. **Hiçbir istemcide açık değil**: `admin`'de
+kaydetmez; çalışma anında okunamazsa 30 kullanılır.
+
+Yerleşik Group Membership mapper'ından iki bilinçli sapma (eşiğin altında bile):
+`full.path` ayarı **yoksa** tam yollar yazılır (yerleşik mapper ayar yokken yalnız grup adını
+yazar; kısa ad isteyen `full.path=false` verir) ve `claim.name` **yoksa** claim `groups` adıyla
+yazılır (yerleşik mapper claim adı yokken hiçbir şey yazmaz). Mapper bir istemcide yerleşik grup
+mapper'ının **yerini alır**, yanında çalışmaz: ikisi birden açıksa eşiğin üstünde yerleşik mapper
+tam listeyi yine yazar ve işaretin anlamı (liste yok) bozulur; açarken aynı claim'i yazan Group
+Membership mapper'ı (istemcide ya da varsayılan kapsamlarında) kaldırılır. Uç nokta yalnız bilgidir:
+tüketiciler işaretteki `endpoint`'e **hiçbir zaman kimlik bilgisi göndermez** (token, cookie,
+istemci secret'ı); grupları kendi yapılandırılmış Keycloak adreslerinden ve kendi yetkileriyle
+sorarlar.
+
+**Hiçbir istemcide açık değil**: `admin`'de
 Group Membership mapper'ının yerini alması admin-token-authz 14'ün işi (core'un yedeği, panelin
 token'dan grup okumayı bırakması ve News rolünden sonra); site istemcilerinde inscribed işareti
 anlayana kadar açılmaz. Harness: JUnit (`SkyGroupOverageMapperTest`) ve `tests/group-overage-mapper.sh`

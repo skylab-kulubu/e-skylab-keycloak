@@ -42,6 +42,16 @@
 # mappers stay, empty). A direct grant of a skyapp role is not touched and keeps working: --revoke
 # reports it as a WARNING; take it away in the admin panel.
 #
+# --drop-covered-direct (with --apply) takes away a DIRECT grant of one of skyapp's CMS roles (to a
+# group or a person) only where frontend-main already gives that principal the same role: the group
+# (or one of its parent groups) or the person (directly, through a group or a composite) effectively
+# holds a frontend-main role (cms:access, client:admin) that includes the skyapp role. That is
+# computed per principal and per role from frontend-main alone, so taking the direct grant away
+# changes nobody's roles. A direct grant frontend-main does not cover is a WARNING and stays. It does
+# nothing else (no setup step, no PROBLEM check of the setup); a skyapp CMS role that includes a role
+# other than skyapp's CMS roles is a PROBLEM in this mode (coverage could depend on the grant), and
+# the run stops before any write. It cannot be combined with --revoke.
+#
 # It refuses every realm but e-skylab and e-skylab-sandbox before it logs in; KEYCLOAK_REALM has no
 # default. Missing skyapp, skycms, skycms-audience (with an audience mapper to skycms) or
 # frontend-main's cms:access/client:admin (config/inscribed-cms-roles.sh makes them) stop the run
@@ -51,6 +61,7 @@
 #   KEYCLOAK_REALM=<realm> skyapp-cms-editor.sh --admin-user <admin>             # --check (default)
 #   KEYCLOAK_REALM=<realm> skyapp-cms-editor.sh --admin-user <admin> --apply     # writes
 #   KEYCLOAK_REALM=<realm> skyapp-cms-editor.sh --kcadm-config <file> [--apply] [--revoke]
+#   KEYCLOAK_REALM=<realm> skyapp-cms-editor.sh --kcadm-config <file> --drop-covered-direct [--apply]
 #
 # The administrator password is typed into kcadm's own prompt and never passes through this script.
 # Environment: KEYCLOAK_ADMIN_URL (default http://keycloak:8080), KEYCLOAK_REALM (required),
@@ -73,6 +84,7 @@ KCADM_CONFIG=''
 OWN_CONFIG=false
 MODE=check
 REVOKE=false
+DROP=false
 SOURCE_CLIENT=frontend-main
 
 APP_CLIENT=skyapp
@@ -96,7 +108,7 @@ GROUPS_MAPPER=inscribed-groups
 MAPPER_FIELDS='id,protocolMapper,config(claim.name,full.path,access.token.claim,id.token.claim,userinfo.token.claim,introspection.token.claim,multivalued,jsonType.label,usermodel.clientRoleMapping.clientId,usermodel.clientRoleMapping.rolePrefix,included.client.audience),name'
 
 usage() {
-  printf 'usage: KEYCLOAK_REALM=(e-skylab|e-skylab-sandbox) %s (--admin-user <administrator> | --kcadm-config <file>) [--check | --apply] [--revoke]\n' \
+  printf 'usage: KEYCLOAK_REALM=(e-skylab|e-skylab-sandbox) %s (--admin-user <administrator> | --kcadm-config <file>) [--check | --apply] [--revoke | --drop-covered-direct]\n' \
     "${BASH_SOURCE[0]##*/}" >&2
   exit 2
 }
@@ -125,11 +137,16 @@ while [[ $# -gt 0 ]]; do
       REVOKE=true
       shift
       ;;
+    --drop-covered-direct)
+      DROP=true
+      shift
+      ;;
     *)
       usage
       ;;
   esac
 done
+[[ $REVOKE != true || $DROP != true ]] || usage
 
 if [[ $TARGET_REALM != e-skylab && $TARGET_REALM != e-skylab-sandbox ]]; then
   printf '[skyapp-cms] refusing realm %s: set KEYCLOAK_REALM to e-skylab (production) or e-skylab-sandbox; nothing was read or changed\n' \
@@ -307,6 +324,7 @@ if [[ $OWN_CONFIG == true ]]; then
 fi
 revoke_note=''
 [[ $REVOKE != true ]] || revoke_note=' revoke'
+[[ $DROP != true ]] || revoke_note=' drop-covered-direct'
 log "realm=$TARGET_REALM mode=$MODE$revoke_note editors=$SOURCE_CLIENT"
 
 if ! realm_name=$(kcadm get "realms/$TARGET_REALM" --fields realm --format csv --noquotes 2>/dev/null | tr -d '\r') \
@@ -419,7 +437,119 @@ link() {
   fi
 }
 
-if [[ $REVOKE == true ]]; then
+if [[ $DROP == true ]]; then
+  # --- --drop-covered-direct: a direct grant goes only where frontend-main covers it --------------
+  # Coverage is read from frontend-main alone, so it must not depend on a skyapp role: skyapp's CMS
+  # roles may include only each other (cms:access includes content:*).
+  for role in "${APP_ROLES[@]}"; do
+    [[ -n ${app_role[$role]} ]] || continue
+    children=$(csv "roles-by-id/${app_role[$role]}/composites" id,name)
+    while IFS=, read -r child_id child_name; do
+      [[ -n $child_id && $app_role_ids != *" $child_id "* ]] || continue
+      problem "$APP_CLIENT/$role includes $child_name, which is not one of $APP_CLIENT's CMS roles: coverage through $SOURCE_CLIENT could depend on the direct grant; take that link away by hand"
+    done <<<"$children"
+  done
+  if [[ $problems != 0 ]]; then
+    log "nothing was changed: $problems problem(s); fix them by hand and run again"
+    exit 1
+  fi
+
+  # reach PARENT_ID: " NAME ... " skyapp's CMS roles that PARENT includes, directly or through another one.
+  reach() {
+    local frontier=" $1 " found=' ' entry parent_id child_id child_name grew=true
+    while [[ $grew == true ]]; do
+      grew=false
+      for entry in "${links[@]}"; do
+        IFS=, read -r parent_id child_id child_name _ <<<"$entry"
+        [[ $frontier == *" $parent_id "* && $frontier != *" $child_id "* ]] || continue
+        frontier+="$child_id "
+        found+="$child_name "
+        grew=true
+      done
+    done
+    printf '%s' "$found"
+  }
+  # covering[ROLE]: " NAME ... " frontend-main's roles that include skyapp's ROLE.
+  declare -A covering=()
+  for source in "${LINKED_ROLES[@]}"; do
+    reached=$(reach "${source_role[$source]}")
+    for role in "${APP_ROLES[@]}"; do
+      [[ $reached != *" $role "* ]] || covering[$role]+=" $source"
+    done
+  done
+
+  # source_held group|user ID: the ids of frontend-main's roles the principal effectively holds (a
+  # group: its own and its parent groups', composites expanded; a user: directly, through any group
+  # or composite), one per line. A failed read stops the run before any write.
+  source_held() {
+    local kind=$1 id=$2 parent
+    if [[ $kind == user ]]; then
+      csv "users/$id/role-mappings/clients/$source_uuid/composite" id
+      return 0
+    fi
+    while [[ -n $id ]]; do
+      csv "groups/$id/role-mappings/clients/$source_uuid/composite" id
+      parent=$(csv "groups/$id" parentId)
+      [[ $parent != null ]] || parent=''
+      id=$parent
+    done
+  }
+  # decide group|user ID ROLE LABEL: whether the direct grant of skyapp's ROLE to the principal goes
+  # (frontend-main gives the principal ROLE anyway) or stays.
+  drops=()
+  keeps=()
+  decide() {
+    local kind=$1 principal=$2 role=$3 label=$4 held source via=''
+    held=$(source_held "$kind" "$principal")
+    for source in ${covering[$role]:-}; do
+      if grep -Fx "${source_role[$source]}" <<<"$held" >/dev/null; then
+        via=$source
+        break
+      fi
+    done
+    if [[ -n $via ]]; then
+      drops+=("$kind,$principal,$role,$via,$label")
+    else
+      keeps+=("$role,$label")
+    fi
+  }
+  for role in "${APP_ROLES[@]}"; do
+    [[ -n ${app_role[$role]} ]] || continue
+    grants=$(csv "clients/$app_uuid/roles/$role/groups" id,path -q max=100000 | sort -t, -k2)
+    while IFS=, read -r principal path; do
+      [[ -z $principal ]] || decide group "$principal" "$role" "the group $path"
+    done <<<"$grants"
+    grants=$(csv "clients/$app_uuid/roles/$role/users" id,username -q max=100000 | sort -t, -k2)
+    while IFS=, read -r principal username; do
+      [[ -z $principal ]] || decide user "$principal" "$role" "user $username"
+    done <<<"$grants"
+  done
+
+  dropped_groups=0
+  dropped_users=0
+  for entry in "${drops[@]}"; do
+    IFS=, read -r kind principal role via label <<<"$entry"
+    if [[ $kind == group ]]; then dropped_groups=$((dropped_groups + 1)); else dropped_users=$((dropped_users + 1)); fi
+    change "take the direct grant of $APP_CLIENT/$role away from $label (it keeps $APP_CLIENT/$role through $SOURCE_CLIENT/$via)"
+    if [[ $MODE == apply ]]; then
+      kcadm_write delete "${kind}s/$principal/role-mappings/clients/$app_uuid" -r "$TARGET_REALM" \
+        -b "$(role_body "${app_role[$role]}" "$role")"
+    fi
+  done
+  for entry in "${keeps[@]}"; do
+    IFS=, read -r role label <<<"$entry"
+    if [[ -z ${covering[$role]:-} ]]; then
+      warning "$APP_CLIENT/$role is granted directly to $label and no $SOURCE_CLIENT role includes $APP_CLIENT/$role (run --apply first): kept"
+    else
+      names=''
+      for source in ${covering[$role]}; do names+=" $SOURCE_CLIENT/$source"; done
+      warning "$APP_CLIENT/$role is granted directly to $label and $SOURCE_CLIENT does not cover it (it holds none of$names): kept; to keep it an editor grant $SOURCE_CLIENT/${role/content:*/cms:access} in the SKY LAB admin panel and run again, otherwise take this grant away there"
+    fi
+  done
+  taken='would take away'
+  [[ $MODE != apply ]] || taken='took away'
+  log "drop-covered-direct: $taken $((dropped_groups + dropped_users)) direct grant(s) covered by $SOURCE_CLIENT ($dropped_groups group grant(s), $dropped_users user grant(s)); kept ${#keeps[@]} not covered"
+elif [[ $REVOKE == true ]]; then
   # --- --revoke: every link into skyapp's CMS roles from a role that is not one of them goes -------
   taken=0
   for entry in "${links[@]}"; do
@@ -572,16 +702,17 @@ is_service_account() {
   [[ $account == "$1" ]]
 }
 
+# (--drop-covered-direct reported every direct grant above.)
 for role in "${APP_ROLES[@]}"; do
-  [[ -n ${app_role[$role]:-} ]] || continue
+  [[ $DROP != true && -n ${app_role[$role]:-} ]] || continue
   holders=$(csv "clients/$app_uuid/roles/$role/groups" path -q max=100000 | sort | paste -sd ' ' -)
   people=$(csv "clients/$app_uuid/roles/$role/users" username -q max=100000 | paste -sd ' ' -)
   if [[ $REVOKE == true ]]; then
     [[ -z $holders ]] || warning "$APP_CLIENT/$role is still granted directly to the group(s) $holders: --revoke does not take a direct grant away, they keep $APP_CLIENT/$role; take it away in the SKY LAB admin panel"
     [[ -z $people ]] || warning "$APP_CLIENT/$role is still granted directly to user(s) $people: --revoke does not take a direct grant away, they keep $APP_CLIENT/$role; take it away in the SKY LAB admin panel"
   else
-    [[ -z $holders ]] || warning "$APP_CLIENT/$role is granted directly to the group(s) $holders: grant $SOURCE_CLIENT/${role/content:*/cms:access} instead and take this grant away in the SKY LAB admin panel"
-    [[ -z $people ]] || warning "$APP_CLIENT/$role is granted directly to user(s) $people: take it away; SkyApp editors come from $SOURCE_CLIENT/cms:access"
+    [[ -z $holders ]] || warning "$APP_CLIENT/$role is granted directly to the group(s) $holders: grant $SOURCE_CLIENT/${role/content:*/cms:access} instead and take this grant away in the SKY LAB admin panel (--drop-covered-direct takes away the ones $SOURCE_CLIENT already covers)"
+    [[ -z $people ]] || warning "$APP_CLIENT/$role is granted directly to user(s) $people: take it away; SkyApp editors come from $SOURCE_CLIENT/cms:access (--drop-covered-direct takes away the ones $SOURCE_CLIENT already covers)"
   fi
 done
 for role in "${LINKED_ROLES[@]}"; do

@@ -37,6 +37,15 @@
 #   - the main site's own token is unchanged (its flat roles claim holds only frontend-main's roles);
 #   - a direct grant of a skyapp CMS role is a WARNING and is not taken away; the users and service
 #     accounts that hold frontend-main/cms:access directly are counted and named;
+#   - --drop-covered-direct (with --revoke a usage error) takes away a direct grant of a skyapp CMS
+#     role exactly where frontend-main covers it, per principal and per role: groups that hold
+#     frontend-main/cms:access (or client:admin for skyapp/client:admin), a group covered by its parent
+#     group, a person covered through a group; a grant frontend-main does not cover (a group holding
+#     nothing, a group holding frontend-main/cms:access but a direct skyapp/client:admin, a person) is
+#     a WARNING and stays. --check writes nothing; --apply writes only those role mapping deletions; a
+#     second run writes nothing; the covered leader's SkyApp session opened before the drop still
+#     gets cms:access + content:read + content:write on refresh (ADMIN also client:admin); a skyapp
+#     CMS role that includes another role is a PROBLEM (no write);
 #   - another client's role that includes skyapp/cms:access (what --editors-from used to make) is a
 #     PROBLEM: --check and --apply stop with no admin event; --revoke takes it away together with
 #     frontend-main's two links (the next refresh carries no CMS role, also for a person who was an
@@ -435,6 +444,107 @@ for user in "$yk_user" "$main_account"; do
   kcadm delete "users/$user/role-mappings/clients/$main" -r "$REALM" -b "$main_editor_role" >/dev/null
 done
 printf '    a direct grant of skyapp/cms:access: WARNING, kept; direct holders of frontend-main/cms:access counted\n'
+
+# ---------------------------------------------------------------------------------------------
+CURRENT_STAGE='--drop-covered-direct'
+out=$(run_expecting 2 skyapp-cms-editor.sh "$REALM" --drop-covered-direct --revoke)
+expect_line "$out" 'usage: KEYCLOAK_REALM=' '--drop-covered-direct with --revoke was accepted'
+# Production's shape after the setup of 2026-10-05: skyapp/cms:access granted directly to editor
+# groups that hold frontend-main/cms:access (ADMIN also skyapp/client:admin next to
+# frontend-main/client:admin), next to direct grants frontend-main does not cover. /UYELER/YK/BASKAN
+# is covered by its parent group, ykmember through the group /UYELER/YK; /UYELER/YK holds
+# frontend-main/cms:access but not client:admin; member and /UYELER/ESKI-EDITORLER hold nothing.
+yk_chair=$(group "$yk" BASKAN)
+grant "$app" cms:access "$admin_group"
+grant "$app" client:admin "$admin_group"
+grant "$app" cms:access "$mobilab_leaders"
+grant "$app" content:write "$yk_chair"
+grant "$app" client:admin "$yk"
+member_user=$(kcadm get users -r "$REALM" -q username=member -q exact=true | jq -r '.[0].id')
+user_grant() { # user_grant USER_ID ROLE: a direct grant of skyapp's ROLE to a person
+  kcadm create "users/$1/role-mappings/clients/$app" -r "$REALM" \
+    -b "$(kcadm get "clients/$app/roles/$2" -r "$REALM" | jq -c '[{id, name}]')" >/dev/null
+}
+user_grant "$yk_user" content:write
+user_grant "$member_user" cms:access
+direct_roles() { # direct_roles groups|users ID: the sorted names of skyapp's roles granted directly
+  kcadm get "$1/$2/role-mappings/clients/$app" -r "$REALM" | jq -c '[.[].name] | sort'
+}
+drop_session=$(app_tokens mobilead)
+event_before=$(newest_admin_event)
+sleep 1
+check=$(editor --check --drop-covered-direct) || { printf '%s\n' "$check" >&2; fail '--check --drop-covered-direct failed'; }
+printf '%s\n' "$check" | sed 's/^/    /'
+[[ $(newest_admin_event) == "$event_before" ]] || fail '--check --drop-covered-direct wrote to the realm'
+expect_line "$check" 'realm=e-skylab mode=check drop-covered-direct editors=frontend-main' 'unexpected header'
+expect_line "$check" 'would take the direct grant of skyapp/cms:access away from the group /ADMIN (it keeps skyapp/cms:access through frontend-main/cms:access)' 'covered ADMIN grant not planned'
+expect_line "$check" 'would take the direct grant of skyapp/client:admin away from the group /ADMIN (it keeps skyapp/client:admin through frontend-main/client:admin)' 'covered ADMIN client:admin not planned'
+expect_line "$check" 'would take the direct grant of skyapp/cms:access away from the group /UYELER/ARGE/MOBILAB/LIDERLER (it keeps skyapp/cms:access through frontend-main/cms:access)' 'covered leader grant not planned'
+expect_line "$check" 'would take the direct grant of skyapp/content:write away from the group /UYELER/YK/BASKAN (it keeps skyapp/content:write through frontend-main/cms:access)' 'grant covered by the parent group not planned'
+expect_line "$check" 'would take the direct grant of skyapp/content:write away from user ykmember (it keeps skyapp/content:write through frontend-main/cms:access)' 'user grant covered through a group not planned'
+expect_line "$check" 'WARNING: skyapp/cms:access is granted directly to the group /UYELER/ESKI-EDITORLER and frontend-main does not cover it (it holds none of frontend-main/cms:access): kept' 'uncovered group grant not kept'
+expect_line "$check" 'WARNING: skyapp/client:admin is granted directly to the group /UYELER/YK and frontend-main does not cover it (it holds none of frontend-main/client:admin): kept' 'grant covered for another role only not kept'
+expect_line "$check" 'WARNING: skyapp/cms:access is granted directly to user member and frontend-main does not cover it' 'uncovered user grant not kept'
+expect_line "$check" 'drop-covered-direct: would take away 5 direct grant(s) covered by frontend-main (4 group grant(s), 1 user grant(s)); kept 3 not covered' 'unexpected counts'
+expect_line "$check" 'check: 5 change(s) pending, 3 warning(s), 0 problem(s)' 'unexpected plan size'
+reject_line "$check" 'would create' '--drop-covered-direct planned a setup step'
+reject_line "$check" 'would make' '--drop-covered-direct planned a setup step'
+
+event_before=$(newest_admin_event)
+sleep 1
+apply=$(editor --apply --drop-covered-direct) || { printf '%s\n' "$apply" >&2; fail '--apply --drop-covered-direct failed'; }
+expect_line "$apply" 'drop-covered-direct: took away 5 direct grant(s) covered by frontend-main (4 group grant(s), 1 user grant(s)); kept 3 not covered' 'apply counts'
+expect_line "$apply" 'applied 5 change(s), 3 warning(s), 0 problem(s)' 'apply did not take away exactly the covered grants'
+json_assert "$(kcadm get admin-events -r "$REALM" -q max=1000)" \
+  '[.[] | select(.time > $t)] | length == 5 and all(.operationType == "DELETE" and .resourceType == "CLIENT_ROLE_MAPPING")' \
+  '--drop-covered-direct wrote something other than five role mapping deletions' --argjson t "$event_before"
+for entry in "groups $admin_group []" "groups $mobilab_leaders []" "groups $yk_chair []" "users $yk_user []" \
+  "groups $yk [\"client:admin\"]" "groups $stale_editors [\"cms:access\"]" "users $member_user [\"cms:access\"]"; do
+  read -r kind id wanted <<<"$entry"
+  [[ $(direct_roles "$kind" "$id") == "$wanted" ]] || fail "after --drop-covered-direct $kind/$id holds $(direct_roles "$kind" "$id") directly, not $wanted"
+done
+access=$(access_of "$(app_refresh "$(jq -r .refresh_token <<<"$drop_session")")")
+json_assert "$access" "(($CMS_ROLES) == [\"cms:access\", \"content:read\", \"content:write\"]) and ($APP_GATE) and ((($AUD) | index(\"skycms\")) != null)" \
+  'after --drop-covered-direct the covered leader lost a SkyApp role'
+printf '    mobilead (covered leader), session opened before the drop, refreshed: roles=%s skyapp gate=%s\n' \
+  "$(jq -c "$CMS_ROLES" <<<"$access")" "$(jq -c "$APP_GATE" <<<"$access")"
+access=$(access_of "$(app_tokens boss)")
+json_assert "$access" "($CMS_ROLES) == [\"client:admin\", \"cms:access\", \"content:read\", \"content:write\"]" 'after --drop-covered-direct ADMIN lost a SkyApp role'
+access=$(access_of "$(app_tokens ykmember)")
+json_assert "$access" "($CMS_ROLES) == [\"client:admin\", \"cms:access\", \"content:read\", \"content:write\"]" 'after --drop-covered-direct ykmember lost a SkyApp role'
+access=$(access_of "$(app_tokens member)")
+json_assert "$access" "($CMS_ROLES) == [\"cms:access\", \"content:read\", \"content:write\"]" 'the uncovered direct grant of member was taken away'
+
+event_before=$(newest_admin_event)
+sleep 1
+again=$(editor --apply --drop-covered-direct) || { printf '%s\n' "$again" >&2; fail 'second --apply --drop-covered-direct failed'; }
+expect_line "$again" 'applied 0 change(s), 3 warning(s), 0 problem(s)' 'second --apply --drop-covered-direct wrote'
+[[ $(newest_admin_event) == "$event_before" ]] || fail 'the second --drop-covered-direct run wrote to the realm'
+out=$(editor --check) || { printf '%s\n' "$out" >&2; fail '--check after --drop-covered-direct failed'; }
+expect_line "$out" '(--drop-covered-direct takes away the ones frontend-main already covers)' 'the setup run does not point at --drop-covered-direct'
+expect_line "$out" 'check: 0 change(s) pending, 3 warning(s), 0 problem(s)' 'the setup changed after --drop-covered-direct'
+printf '    --drop-covered-direct: 5 covered grants taken away (4 groups, 1 user), 3 uncovered kept as WARNING; second run 0 changes, no admin event\n'
+
+# A skyapp CMS role that includes another role: coverage could ride on the direct grant itself
+# (here frontend-main/client:admin would come through skyapp/cms:access). PROBLEM, no write.
+main_admin_role=$(kcadm get "clients/$main/roles/client:admin" -r "$REALM" | jq -c '[{id, name}]')
+app_editor_role=$(kcadm get "clients/$app/roles/cms:access" -r "$REALM" | jq -r .id)
+kcadm create "roles-by-id/$app_editor_role/composites" -r "$REALM" -b "$main_admin_role" >/dev/null
+event_before=$(newest_admin_event)
+sleep 1
+out=$(run_expecting 1 skyapp-cms-editor.sh "$REALM" --apply --drop-covered-direct)
+expect_line "$out" "PROBLEM: skyapp/cms:access includes client:admin, which is not one of skyapp's CMS roles" 'a skyapp role with a foreign composite was not reported'
+expect_line "$out" 'nothing was changed: 1 problem(s)' '--drop-covered-direct did not stop on the PROBLEM'
+no_admin_event_since "$event_before" '--drop-covered-direct wrote to the realm although a PROBLEM was found'
+kcadm delete "roles-by-id/$app_editor_role/composites" -r "$REALM" -b "$main_admin_role" >/dev/null
+printf '    a skyapp CMS role that includes another role: PROBLEM, exit 1, no admin event\n'
+
+# Back to the state the next stages expect: only /UYELER/ESKI-EDITORLER holds a skyapp role directly.
+kcadm delete "groups/$yk/role-mappings/clients/$app" -r "$REALM" \
+  -b "$(kcadm get "clients/$app/roles/client:admin" -r "$REALM" | jq -c '[{id, name}]')" >/dev/null
+kcadm delete "users/$member_user/role-mappings/clients/$app" -r "$REALM" \
+  -b "$(kcadm get "clients/$app/roles/cms:access" -r "$REALM" | jq -c '[{id, name}]')" >/dev/null
+kcadm delete "groups/$yk_chair" -r "$REALM"
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='another role that includes a skyapp role is a PROBLEM'

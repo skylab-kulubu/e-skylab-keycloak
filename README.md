@@ -450,7 +450,14 @@ eksik önkoşul gibi hiçbir şey yazılmadan koşuyu durdurur (çıkış 1). `-
 rollerine başka rollerden giden her bağı alır (`frontend-main`'in ikisi ve varsa başka istemci ya
 da realm rolünden gelenler): sonraki token yenilemesinde kimse bir composite üzerinden SkyApp
 rolü almaz. `skyapp` rolünün bir gruba ya da kişiye doğrudan atanması `--revoke`'la gitmez; betik
-bunu WARNING olarak gösterir, panelden kaldırılır. Önce `inscribed-cms-roles.sh --client
+bunu WARNING olarak gösterir, panelden kaldırılır. `--drop-covered-direct` (varsayılan
+`--check`, `--apply` ile yazar; `--revoke` ile verilemez) yalnız kurulumdan sonra kalan doğrudan
+atamaları temizler: bir `skyapp` CMS rolünün gruba ya da kişiye doğrudan atamasını, o grup (ya da üst
+grubu) veya kişi (doğrudan, bir grubu ya da composite üzerinden) aynı rolü içeren bir
+`frontend-main` rolünü (`cms:access`, `client:admin`) zaten taşıyorsa kaldırır. Kapsama her ilke
+ve her rol için yalnız `frontend-main`'den hesaplanır, yani kimsenin rolü değişmez; kapsanmayan
+atama WARNING olarak kalır. `skyapp`'in CMS rollerinden biri başka bir rol içeriyorsa bu modda
+PROBLEM'dir ve hiçbir şey yazılmaz. Önce `inscribed-cms-roles.sh --client
 frontend-main` ve `skycms`'i access token'a yazan bir `skycms-audience` kapsamı gerekir
 (`site-clients.sh --shared-scope` kurar ya da onarır); eksik önkoşulda hiçbir şey yazmaz. Harness
 `tests/skyapp-cms-editor.sh` tek başına çalışır.

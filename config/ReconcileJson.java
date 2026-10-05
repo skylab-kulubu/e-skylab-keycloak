@@ -33,8 +33,15 @@ import java.util.TreeMap;
  *   merge BASE.json EXTRA.json  prints the top-level union of both objects (EXTRA wins); used to
  *                               add environment-derived fields to a source-controlled document.
  *   names                       prints the "name" of every element of the array on stdin.
+ *   scope-mappings              stdin is the scope mappings of one client (GET
+ *                               clients/{id}/scope-mappings); prints one line per mapped role:
+ *                               "-<TAB>-<TAB>roleId<TAB>roleName" for a realm role and
+ *                               "clientId<TAB>clientUuid<TAB>roleId<TAB>roleName" for a client role.
  *   field NAME                  prints the value of top-level NAME of the object on stdin as text
  *                               (empty when absent or null, JSON for containers).
+ *   role-attribute NAME         stdin is a role list read with briefRepresentation=false; prints
+ *                               "roleName<TAB>value" per role, value being the first value of the
+ *                               role attribute NAME (empty when the role does not have it).
  *   realm-attribute NAME VALUE  prints {"attributes": {...}} with the complete "attributes" map of
  *                               the realm on stdin plus NAME=VALUE. Keycloak removes every realm
  *                               attribute absent from a PUT that carries "attributes", so the map
@@ -75,7 +82,9 @@ public final class ReconcileJson {
             case "mapper-diff" -> mapperDiff(requireFile(args), readStdin(), out);
             case "merge" -> merge(args, out);
             case "names" -> names(readStdin(), out);
+            case "scope-mappings" -> scopeMappings(readStdin(), out);
             case "field" -> field(args, readStdin(), out);
+            case "role-attribute" -> roleAttribute(args, readStdin(), out);
             case "realm-attribute" -> realmAttribute(args, readStdin(), out);
             case "user-profile" -> System.exit(userProfile(requireFile(args), readStdin(), out));
             case "password-form" -> System.exit(passwordForm(args, readStdin(), out));
@@ -85,8 +94,9 @@ public final class ReconcileJson {
 
     private static void usage() {
         System.err.println("usage: ReconcileJson diff-fields|mapper-diff|user-profile FILE"
-                + "  |  ReconcileJson merge BASE EXTRA  |  ReconcileJson names"
-                + "  |  ReconcileJson field NAME  |  ReconcileJson realm-attribute NAME VALUE"
+                + "  |  ReconcileJson merge BASE EXTRA  |  ReconcileJson names|scope-mappings"
+                + "  |  ReconcileJson field NAME  |  ReconcileJson role-attribute NAME"
+                + "  |  ReconcileJson realm-attribute NAME VALUE"
                 + "  |  ReconcileJson password-form FROM TO");
         System.exit(1);
     }
@@ -289,6 +299,35 @@ public final class ReconcileJson {
         }
     }
 
+    // ------------------------------------------------------------------ scope-mappings
+
+    private static void scopeMappings(JsonNode mappings, PrintStream out) {
+        if (!mappings.isObject()) {
+            throw new IllegalArgumentException("scope-mappings expects the scope mappings object of a client");
+        }
+        for (JsonNode role : mappings.path("realmMappings")) {
+            out.println("-\t-\t" + roleColumns(role));
+        }
+        for (Map.Entry<String, JsonNode> client : mappings.path("clientMappings").properties()) {
+            String clientUuid = client.getValue().path("id").asText();
+            if (clientUuid.isEmpty()) {
+                throw new IllegalArgumentException("client mapping " + client.getKey() + " has no id");
+            }
+            for (JsonNode role : client.getValue().path("mappings")) {
+                out.println(client.getKey() + "\t" + clientUuid + "\t" + roleColumns(role));
+            }
+        }
+    }
+
+    private static String roleColumns(JsonNode role) {
+        String id = role.path("id").asText();
+        String name = role.path("name").asText();
+        if (id.isEmpty() || name.isEmpty()) {
+            throw new IllegalArgumentException("every mapped role needs an id and a name");
+        }
+        return id + "\t" + name;
+    }
+
     // ------------------------------------------------------------------ field
 
     private static void field(String[] args, JsonNode live, PrintStream out) {
@@ -302,6 +341,26 @@ public final class ReconcileJson {
             out.println(value.asText());
         } else {
             out.println(value.toString());
+        }
+    }
+
+    // ------------------------------------------------------------------ role-attribute
+
+    private static void roleAttribute(String[] args, JsonNode roles, PrintStream out) {
+        if (args.length != 2) {
+            usage();
+        }
+        if (!roles.isArray()) {
+            throw new IllegalArgumentException("role-attribute expects a JSON array of roles");
+        }
+        for (JsonNode role : roles) {
+            String name = role.path("name").asText();
+            if (name.isEmpty()) {
+                throw new IllegalArgumentException("every role needs a name");
+            }
+            JsonNode values = role.path("attributes").path(args[1]);
+            String value = values.isArray() && !values.isEmpty() ? values.get(0).asText() : "";
+            out.println(name + "\t" + value.replace('\t', ' ').replace('\n', ' '));
         }
     }
 

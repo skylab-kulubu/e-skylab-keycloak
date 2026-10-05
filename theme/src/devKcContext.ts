@@ -302,9 +302,10 @@ type PreviewLanguageTag = "tr" | "en";
 type PreviewMessage = { type: "success" | "warning" | "error" | "info"; summary: Record<PreviewLanguageTag, string> };
 type PreviewState = { message: PreviewMessage; fieldErrors?: Record<string, PreviewMessage["summary"]>; username?: string };
 
-// Keycloak's own wording for each state (its tr/en message bundles), so the preview shows what the server sends.
-const invalidUserMessage = { tr: "Geçersiz kullanıcı adı veya şifre.", en: "Invalid username or password." };
-const missingUsernameMessage = { tr: "Lütfen kullanıcı adını belirtin.", en: "Please specify username." };
+// The wording of each state in the theme's message bundle (i18n.ts, which Keycloak reads on the
+// server), so the preview shows what the server sends; i18n.test.ts keeps the two in step.
+const invalidUserMessage = { tr: "Kullanıcı adı, e-posta veya parola hatalı.", en: "The username, e-mail or password is incorrect." };
+const missingUsernameMessage = { tr: "Kullanıcı adını veya e-postanı yaz.", en: "Enter your username or e-mail." };
 
 /**
  * Server-side states of a page, previewed with `?page=<id>&state=<name>`: the page-wide
@@ -317,8 +318,8 @@ export const previewStates = {
       message: {
         type: "success",
         summary: {
-          tr: "Daha fazla talimatla kısa sürede bir e-posta almalısınız.",
-          en: "You should receive an email shortly with further instructions."
+          tr: "Bu bilgiler bir hesaba aitse hesabın birincil e-posta adresine bir bağlantı gönderdik. Gelen kutunu kontrol et; birkaç dakika içinde gelmezse istenmeyen (spam) klasörüne de bak.",
+          en: "If these details belong to an account, we sent a link to its primary e-mail address. Check your inbox; if nothing arrives within a few minutes, look in your spam folder too."
         }
       }
     },
@@ -332,8 +333,8 @@ export const previewStates = {
       message: {
         type: "error",
         summary: {
-          tr: "Kimlik sağlayıcıyla kimlik doğrulaması yapılırken beklenmeyen bir hata oluştu",
-          en: "Unexpected error when authenticating with identity provider"
+          tr: "YTÜ hesabınla giriş sırasında beklenmeyen bir sorun oluştu. Tekrar dene.",
+          en: "Something unexpected went wrong while signing in with your YTÜ account. Please try again."
         }
       }
     }

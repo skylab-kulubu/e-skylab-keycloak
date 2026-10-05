@@ -38,6 +38,11 @@
 #   - drift (Full scope on, a localhost redirect) is repaired and the extra URI removed;
 #   - in the sandbox realm the origin is sandbox-<site>, a missing core client is a NOTE, the
 #     Privileged group /UYELER/ADMIN is found and missing teams are WARNINGs;
+#   - --site main is refused in e-skylab (production's frontend-main is hand-made) by both scripts
+#     before a login; in the sandbox realm it makes frontend-main in the event sites' shape with the
+#     origin https://sandbox.yildizskylab.com, its editors are the Privileged groups only, an ADMIN
+#     member's token through it carries cms:access + client:admin, its service account stays
+#     content:read + schema:sync, and a second run writes nothing;
 #   - the client secret is never printed.
 # Requirements on the host: docker, curl, jq, openssl, base64. SITE_CLIENTS_TEST_PORT (default 18093).
 # The jq programs name jq variables ($s, $t), not shell ones:
@@ -134,8 +139,8 @@ scope_uuids() {
 newest_admin_event() {
   kcadm get admin-events -r "${1:-$REALM}" -q max=1 | jq -r '.[0].time // 0'
 }
-client_secret() {
-  kcadm get "clients/$(client_uuid "$1")/client-secret" -r "$REALM" | jq -j .value
+client_secret() { # client_secret CLIENT [REALM]
+  kcadm get "clients/$(client_uuid "$1" "${2:-$REALM}")/client-secret" -r "${2:-$REALM}" | jq -j .value
 }
 jwt_payload() {
   local segment
@@ -145,16 +150,17 @@ jwt_payload() {
 }
 b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
 
-# code_flow_response CLIENT USER: the person's token response from the real authorization code flow
-# with PKCE S256 (as NextAuth's Keycloak provider runs it); the code is exchanged with the secret.
+# code_flow_response CLIENT USER [REALM SITE]: the person's token response from the real
+# authorization code flow with PKCE S256 (as NextAuth's Keycloak provider runs it); the code is
+# exchanged with the secret.
 code_flow_response() {
-  local client=$1 user=$2 site callback jar page action location code verifier challenge
-  site="https://${client#frontend-}.yildizskylab.com"
+  local client=$1 user=$2 realm=${3:-$REALM} site=${4:-} callback jar page action location code verifier challenge
+  [[ -n $site ]] || site="https://${client#frontend-}.yildizskylab.com"
   callback="$site/api/auth/callback/keycloak"
   verifier=$(openssl rand -hex 32)
   challenge=$(printf '%s' "$verifier" | openssl dgst -sha256 -binary | b64url)
   jar=$(mktemp "${TMPDIR:-/tmp}/site-clients-jar.XXXXXX")
-  page=$(curl -fsS -c "$jar" -b "$jar" -G "$BASE_URL/realms/$REALM/protocol/openid-connect/auth" \
+  page=$(curl -fsS -c "$jar" -b "$jar" -G "$BASE_URL/realms/$realm/protocol/openid-connect/auth" \
     --data-urlencode "client_id=$client" --data-urlencode response_type=code \
     --data-urlencode 'scope=openid email profile' --data-urlencode "redirect_uri=$callback" \
     --data-urlencode state=harness-state --data-urlencode "code_challenge=$challenge" \
@@ -167,7 +173,7 @@ code_flow_response() {
   [[ $location == "$callback?"* ]] || fail "the login of $user did not return to $callback ($location)"
   code=$(sed -n 's/.*[?&]code=\([^&]*\).*/\1/p' <<<"$location")
   [[ -n $code ]] || fail "no authorization code for $user"
-  client_secret "$client" | curl -fsS "$BASE_URL/realms/$REALM/protocol/openid-connect/token" \
+  client_secret "$client" "$realm" | curl -fsS "$BASE_URL/realms/$realm/protocol/openid-connect/token" \
     --data-urlencode grant_type=authorization_code --data-urlencode "code=$code" \
     --data-urlencode "redirect_uri=$callback" --data-urlencode "client_id=$client" \
     --data-urlencode "code_verifier=$verifier" --data-urlencode 'client_secret@-'
@@ -206,6 +212,12 @@ for realm in '' master other-realm; do
   done
 done
 printf '    unset, master and other-realm refused (exit 2) before a login\n'
+for script in site-clients.sh site-editor-grants.sh; do
+  refused=$(run_expecting 2 "$script" "$REALM" --apply --site main)
+  expect_line "$refused" 'refusing --site main in realm e-skylab' '--site main not refused in production'
+  reject_line "$refused" 'realm=' 'the refused --site main run went on'
+done
+printf '    --site main refused in e-skylab (exit 2) before a login\n'
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='fixture realm'
@@ -455,5 +467,68 @@ expect_line "$out" 'Privileged groups: /UYELER/ADMIN' 'sandbox Privileged group 
 expect_line "$out" 'WARNING: frontend-artlab: the team /UYELER/ARGE/AIRLAB does not exist in realm e-skylab-sandbox' 'missing team not a WARNING'
 expect_line "$out" 'WARNING: frontend-artlab: the team /UYELER/ORGANIZASYON/ARTLAB does not exist in realm e-skylab-sandbox' 'missing organization team not a WARNING'
 expect_line "$out" 'grant frontend-artlab/client:admin to the group /UYELER/ADMIN' 'sandbox client:admin not granted'
+
+# ---------------------------------------------------------------------------------------------
+CURRENT_STAGE='sandbox: the main site (--site main)'
+SANDBOX_MAIN=https://sandbox.yildizskylab.com
+s_admin=$(kcadm get groups -r "$SANDBOX_REALM" -q search=ADMIN | jq -r '.. | objects | select(.path? == "/UYELER/ADMIN") | .id' | head -n 1)
+[[ -n $s_admin ]] || fail 'no /UYELER/ADMIN in the sandbox fixture'
+s_boss=$(kcadm create users -r "$SANDBOX_REALM" -i -s username=sboss -s enabled=true -s email=sboss@example.invalid \
+  -s emailVerified=true -s firstName=Harness -s lastName=sboss)
+kcadm set-password -r "$SANDBOX_REALM" --userid "$s_boss" --new-password "$PERSON_PASSWORD" >/dev/null
+kcadm update "users/$s_boss/groups/$s_admin" -r "$SANDBOX_REALM" -n -b '{}' >/dev/null
+s_member=$(kcadm create users -r "$SANDBOX_REALM" -i -s username=smember -s enabled=true -s email=smember@example.invalid \
+  -s emailVerified=true -s firstName=Harness -s lastName=smember)
+kcadm set-password -r "$SANDBOX_REALM" --userid "$s_member" --new-password "$PERSON_PASSWORD" >/dev/null
+check=$(RUN_REALM=$SANDBOX_REALM clients --check --site main) || { printf '%s\n' "$check" >&2; fail 'sandbox main --check failed'; }
+printf '%s\n' "$check" | sed 's/^/    /'
+expect_line "$check" 'realm=e-skylab-sandbox mode=check clients=frontend-main' 'unexpected sandbox main header'
+expect_line "$check" "would create confidential client frontend-main (standard flow with PKCE S256 and service account on, implicit and direct grants off, fullScopeAllowed=false; redirect $SANDBOX_MAIN/api/auth/callback/keycloak, web origin $SANDBOX_MAIN, post-logout $SANDBOX_MAIN/*" 'sandbox main client not planned'
+reject_line "$check" 'hand-made frontend-main' 'the managed sandbox frontend-main was reported as hand-made'
+expect_line "$check" 'NOTE: frontend-arge does not exist in realm e-skylab-sandbox' 'frontend-arge report missing'
+[[ -z $(client_uuid frontend-main "$SANDBOX_REALM") ]] || fail '--check made the sandbox frontend-main'
+out=$(RUN_REALM=$SANDBOX_REALM clients --apply --site main) || { printf '%s\n' "$out" >&2; fail 'sandbox main --apply failed'; }
+s_main=$(client_uuid frontend-main "$SANDBOX_REALM")
+[[ -n $s_main ]] || fail 'the sandbox frontend-main was not made'
+live=$(kcadm get "clients/$s_main" -r "$SANDBOX_REALM")
+json_assert "$live" '.enabled and (.publicClient | not) and .standardFlowEnabled and (.implicitFlowEnabled | not)
+  and (.directAccessGrantsEnabled | not) and .serviceAccountsEnabled and (.fullScopeAllowed | not)
+  and .attributes["pkce.code.challenge.method"] == "S256" and .name == "SKY LAB"
+  and .redirectUris == [$s + "/api/auth/callback/keycloak"] and .webOrigins == [$s]
+  and .attributes["post.logout.redirect.uris"] == $s + "/*"' 'the sandbox frontend-main is not in the Site client shape' --arg s "$SANDBOX_MAIN"
+json_assert "$(kcadm get "clients/$s_main/default-client-scopes" -r "$SANDBOX_REALM")" 'any(.[]; .name == "skycms-audience")' \
+  'skycms-audience is not a default scope of the sandbox frontend-main'
+printf '    sandbox frontend-main: %s\n' "$(jq -c '{name, fullScopeAllowed, pkce: .attributes["pkce.code.challenge.method"], redirectUris}' <<<"$live")"
+out=$(RUN_REALM=$SANDBOX_REALM roles --apply --client frontend-main) || { printf '%s\n' "$out" >&2; fail 'sandbox main roles failed'; }
+expect_line "$out" 'create client role cms:access on frontend-main' 'cms:access not made on the sandbox frontend-main'
+out=$(RUN_REALM=$SANDBOX_REALM grants --apply --site main) || { printf '%s\n' "$out" >&2; fail 'sandbox main grants failed'; }
+expect_line "$out" 'grant frontend-main/cms:access to the group /UYELER/ADMIN' 'sandbox main cms:access not granted'
+expect_line "$out" 'grant frontend-main/client:admin to the group /UYELER/ADMIN' 'sandbox main client:admin not granted'
+# The sandbox fixture has only /UYELER/ADMIN: YK and DK are missing, a WARNING each, and nothing else.
+expect_line "$out" 'WARNING: no Privileged group YK (neither /YK nor /UYELER/YK)' 'missing sandbox YK not a WARNING'
+expect_line "$out" 'WARNING: no Privileged group DK (neither /DK nor /UYELER/DK)' 'missing sandbox DK not a WARNING'
+expect_line "$out" 'applied 2 change(s), 2 warning(s), 0 problem(s)' 'the main site got team grants or other warnings'
+[[ $(kcadm get "clients/$s_main/roles/cms:access/groups" -r "$SANDBOX_REALM" | jq -c '[.[].path]') == '["/UYELER/ADMIN"]' ]] \
+  || fail 'cms:access on the sandbox frontend-main is not only on /UYELER/ADMIN'
+access=$(jwt_payload "$(code_flow_response frontend-main sboss "$SANDBOX_REALM" "$SANDBOX_MAIN" | jq -r .access_token)")
+json_assert "$access" ".azp == \"frontend-main\" and (($AUD) | index(\"skycms\") != null)
+  and (($CMS_ROLES) == [\"client:admin\", \"cms:access\", \"content:read\", \"content:write\"]) and ($EDITOR_GATE)" \
+  'the sandbox ADMIN member is no main-site editor'
+access=$(jwt_payload "$(code_flow_response frontend-main smember "$SANDBOX_REALM" "$SANDBOX_MAIN" | jq -r .access_token)")
+json_assert "$access" "(($CMS_ROLES) == []) and (($EDITOR_GATE) | not)" 'a plain sandbox member got a main-site CMS role'
+access=$(jwt_payload "$(client_secret frontend-main "$SANDBOX_REALM" | curl -fsS "$BASE_URL/realms/$SANDBOX_REALM/protocol/openid-connect/token" \
+  --data-urlencode grant_type=client_credentials --data-urlencode client_id=frontend-main \
+  --data-urlencode 'client_secret@-' | jq -r .access_token)")
+json_assert "$access" ".azp == \"frontend-main\" and (($AUD) | index(\"skycms\") != null)
+  and (($CMS_ROLES) == [\"content:read\", \"schema:sync\"])" 'the sandbox frontend-main service account is not read-only'
+printf '    sandbox frontend-main: ADMIN member editor with client:admin, plain member none, service account %s\n' "$(jq -c "$CMS_ROLES" <<<"$access")"
+again=$(RUN_REALM=$SANDBOX_REALM clients --check --site main) || { printf '%s\n' "$again" >&2; fail 'second sandbox main --check failed'; }
+expect_line "$again" 'check: 0 change(s) pending, 0 warning(s), 0 problem(s)' 'second sandbox main --check plans changes'
+again=$(RUN_REALM=$SANDBOX_REALM grants --check --site main) || { printf '%s\n' "$again" >&2; fail 'second sandbox main grants failed'; }
+expect_line "$again" 'check: 0 change(s) pending, 2 warning(s), 0 problem(s)' 'second sandbox main grants plan changes'
+secret=$(client_secret frontend-main "$SANDBOX_REALM")
+[[ ${#secret} -ge 16 ]] || fail 'the sandbox frontend-main has no generated secret'
+if grep -Fq -- "$secret" "$OUTPUTS"; then fail 'a script printed the sandbox frontend-main secret'; fi
+secret=''
 
 printf 'site-clients.sh and site-editor-grants.sh contract holds against %s.\n' "$IMAGE"

@@ -50,6 +50,22 @@ FRONTEND_ARGE_CLIENT_ID=frontend-arge
 FRONTEND_ARGE_SCOPE_NAME=frontend-arge-core-audience
 SKYFORMS_CLIENT_ID=skyforms
 SKYFORMS_SCOPE_NAME=skyforms-forms-audience
+# The admin panel's login client (ADR-0058; see reconcile_admin_panel_client): admin, superadmin in
+# the sandbox realm (as in inscribed-cms-roles.sh); KEYCLOAK_ADMIN_PANEL_CLIENT_ID names another.
+if [[ $TARGET_REALM == e-skylab-sandbox ]]; then
+  ADMIN_PANEL_CLIENT_ID=${KEYCLOAK_ADMIN_PANEL_CLIENT_ID:-superadmin}
+else
+  ADMIN_PANEL_CLIENT_ID=${KEYCLOAK_ADMIN_PANEL_CLIENT_ID:-admin}
+fi
+ADMIN_PANEL_SCOPE_NAME=admin-panel-api-audience
+# The API clients whose every role the panel's token may carry (skycms reads the panel's own roles).
+ADMIN_PANEL_API_CLIENTS=(core forms)
+# An operator runs one step with a kcadm session they logged in themselves (the sandbox realm has no
+# reconciler identity): KEYCLOAK_RECONCILE_KCADM_CONFIG names that session's kcadm config file, which
+# is never deleted here, and KEYCLOAK_RECONCILE_ONLY the step. The whole reconciliation still runs
+# only as the scoped reconciler identity, so an operator session requires KEYCLOAK_RECONCILE_ONLY.
+OPERATOR_KCADM_CONFIG=${KEYCLOAK_RECONCILE_KCADM_CONFIG:-}
+RECONCILE_ONLY=${KEYCLOAK_RECONCILE_ONLY:-}
 # Event retention (account erasure ticket 09). Keycloak deletes no event with the person core's
 # erasure saga removes: CREATE and UPDATE admin events hold the whole user representation
 # (e-mail, names, school and personal e-mail), DELETE holds the username, LOGIN and LOGIN_ERROR
@@ -62,7 +78,27 @@ EVENT_RETENTION_SETTINGS="{\"eventsEnabled\":true,\"eventsExpiration\":$EVENT_RE
 # The admin event expiration is a realm attribute (seconds), read by Keycloak's scheduled task.
 ADMIN_EVENTS_EXPIRATION_ATTRIBUTE=adminEventsExpiration
 ACCOUNT_ROLE_ALLOWLIST=(manage-account view-profile manage-account-links)
-KCADM_CONFIG=$(mktemp /tmp/account-center-kcadm.XXXXXX)
+case $RECONCILE_ONLY in
+  '' | admin-panel-client | core-roles | media-attach) ;;
+  *)
+    printf 'KEYCLOAK_RECONCILE_ONLY must be empty, admin-panel-client, core-roles or media-attach, not %s\n' "$RECONCILE_ONLY" >&2
+    exit 2
+    ;;
+esac
+if [[ -n $OPERATOR_KCADM_CONFIG ]]; then
+  if [[ -z $RECONCILE_ONLY ]]; then
+    printf 'KEYCLOAK_RECONCILE_KCADM_CONFIG needs KEYCLOAK_RECONCILE_ONLY: an operator session runs one step; the whole reconciliation runs as %s\n' \
+      "$CONFIG_CLIENT_ID" >&2
+    exit 2
+  fi
+  if [[ ! -r $OPERATOR_KCADM_CONFIG ]]; then
+    printf 'KEYCLOAK_RECONCILE_KCADM_CONFIG is not a readable kcadm config file: %s\n' "$OPERATOR_KCADM_CONFIG" >&2
+    exit 2
+  fi
+  KCADM_CONFIG=$OPERATOR_KCADM_CONFIG
+else
+  KCADM_CONFIG=$(mktemp /tmp/account-center-kcadm.XXXXXX)
+fi
 WORK_DIR=$(mktemp -d /tmp/account-center-reconcile.XXXXXX)
 JSON_TOOL_CLASSPATH=''
 ENSURED_SCOPE_ID=''
@@ -77,7 +113,9 @@ source "$CONFIG_DIR/mailer-client-contract.sh"
 source "$CONFIG_DIR/erasure-client-contract.sh"
 
 cleanup() {
-  rm -f "$KCADM_CONFIG"
+  if [[ -z $OPERATOR_KCADM_CONFIG ]]; then
+    rm -f "$KCADM_CONFIG"
+  fi
   rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
@@ -98,7 +136,9 @@ require() {
   fi
 }
 
-require KEYCLOAK_CONFIG_CLIENT_SECRET
+if [[ -z $OPERATOR_KCADM_CONFIG ]]; then
+  require KEYCLOAK_CONFIG_CLIENT_SECRET
+fi
 
 case $PASSWORD_FORM in
   "$SKY_PASSWORD_FORM" | "$STOCK_PASSWORD_FORM") ;;
@@ -993,7 +1033,7 @@ reconcile_skyapp_audience() {
 # has neither site client) skips the item with a warning.
 reconcile_login_client_audience() {
   local client_id=$1 scope_name=$2 mappers_file=$3
-  local client_uuid scope_uuid optional_scopes
+  local client_uuid
   if ! client_uuid=$(optional_lookup client_id_by_client_id "$client_id"); then
     return 2
   fi
@@ -1001,6 +1041,13 @@ reconcile_login_client_audience() {
     warn "client $client_id does not exist in realm $TARGET_REALM; skipped client scope $scope_name"
     return 0
   fi
+  ensure_default_audience_scope "$client_id" "$client_uuid" "$scope_name" "$mappers_file"
+}
+
+# The source-controlled audience scope of a login client, kept among its default scopes only.
+ensure_default_audience_scope() {
+  local client_id=$1 client_uuid=$2 scope_name=$3 mappers_file=$4
+  local scope_uuid optional_scopes
   ensure_client_scope "$scope_name" "$mappers_file"
   scope_uuid=$ENSURED_SCOPE_ID
   # Keycloak keeps one link per client and scope, so an optional link would block the default one.
@@ -1015,6 +1062,473 @@ reconcile_login_client_audience() {
     log "client $client_id: detached optional scope $scope_name (it must be a default scope)"
   fi
   ensure_default_client_scope "$client_uuid" "$scope_uuid" "$scope_name"
+}
+
+# The admin panel's login client (ADR-0058, admin-token-authz ticket 02), made by hand and
+# confidential in both realms. With full scope its token carried every audience and role of the
+# person (11 audiences, 12 realm roles, 3.3 KB in production). Here the token is narrowed to the APIs
+# the panel calls: every role of core and forms is in the client's role scope and nothing else,
+# "Full scope allowed" is off (the panel's own roles, content:* for inscribed, always pass), and
+# core, forms and skycms come from hardcoded audience mappers so a person without a role of that API
+# is not refused (the reason of reconcile_login_client_audience). realm_access disappears; groups and
+# the client's own mappers stay. Standard Token Exchange is on, so the panel's server can trade its
+# token for a token of one of the three APIs (Keycloak lets a confidential client exchange a token
+# issued to itself). The order keeps the live panel working during the run: audiences and API roles
+# first, full scope off last. A role made on core or forms outside the reconciler reaches the panel's
+# token with the next run.
+#
+# A missing client is skipped with a warning. A public one fails the run before anything is written
+# to it: token exchange needs a confidential client, and making it confidential changes how the panel
+# signs in (it must then send the client secret), which is the panel's change (admin-token-authz
+# ticket 07). The step runs last, so every other step is done by then.
+reconcile_admin_panel_client() {
+  local client_uuid live_file public_client desired_file="$WORK_DIR/client-$ADMIN_PANEL_CLIENT_ID.json"
+  if ! client_uuid=$(optional_lookup client_id_by_client_id "$ADMIN_PANEL_CLIENT_ID"); then
+    return 2
+  fi
+  if [[ -z $client_uuid ]]; then
+    warn "client $ADMIN_PANEL_CLIENT_ID does not exist in realm $TARGET_REALM; skipped the admin panel token contract"
+    return 0
+  fi
+  live_file=$(mktemp "$WORK_DIR/admin-panel.XXXXXX")
+  kcadm_json "clients/$client_uuid" -r "$TARGET_REALM" >"$live_file"
+  public_client=$(json_tool field publicClient <"$live_file")
+  if [[ $public_client != true && $public_client != false ]]; then
+    printf 'Client %s has no readable publicClient flag (%s); nothing was changed on it\n' \
+      "$ADMIN_PANEL_CLIENT_ID" "${public_client:-empty}" >&2
+    return 1
+  fi
+  if [[ $public_client == true ]]; then
+    printf 'Client %s is public: Standard Token Exchange needs a confidential client, and making it confidential changes how the admin panel signs in (it must send the client secret; admin-token-authz ticket 07). Nothing was changed on %s; make it confidential together with the panel, then run again\n' \
+      "$ADMIN_PANEL_CLIENT_ID" "$ADMIN_PANEL_CLIENT_ID" >&2
+    return 1
+  fi
+  ensure_default_audience_scope "$ADMIN_PANEL_CLIENT_ID" "$client_uuid" "$ADMIN_PANEL_SCOPE_NAME" \
+    "$CONFIG_DIR/admin-panel-api-audience-mappers.json"
+  reconcile_admin_panel_role_scope "$client_uuid"
+  printf '{"fullScopeAllowed":false,"attributes":{"standard.token.exchange.enabled":"true"}}\n' >"$desired_file"
+  apply_fields_if_changed "client $ADMIN_PANEL_CLIENT_ID (no full scope, standard token exchange)" \
+    "$desired_file" "clients/$client_uuid" -r "$TARGET_REALM"
+}
+
+# {"id":…,"name":…} of one role; role names are free text (a quote or backslash stays JSON).
+role_reference() {
+  local name=${2//\\/\\\\}
+  name=${name//\"/\\\"}
+  printf '{"id":"%s","name":"%s"}' "$1" "$name"
+}
+
+# The role scope of the admin panel's client: every role of the API clients, no other client role
+# and no realm role. A missing API client is reported; its roles are added once it exists.
+reconcile_admin_panel_role_scope() {
+  local client_uuid=$1
+  local live_file mapped api api_uuid roles_csv role_id role_name body owner owner_uuid is_api
+  local changed='' label
+  label="role scope mappings of $ADMIN_PANEL_CLIENT_ID (every role of $(printf '%s, ' "${ADMIN_PANEL_API_CLIENTS[@]}" | sed 's/, $//'))"
+  live_file=$(mktemp "$WORK_DIR/admin-panel-scope.XXXXXX")
+  kcadm_json "clients/$client_uuid/scope-mappings" -r "$TARGET_REALM" >"$live_file"
+  mapped=$(json_tool scope-mappings <"$live_file")
+  for api in "${ADMIN_PANEL_API_CLIENTS[@]}"; do
+    if ! api_uuid=$(optional_lookup client_id_by_client_id "$api"); then
+      return 2
+    fi
+    if [[ -z $api_uuid ]]; then
+      warn "client $api does not exist in realm $TARGET_REALM; no $api role is in the scope of $ADMIN_PANEL_CLIENT_ID"
+      continue
+    fi
+    roles_csv=$(kcadm get "clients/$api_uuid/roles" -r "$TARGET_REALM" \
+      --fields id,name \
+      --format csv \
+      --noquotes)
+    body=''
+    while IFS=, read -r role_id role_name; do
+      [[ -n $role_id ]] || continue
+      if ! grep -Fq "$api"$'\t'"$api_uuid"$'\t'"$role_id"$'\t' <<<"$mapped"; then
+        body="$body,$(role_reference "$role_id" "$role_name")"
+        changed="$changed +$api/$role_name"
+      fi
+    done <<<"$roles_csv"
+    if [[ -n $body ]]; then
+      kcadm create "clients/$client_uuid/scope-mappings/clients/$api_uuid" \
+        -r "$TARGET_REALM" \
+        -b "[${body#,}]" >/dev/null
+    fi
+  done
+  while IFS=$'\t' read -r owner owner_uuid role_id role_name; do
+    [[ -n $owner ]] || continue
+    is_api=false
+    for api in "${ADMIN_PANEL_API_CLIENTS[@]}"; do
+      [[ $owner == "$api" ]] && is_api=true
+    done
+    [[ $is_api == false ]] || continue
+    body="[$(role_reference "$role_id" "$role_name")]"
+    if [[ $owner == - ]]; then
+      kcadm delete "clients/$client_uuid/scope-mappings/realm" -r "$TARGET_REALM" -b "$body" >/dev/null
+      changed="$changed -realm/$role_name"
+    else
+      kcadm delete "clients/$client_uuid/scope-mappings/clients/$owner_uuid" -r "$TARGET_REALM" -b "$body" >/dev/null
+      changed="$changed -$owner/$role_name"
+    fi
+  done <<<"$mapped"
+  if [[ -z $changed ]]; then
+    log "$label: unchanged"
+  else
+    log "$label: updated (${changed# })"
+  fi
+}
+
+# core's per-resource client roles (ADR-0059, admin-token-authz ticket 03): what the Privileged
+# group check of core gave, one role per resource, so that it can be granted per resource from the
+# SKY LAB admin panel. The list is the contract table in sky_lab_genel
+# .scratch/admin-token-authz/spec.md ("Sözleşme: core'un kaynak rolleri"); core (tickets 04/05)
+# checks exactly these names. Every run creates a missing role (manage-clients). Each role is
+# granted to the Privileged groups (ADMIN, YK, DK at /<NAME> and /UYELER/<NAME>, whichever exist)
+# ONCE: the role attribute CORE_ROLE_SEED_ATTRIBUTE records when and to which groups, and a role
+# that carries it is never granted again, so a mapping changed or removed in the admin panel stays
+# that way. Nothing here ever removes a mapping or a role. A role added to the list later is seeded
+# on its own first run. Granting a client role to a group needs user permissions, which the
+# reconciler identity deliberately lacks (ADR-0048's reason for manage-clients): its runs create
+# the roles and warn about unseeded ones; an operator seeds them by running this step alone with
+# their own kcadm session (KEYCLOAK_RECONCILE_ONLY=core-roles, runbook §19).
+CORE_CLIENT_ID=${KEYCLOAK_CORE_CLIENT_ID:-core}
+CORE_ROLE_SEED_ATTRIBUTE=skylab.seeded-group-mappings
+CORE_PRIVILEGED_NAMES=(ADMIN YK DK)
+# name|description (the description is written only when the role is created)
+CORE_ROLE_DEFINITIONS=(
+  'event:manage|Her takımın etkinliklerini, etkinlik günlerini ve oturumlarını yönetir; kapı görevlisi atar (ADR-0059)'
+  'season:manage|Sezonları oluşturur, değiştirir, siler (ADR-0059)'
+  'ticket:manage|Her etkinliğin biletlerini görür ve atar (ADR-0059)'
+  'ticket:validate|Her etkinlikte kapı girişi yapar (bilet doğrulama; ADR-0059)'
+  'competitor:manage|Her yarışmacıyı görür ve yönetir (ADR-0059)'
+  'media:manage|Medyayı listeler ve siler (ADR-0059)'
+  'media:private:read|core uygulamasının özel medyasını açar (sertifika varlıkları; ADR-0059)'
+  'certificate:manage|Her takımın sertifikalarını ve sertifika şablonlarını yönetir (ADR-0059)'
+  'users:manage|Kullanıcıları görür ve yönetir (ADR-0059)'
+  'groups:manage|Grupları görür ve yönetir (ADR-0059)'
+  'github:activity:read|Kulübün GitHub etkinliğini (özel depolar dahil) görür (ADR-0059)'
+  'url:moderator|Her kısa linki ve form bağlantısını görür ve yönetir'
+  'url:access|Kısa link oluşturur, kendi linklerini görür ve yönetir'
+)
+
+# The Privileged groups that exist, one "path<TAB>id" per line. Only Keycloak's answer that the
+# path does not exist counts as a missing group; any other failed lookup (network, permission,
+# server error) fails the function, so the caller never seeds and marks a role without a group
+# that is in fact there.
+core_privileged_groups() {
+  local name path line id stderr_file
+  stderr_file=$(mktemp "$WORK_DIR/stderr.XXXXXX")
+  for name in "${CORE_PRIVILEGED_NAMES[@]}"; do
+    for path in "/$name" "/UYELER/$name"; do
+      if line=$(kcadm get "group-by-path$path" -r "$TARGET_REALM" --fields id,path --format csv --noquotes \
+        2>"$stderr_file"); then
+        line=$(tr -d '\r' <<<"$line" | sed '/^$/d')
+      elif grep -Eqi 'not found|does not exist' "$stderr_file"; then
+        continue
+      else
+        cat "$stderr_file" >&2
+        printf 'The Privileged group %s could not be looked up in realm %s; nothing was granted\n' \
+          "$path" "$TARGET_REALM" >&2
+        return 1
+      fi
+      id=${line%%,*}
+      [[ -n $line && ${line#*,} == "$path" && -n $id ]] || continue
+      printf '%s\t%s\n' "$path" "$id"
+    done
+  done
+}
+
+reconcile_core_roles() {
+  local core_uuid roles_csv definition name description created='' roles_file seeds
+  local unseeded=() role_name role_seed_value seed groups default path gid stamp granted held role_id paths
+  local role_ids body defaults
+  if ! core_uuid=$(optional_lookup client_id_by_client_id "$CORE_CLIENT_ID"); then
+    return 2
+  fi
+  if [[ -z $core_uuid ]]; then
+    warn "client $CORE_CLIENT_ID does not exist in realm $TARGET_REALM; skipped core's resource roles"
+    return 0
+  fi
+  roles_csv=$(kcadm get "clients/$core_uuid/roles" -r "$TARGET_REALM" --fields name --format csv --noquotes \
+    | tr -d '\r')
+  for definition in "${CORE_ROLE_DEFINITIONS[@]}"; do
+    name=${definition%%|*}
+    description=${definition#*|}
+    if ! grep -Fxq -- "$name" <<<"$roles_csv"; then
+      kcadm_quiet create "clients/$core_uuid/roles" -r "$TARGET_REALM" \
+        -s "name=$name" -s "description=$description"
+      created="$created, $name"
+    fi
+  done
+  if [[ -z $created ]]; then
+    log "client roles of $CORE_CLIENT_ID (${#CORE_ROLE_DEFINITIONS[@]} resource roles): unchanged"
+  else
+    log "client roles of $CORE_CLIENT_ID (${#CORE_ROLE_DEFINITIONS[@]} resource roles): created (${created#, })"
+  fi
+
+  roles_file=$(mktemp "$WORK_DIR/core-roles.XXXXXX")
+  kcadm_json "clients/$core_uuid/roles" -r "$TARGET_REALM" -q briefRepresentation=false >"$roles_file"
+  seeds=$(json_tool role-attribute "$CORE_ROLE_SEED_ATTRIBUTE" <"$roles_file")
+  for definition in "${CORE_ROLE_DEFINITIONS[@]}"; do
+    name=${definition%%|*}
+    seed=''
+    while IFS=$'\t' read -r role_name role_seed_value; do
+      [[ $role_name == "$name" ]] && seed=$role_seed_value
+    done <<<"$seeds"
+    [[ -n $seed ]] || unseeded+=("$name")
+  done
+  if [[ ${#unseeded[@]} == 0 ]]; then
+    log "group mappings of the $CORE_CLIENT_ID resource roles: unchanged (each seeded once; the SKY LAB admin panel owns them)"
+    return 0
+  fi
+  if [[ -z $OPERATOR_KCADM_CONFIG ]]; then
+    warn "core roles not yet granted to the Privileged groups: ${unseeded[*]} (granting a role to a group needs user permissions the reconciler identity does not have); run this step alone with an operator session: KEYCLOAK_RECONCILE_ONLY=core-roles (runbook §19)"
+    return 0
+  fi
+
+  # Operator session: seed. Nothing is written unless every check passes.
+  if ! groups=$(core_privileged_groups); then
+    return 1
+  fi
+  if [[ -z $groups ]]; then
+    warn "no Privileged group (/ADMIN, /YK, /DK or under /UYELER) exists in realm $TARGET_REALM; nothing was granted, the roles stay unseeded"
+    return 0
+  fi
+  # Read into a variable first: a failed read inside a process substitution would pass as "no
+  # default group" and seed anyway. This check is what keeps every new user from getting the roles.
+  if ! defaults=$(kcadm get "realms/$TARGET_REALM/default-groups" --fields path --format csv --noquotes); then
+    printf 'The default groups of realm %s could not be read; nothing was granted (a Privileged default group would give every new user the core resource roles)\n' \
+      "$TARGET_REALM" >&2
+    return 1
+  fi
+  while IFS= read -r default; do
+    default=${default%$'\r'}
+    [[ -n $default ]] || continue
+    while IFS=$'\t' read -r path gid; do
+      if [[ $default == "$path" || $default == "$path"/* ]]; then
+        printf 'The default group %s is at or under the Privileged group %s: every new user would get the core resource roles. Nothing was granted\n' \
+          "$default" "$path" >&2
+        return 1
+      fi
+    done <<<"$groups"
+  done <<<"$defaults"
+  for name in "${CORE_PRIVILEGED_NAMES[@]}"; do
+    grep -Eq "^(/UYELER)?/$name"$'\t' <<<"$groups" \
+      || warn "no Privileged group $name (neither /$name nor /UYELER/$name) in realm $TARGET_REALM; it gets no core resource role"
+  done
+  paths=$(cut -f1 <<<"$groups" | paste -sd, -)
+  stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  role_ids=$(kcadm get "clients/$core_uuid/roles" -r "$TARGET_REALM" --fields id,name --format csv --noquotes \
+    | tr -d '\r')
+  declare -A granted_to=()
+  # One read and at most one write per group.
+  while IFS=$'\t' read -r path gid; do
+    held=$(kcadm get "groups/$gid/role-mappings/clients/$core_uuid" -r "$TARGET_REALM" --fields name --format csv \
+      --noquotes | tr -d '\r')
+    body=''
+    for name in "${unseeded[@]}"; do
+      grep -Fxq -- "$name" <<<"$held" && continue
+      role_id=$(sed -n "s/^\([^,]*\),$name\$/\1/p" <<<"$role_ids")
+      [[ -n $role_id ]] || { printf 'core role %s could not be read back\n' "$name" >&2; return 1; }
+      body="$body,$(role_reference "$role_id" "$name")"
+      granted_to[$name]="${granted_to[$name]:-}, $path"
+    done
+    [[ -z $body ]] || kcadm_quiet create "groups/$gid/role-mappings/clients/$core_uuid" -r "$TARGET_REALM" \
+      -b "[${body#,}]"
+  done <<<"$groups"
+  # The mark comes last: a run cut before it grants the same (idempotently) next time.
+  for name in "${unseeded[@]}"; do
+    kcadm_quiet update "clients/$core_uuid/roles/$name" -r "$TARGET_REALM" \
+      -s "attributes.\"$CORE_ROLE_SEED_ATTRIBUTE\"=[\"$stamp $paths\"]"
+    granted=${granted_to[$name]:-, none (every group already held it)}
+    log "core role $name: seeded once to $paths (granted to: ${granted#, })"
+  done
+}
+
+# core's service attach role (media redesign ticket 03, ADR-0052; anonymous-form-uploads ticket 03):
+# POST/DELETE /v1/media/{id}/attachments on core accept only a client-credentials token whose azp
+# and client_id are a client listed in core's MEDIA_SERVICE_CLIENTS and whose
+# resource_access.core.roles holds media:attach; aud must contain core. The role is a client role
+# of core that only the listed products' service accounts hold: never a person, a group or a
+# default role (core refuses a person's token anyway: it has no client_id).
+#
+# Every run creates the role when it is missing (manage-clients) and, for a listed client whose
+# fullScopeAllowed is false, maps the role in the client's role scope, or it never reaches the
+# token. Granting it to the service account needs user permissions the reconciler identity
+# deliberately lacks (as for core-roles), so an operator runs this step alone with their own kcadm
+# session (KEYCLOAK_RECONCILE_ONLY=media-attach, runbook §20). The operator step reads everything
+# first and writes only when every read succeeded; a failed read is never taken for "absent". It
+# then grants the role to each listed service account that lacks it, records on the role (attribute
+# MEDIA_ATTACH_GRANT_ATTRIBUTE) when and to which service accounts, and reports, never removes, any
+# other holder: a user, a group or the realm's default role. aud core is not added here: Keycloak's
+# audience resolve mapper (default scope roles) puts core in aud once resource_access.core is in the
+# token; the step verifies that scope instead of adding a second audience mapper.
+MEDIA_ATTACH_ROLE=media:attach
+MEDIA_ATTACH_DESCRIPTION="Service attach API (media redesign ticket 03, ADR-0052): a product's service account links Media to its own records. Service accounts only; never a person or a group."
+# The clients whose service account holds the role. Keep it in step with core's
+# MEDIA_SERVICE_CLIENTS (product:client pairs; unset it is forms:forms): a CMS client is added in
+# both places together, once its service account exists.
+MEDIA_ATTACH_CLIENTS=(forms)
+MEDIA_ATTACH_GRANT_ATTRIBUTE=skylab.granted-service-accounts
+MEDIA_ATTACH_OPERATOR_STEP='run this step alone with an operator session: KEYCLOAK_RECONCILE_ONLY=media-attach (runbook §20)'
+
+# media_attach_read WHAT ARGS...: a kcadm read for the media-attach step; a failure names WHAT and
+# stops the step before it writes anything.
+media_attach_read() {
+  local what=$1 result
+  shift
+  if ! result=$(kcadm get "$@" -r "$TARGET_REALM" --format csv --noquotes); then
+    printf '%s could not be read in realm %s; nothing was granted\n' "$what" "$TARGET_REALM" >&2
+    return 1
+  fi
+  tr -d '\r' <<<"$result" | sed '/^$/d'
+}
+
+reconcile_media_attach() {
+  local core_uuid role_id roles_file marker='' marker_accounts='' role_name value client client_uuid flags
+  local sa_line sa_id sa_name full_scope scopes mapped held state stderr_file
+  local users groups defaults others='' account accounts stamp label marks line
+  local operator=false
+  local plan=()
+  [[ -z $OPERATOR_KCADM_CONFIG ]] || operator=true
+  if ! core_uuid=$(optional_lookup client_id_by_client_id "$CORE_CLIENT_ID"); then
+    return 2
+  fi
+  if [[ -z $core_uuid ]]; then
+    warn "client $CORE_CLIENT_ID does not exist in realm $TARGET_REALM; skipped $MEDIA_ATTACH_ROLE"
+    return 0
+  fi
+  label="client role $MEDIA_ATTACH_ROLE of $CORE_CLIENT_ID"
+  if ! role_id=$(optional_lookup client_role_id_by_name "$core_uuid" "$MEDIA_ATTACH_ROLE"); then
+    return 2
+  fi
+  if [[ -z $role_id ]]; then
+    kcadm_quiet create "clients/$core_uuid/roles" -r "$TARGET_REALM" \
+      -s "name=$MEDIA_ATTACH_ROLE" -s "description=$MEDIA_ATTACH_DESCRIPTION"
+    role_id=$(client_role_id_by_name "$core_uuid" "$MEDIA_ATTACH_ROLE")
+    log "$label: created"
+  else
+    log "$label: unchanged"
+  fi
+  roles_file=$(mktemp "$WORK_DIR/media-attach-roles.XXXXXX")
+  kcadm_json "clients/$core_uuid/roles" -r "$TARGET_REALM" -q briefRepresentation=false >"$roles_file"
+  # Into a variable first: a failure inside a process substitution would pass as "no record".
+  marks=$(json_tool role-attribute "$MEDIA_ATTACH_GRANT_ATTRIBUTE" <"$roles_file")
+  while IFS=$'\t' read -r role_name value; do
+    [[ $role_name == "$MEDIA_ATTACH_ROLE" ]] && marker=$value
+  done <<<"$marks"
+  # "<timestamp> <service account>,<service account>"
+  [[ -z $marker ]] || marker_accounts=${marker#* }
+
+  # Reads: one plan line per listed client that has a service account.
+  for client in "${MEDIA_ATTACH_CLIENTS[@]}"; do
+    if ! client_uuid=$(optional_lookup client_id_by_client_id "$client"); then
+      return 2
+    fi
+    if [[ -z $client_uuid ]]; then
+      warn "client $client does not exist in realm $TARGET_REALM; $MEDIA_ATTACH_ROLE is not granted to its service account"
+      continue
+    fi
+    flags=$(media_attach_read "Client $client" "clients/$client_uuid" --fields serviceAccountsEnabled,fullScopeAllowed)
+    if [[ ${flags%%,*} != true ]]; then
+      warn "client $client has no service account (serviceAccountsEnabled=${flags%%,*}); $MEDIA_ATTACH_ROLE is not granted and nothing was changed on the client"
+      continue
+    fi
+    full_scope=${flags#*,}
+    scopes=$(media_attach_read "The default client scopes of $client" "clients/$client_uuid/default-client-scopes" --fields name)
+    if grep -Fxq roles <<<"$scopes"; then
+      log "default client scope roles of $client: verified (it puts resource_access and, through audience resolve, aud $CORE_CLIENT_ID in the token)"
+    else
+      warn "client $client has no default client scope roles: its token carries neither resource_access.$CORE_CLIENT_ID nor aud $CORE_CLIENT_ID; nothing was changed on the client, add roles back to its default client scopes"
+    fi
+    mapped=-
+    if [[ $full_scope == false ]]; then
+      mapped=$(media_attach_read "The role scope of $client" "clients/$client_uuid/scope-mappings/clients/$core_uuid" --fields name)
+      if grep -Fxq -- "$MEDIA_ATTACH_ROLE" <<<"$mapped"; then mapped=yes; else mapped=no; fi
+    fi
+    sa_line=$(media_attach_read "The service account of $client" "clients/$client_uuid/service-account-user" --fields id,username)
+    sa_id=${sa_line%%,*}
+    sa_name=${sa_line#*,}
+    if [[ -z $sa_id || -z $sa_name || $sa_line != *,* || $sa_line == *$'\n'* ]]; then
+      printf 'The service account of %s could not be resolved in realm %s; nothing was granted\n' "$client" "$TARGET_REALM" >&2
+      return 1
+    fi
+    stderr_file=$(mktemp "$WORK_DIR/stderr.XXXXXX")
+    if held=$(kcadm get "users/$sa_id/role-mappings/clients/$core_uuid/composite" -r "$TARGET_REALM" \
+      --fields name --format csv --noquotes 2>"$stderr_file"); then
+      if grep -Fxq -- "$MEDIA_ATTACH_ROLE" <<<"$(tr -d '\r' <<<"$held")"; then state=held; else state=missing; fi
+    elif [[ $operator == true ]]; then
+      cat "$stderr_file" >&2
+      printf 'The %s roles of %s could not be read in realm %s; nothing was granted\n' "$CORE_CLIENT_ID" "$sa_name" "$TARGET_REALM" >&2
+      return 1
+    else
+      # The reconciler identity has no user permissions: expected, the operator step checks.
+      state=unreadable
+    fi
+    plan+=("$client|$client_uuid|$full_scope|$mapped|$sa_id|$sa_name|$state")
+  done
+
+  if [[ $operator == true ]]; then
+    users=$(media_attach_read "The users holding $MEDIA_ATTACH_ROLE" "clients/$core_uuid/roles/$MEDIA_ATTACH_ROLE/users" --fields username)
+    groups=$(media_attach_read "The groups holding $MEDIA_ATTACH_ROLE" "clients/$core_uuid/roles/$MEDIA_ATTACH_ROLE/groups" --fields path)
+    defaults=$(media_attach_read "The default role default-roles-${TARGET_REALM,,}" "roles/default-roles-${TARGET_REALM,,}/composites/clients/$core_uuid" --fields name)
+  fi
+
+  # Writes.
+  accounts=''
+  for line in ${plan[@]+"${plan[@]}"}; do
+    IFS='|' read -r client client_uuid full_scope mapped sa_id sa_name state <<<"$line"
+    case $mapped in
+      -) log "role scope of $client: unchanged (full scope: the roles of its service account reach its token)" ;;
+      yes) log "role scope of $client: unchanged ($CORE_CLIENT_ID/$MEDIA_ATTACH_ROLE is mapped)" ;;
+      no)
+        kcadm_quiet create "clients/$client_uuid/scope-mappings/clients/$core_uuid" -r "$TARGET_REALM" \
+          -b "[$(role_reference "$role_id" "$MEDIA_ATTACH_ROLE")]"
+        log "role scope of $client: updated (+$CORE_CLIENT_ID/$MEDIA_ATTACH_ROLE; fullScopeAllowed is false)"
+        ;;
+    esac
+    case $state in
+      held)
+        log "service account $sa_name: $MEDIA_ATTACH_ROLE unchanged (held)"
+        accounts+=",$sa_name"
+        ;;
+      missing)
+        if [[ $operator == true ]]; then
+          kcadm_quiet create "users/$sa_id/role-mappings/clients/$core_uuid" -r "$TARGET_REALM" \
+            -b "[$(role_reference "$role_id" "$MEDIA_ATTACH_ROLE")]"
+          log "service account $sa_name: $MEDIA_ATTACH_ROLE granted"
+          accounts+=",$sa_name"
+        else
+          warn "service account $sa_name lacks $MEDIA_ATTACH_ROLE; $MEDIA_ATTACH_OPERATOR_STEP"
+        fi
+        ;;
+      unreadable)
+        if [[ ,$marker_accounts, == *",$sa_name,"* ]]; then
+          log "service account $sa_name: $MEDIA_ATTACH_ROLE unchanged (granted by the operator step at ${marker%% *}; the reconciler identity cannot read service-account roles, the operator step re-checks them)"
+        else
+          warn "$MEDIA_ATTACH_ROLE is not yet granted to service account $sa_name by the operator step (the reconciler identity cannot read or grant service-account roles); $MEDIA_ATTACH_OPERATOR_STEP"
+        fi
+        ;;
+    esac
+  done
+  [[ $operator == true ]] || return 0
+
+  accounts=$(tr ',' '\n' <<<"${accounts#,}" | sed '/^$/d' | sort | paste -sd, -)
+  if [[ -n $accounts && $accounts != "$marker_accounts" ]]; then
+    stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    kcadm_quiet update "clients/$core_uuid/roles/$MEDIA_ATTACH_ROLE" -r "$TARGET_REALM" \
+      -s "attributes.\"$MEDIA_ATTACH_GRANT_ATTRIBUTE\"=[\"$stamp $accounts\"]"
+    log "$label: grant recorded ($MEDIA_ATTACH_GRANT_ATTRIBUTE=$stamp $accounts)"
+  fi
+  while IFS= read -r account; do
+    [[ -n $account && ,$accounts, != *",$account,"* ]] || continue
+    others+=", $account"
+  done <<<"$users"
+  [[ -z $others ]] \
+    || warn "$MEDIA_ATTACH_ROLE is also held by the users ${others#, } (nothing was removed; it is for the service accounts of ${MEDIA_ATTACH_CLIENTS[*]} only, remove it in the Admin Console)"
+  [[ -z $groups ]] \
+    || warn "$MEDIA_ATTACH_ROLE is held by the groups $(paste -sd, - <<<"$groups") (nothing was removed; every member holds it, remove it in the Admin Console)"
+  ! grep -Fxq -- "$MEDIA_ATTACH_ROLE" <<<"$defaults" \
+    || warn "$MEDIA_ATTACH_ROLE is in the default role default-roles-${TARGET_REALM,,} (nothing was removed; every user holds it, remove it in the Admin Console)"
 }
 
 # The keycloak-mailer service-account client (K5) is provisioned by the operator with
@@ -1165,9 +1679,27 @@ verify_erasure_client() {
   fi
 }
 
-authenticate
+if [[ -z $OPERATOR_KCADM_CONFIG ]]; then
+  authenticate
+fi
 kcadm_json "realms/$TARGET_REALM" >/dev/null
 compile_json_tool
+
+if [[ $RECONCILE_ONLY == admin-panel-client ]]; then
+  reconcile_admin_panel_client
+  printf 'Admin panel client configuration is reconciled.\n'
+  exit 0
+fi
+if [[ $RECONCILE_ONLY == core-roles ]]; then
+  reconcile_core_roles
+  printf 'Core resource roles are reconciled.\n'
+  exit 0
+fi
+if [[ $RECONCILE_ONLY == media-attach ]]; then
+  reconcile_media_attach
+  printf 'Media attach role is reconciled.\n'
+  exit 0
+fi
 
 reconcile_realm_settings
 reconcile_brute_force_and_password_policy
@@ -1201,5 +1733,12 @@ reconcile_account_center_client_scopes "$scope_uuid" "$core_scope_uuid"
 reconcile_account_scope_mappings
 verify_mailer_client
 verify_erasure_client
+# Before the admin panel's step, so that a core role created here enters its scope in this run.
+reconcile_core_roles
+# Also before the admin panel's step: a media:attach created here enters its scope in this run.
+reconcile_media_attach
+# Last: a public admin panel client stops the run, and every other step is done by then; core and
+# forms roles made by earlier steps are already in place to enter the panel's scope.
+reconcile_admin_panel_client
 
 printf 'Account Center Keycloak configuration is reconciled.\n'

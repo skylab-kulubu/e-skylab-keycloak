@@ -40,7 +40,7 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.15.0`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.16.0`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.1.1`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
@@ -64,10 +64,11 @@ yeniden denemeyi, “beni hatırla” aktarımını, AIA ekranlarını, klavye k
 kontrastı ve azaltılmış hareket tercihlerini korur. Giriş sayfası, erişim
 anahtarı teklifi ve Keycloak'ın diğer bütün sayfaları (parola yenileme, doğrulama
 uygulaması, erişim anahtarı kaydı, hata, bilgi, çıkış onayı, kimlik sağlayıcı bağlama…)
-tek bir tasarım sistemini paylaşır: `theme/src/login/legacy-login.css` tek
-stil dosyası ve tek token kümesidir, `Template.tsx` her sayfayı giriş
-sayfasının `LegacyFrame` çerçevesinde (animasyonlu SKY LAB logosu, cam kart,
-KVKK altbilgisi, dil seçimi) çizer ve bütün metinler `i18n.ts` içinden gelir
+tek bir tasarım sistemini paylaşır: renkler, köşe yarıçapı ve yazı tipi
+`@skylab-kulubu/skylcn-ui` token'larından gelir, `theme/src/login/legacy-login.css`
+bunları giriş rollerine bağlayan tek stil dosyasıdır. `Template.tsx` her sayfayı
+giriş sayfasının `LegacyFrame` çerçevesinde (solda sayfa, geniş ekranda sağda
+animasyonlu SKY LAB logolu tanıtım paneli, KVKK altbilgisi, dil seçimi) çizer ve bütün metinler `i18n.ts` içinden gelir
 (önce Türkçe, sonra İngilizce).
 
 İlk fiziksel doğrulama Touch ID üzerinde tamamlanmıştır. Face ID, Android
@@ -129,6 +130,36 @@ Uzlaştırıcı, gizli `account-center` istemcisini şu sözleşmeyle yönetir:
   üniversite, bölüm ve fakültesini yeniler (C2); ayrıntı
   [`docs/v2-identity-reconcile-runbook.md`](docs/v2-identity-reconcile-runbook.md) §9.
 - BFF'nin en küçük `openid` isteğine uygun biçimde isteğe bağlı kapsam yoktur.
+
+**Group overage mapper'ı** (ADR-0059; SPI'daki `sky-group-overage-mapper`,
+`com.skylab.mapper.SkyGroupOverageMapper`): Keycloak'ın Group Membership mapper'ının Microsoft Entra
+sınırlı hâli. Kişinin grup yolu sayısı eşiğe (`overage.threshold`, varsayılan 30) eşit ya da
+altındaysa claim'i (`claim.name`, varsayılan `groups`; `full.path`, varsayılan açık) Group Membership
+mapper'ı nasıl yazıyorsa öyle yazar (grubu yoksa claim yok). Üstündeyse liste yazılmaz, yerine
+Entra'nın işareti gelir: `"_claim_names": {"groups": "src1"}`,
+`"_claim_sources": {"src1": {"endpoint": "<kök>/admin/realms/<realm>/users/<id>/groups"}}`. Liste hiçbir
+zaman kısaltılmaz (eksik liste "o grupta değil" diye okunurdu). Servisler yalnız işaretin varlığına
+bakar (core `_claim_names.groups`; uç noktayı çağırmaz) ve grupları Keycloak'tan sorar; core
+`groups` adını okuduğu için `claim.name` varsayılanda kalmalı. Access token, ID token, userinfo ve
+introspection aynı kuralla, mapper'ın açık olduğu her yerde. Eşik tam sayı değilse Admin REST mapper'ı
+kaydetmez; çalışma anında okunamazsa 30 kullanılır.
+
+Yerleşik Group Membership mapper'ından iki bilinçli sapma (eşiğin altında bile):
+`full.path` ayarı **yoksa** tam yollar yazılır (yerleşik mapper ayar yokken yalnız grup adını
+yazar; kısa ad isteyen `full.path=false` verir) ve `claim.name` **yoksa** claim `groups` adıyla
+yazılır (yerleşik mapper claim adı yokken hiçbir şey yazmaz). Mapper bir istemcide yerleşik grup
+mapper'ının **yerini alır**, yanında çalışmaz: ikisi birden açıksa eşiğin üstünde yerleşik mapper
+tam listeyi yine yazar ve işaretin anlamı (liste yok) bozulur; açarken aynı claim'i yazan Group
+Membership mapper'ı (istemcide ya da varsayılan kapsamlarında) kaldırılır. Uç nokta yalnız bilgidir:
+tüketiciler işaretteki `endpoint`'e **hiçbir zaman kimlik bilgisi göndermez** (token, cookie,
+istemci secret'ı); grupları kendi yapılandırılmış Keycloak adreslerinden ve kendi yetkileriyle
+sorarlar.
+
+**Hiçbir istemcide açık değil**: `admin`'de
+Group Membership mapper'ının yerini alması admin-token-authz 14'ün işi (core'un yedeği, panelin
+token'dan grup okumayı bırakması ve News rolünden sonra); site istemcilerinde inscribed işareti
+anlayana kadar açılmaz. Harness: JUnit (`SkyGroupOverageMapperTest`) ve `tests/group-overage-mapper.sh`
+(gerçek imajda atılabilir bir realm: 30 grupta liste, 31'de işaret, grupsuz kişide ikisi de yok).
 
 Realm oturumu, giriş ayarları ve tema `config/account-center-realm.json`
 (`editUsernameAllowed=false`, `loginWithEmailAllowed=true`,
@@ -281,6 +312,57 @@ yönetmez; imaj yayını gerekmez. Sunucuda sky_lab_genel'deki
 `ops/wizards/place-keycloak-client-wizard.sh` betiği koşar ve secret'ı doğrudan OpenBao'ya taşır.
 Harness `tests/place-client.sh` tek başına çalışır (runbook §14).
 
+Forms (forms-backend) SkyMail'den tek tek posta gönderir (`POST /v1/mail_tasks/single`); SkyMail
+token'daki `resource_access.skymail.roles`'ta `skymail:access` ve `skymail:mails:send` (ya da daha
+geniş `skymail:mails:write`) arar. Bu yetki iki realm'de de elle verilmişti, sandbox'ta hiç
+yoktu: her sandbox Forms postası 403 `server.forbidden` aldı. Operatör `config/forms-skymail-grants.sh`
+ile `service-account-forms`'a eksik olanı verir (varsayılan `--check`, `--apply`; kcadm prompt
+düzeni ya da `--kcadm-config`; `KEYCLOAK_REALM` yalnız `e-skylab` ya da `e-skylab-sandbox`):
+`skymail:access`, ve `skymail:mails:write` tutmuyorsa `skymail:mails:send`; `forms`'un
+`fullScopeAllowed`'ı kapalıysa aynı roller kapsam eşlemesine. Hiçbir şey silinmez, SkyMail rolü
+oluşturulmaz; `skymail:mails:write` NOTE olarak kalır. Uzlaştırıcının kimliği kullanıcı yetkisi
+taşımadığı için bu bir operatör betiğidir; imaj yayını gerekmez (betik `--kcadm-config` ile
+dışarıdan da koşar). Harness `tests/forms-skymail-grants.sh` tek başına çalışır.
+
+Admin panelinin istemcisini (`admin`, sandbox'ta `superadmin`; ADR-0058) uzlaştırıcı daraltır.
+İstemci iki realm'de de elle kurulmuş ve gizlidir; uzlaştırıcı onu yerinde benimser, id'sine,
+secret'ına, adreslerine ve kendi mapper'larına dokunmaz. Access token'ın `aud`'u tam olarak
+`core`, `forms`, `skycms` olur (üçü de `admin-panel-api-audience` varsayılan kapsamındaki sabit
+audience mapper'larından, `config/admin-panel-api-audience-mappers.json`), `realm_access`
+kalkar, `resource_access` yalnız `core`, `forms` ve istemcinin kendi rollerini taşır: "Full scope
+allowed" kapanır, rol kapsamında `core` ve `forms` istemcilerinin her rolü bulunur, başka istemci
+ya da realm rolü bulunmaz. `groups` ve inscribed'ın düz `roles` claim'i kalır. Standard Token
+Exchange açılır: panelin sunucusu token'ı `audience=core|forms|skycms` ile tek audience'lı bir
+token'a çevirebilir; başka bir audience reddedilir. Sıra canlı paneli bozmaz: önce audience ve
+API rolleri, en son tam kapsamın kapanması. `core` ya da `forms`'ta uzlaştırıcı dışında
+oluşturulan bir rol panelin token'ına bir sonraki koşuda girer. Adım en son koşar. İstemci yoksa
+uyarıyla atlanır; public ise koşu ona hiçbir şey yazmadan hata verir (gizliye çevirmek panelin
+secret'la girmesini gerektirir; o panelin işidir). Sandbox realm'inde uzlaştırıcı kimliği yoktur: operatör aynı adımı
+kendi kcadm oturumuyla tek başına koşar (`KEYCLOAK_RECONCILE_KCADM_CONFIG` +
+`KEYCLOAK_RECONCILE_ONLY=admin-panel-client`; tam uzlaştırma operatör oturumuyla koşmaz).
+Sunucuda sky_lab_genel'deki `ops/wizards/admin-panel-keycloak-sandbox-wizard.sh` koşar
+(runbook §16).
+
+core'un kaynak rollerini (ADR-0059: `event:manage`, `ticket:manage`, `certificate:manage`,
+`users:manage` gibi 11 yeni rol ve var olan `url:moderator`, `url:access`) uzlaştırıcı her koşuda
+`core` istemcisinde var eder ve admin panelinin adımından önce koşar. Roller Privileged gruplara
+(`ADMIN`, `YK`, `DK`; `/<AD>` ya da `/UYELER/<AD>`) **bir kez** verilir; rol özniteliği
+`skylab.seeded-group-mappings` bunu kaydeder ve sonraki koşular SKY LAB admin panelinde değişen
+eşlemelere dokunmaz, hiçbir eşlemeyi silmez. Gruba rol vermek kullanıcı yetkisi istediği için bunu
+uzlaştırıcı kimliği değil operatör yapar: `KEYCLOAK_RECONCILE_KCADM_CONFIG` +
+`KEYCLOAK_RECONCILE_ONLY=core-roles`; uzlaştırıcı işaretsiz rolleri uyarıyla bildirir. Rol listesi
+sky_lab_genel'deki admin-token-authz spec'inin sözleşme tablosudur (runbook §19).
+
+core'un servis bağlama rolünü `media:attach` (ADR-0052; Forms'un core'a Media bağlaması ve anonim
+form yüklemesi) uzlaştırıcı her koşuda `core` istemcisinde var eder; `forms`'un `fullScopeAllowed`'ı
+kapalıysa rolü onun kapsam eşlemesine ekler ve `aud: core`'u veren varsayılan `roles` kapsamını
+yalnız doğrular (ikinci audience mapper eklenmez). Rol yalnız `service-account-forms`'ta bulunur;
+servis hesabına rol vermek kullanıcı yetkisi istediği için bunu operatör yapar
+(`KEYCLOAK_RECONCILE_KCADM_CONFIG` + `KEYCLOAK_RECONCILE_ONLY=media-attach`): önce her şeyi okur,
+okuma hatasında hiçbir şey vermez, verdikten sonra rolün `skylab.granted-service-accounts`
+özniteliğine kaydeder, rolü taşıyan başka kullanıcı, grup ya da varsayılan rolü bildirir ve hiçbir
+şey silmez. İstemci listesi core'un `MEDIA_SERVICE_CLIENTS`'ıyla aynı tutulur (runbook §20).
+
 Etkinlik siteleri (ARTLAB, YıldızJam, SkyDays) da canlıdaki inscribed'ın tenant'larıdır (ADR-0056
 eki, 2026-10-03). Site istemcilerini (`frontend-artlab`, `frontend-yildizjam`, `frontend-skydays`)
 idempotent `config/site-clients.sh` kurar; realm açıkça verilir (`KEYCLOAK_REALM=e-skylab` ya da
@@ -290,7 +372,9 @@ idempotent `config/site-clients.sh` kurar; realm açıkça verilir (`KEYCLOAK_RE
 `skycms` ortak `skycms-audience` kapsamından, `core` site başına `frontend-<site>-core-audience`
 kapsamından gelir; tam yollu `groups`, `groups`'u başka biçimde yazan kapsam (ör.
 `microprofile-jwt`) yalnız bu istemciden ayrılır. Elle yapılmış `frontend-main` ve `frontend-arge`
-yalnız raporlanır. Ardından `inscribed-cms-roles.sh --client frontend-<site>` rolleri kurar (servis
+yalnız raporlanır; tek istisna ana sitenin sandbox'ı: `--site main` yalnız `e-skylab-sandbox`'ta
+`frontend-main`'i aynı biçimde `https://sandbox.yildizskylab.com` için kurar (production'da reddedilir).
+Ardından `inscribed-cms-roles.sh --client frontend-<site>` rolleri kurar (servis
 hesabına yalnız `content:read` + `schema:sync`) ve `config/site-editor-grants.sh` `cms:access`'i
 Privileged gruplara, sahip lab takımının ve etkinliğin organizasyon takımının
 (`/UYELER/ORGANIZASYON/<ETKİNLİK>`) `LIDERLER`/`KOORDINATORLER` gruplarına, `client:admin`'i
@@ -340,8 +424,9 @@ belgesindedir.
 
 Sürekli uzlaştırma yalnız servis amaçlı `account-center-config` istemcisiyle
 kimlik doğrular (`realm-management` rolleri yalnız `manage-clients`,
-`view-clients`, `manage-realm`, `view-realm`; kullanıcı yetkisi yoktur). Bu
-istemcinin oluşturulması veya gizli anahtarının döndürülmesi ayrı ve
+`view-clients`, `manage-realm`, `view-realm`; kullanıcı yetkisi yoktur). Tek istisna, operatörün
+kendi kcadm oturumuyla tek başına koştuğu admin paneli adımıdır (yukarıda).
+`account-center-config` istemcisinin oluşturulması veya gizli anahtarının döndürülmesi ayrı ve
 denetlenebilir bir başlangıç adımıdır; ana yönetici bilgileri normal Compose
 yığınına girmez.
 
@@ -617,7 +702,8 @@ Doğrulama sırası şu şekildedir:
    (passkey RP ID, brute force, parola politikası, User Profile, token
    `aud`/`sky_authorization`, Admin REST'in `account-center` token'ını
    reddetmesi, `keycloak-mailer`, `core-erasure` (erase kapsamı başına tek rol ve
-   `aud`, core token'larının değişmemesi), sapma onarımı, değişiklik üretmeyen üçüncü
+   `aud`, core token'larının değişmemesi), admin panelinin dar token'ı ve Standard
+   Token Exchange'i, sapma onarımı, değişiklik üretmeyen üçüncü
    koşu, relying party id geçişi etrafında passkey temizliği kuru koşusu ve
    `--apply` uygulaması) aynı koşuda doğrulanır.
 5. Commit'e bağlı fiziksel WebAuthn kanıtı doğrulanır.

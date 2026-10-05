@@ -71,8 +71,10 @@ fi
 # One design system: the login stylesheet is the only stylesheet and the only token set.
 [[ ! -e "$THEME_DIR/src/login/theme.css" ]] \
   || fail 'theme.css must stay deleted; every page uses legacy-login.css'
-[[ $(find "$THEME_DIR/src" -type f -name '*.css' | wc -l | tr -d ' ') == 1 ]] \
-  || fail 'the theme must ship exactly one stylesheet'
+# The landing page at / (src/welcome/welcome.css) imports this stylesheet and adds only its layout;
+# tests/check-welcome-theme.sh holds it to that.
+[[ $(find "$THEME_DIR/src" -type f -name '*.css' | LC_ALL=C sort) == "$THEME_DIR/src/login/legacy-login.css"$'\n'"$THEME_DIR/src/welcome/welcome.css" ]] \
+  || fail 'the theme must ship exactly one stylesheet (plus the landing page stylesheet that imports it)'
 [[ $(grep -c '^:root {' "$THEME_DIR/src/login/legacy-login.css") == 1 ]] \
   || fail 'legacy-login.css must define exactly one :root token set'
 grep -Fq '@media (prefers-reduced-motion: reduce)' "$THEME_DIR/src/login/legacy-login.css" \

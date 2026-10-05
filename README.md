@@ -251,6 +251,21 @@ Doğrulanmamış, okul alan adındaki, başkasında olan ya da iki kişiye düş
 adresler yalnız sayılır. Entegrasyon testi ayrı bir realm'de kuru koşu →
 uygulama → yazmayan ikinci koşuyu doğrular (runbook §10).
 
+Faz 2'den önce YTÜ girişiyle açılan hesapların birincil e-postası (`email`) yoktur:
+`MicrosoftMapper` ilk girişte adresi siler. Operatör `config/fill-missing-primary-from-school.sh`
+ile bu hesaplara bir kereye mahsus okul adresini birincil yapar (eskylab-login-ux bilet 06, karar
+O5). Yalnız dört koşulun hepsi sağlanırsa yazar: `email` boş, OBS bağlantısı var, `schoolEmail`
+dolu ve geçerli bir adres, adres başka hiçbir hesabın `email`, `schoolEmail` ya da
+`personalEmail` değeri değil. Yazılan: `email` = kırpılmış, küçük harfli okul adresi,
+`emailVerified=true`; hesabın geri kalanı okunduğu gibi kalır, posta gönderilmez, her yazma bir
+UPDATE USER admin olayı bırakır. Koşulu tutmayanlar yalnız sayılır (`noObsLink`, `noSchoolEmail`,
+`invalidSchoolEmail`, `taken`); `--skipped-list` onları `0600` izinli yeni bir dosyaya yazar.
+Varsayılan kuru koşu, `--apply`; `--realm` yalnız `e-skylab` ya da `e-skylab-sandbox`; kcadm
+prompt düzeni ya da `--kcadm-config`. Seçim kodu betiğin içindedir ve imajın JDK'sı ile
+derlenir; imaj yayını gerekmez. sky_lab_genel'deki `ops/wizards/eskylab-missing-primary-wizard.sh`
+production sunucusunda koşar. Harness `tests/fill-missing-primary-from-school.sh` tek başına
+çalışır.
+
 Hesap silmede (ADR-0051) core, SkyMail, CMS ve Forms'a ayrı bir gizli service
 account istemcisinden, `core-erasure`'dan aldığı token'larla gider. Operatör
 istemciyi, üç isteğe bağlı `account-erase-*` kapsamını ve üç erase rolünü

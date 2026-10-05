@@ -14,6 +14,10 @@
 # The fixture realm has core but not forms (core-erasure-client.sh makes forms and skycms later),
 # so the first two passes map only core roles and warn about forms; the last stage runs the step
 # alone with an operator session once forms exists, the way the sandbox realm is reconciled.
+#
+# The exchanged token must keep what each API reads (admin-token-authz K1, the gate of the panel's
+# BFF): tests/admin-panel-exchanged-token.jq is that contract, checked for a Privileged person, a
+# team Leader and a plain member whose roles come from groups as in production.
 
 AP_CLIENT=admin
 AP_SCOPE=admin-panel-api-audience
@@ -23,10 +27,24 @@ AP_REDIRECT=https://admin.yildizskylab.com/api/auth/callback
 # What core-frontend asks for (src/lib/auth/oauth2.ts).
 AP_PANEL_SCOPE='openid profile email'
 AP_FORMS_ROLE=skyforms:form:manage
+AP_APIS=(core forms skycms)
+AP_EXCHANGE_CONTRACT="$SCRIPT_DIR/admin-panel-exchanged-token.jq"
+# The forms role forms-backend checks (HasRoleAsync("skyforms:*", "forms")), held in production
+# through groups.
+AP_FORMS_CHECKED_ROLE='skyforms:*'
+# The people of the exchange proof and the team groups under the fixture's /UYELER (production's
+# shape: a member is in /UYELER/<unit>/<team>, its Leader also in the team's LIDERLER subgroup).
+AP_PRIVILEGED_USER=admin-panel-privileged-fixture
+AP_LEADER_USER=admin-panel-leader-fixture
+AP_MEMBER_USER=admin-panel-member-fixture
+AP_PEOPLE_PASSWORD=admin-panel-people-password-change-me
+AP_TEAM_PATH=/UYELER/ARGE/WEBLAB
+AP_LEADERS_PATH=/UYELER/ARGE/WEBLAB/LIDERLER
 AP_UUID=''
 AP_SECRET=''
 AP_EXCHANGE_STATUS=''
 AP_EXCHANGE_BODY=''
+AP_EXCHANGED_PAYLOAD=''
 
 ap_client_secret() {
   kcadm get "clients/$AP_UUID/client-secret" -r "$V2_REALM" -c | jq -r '.value // empty'
@@ -45,10 +63,12 @@ ap_operator_reconcile() {
     keycloak /opt/keycloak/config/reconcile-account-center.sh 2>&1
 }
 
-# ap_exchange <subject access token> <audience>: Standard Token Exchange by the panel's client;
-# leaves the HTTP status and the response body in AP_EXCHANGE_STATUS and AP_EXCHANGE_BODY.
+# ap_exchange <subject access token> <audience> [<parameter>=<value>...]: Standard Token Exchange by
+# the panel's client, as the panel's server will ask (no scope); leaves the HTTP status and the
+# response body in AP_EXCHANGE_STATUS and AP_EXCHANGE_BODY.
 ap_exchange() {
-  local body="$TEST_STATE_DIR/ap-exchange.body"
+  local body="$TEST_STATE_DIR/ap-exchange.body" pair extra=()
+  for pair in "${@:3}"; do extra+=(--data-urlencode "$pair"); done
   AP_EXCHANGE_STATUS=$(curl --silent --show-error \
     --output "$body" \
     --write-out '%{http_code}' \
@@ -57,9 +77,109 @@ ap_exchange() {
     --data-urlencode "subject_token=$1" \
     --data-urlencode subject_token_type=urn:ietf:params:oauth:token-type:access_token \
     --data-urlencode "audience=$2" \
+    ${extra[@]+"${extra[@]}"} \
     "http://localhost:18080/realms/$V2_REALM/protocol/openid-connect/token")
   AP_EXCHANGE_BODY=$(cat "$body")
   rm -f "$body"
+}
+
+# ap_assert_exchanged <subject access token> <its payload> <audience> <who>: the exchange to one API
+# succeeds with one access token (no refresh or ID token) that keeps
+# tests/admin-panel-exchanged-token.jq; leaves its payload in AP_EXCHANGED_PAYLOAD.
+ap_assert_exchanged() {
+  local token=$1 subject=$2 audience=$3 who=$4 violations
+  ap_exchange "$token" "$audience"
+  [[ $AP_EXCHANGE_STATUS == 200 ]] \
+    || fail "the exchange to $audience for $who was refused (HTTP $AP_EXCHANGE_STATUS, $(jq -r '.error + ": " + .error_description' <<<"$AP_EXCHANGE_BODY"))"
+  json_assert "$AP_EXCHANGE_BODY" \
+    '.issued_token_type == "urn:ietf:params:oauth:token-type:access_token" and (has("refresh_token") | not) and (has("id_token") | not)' \
+    "the exchange to $audience for $who returned more than one access token"
+  AP_EXCHANGED_PAYLOAD=$(v2_jwt_payload "$(jq -r .access_token <<<"$AP_EXCHANGE_BODY")")
+  violations=$(jq -c --arg aud "$audience" --argjson subject "$subject" -f "$AP_EXCHANGE_CONTRACT" <<<"$AP_EXCHANGED_PAYLOAD")
+  [[ $violations == '[]' ]] \
+    || fail "the token exchanged to $audience for $who breaks the contract: $(jq -r 'join("; ")' <<<"$violations")"
+}
+
+# ap_effective_roles <user id> <clientId>: the person's effective roles of one client (direct, from
+# groups and composites) as Keycloak's admin API reports them, a sorted JSON array.
+ap_effective_roles() {
+  kcadm get "users/$1/role-mappings/clients/$(lca_client_uuid "$2")/composite" -r "$V2_REALM" -c \
+    | jq -c '[.[].name] | sort'
+}
+
+# ap_group_id <path>: the id of a group by its full path.
+ap_group_id() {
+  kcadm get "group-by-path$1" -r "$V2_REALM" -c | jq -r .id
+}
+
+# ap_grant_group <path> <clientId> <role>...: client roles to a group (the SKY LAB admin panel's
+# grants); role names may hold * and :, so they are looked up, not put in a URL.
+ap_grant_group() {
+  local path=$1 client=$2 client_uuid
+  shift 2
+  client_uuid=$(lca_client_uuid "$client")
+  kcadm create "groups/$(ap_group_id "$path")/role-mappings/clients/$client_uuid" -r "$V2_REALM" \
+    -b "$(kcadm get "clients/$client_uuid/roles" -r "$V2_REALM" -c \
+      | jq -c --args '[.[] | select(.name | IN($ARGS.positional[])) | {id, name}]' "$@")" >/dev/null
+}
+
+# ap_person <username> <group path>...: a person who signs in with AP_PEOPLE_PASSWORD; prints the id.
+ap_person() {
+  local username=$1 id path
+  shift
+  id=$(kcadm create users -r "$V2_REALM" -i -s "username=$username" -s enabled=true \
+    -s "email=$username@example.invalid" -s emailVerified=true -s firstName=Admin -s lastName=Exchange)
+  kcadm set-password -r "$V2_REALM" --userid "$id" --new-password "$AP_PEOPLE_PASSWORD" >/dev/null
+  for path in "$@"; do
+    kcadm update "users/$id/groups/$(ap_group_id "$path")" -r "$V2_REALM" -n -b '{}' >/dev/null
+  done
+  printf '%s\n' "$id"
+}
+
+# ap_assert_person_exchanges <username> <user id>: the person's real panel login, then the exchange
+# to each API. The panel's token must carry exactly the person's effective core, forms and panel
+# roles and group paths (so the contract's "every claim kept" is not vacuous); each exchanged token
+# keeps the contract and carries what its API reads. Prints one evidence line (claim names only).
+ap_assert_person_exchanges() {
+  local who=$1 id=$2 core forms panel groups token subject audience shapes=()
+  core=$(ap_effective_roles "$id" core)
+  forms=$(ap_effective_roles "$id" forms)
+  panel=$(ap_effective_roles "$id" "$AP_CLIENT")
+  groups=$(kcadm get "users/$id/groups" -r "$V2_REALM" -c | jq -c '[.[].path] | sort')
+  lca_login "$AP_CLIENT" "$AP_REDIRECT" "$AP_SECRET" "$who" "$AP_PEOPLE_PASSWORD" "$AP_PANEL_SCOPE"
+  token=$LCA_ACCESS_TOKEN
+  subject=$LCA_ACCESS_PAYLOAD
+  json_assert "$subject" \
+    '(.resource_access.core.roles // [] | sort) == $core and (.resource_access.forms.roles // [] | sort) == $forms
+      and (.resource_access[$client].roles // [] | sort) == $panel and (.roles // [] | sort) == $panel
+      and ((.resource_access // {}) | keys - [$client, "core", "forms"]) == [] and (.groups // [] | sort) == $groups
+      and (has("realm_access") | not) and (.sid | type) == "string"' \
+    "the panel token of $who does not carry exactly their roles and group paths" \
+    --arg client "$AP_CLIENT" --argjson core "$core" --argjson forms "$forms" --argjson panel "$panel" \
+    --argjson groups "$groups"
+  for audience in "${AP_APIS[@]}"; do
+    ap_assert_exchanged "$token" "$subject" "$audience" "$who"
+    case $audience in
+      core)
+        json_assert "$AP_EXCHANGED_PAYLOAD" '(.resource_access.core.roles // [] | sort) == $core and (.groups // [] | sort) == $groups' \
+          "the core token of $who lost core's roles or the group paths" --argjson core "$core" --argjson groups "$groups"
+        ;;
+      forms)
+        json_assert "$AP_EXCHANGED_PAYLOAD" '(.resource_access.forms.roles // [] | sort) == $forms' \
+          "the forms token of $who lost the forms roles" --argjson forms "$forms"
+        ;;
+      skycms)
+        json_assert "$AP_EXCHANGED_PAYLOAD" \
+          '.azp == $client and (.roles // [] | sort) == $panel and (.groups // [] | sort) == $groups and ((.resource_access // {}) | length) == 0' \
+          "the skycms token of $who lost the tenant, the flat roles or the group paths" \
+          --arg client "$AP_CLIENT" --argjson panel "$panel" --argjson groups "$groups"
+        ;;
+    esac
+    shapes+=("$audience$(jq -c '.resource_access // {} | keys' <<<"$AP_EXCHANGED_PAYLOAD")")
+  done
+  printf '    %s: %s core, %s forms, %s panel role(s), %s group path(s); resource_access %s; every exchanged token keeps %s\n' \
+    "$who" "$(jq length <<<"$core")" "$(jq length <<<"$forms")" "$(jq length <<<"$panel")" "$(jq length <<<"$groups")" \
+    "${shapes[*]}" "$(jq -c '[keys[] | select(IN("exp", "iat", "jti", "aud", "resource_access") | not)]' <<<"$AP_EXCHANGED_PAYLOAD")"
 }
 
 # The reconciled contract of the panel's client; the arguments are the API clients whose every
@@ -249,18 +369,90 @@ stage_admin_panel_tokens() {
     'the panel token of a person without API roles lacks one of the three audiences'
 
   CURRENT_STAGE='admin panel client: Standard Token Exchange to one API'
-  for audience in core forms skycms; do
-    ap_exchange "$token" "$audience"
-    [[ $AP_EXCHANGE_STATUS == 200 ]] \
-      || fail "the exchange to $audience was refused (HTTP $AP_EXCHANGE_STATUS, $(jq -r '.error + ": " + .error_description' <<<"$AP_EXCHANGE_BODY"))"
-    payload=$(v2_jwt_payload "$(jq -r .access_token <<<"$AP_EXCHANGE_BODY")")
-    json_assert "$payload" '(.aud | if type == "array" then . else [.] end) == [$aud] and .azp == $client' \
-      "the exchanged token for $audience does not carry that one audience" --arg aud "$audience" --arg client "$AP_CLIENT"
+  for audience in "${AP_APIS[@]}"; do
+    ap_assert_exchanged "$token" "$payload" "$audience" "$AP_USER"
   done
   # skymail is a client the person holds a role of: a full-scope token would name it, this one must not.
   ap_exchange "$token" skymail
   [[ $AP_EXCHANGE_STATUS == 400 && $(jq -r .error <<<"$AP_EXCHANGE_BODY") == invalid_request ]] \
     || fail "an exchange to an audience outside the panel token was not refused (HTTP $AP_EXCHANGE_STATUS)"
+  # The exchange gives no refresh token: the server keeps only the panel's own session.
+  ap_exchange "$token" core requested_token_type=urn:ietf:params:oauth:token-type:refresh_token
+  [[ $AP_EXCHANGE_STATUS == 400 && $(jq -r .error <<<"$AP_EXCHANGE_BODY") == invalid_request ]] \
+    || fail "an exchange for a refresh token was not refused (HTTP $AP_EXCHANGE_STATUS)"
+}
+
+# admin-token-authz K1, the gate of the panel's BFF: after the exchange each API still finds what it
+# reads, for the three kinds of people the panel serves, with their roles coming from groups as in
+# production (the SKY LAB admin panel's grants):
+#   - a Privileged person in /UYELER/YK: core's resource roles as the operator seeded them (the
+#     core-roles stage ran before), the panel's content:read and content:write (inscribed) and the
+#     forms role skyforms:* that forms-backend checks;
+#   - a team Leader in the team group and its LIDERLER subgroup: content:read and content:write for
+#     the team page; core and inscribed decide from the group paths;
+#   - a plain member of the team: no role of any API, only the group path.
+# The panel's token must carry exactly each person's effective roles and group paths, and every
+# exchange to core, forms and skycms must keep tests/admin-panel-exchanged-token.jq. Keycloak's
+# Evaluate with an audience (what an operator can run against a live realm without anyone's
+# password) must give the same token as the exchange. Runs before the no-op reconciliation, which
+# then proves the new forms role is already in the panel's scope.
+stage_admin_panel_exchange_claims() {
+  CURRENT_STAGE='admin panel client: groups and people of the exchange proof'
+  local output parent name client person privileged leader member audience evaluated exchanged
+  local normalize='del(.exp, .iat, .jti, .sid, .iss, .auth_time) | if has("scope") then .scope |= (split(" ") | sort | join(" ")) else . end'
+  # The role forms-backend checks; the step alone puts it in the panel's scope, as the next
+  # reconciliation would.
+  output=$(kcadm get "clients/$(lca_client_uuid forms)/roles" -r "$V2_REALM" -c)
+  if ! jq -e --arg role "$AP_FORMS_CHECKED_ROLE" 'any(.[]; .name == $role)' <<<"$output" >/dev/null; then
+    kcadm create "clients/$(lca_client_uuid forms)/roles" -r "$V2_REALM" -s "name=$AP_FORMS_CHECKED_ROLE" >/dev/null
+  fi
+  output=$(ap_operator_reconcile "$AP_CLIENT" -e KEYCLOAK_RECONCILE_ONLY=admin-panel-client) \
+    || { printf '%s\n' "$output" >&2; fail 'the step alone failed'; }
+  ap_assert_contract core forms
+  parent=/UYELER
+  for name in ARGE WEBLAB LIDERLER; do
+    kcadm create "groups/$(ap_group_id "$parent")/children" -r "$V2_REALM" -s "name=$name" >/dev/null
+    parent="$parent/$name"
+  done
+  [[ $parent == "$AP_LEADERS_PATH" ]] || fail "the team groups are not $AP_LEADERS_PATH"
+  ap_grant_group /UYELER/YK "$AP_CLIENT" content:read content:write
+  ap_grant_group /UYELER/YK forms "$AP_FORMS_CHECKED_ROLE"
+  ap_grant_group "$AP_LEADERS_PATH" "$AP_CLIENT" content:read content:write
+  privileged=$(ap_person "$AP_PRIVILEGED_USER" /UYELER/YK)
+  leader=$(ap_person "$AP_LEADER_USER" "$AP_TEAM_PATH" "$AP_LEADERS_PATH")
+  member=$(ap_person "$AP_MEMBER_USER" "$AP_TEAM_PATH")
+  # The people are what they stand for, or the proof below would be vacuous.
+  json_assert "$(ap_effective_roles "$privileged" core)" 'length > 0' 'the Privileged person holds no core role'
+  [[ $(ap_effective_roles "$privileged" forms) == "[\"$AP_FORMS_CHECKED_ROLE\"]" ]] \
+    || fail "the Privileged person does not hold exactly $AP_FORMS_CHECKED_ROLE of forms"
+  for person in "$privileged" "$leader"; do
+    [[ $(ap_effective_roles "$person" "$AP_CLIENT") == '["content:read","content:write"]' ]] \
+      || fail 'a Privileged person or Leader does not hold exactly content:read and content:write'
+  done
+  for client in core forms; do
+    [[ $(ap_effective_roles "$leader" "$client") == '[]' ]] || fail "the Leader holds a role of $client"
+  done
+  for client in core forms "$AP_CLIENT"; do
+    [[ $(ap_effective_roles "$member" "$client") == '[]' ]] || fail "the plain member holds a role of $client"
+  done
+
+  CURRENT_STAGE='admin panel client: exchanged tokens of a Privileged person, a Leader and a member'
+  ap_assert_person_exchanges "$AP_PRIVILEGED_USER" "$privileged"
+  ap_assert_person_exchanges "$AP_LEADER_USER" "$leader"
+  ap_assert_person_exchanges "$AP_MEMBER_USER" "$member"
+
+  CURRENT_STAGE='admin panel client: Evaluate with an audience is the exchange'
+  lca_login "$AP_CLIENT" "$AP_REDIRECT" "$AP_SECRET" "$AP_PRIVILEGED_USER" "$AP_PEOPLE_PASSWORD" "$AP_PANEL_SCOPE"
+  for audience in "${AP_APIS[@]}"; do
+    ap_assert_exchanged "$LCA_ACCESS_TOKEN" "$LCA_ACCESS_PAYLOAD" "$audience" "$AP_PRIVILEGED_USER"
+    # Evaluate makes its own session and reaches Keycloak by another address: sid and iss differ.
+    evaluated=$(kcadm get "clients/$AP_UUID/evaluate-scopes/generate-example-access-token" -r "$V2_REALM" \
+      -q "userId=$privileged" -q "audience=$audience" -q scope=openid -c | jq -S -c "$normalize")
+    exchanged=$(jq -S -c "$normalize" <<<"$AP_EXCHANGED_PAYLOAD")
+    [[ $evaluated == "$exchanged" ]] \
+      || fail "Evaluate with audience $audience differs from the exchange in $(jq -n -c --argjson a "$evaluated" --argjson b "$exchanged" '[($a + $b) | keys[] | select($a[.] != $b[.])]')"
+  done
+  printf '    Evaluate (userId, audience, scope=openid) gives the exchanged token for core, forms and skycms\n'
 }
 
 # Part of v2_state_snapshot: what the no-op reconciliation must leave byte for byte.

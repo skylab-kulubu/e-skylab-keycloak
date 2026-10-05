@@ -1357,6 +1357,60 @@ panel secret'ını alır, sonra istemci gizliye çevrilir, sonra uzlaştırıcı
 İstemci adı realm'den gelir (`e-skylab-sandbox` → `superadmin`, diğerleri → `admin`;
 `inscribed-cms-roles.sh` ile aynı); `KEYCLOAK_ADMIN_PANEL_CLIENT_ID` başka bir ad verir.
 
+### Token exchange'ten sonra API'lerin okuduğu claim'ler (admin-token-authz K1)
+
+Panelin sunucusu (BFF) her API'ye exchange'li bir token gönderir: `audience` tek API, `scope`
+yok. Keycloak 26.7 bu token'ı panelin kendi token'ıyla aynı oturumda (`sid` aynı), aynı istemciyle
+(`azp`) ve aynı varsayılan kapsamlarla üretir. Sonra `aud`'u istenen API'ye, `resource_access`'i o
+API'nin anahtarına indirir (`TokenManager.restrictRequestedAudience`). İstemcinin kendi
+mapper'ları (`inscribed-roles`, `groups`) ve profil kapsamları yeniden çalışır. Yani düz `roles` ve
+`groups` kalır, `resource_access.admin` düşer. Yanıtta refresh token ve ID token yoktur.
+`requested_token_type=…:refresh_token` istenirse `400 invalid_request` döner.
+
+Sözleşme `tests/admin-panel-exchanged-token.jq`'dadır. İki harness de onu çalıştırır:
+
+- `aud` tam olarak istenen API'dir.
+- `resource_access`, panel token'ının yalnız o API'ye ait kısmıdır. skycms için boştur.
+- `realm_access` ve `client_id` yoktur. core, `client_id`'yi servis hesabı işareti sayar.
+- Panel token'ındaki her claim aynı değerle kalır. Bunun dışında kalanlar yalnız `aud`,
+  `resource_access`, `exp`, `iat` ve `jti`'dir.
+- Yeni claim eklenmez.
+- Token, panelin token'ından uzun yaşamaz.
+
+| API | Token'dan okuduğu claim'ler (kaynak) | Exchange'ten sonra |
+| --- | --- | --- |
+| core (`aud` ∋ `core`) | `iss`, `sub` (UUID), `azp`, `email`, `given_name`, `family_name`, `preferred_username`, (varsa) `school_email`, `sky_number`, `university`, `department`, `groups` (tam yol; ya da Group overage işareti `_claim_names.groups`), `resource_access.core.roles`; `client_id` = `azp` servis hesabı demektir (core-backend `internal/authn/jwt.go`) | hepsi aynen; `resource_access` yalnız `core` |
+| forms-backend (`aud` ∋ `forms`) | `iss`, `sub` (GUID; erişim kapısı), `resource_access.forms.roles` (`skyforms:*`) (`FormsJwtAuthenticationExtensions.cs`, `JwtCurrentUserService.cs`) | hepsi aynen; `resource_access` yalnız `forms` |
+| inscribed (`aud` ∋ `skycms`) | `azp` (tenant), `sub` (`updatedBy`), düz `roles` (`content:*`), `groups` (tam yol; koleksiyon kuralları, takım slug'ı), `email` (yalnız `/admin/*` yolları) (inscribed-dotnet 2.0.1: `ConfigureJwtBearerOptions.cs`, `ClaimPrincipalTenant.cs`, `AccessRuleEvaluator.cs`) | hepsi aynen; `resource_access` boş |
+
+Harness'ler:
+
+- **Production biçimi:** `tests/admin-panel-client.sh`, aşama
+  `stage_admin_panel_exchange_claims`. Roller production'daki gibi gruplardan gelir. Üç kişi
+  panelden gerçekten giriş yapar:
+  - Privileged kişi `/UYELER/YK`'dadır. Operatörün tohumladığı core rolleri, `content:read`,
+    `content:write` ve forms'un `skyforms:*` rolü bu gruptan gelir.
+  - Lider `/UYELER/ARGE/WEBLAB` ve `…/LIDERLER`'dedir. `content:*` rolleri `LIDERLER`'den
+    gelir.
+  - Sıradan üyenin rolü yoktur.
+
+  Panel token'ı kişinin Admin API'deki etkin rollerini ve grup yollarını birebir taşır. Üç API'ye
+  yapılan exchange sözleşmeyi korur.
+- **Evaluate:** Keycloak'ın Evaluate'i (`evaluate-scopes/generate-example-access-token`,
+  `userId`, `audience`, `scope=openid`) exchange'le aynı token'ı verir; yalnız `sid`, `iss` ve
+  zamanlar farklıdır. Bu yüzden canlı bir realm, kimsenin parolası olmadan Evaluate'le
+  denetlenebilir.
+- **Sandbox biçimi:** `tests/sandbox-admin-local-client.sh`. Burada `groups` bir realm
+  kapsamından gelir ve istemcide elle konmuş bir claim vardır. `superadmin`'in exchange'i aynı
+  sözleşmeyi korur. `admin-local` public'tir ve exchange kapalıdır, bu yüzden `400
+  invalid_request` alır. Exchange açılsa bile Keycloak public istemciye `invalid_client`
+  döndürür. BFF yerelde çalışmadan önce `admin-local` gizli istemciye dönmelidir.
+
+Kalan risk elle kurulmuş canlı istemcilerdedir. `profile`, `email` ve `basic` `admin`'in
+varsayılan kapsamı değil de isteğe bağlı kapsamıysa durum değişir: panelin girişi bunları
+`scope` ile ister, exchange istemez. O durumda `email`, profil ve `sub` exchange'li token'da
+olmaz. Bu, canlıda bir kişi ve `audience` ile Evaluate'le görülür.
+
 ### Operatör oturumuyla tek adım (sandbox)
 
 Sandbox realm'inde uzlaştırıcı kimliği (`account-center-config`) yoktur ve tam uzlaştırma sandbox'a

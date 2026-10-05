@@ -45,6 +45,10 @@ realm ayarı bırakmamaktır.
   sağlayıcısı (`3.1.1`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
   etkinleştirilir.
+- `/` adresi (Keycloak'ın karşılama sayfası) Admin Console'a yönlenmez, e-SKY LAB
+  tanıtım sayfasını gösterir: `/opt/keycloak/themes/e-skylab-welcome` klasör
+  teması, imajdaki `KC_SPI_THEME__WELCOME_THEME=e-skylab-welcome` ile seçilir
+  (çalışma zamanı seçeneği; Dokploy'da ayar gerekmez).
 - Realm ve istemci ayarları `config/reconcile-account-center.sh` ile sürekli
   uzlaştırılır; tek seferlik realm içe aktarımına güvenilmez.
 - Sistem e-postaları `sky-mail` sağlayıcılarıyla SkyMail üzerinden gönderilir;
@@ -70,6 +74,21 @@ bunları giriş rollerine bağlayan tek stil dosyasıdır. `Template.tsx` her sa
 giriş sayfasının `LegacyFrame` çerçevesinde (solda sayfa, geniş ekranda sağda
 animasyonlu SKY LAB logolu tanıtım paneli, KVKK altbilgisi, dil seçimi) çizer ve bütün metinler `i18n.ts` içinden gelir
 (önce Türkçe, sonra İngilizce).
+
+`https://e.yildizskylab.com/` adresini doğrudan açan kişi Keycloak'ın
+karşılama sayfası yerine e-SKY LAB'in tanıtım sayfasını görür: e-SKY LAB nedir,
+hangi uygulamalarda kullanılır, bugün nasıl giriş yapılır, okul şifresi ve
+Microsoft'tan alınan bilgiler (ADR-0063'ün güven metni), Hesap Merkezi ve KVKK
+Aydınlatma Metni bağlantıları. Sayfa `theme/src/welcome/` içindeki React
+bileşenlerinden (`AnimatedSkyLabLogo`, `YtuMark` giriş temasıyla ortak) derleme
+sırasında bir kez durağan HTML'e çevrilir (`npm run build-welcome-theme`); betik,
+form ve Admin Console bağlantısı yoktur, Keycloak'ın verdiği değerlerden yalnız
+`resourcesPath` kullanılır. Stil dosyası giriş temasının token'larını, yazı
+tipini ve `legacy-login.css`'ini aynen içe alır, yalnız sayfa düzenini ekler.
+Sayfa Keycloak'ın yalnız `/` yolunu kullanır; `/realms`, `/resources` (kaynaklar
+`/resources/<sürüm>/welcome/e-skylab-welcome/` altında), `/admin` ve `/js`
+değişmez. Giriş düğmelerinin metni değişince (e-postayla kod, kayıt) bu sayfa da
+değişir.
 
 İlk fiziksel doğrulama Touch ID üzerinde tamamlanmıştır. Face ID, Android
 Credential Manager, Windows Hello ve mobil WebView yüzeyleri sürüm sonrası
@@ -434,7 +453,13 @@ Privileged gruplara, sahip lab takımının ve etkinliğin organizasyon takımı
 (`/UYELER/ORGANIZASYON/<ETKİNLİK>`) `LIDERLER`/`KOORDINATORLER` gruplarına, `client:admin`'i
 yalnız `ADMIN`'e verir; kişiye vermez, hiçbir şeyi geri almaz. sky_lab_genel'deki
 `ops/wizards/site-cms-setup-wizard.sh` üçünü koşar, secret'ı OpenBao'ya taşır. Harness
-`tests/site-clients.sh` tek başına çalışır (runbook §18).
+`tests/site-clients.sh` tek başına çalışır (runbook §18). `site-clients.sh --shared-scope`
+yalnız ortak `skycms-audience` kapsamını kurar ya da onarır, hiçbir site istemcisine dokunmaz
+(`--site` ile birlikte verilemez). Production'daki kapsam elle yapılmıştı ve tek mapper'ı
+`audience-mapper` hiçbir audience adlandırmıyordu (2026-09-21 realm dökümü): `skycms`'i yalnız
+bir `skycms` rolü taşıyanın token'ına audience-resolve koyuyordu. Kapsamda yalnız `skycms`'i
+adlandıran (ya da hiç adlandırmayan) başka bir Audience mapper'ı, kapsamın kendi mapper'ı
+yerindeyken silinir; başka audience adlandıran mapper PROBLEM'dir ve kalır.
 
 SkyApp de ana sitenin haber ve takım sayfalarını düzenler (ADR-0056 eki, 2026-10-03): uygulama
 inscribed'ın ortak `news`/`teams` koleksiyonlarına kişinin kendi `skyapp` token'ıyla doğrudan
@@ -454,8 +479,9 @@ rollerine başka rollerden giden her bağı alır (`frontend-main`'in ikisi ve v
 da realm rolünden gelenler): sonraki token yenilemesinde kimse bir composite üzerinden SkyApp
 rolü almaz. `skyapp` rolünün bir gruba ya da kişiye doğrudan atanması `--revoke`'la gitmez; betik
 bunu WARNING olarak gösterir, panelden kaldırılır. Önce `inscribed-cms-roles.sh --client
-frontend-main` gerekir; eksik önkoşulda hiçbir şey yazmaz. Harness `tests/skyapp-cms-editor.sh`
-tek başına çalışır.
+frontend-main` ve `skycms`'i access token'a yazan bir `skycms-audience` kapsamı gerekir
+(`site-clients.sh --shared-scope` kurar ya da onarır); eksik önkoşulda hiçbir şey yazmaz. Harness
+`tests/skyapp-cms-editor.sh` tek başına çalışır.
 
 `account-center` realm'in etkin tarayıcı akışını kullanır; böylece
 production'a özel parola, OTP ve passkey davranışı olduğu gibi geçerlidir ve
@@ -721,6 +747,14 @@ gösterir; `?page=<sayfa>.ftl` ve `&lang=en` sorgu parametreleri
 cd theme
 npm ci --ignore-scripts
 npx vite            # http://localhost:5173/?page=login-config-totp.ftl
+```
+
+Tanıtım sayfası (`/`) derlenip gerçek Keycloak'ta (stok imaj, geliştirme
+kipi, derlenen tema salt okunur bağlı) şöyle açılır ve denetlenir:
+
+```bash
+(cd theme && npm run build-welcome-theme) && bash tests/check-welcome-theme.sh
+bash tests/welcome-page.sh   # Docker; stok Keycloak 26.7.4, port 18096
 ```
 
 `theme/tests/browser/visual.spec.ts`, her sayfanın masaüstü (1280×800) ve

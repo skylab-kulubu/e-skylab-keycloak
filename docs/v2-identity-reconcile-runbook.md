@@ -1629,6 +1629,26 @@ Harness bunu da dener: production reddi, istemcinin biçimi, ADMIN üyesinin tok
 `client:admin`, düz üyede CMS rolü olmadığı, servis hesabının salt okuma kaldığı, ikinci koşunun
 yazmadığı. Operatör: `ops/wizards/site-cms-setup-wizard.sh --site main --sandbox`.
 
+**Yalnız ortak kapsam (`--shared-scope`, 2026-10-05).** `site-clients.sh --shared-scope [--apply]`
+yalnız ortak `skycms-audience` kapsamını kurar ya da onarır ve elle yapılmış istemcileri raporlar;
+hiçbir site istemcisini okumaz, yazmaz (`--site` ile birlikte kullanım hatasıdır, çıkış 2). Kapsam
+bugün etkinlik sitelerinden önce gerekiyor: production'da `frontend-main` ve `frontend-arge`'ın
+varsayılan kapsamıdır, `config/skyapp-cms-editor.sh` de `skyapp`'e bağlar ve kapsamda `skycms`'i
+access token'a yazan bir Audience mapper'ı yoksa `MISSING` ile durur. Production'daki kapsam elle
+yapılmıştı; 2026-09-21 realm dökümünde tek mapper'ı `audience-mapper`'dır ve ne
+`included.client.audience` ne `included.custom.audience` taşır, yani Keycloak onun için hiçbir şey
+eklemez. `skycms` o güne kadar `frontend-main` token'ına yalnız audience-resolve ile, kişi bir
+`skycms` rolü taşıyorsa giriyordu. Betik kapsamın kendi `skycms-audience` mapper'ını ekler
+(access token ve introspection, ID token değil), öznitelikleri `include.in.token.scope=false`,
+`display.on.consent.screen=false` yapar ve yalnız `skycms`'i adlandıran (ya da hiçbir audience
+adlandırmayan) başka bir Audience mapper'ını kendi mapper'ı yerindeyken siler: o mapper'ın
+ekleyebileceği her şeyi kendi mapper'ı da ekler. Başka bir audience adlandıran mapper `PROBLEM`'dir
+ve kalır. Harness: `tests/site-clients.sh` (production'ın biçimi, plan, yazılanlar, `skycms`'siz
+kişinin `frontend-main` token'ında önce yok sonra var olan `skycms`, ikinci koşu, özel audience,
+başka audience) ve `tests/skyapp-cms-editor.sh` (production'ın 2026-10-05'te bastığı `MISSING`
+satırı, `--shared-scope --apply`'dan sonra koşunun sürmesi). Operatör: sky_lab_genel'deki
+`ops/wizards/skyapp-cms-editor-wizard.sh` bunu `skyapp-cms-editor.sh`'tan önce koşar.
+
 ## 19. core'un kaynak rolleri ve Privileged gruplara bir kez verilmesi (ADR-0059)
 
 core bugün etkinlik, bilet, sertifika, kullanıcı, grup gibi işlerde "kişi `ADMIN`, `YK` ya da `DK`

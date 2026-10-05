@@ -20,7 +20,10 @@
 #     development reads the sandbox CMS without a token). Any other URI on the client is removed
 #     and listed;
 #   - aud skycms through the shared realm scope skycms-audience (one Audience mapper, access token
-#     and introspection only), attached as a default scope; the scope is made when missing;
+#     and introspection only), attached as a default scope; the scope is made when missing. Another
+#     Audience mapper in it that names no audience but skycms (production's hand-made audience-mapper
+#     named none at all, so it added nothing) is removed once the scope's own mapper is in place;
+#     any other mapper in it is a PROBLEM;
 #   - aud core through its own scope frontend-<site>-core-audience (the shape the reconciler gives
 #     frontend-main and frontend-arge: config/frontend-arge-core-audience-mappers.json), attached as
 #     a default scope; the site's image bridge uploads to core /v1/media with the editor's token.
@@ -52,6 +55,13 @@
 #   KEYCLOAK_REALM=<realm> site-clients.sh --kcadm-config <file> [--apply] # reuse a kcadm session
 #   ... [--site artlab|yildizjam|skydays]...                                # default: all three
 #   KEYCLOAK_REALM=e-skylab-sandbox site-clients.sh ... --site main         # the main site, sandbox only
+#   KEYCLOAK_REALM=<realm> site-clients.sh ... --shared-scope [--apply]     # the shared scope only
+#
+# --shared-scope makes or repairs only the shared skycms-audience scope and reports the hand-made
+# clients; no site client is read or written (it cannot be combined with --site). Every client
+# that has the scope as a default scope (production's hand-made frontend-main and frontend-arge,
+# config/skyapp-cms-editor.sh's skyapp) gets aud skycms from it, so it is the prerequisite those
+# need before any event site exists.
 #
 # The administrator password is typed into kcadm's own prompt and never passes through this
 # script. --kcadm-config reuses a kcadm config file an operator (or a wizard) already logged in
@@ -81,6 +91,7 @@ KCADM_CONFIG=''
 OWN_CONFIG=false
 MODE=check
 SITES=()
+SHARED_SCOPE_ONLY=false
 
 ALL_SITES=(artlab yildizjam skydays)
 HAND_MADE_CLIENTS=(frontend-main frontend-arge)
@@ -112,7 +123,7 @@ GROUPS_MAPPER=groups
 MAPPER_FIELDS='id,protocolMapper,config(claim.name,full.path,included.client.audience,access.token.claim,id.token.claim,introspection.token.claim),name'
 
 usage() {
-  printf 'usage: KEYCLOAK_REALM=(e-skylab|e-skylab-sandbox) %s (--admin-user <administrator> | --kcadm-config <file>) [--check | --apply] [--site artlab|yildizjam|skydays|main]...\n' \
+  printf 'usage: KEYCLOAK_REALM=(e-skylab|e-skylab-sandbox) %s (--admin-user <administrator> | --kcadm-config <file>) [--check | --apply] [--site artlab|yildizjam|skydays|main]... | [--shared-scope]\n' \
     "${BASH_SOURCE[0]##*/}" >&2
   exit 2
 }
@@ -137,6 +148,10 @@ while [[ $# -gt 0 ]]; do
       esac
       shift 2
       ;;
+    --shared-scope)
+      SHARED_SCOPE_ONLY=true
+      shift
+      ;;
     --apply)
       MODE=apply
       shift
@@ -150,7 +165,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
-[[ ${#SITES[@]} -gt 0 ]] || SITES=("${ALL_SITES[@]}")
+if [[ $SHARED_SCOPE_ONLY == true ]]; then
+  [[ ${#SITES[@]} -eq 0 ]] || { printf -- '--shared-scope writes no site client; it cannot be combined with --site\n' >&2; usage; }
+else
+  [[ ${#SITES[@]} -gt 0 ]] || SITES=("${ALL_SITES[@]}")
+fi
 
 # Before anything else, and before a login: only the two club realms, and only when named.
 if [[ $TARGET_REALM != "$PRODUCTION_REALM" && $TARGET_REALM != "$SANDBOX_REALM" ]]; then
@@ -361,12 +380,28 @@ realm_groups_scope() {
   printf '%s\n' "$id"
 }
 
+# names_at_most SCOPE_ID MAPPER_ID AUDIENCE: whether the Audience mapper names no audience but
+# AUDIENCE (included.client.audience and included.custom.audience each empty or AUDIENCE). Keycloak
+# adds the client audience, else the custom one, else nothing: whatever such a mapper adds, the
+# scope's own mapper adds too, so it goes without an access token losing an audience.
+# A failed read stops the run: a mapper whose audience is unknown is never removed.
+names_at_most() {
+  local targets client='' custom=''
+  targets=$(csv "client-scopes/$1/protocol-mappers/models/$2" 'config(included.client.audience,included.custom.audience)') \
+    || { printf 'the mapper %s of client scope %s cannot be read; stopped\n' "$2" "$1" >&2; exit 1; }
+  IFS=, read -r client custom <<<"$targets" || true
+  [[ (-z $client || $client == "$3") && (-z $custom || $custom == "$3") ]]
+}
+
 # ensure_audience_scope NAME AUDIENCE MAPPER: one realm scope NAME carrying exactly one Audience
 # mapper MAPPER to AUDIENCE. Sets SCOPE_ID (empty while --check plans to create it); a duplicate
-# is a PROBLEM (returns 1). Not run in a subshell: its changes and problems are counted.
+# is a PROBLEM (returns 1). Another Audience mapper in it that names no audience but AUDIENCE is
+# removed after MAPPER is in place (a hand-made one, as production's audience-mapper in
+# skycms-audience, which named none); any other mapper is a PROBLEM and stays. Not run in a
+# subshell: its changes and problems are counted.
 SCOPE_ID=''
 ensure_audience_scope() {
-  local name=$1 audience=$2 mapper=$3 list count id='' shape line mapper_line=''
+  local name=$1 audience=$2 mapper=$3 list count id='' shape line mapper_line='' redundant=() own_written=true
   SCOPE_ID=''
   list=$(scope_ids "$name")
   count=$(sed '/^$/d' <<<"$list" | wc -l | tr -d ' ')
@@ -398,6 +433,8 @@ ensure_audience_scope() {
       [[ -n $line ]] || continue
       if [[ ${line##*,} == "$mapper" && -z $mapper_line ]]; then
         mapper_line=$line
+      elif [[ $(mapper_rest "$line") == oidc-audience-mapper,* ]] && names_at_most "$id" "${line%%,*}" "$audience"; then
+        redundant+=("$line")
       else
         problem "client scope $name also has the mapper ${line##*,}; it should carry only $mapper. Remove it by hand"
       fi
@@ -407,7 +444,7 @@ ensure_audience_scope() {
     change "add mapper $mapper to $name (aud += $audience; access token and introspection, not the ID token)"
     if [[ $MODE == apply ]]; then
       kcadm_write create "client-scopes/$id/protocol-mappers/models" -r "$TARGET_REALM" \
-        -b "$(audience_mapper_body "$mapper" "$audience")"
+        -b "$(audience_mapper_body "$mapper" "$audience")" || own_written=false
     fi
   elif own_audience_ok "$(mapper_rest "$mapper_line")" "$audience"; then
     log "client scope $name: mapper $mapper unchanged"
@@ -415,9 +452,22 @@ ensure_audience_scope() {
     change "repair mapper $mapper in $name ($(mapper_rest "$mapper_line") -> aud $audience, access token and introspection, not the ID token)"
     if [[ $MODE == apply ]]; then
       kcadm_write update "client-scopes/$id/protocol-mappers/models/${mapper_line%%,*}" -r "$TARGET_REALM" \
-        -b "$(audience_mapper_body "$mapper" "$audience" "${mapper_line%%,*}")"
+        -b "$(audience_mapper_body "$mapper" "$audience" "${mapper_line%%,*}")" || own_written=false
     fi
   fi
+  # The caller runs this function in a || list, where set -e does not apply: a failed write of the
+  # scope's own mapper is checked here, and then no other mapper is removed.
+  if [[ $own_written != true ]]; then
+    problem "the mapper $mapper could not be written to client scope $name; no other mapper was removed from it"
+    SCOPE_ID=$id
+    return 1
+  fi
+  for line in "${redundant[@]}"; do
+    change "remove the mapper ${line##*,} from $name (an Audience mapper that names no audience but $audience; $mapper puts $audience into the access token)"
+    if [[ $MODE == apply ]]; then
+      kcadm_write delete "client-scopes/$id/protocol-mappers/models/${line%%,*}" -r "$TARGET_REALM"
+    fi
+  done
   SCOPE_ID=$id
 }
 
@@ -474,7 +524,7 @@ if [[ $OWN_CONFIG == true ]]; then
 fi
 site_clients=''
 for site in "${SITES[@]}"; do site_clients+="${site_clients:+ }frontend-$site"; done
-log "realm=$TARGET_REALM mode=$MODE clients=$site_clients"
+log "realm=$TARGET_REALM mode=$MODE clients=${site_clients:-none (--shared-scope: only the shared $SKYCMS_SCOPE scope)}"
 
 # --- prerequisites: nothing is written unless they hold ------------------------------------------
 if ! realm_name=$(kcadm get "realms/$TARGET_REALM" --fields realm --format csv --noquotes 2>/dev/null | tr -d '\r') \

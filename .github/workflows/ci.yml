@@ -113,7 +113,8 @@ jobs:
   # authorization code flow (PKCE); needs no build of this repository's image.
   site-clients:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 19-28 minutes on main before the --shared-scope stage (about 5 more).
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
 
@@ -146,6 +147,30 @@ jobs:
       - name: login client narrowing against a throwaway Keycloak
         run: bash tests/login-clients.sh
 
+  # The landing page at / (the e-skylab-welcome theme, rendered from theme/src/welcome) served by
+  # the stock Keycloak image in dev mode with the built theme mounted; needs no build of this
+  # repository's image.
+  welcome-page:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.22.1
+          cache: npm
+          cache-dependency-path: theme/package-lock.json
+
+      - name: Build the landing page theme
+        working-directory: theme
+        run: |
+          npm ci --ignore-scripts
+          npm run build-welcome-theme
+
+      - name: Landing page at / against a throwaway Keycloak
+        run: bash tests/welcome-page.sh
+
   integration:
     runs-on: ubuntu-latest
     # The full harness takes 56-83 minutes depending on the runner (2026-10); 120 leaves headroom.
@@ -174,6 +199,8 @@ jobs:
           npx playwright install --with-deps chromium
           npm run build-keycloak-theme
           bash ../tests/check-theme-contract.sh
+          npm run build-welcome-theme
+          bash ../tests/check-welcome-theme.sh
 
       - uses: docker/setup-buildx-action@v4
 

@@ -100,6 +100,36 @@ Only the two original brand image assets were carried forward.
   `invalid-credentials`, `idp-error`; `login-reset-password.ftl`
   `missing-username`).
 
+## Landing page (welcome theme)
+
+Keycloak answers `/` through its welcome theme; the bundled one redirects to the
+Admin Console once an admin exists (`redirectToAdmin=true`). The image installs
+a second, source-built theme instead: `e-skylab-welcome`, a folder theme at
+`/opt/keycloak/themes/e-skylab-welcome` selected by
+`KC_SPI_THEME__WELCOME_THEME=e-skylab-welcome` (Dockerfile, run-time option).
+
+- `src/welcome/WelcomePage.tsx` is the page (what e-SKY LAB is, where the
+  account is used, how to sign in today, the ADR-0063 trust copy, Account
+  Center and KVKK links); `src/welcome/template.tsx` wraps it into `index.ftl`.
+  `npm run build-welcome-theme` (`scripts/build-welcome-theme.mjs`) renders it
+  once with `react-dom/server` and bundles `src/welcome/welcome.css` with Vite
+  into `dist_welcome/e-skylab-welcome/welcome/`.
+- Static by contract: no script, form or inline handler; the only Keycloak value
+  it uses is `resourcesPath`, so it can show neither the Admin Console link nor
+  the admin creation form; the body sits in `<#noparse>`; links go only to the
+  club's own apps and the KVKK text. `theme.properties` sets
+  `redirectToAdmin=false`.
+- One design system: `welcome.css` imports the skylcn-ui tokens, Space Grotesk
+  and `src/login/legacy-login.css` and adds only the landing layout (no token
+  set of its own). The logo and YTÜ mark are the login theme's components.
+- Tests: `WelcomePage.test.tsx` (Vitest: landmarks, copy, link allowlist,
+  template contract), `../tests/check-welcome-theme.sh` (the built files) and
+  `../tests/welcome-page.sh` (stock Keycloak serving the built theme: `/` is the
+  page, its resources load, Keycloak's own paths are unchanged). The
+  integration harness checks the optimized image serves it.
+- Copy follows today's login buttons; when they change (e-mail code, sign-up,
+  ADR-0063), change this page too.
+
 ## Account Center boundary
 
 The theme does not construct Account Center AIA URLs. The BFF must create a PAR

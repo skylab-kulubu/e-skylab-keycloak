@@ -31,6 +31,12 @@ COPY theme/src ./src
 RUN npm test && npm run build-keycloak-theme && \
     test "$(find dist_keycloak -maxdepth 1 -type f -name '*.jar' | wc -l | tr -d ' ')" = 1 && \
     test -f dist_keycloak/e-skylab-theme-2.0.1.jar
+# The landing page at / (Keycloak's welcome page), rendered from src/welcome with the same tokens,
+# typeface and chrome as the login theme. A folder theme: Keycloak reads it at run time.
+RUN npm run build-welcome-theme && \
+    test -f dist_welcome/e-skylab-welcome/welcome/theme.properties && \
+    test -f dist_welcome/e-skylab-welcome/welcome/index.ftl && \
+    test -f dist_welcome/e-skylab-welcome/welcome/resources/welcome.css
 
 FROM ${KEYCLOAK_IMAGE} AS builder
 
@@ -42,6 +48,7 @@ ENV KC_DB=postgres \
 COPY --from=providers --chown=keycloak:keycloak --chmod=0644 /build/spi/target/e-skylab-spi-1.16.0.jar /opt/keycloak/providers/e-skylab-spi-1.16.0.jar
 COPY --from=providers --chown=keycloak:keycloak --chmod=0644 /build/rabbitmq-provider/target/keycloak-to-rabbit-3.1.1.jar /opt/keycloak/providers/keycloak-to-rabbit-3.1.1.jar
 COPY --from=theme --chown=keycloak:keycloak --chmod=0644 /build/theme/dist_keycloak/e-skylab-theme-2.0.1.jar /opt/keycloak/providers/e-skylab-theme-2.0.1.jar
+COPY --from=theme --chown=keycloak:keycloak /build/theme/dist_welcome/e-skylab-welcome /opt/keycloak/themes/e-skylab-welcome
 
 # Keep provider mtimes stable across Docker implementations. Keycloak records them
 # while augmenting the optimized image and checks them again at runtime.
@@ -52,6 +59,9 @@ FROM ${KEYCLOAK_IMAGE}
 
 COPY --from=builder /opt/keycloak/ /opt/keycloak/
 COPY --chown=keycloak:keycloak --chmod=0555 config /opt/keycloak/config
+
+# / shows the e-SKY LAB landing page instead of redirecting to the Admin Console (a run-time option).
+ENV KC_SPI_THEME__WELCOME_THEME=e-skylab-welcome
 
 ENTRYPOINT ["/opt/keycloak/bin/kc.sh"]
 CMD ["start", "--optimized"]

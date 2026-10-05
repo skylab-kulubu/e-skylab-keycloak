@@ -45,6 +45,10 @@ realm ayarı bırakmamaktır.
   sağlayıcısı (`3.1.1`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
   etkinleştirilir.
+- `/` adresi (Keycloak'ın karşılama sayfası) Admin Console'a yönlenmez, e-SKY LAB
+  tanıtım sayfasını gösterir: `/opt/keycloak/themes/e-skylab-welcome` klasör
+  teması, imajdaki `KC_SPI_THEME__WELCOME_THEME=e-skylab-welcome` ile seçilir
+  (çalışma zamanı seçeneği; Dokploy'da ayar gerekmez).
 - Realm ve istemci ayarları `config/reconcile-account-center.sh` ile sürekli
   uzlaştırılır; tek seferlik realm içe aktarımına güvenilmez.
 - Sistem e-postaları `sky-mail` sağlayıcılarıyla SkyMail üzerinden gönderilir;
@@ -70,6 +74,21 @@ bunları giriş rollerine bağlayan tek stil dosyasıdır. `Template.tsx` her sa
 giriş sayfasının `LegacyFrame` çerçevesinde (solda sayfa, geniş ekranda sağda
 animasyonlu SKY LAB logolu tanıtım paneli, KVKK altbilgisi, dil seçimi) çizer ve bütün metinler `i18n.ts` içinden gelir
 (önce Türkçe, sonra İngilizce).
+
+`https://e.yildizskylab.com/` adresini doğrudan açan kişi Keycloak'ın
+karşılama sayfası yerine e-SKY LAB'in tanıtım sayfasını görür: e-SKY LAB nedir,
+hangi uygulamalarda kullanılır, bugün nasıl giriş yapılır, okul şifresi ve
+Microsoft'tan alınan bilgiler (ADR-0063'ün güven metni), Hesap Merkezi ve KVKK
+Aydınlatma Metni bağlantıları. Sayfa `theme/src/welcome/` içindeki React
+bileşenlerinden (`AnimatedSkyLabLogo`, `YtuMark` giriş temasıyla ortak) derleme
+sırasında bir kez durağan HTML'e çevrilir (`npm run build-welcome-theme`); betik,
+form ve Admin Console bağlantısı yoktur, Keycloak'ın verdiği değerlerden yalnız
+`resourcesPath` kullanılır. Stil dosyası giriş temasının token'larını, yazı
+tipini ve `legacy-login.css`'ini aynen içe alır, yalnız sayfa düzenini ekler.
+Sayfa Keycloak'ın yalnız `/` yolunu kullanır; `/realms`, `/resources` (kaynaklar
+`/resources/<sürüm>/welcome/e-skylab-welcome/` altında), `/admin` ve `/js`
+değişmez. Giriş düğmelerinin metni değişince (e-postayla kod, kayıt) bu sayfa da
+değişir.
 
 İlk fiziksel doğrulama Touch ID üzerinde tamamlanmıştır. Face ID, Android
 Credential Manager, Windows Hello ve mobil WebView yüzeyleri sürüm sonrası
@@ -689,6 +708,14 @@ gösterir; `?page=<sayfa>.ftl` ve `&lang=en` sorgu parametreleri
 cd theme
 npm ci --ignore-scripts
 npx vite            # http://localhost:5173/?page=login-config-totp.ftl
+```
+
+Tanıtım sayfası (`/`) derlenip gerçek Keycloak'ta (stok imaj, geliştirme
+kipi, derlenen tema salt okunur bağlı) şöyle açılır ve denetlenir:
+
+```bash
+(cd theme && npm run build-welcome-theme) && bash tests/check-welcome-theme.sh
+bash tests/welcome-page.sh   # Docker; stok Keycloak 26.7.4, port 18096
 ```
 
 `theme/tests/browser/visual.spec.ts`, her sayfanın masaüstü (1280×800) ve

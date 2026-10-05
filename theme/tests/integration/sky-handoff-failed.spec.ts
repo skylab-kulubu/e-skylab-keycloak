@@ -54,7 +54,8 @@ for (const colorScheme of ["light", "dark"] as const) {
         expect(links, reason).toEqual(["#sl-handoff-failed-main", "https://skyl.app/kvkk-metni"]);
         await expect(page).toHaveTitle(`${sentence.replace(/\.$/, "")} · SKY LAB`);
         expect(await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme)).toBe("dark");
-        await expect(page.locator(".sl-body")).toHaveCSS("background-color", "rgb(8, 7, 11)");
+        // skylcn-ui's dark --sidebar (#0a0a0a) through --sl-legacy-bg, whatever the phone's scheme
+        await expect(page.locator(".sl-body")).toHaveCSS("background-color", "rgb(10, 10, 10)");
       }
 
       // A refused open (an unknown code, no proof) redirects the WebView to the same page.

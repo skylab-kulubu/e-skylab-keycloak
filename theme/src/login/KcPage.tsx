@@ -9,7 +9,9 @@ import PasskeyOffer from "./PasskeyOffer";
 import Template from "./Template";
 import { useI18n } from "./i18n";
 import { usePasskeyRememberMeBridge } from "./rememberMeBridge";
-// One stylesheet, one token set: the login page design system for every page.
+// skylcn-ui tokens and the brand face first; legacy-login.css maps them onto every page.
+import "@fontsource-variable/space-grotesk/wght.css";
+import "@skylab-kulubu/skylcn-ui/tokens.css";
 import "./legacy-login.css";
 
 const UserProfileFormFields = lazy(() => import("keycloakify/login/UserProfileFormFields"));

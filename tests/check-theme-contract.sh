@@ -55,6 +55,12 @@ for required_token in \
     || fail "generated theme bundle lost $required_token"
 done
 
+# Keycloak renders page-wide notices, field errors and info pages on the server from the
+# theme's messages_*.properties; Keycloakify drops every custom text there when it cannot
+# evaluate the argument of withCustomTranslations, and only warns.
+node "$THEME_DIR/scripts/check-message-bundles.mjs" "$THEME_JAR" \
+  || fail 'the theme message bundles lost the custom translations of src/login/i18n.ts'
+
 grep -Fq 'sl-legacy-logo-draw' <<<"$bundle_css" \
   || fail 'generated theme bundle lost the SKY LAB logo drawing animation'
 

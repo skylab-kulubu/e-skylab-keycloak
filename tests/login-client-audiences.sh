@@ -26,6 +26,7 @@ LCA_FRONTEND_MAIN_REDIRECT=https://yildizskylab.com/api/auth/callback/keycloak
 LCA_FRONTEND_ARGE_REDIRECT=https://arge.yildizskylab.com/api/auth/callback/keycloak
 LCA_HAND_MADE_SCOPE_UUID=''
 LCA_HAND_MADE_MAPPER_UUID=''
+LCA_ACCESS_TOKEN=''
 LCA_ACCESS_PAYLOAD=''
 LCA_ID_PAYLOAD=''
 
@@ -118,12 +119,19 @@ stage_login_audiences_after_first_reconciliation() {
     -b '{"name":"unexpected-forms-mapper","protocol":"openid-connect","protocolMapper":"oidc-audience-mapper","config":{"included.custom.audience":"unexpected","access.token.claim":"true"}}' >/dev/null
 }
 
-# Authorization code with PKCE and Keycloak's own login form, like v2_login_account_center but for
-# a public client without PAR; leaves both token payloads in LCA_ACCESS_PAYLOAD and LCA_ID_PAYLOAD.
+# Authorization code with PKCE and Keycloak's own login form, like v2_login_account_center but
+# without PAR; leaves the access token in LCA_ACCESS_TOKEN and both token payloads in
+# LCA_ACCESS_PAYLOAD and LCA_ID_PAYLOAD. A public client and the audience fixture person unless
+# the optional arguments name a client secret, another person and the requested scope.
 lca_login() {
-  local client_id=$1 redirect_uri=$2
+  local client_id=$1 redirect_uri=$2 client_secret=${3:-} username=${4:-$LCA_USER}
+  local password=${5:-$LCA_PASSWORD} scope=${6:-openid}
   local verifier challenge page login_action status location code response token
+  local client_auth=()
   local cookies="$TEST_STATE_DIR/lca-$client_id.cookies" headers="$TEST_STATE_DIR/lca-$client_id.headers"
+  [[ -z $client_secret ]] || client_auth=(--user "$client_id:$client_secret")
+  # A fresh browser every time: a leftover Keycloak session cookie would skip the login form.
+  rm -f "$cookies"
   verifier="lca-$client_id-verifier-0123456789abcdefghijklmnopqrstuvwxyz"
   challenge=$(printf '%s' "$verifier" | openssl dgst -binary -sha256 | openssl base64 -A | tr '+/' '-_' | tr -d '=')
   page=$(curl --fail --silent --show-error --location \
@@ -131,7 +139,7 @@ lca_login() {
     --get \
     --data-urlencode "client_id=$client_id" \
     --data-urlencode response_type=code \
-    --data-urlencode scope=openid \
+    --data-urlencode "scope=$scope" \
     --data-urlencode "redirect_uri=$redirect_uri" \
     --data-urlencode "code_challenge=$challenge" \
     --data-urlencode code_challenge_method=S256 \
@@ -146,8 +154,8 @@ lca_login() {
     --dump-header "$headers" \
     --write-out '%{http_code}' \
     --cookie-jar "$cookies" --cookie "$cookies" \
-    --data-urlencode "username=$LCA_USER" \
-    --data-urlencode "password=$LCA_PASSWORD" \
+    --data-urlencode "username=$username" \
+    --data-urlencode "password=$password" \
     --data-urlencode credentialId= \
     "$login_action")
   [[ $status == 302 ]] || fail "$client_id login: credential submission did not redirect (HTTP $status)"
@@ -161,15 +169,16 @@ lca_login() {
   code=$(sed -n 's/.*[?&]code=\([^&]*\).*/\1/p' <<<"$location")
   [[ -n $code ]] || fail "$client_id login: the authorization redirect lacks a code"
   response=$(curl --fail --silent --show-error \
+    ${client_auth[@]+"${client_auth[@]}"} \
     --data-urlencode grant_type=authorization_code \
     --data-urlencode "client_id=$client_id" \
     --data-urlencode "code=$code" \
     --data-urlencode "redirect_uri=$redirect_uri" \
     --data-urlencode "code_verifier=$verifier" \
     "http://localhost:18080/realms/$V2_REALM/protocol/openid-connect/token")
-  token=$(jq -r .access_token <<<"$response")
-  [[ -n $token && $token != null ]] || fail "$client_id login: no access token was issued"
-  LCA_ACCESS_PAYLOAD=$(v2_jwt_payload "$token")
+  LCA_ACCESS_TOKEN=$(jq -r .access_token <<<"$response")
+  [[ -n $LCA_ACCESS_TOKEN && $LCA_ACCESS_TOKEN != null ]] || fail "$client_id login: no access token was issued"
+  LCA_ACCESS_PAYLOAD=$(v2_jwt_payload "$LCA_ACCESS_TOKEN")
   token=$(jq -r .id_token <<<"$response")
   [[ -n $token && $token != null ]] || fail "$client_id login: no ID token was issued"
   LCA_ID_PAYLOAD=$(v2_jwt_payload "$token")

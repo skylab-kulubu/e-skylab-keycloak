@@ -16,32 +16,44 @@
 
 :root {
   color-scheme: dark;
-  --sl-legacy-accent: #e0c8e5;
-  /* Submit palette: white text reads at 4.89:1 on the blue and 4.81:1 on the pink (WCAG AA). */
-  --sl-legacy-blue: #1a73c4;
-  --sl-legacy-pink: #d91f6d;
-  --sl-legacy-bg: #08070b;
-  --sl-legacy-ink: #fff;
-  --sl-legacy-text: #f4f4f5;
-  --sl-legacy-label: #d4d4d8;
-  --sl-legacy-muted: #a1a1aa;
-  --sl-legacy-subtle: #71717a;
-  --sl-legacy-link: #38a8f5;
-  --sl-legacy-link-hover: #7cc4ff;
-  --sl-legacy-info: #93c5fd;
-  --sl-legacy-focus: #7dd3fc;
-  --sl-legacy-danger: #fb7185;
-  --sl-legacy-success: #86efac;
-  --sl-legacy-warning: #fcd34d;
-  --sl-legacy-border: rgba(255, 255, 255, 0.1);
-  --sl-legacy-surface: rgba(24, 24, 27, 0.6);
-  --sl-legacy-surface-raised: rgba(255, 255, 255, 0.05);
-  --sl-legacy-surface-hover: rgba(255, 255, 255, 0.1);
+  /* Login roles drawn from the skylcn-ui tokens (tokens.css, imported first). */
+  --skylcn-font-sans: "Space Grotesk Variable";
+  --sl-legacy-accent: var(--skylab-500);
+  /* Submit: dark text on brand lilac, lighter on hover, deeper when pressed. */
+  --sl-legacy-primary: var(--primary);
+  --sl-legacy-primary-hover: var(--skylab-400);
+  --sl-legacy-primary-active: var(--skylab-600);
+  --sl-legacy-on-primary: var(--primary-foreground);
+  --sl-legacy-bg: var(--sidebar);
+  --sl-legacy-ink: var(--foreground-strong);
+  --sl-legacy-text: var(--foreground);
+  --sl-legacy-label: var(--secondary-foreground);
+  --sl-legacy-muted: var(--muted-foreground);
+  --sl-legacy-subtle: var(--subtle-foreground);
+  --sl-legacy-link: var(--skylab-500);
+  --sl-legacy-link-hover: var(--skylab-300);
+  --sl-legacy-info: var(--info);
+  --sl-legacy-focus: var(--skylab-400);
+  --sl-legacy-danger: var(--destructive);
+  --sl-legacy-success: var(--success);
+  --sl-legacy-warning: var(--warning);
+  --sl-legacy-border: var(--border);
+  --sl-legacy-surface: rgba(18, 18, 18, 0.72);
+  --sl-legacy-surface-raised: var(--accent);
+  --sl-legacy-surface-hover: var(--accent-strong);
   --sl-legacy-surface-active: rgba(255, 255, 255, 0.15);
-  --sl-legacy-input-bg: rgba(39, 39, 42, 0.6);
-  --sl-legacy-font:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
+  --sl-legacy-input-bg: var(--input-background);
+  --sl-legacy-input-border: var(--input);
+  /* skylcn-ui's ring at 60% instead of 40%, so the field focus ring clears 3:1 on the card (WCAG 1.4.11) */
+  --sl-legacy-ring: rgba(235, 213, 238, 0.6);
+  /* skylcn-ui's primary button: a lilac wash and outline around near-white lilac text. */
+  --sl-legacy-brand-text: var(--skylab-300);
+  --sl-legacy-brand-wash: rgba(224, 200, 229, 0.14);
+  --sl-legacy-brand-wash-hover: rgba(235, 213, 238, 0.22);
+  --sl-legacy-brand-line: rgba(235, 213, 238, 0.5);
+  --sl-legacy-brand-line-hover: rgba(243, 232, 245, 0.6);
+  --sl-legacy-radius: var(--radius);
+  --sl-legacy-font: var(--font-family-sans);
   font-family: var(--sl-legacy-font);
 }
 
@@ -80,8 +92,8 @@ a:hover {
 }
 
 :focus-visible {
-  outline: 3px solid var(--sl-legacy-focus);
-  outline-offset: 3px;
+  outline: 2px solid var(--sl-legacy-focus);
+  outline-offset: 2px;
 }
 
 /* 2. LegacyFrame chrome --------------------------------------------------- */
@@ -120,24 +132,11 @@ a:hover {
   z-index: 0;
   opacity: 0;
   background:
-    radial-gradient(1200px 760px at 78% 10%, rgba(224, 200, 229, 0.1), transparent 60%),
-    radial-gradient(900px 700px at 8% 80%, rgba(170, 140, 200, 0.055), transparent 60%),
+    radial-gradient(56rem 36rem at 50% 46%, rgba(224, 200, 229, 0.08), transparent 70%),
+    radial-gradient(1200px 760px at 78% 10%, rgba(224, 200, 229, 0.07), transparent 60%),
+    radial-gradient(900px 700px at 8% 80%, rgba(170, 140, 200, 0.05), transparent 60%),
     var(--sl-legacy-bg);
   animation: sl-legacy-bloom 2.4s cubic-bezier(0.2, 0.7, 0.3, 1) 50ms forwards;
-}
-
-.sl-legacy-background__mark {
-  position: fixed;
-  z-index: 3;
-  top: 50%;
-  right: -14%;
-  width: clamp(720px, 70vw, 1080px);
-  height: auto;
-  pointer-events: none;
-  opacity: 0;
-  filter: drop-shadow(0 0 80px rgba(224, 200, 229, 0.22));
-  transform: translateY(-50%);
-  animation: sl-legacy-mark 3.4s cubic-bezier(0.2, 0.7, 0.3, 1) 0.4s forwards;
 }
 
 .sl-legacy-background__iris {
@@ -178,6 +177,21 @@ a:hover {
   animation: sl-legacy-grain 3s cubic-bezier(0.2, 0.7, 0.3, 1) 0.45s forwards;
 }
 
+/* The square grid behind the card (GridBackdrop.tsx), fading out at the edges */
+.sl-legacy-grid {
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  /* The lines, drawn once here; GridBackdrop.tsx centres them and paints only the lit cells */
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 48px 48px;
+  -webkit-mask-image: radial-gradient(ellipse 95% 95% at 50% 50%, black 60%, transparent 100%);
+  mask-image: radial-gradient(ellipse 95% 95% at 50% 50%, black 60%, transparent 100%);
+}
+
 .sl-legacy-skip-link {
   position: fixed;
   z-index: 20;
@@ -195,16 +209,63 @@ a:hover {
   transform: translateY(0);
 }
 
+/* A column: team strip, the card and footer in the middle, team strip. The
+   strips sit in the flow, so at no height do they run over the card. */
 .sl-legacy-main {
   position: relative;
   z-index: 10;
   min-height: 100vh;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
+}
+
+.sl-legacy-teams {
+  width: 100%;
+  padding: 1rem 0;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to right, transparent, black 15%, black 85%, transparent);
+  mask-image: linear-gradient(to right, transparent, black 15%, black 85%, transparent);
+  pointer-events: none;
+}
+
+.sl-legacy-teams__track {
+  display: flex;
+  width: max-content;
+  animation: sl-legacy-teams 70s linear infinite;
+}
+
+.sl-legacy-teams--right .sl-legacy-teams__track {
+  animation-direction: reverse;
+}
+
+/* Spacing as a trailing margin, not a gap, so both copies are the same width */
+.sl-legacy-teams__item {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  height: 1.625rem;
+  margin-right: 3.5rem;
+  color: var(--sl-legacy-muted);
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  opacity: 0.3;
+}
+
+/* Every logo in one tone, whatever colours its file carries */
+.sl-legacy-teams__item img {
+  height: 100%;
+  width: auto;
+  max-width: 7rem;
+  object-fit: contain;
+  filter: brightness(0) invert(1);
 }
 
 .sl-legacy-stack {
+  margin-block: auto;
   width: 100%;
   max-width: 28rem;
   padding: 1.5rem 1rem;
@@ -219,10 +280,10 @@ a:hover {
 }
 
 .sl-legacy-logo__animation {
-  width: 8.5rem;
-  height: 8rem;
+  width: 5.75rem;
+  height: 5.5rem;
   color: var(--sl-legacy-accent);
-  filter: drop-shadow(0 0 30px rgba(224, 200, 229, 0.3));
+  filter: drop-shadow(0 0 20px rgba(224, 200, 229, 0.22));
 }
 
 .sl-legacy-logo__svg {
@@ -235,7 +296,7 @@ a:hover {
   fill: currentColor;
   fill-opacity: 0;
   stroke: currentColor;
-  stroke-width: 1.5;
+  stroke-width: 1;
   stroke-opacity: 1;
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
@@ -250,23 +311,153 @@ a:hover {
   animation-fill-mode: both;
 }
 
-.sl-legacy-card,
-.sl-legacy-footer {
+.sl-legacy-card {
   border: 1px solid var(--sl-legacy-border);
   background: var(--sl-legacy-surface);
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.55);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 24px 48px -16px rgba(0, 0, 0, 0.6);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
 }
 
 .sl-legacy-card {
-  padding: 2rem;
-  border-radius: 1.5rem;
+  display: grid;
+  overflow: hidden;
+  border-radius: calc(var(--sl-legacy-radius) * 2);
+}
+
+.sl-legacy-card__body {
+  min-width: 0;
+  padding: 1.75rem;
+}
+
+/* On a phone the brand panel is only the logo, at the top of the card. */
+.sl-legacy-brand {
+  position: relative;
+  isolation: isolate;
+  order: -1;
+  padding: 1.75rem 1.75rem 0;
+}
+
+.sl-legacy-brand .sl-legacy-logo {
+  justify-content: flex-start;
+}
+
+.sl-legacy-brand__copy,
+.sl-legacy-brand__mark {
+  display: none;
+}
+
+.sl-legacy-brand__title {
+  margin: 0;
+  color: var(--sl-legacy-ink);
+  font-size: 1.375rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  text-wrap: balance;
+}
+
+.sl-legacy-brand__text {
+  margin: 0.5rem 0 0;
+  color: var(--sl-legacy-muted);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  text-wrap: pretty;
+}
+
+.sl-legacy-brand__features {
+  display: grid;
+  gap: 0.875rem;
+  margin: 1.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sl-legacy-brand__features li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: var(--sl-legacy-label);
+  font-size: 0.875rem;
+}
+
+.sl-legacy-brand__icon {
+  width: 2rem;
+  height: 2rem;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--sl-legacy-border);
+  border-radius: calc(var(--sl-legacy-radius) - 2px);
+  color: var(--sl-legacy-accent);
+  background: var(--sl-legacy-surface-raised);
+}
+
+.sl-legacy-brand__icon svg,
+.sl-legacy-brand__icon .sl-key-icon {
+  width: 1rem;
+  height: 1rem;
+}
+
+/* The mark again, large and faint, cropped by the panel's bottom right corner */
+.sl-legacy-brand__mark {
+  position: absolute;
+  z-index: -1;
+  right: -9.5rem;
+  bottom: -8.5rem;
+  width: 22rem;
+  max-width: none;
+  height: auto;
+  pointer-events: none;
+  opacity: 0;
+  animation: sl-legacy-mark 3.4s cubic-bezier(0.2, 0.7, 0.3, 1) 0.4s forwards;
+}
+
+/* Wide screens, login page only: the form on the left, what the account gives
+   on the right. Every other page keeps one column with the logo on top. */
+@media (min-width: 56rem) {
+  .sl-legacy-stack--wide {
+    max-width: 56rem;
+  }
+
+  .sl-legacy-card--brand {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .sl-legacy-card--brand .sl-legacy-card__body {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 2.5rem;
+  }
+
+  .sl-legacy-card--brand .sl-legacy-brand {
+    order: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 2.5rem;
+    overflow: hidden;
+    border-left: 1px solid var(--sl-legacy-border);
+    background:
+      radial-gradient(28rem 22rem at 100% 100%, rgba(224, 200, 229, 0.07), transparent 70%),
+      rgba(255, 255, 255, 0.015);
+  }
+
+  .sl-legacy-card--brand .sl-legacy-logo {
+    margin-bottom: 1.5rem;
+  }
+
+  .sl-legacy-card--brand .sl-legacy-brand__copy,
+  .sl-legacy-card--brand .sl-legacy-brand__mark {
+    display: block;
+  }
 }
 
 .sl-legacy-intro {
-  margin-bottom: 1.25rem;
-  text-align: center;
+  margin-bottom: 1.5rem;
 }
 
 /* A card that is only its heading and sentence (the Web handoff failure page). */
@@ -278,8 +469,10 @@ a:hover {
   margin: 0;
   color: var(--sl-legacy-ink);
   font-size: 1.5rem;
-  font-weight: 700;
-  line-height: 1.3;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  text-wrap: balance;
   overflow-wrap: anywhere;
 }
 
@@ -289,14 +482,15 @@ a:hover {
 
 .sl-legacy-intro p {
   margin: 0.5rem 0 0;
+  text-wrap: pretty;
   color: var(--sl-legacy-muted);
   font-size: 0.875rem;
   line-height: 1.625;
 }
 
 .sl-legacy-footer {
-  padding: 1rem 1.25rem;
-  border-radius: 1.5rem;
+  padding: 0.25rem 1rem;
+  border-radius: calc(var(--sl-legacy-radius) * 2);
   text-align: center;
 }
 
@@ -332,8 +526,6 @@ a:hover {
 
 .sl-legacy-languages {
   margin-top: 0.75rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid var(--sl-legacy-border);
 }
 
 .sl-legacy-languages ul {
@@ -392,16 +584,29 @@ a:hover {
 .sl-legacy-choice,
 .sl-legacy-content #kc-error-message > p > a,
 .sl-legacy-content #kc-info-message > p > a {
-  min-height: 3.25rem;
+  min-height: 2.75rem;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 0.75rem;
-  padding: 0.875rem 1rem;
-  border-radius: 0.75rem;
-  font-size: 1rem;
-  font-weight: 600;
+  padding: 0.625rem 1rem;
+  border-radius: var(--sl-legacy-radius);
+  font-size: 0.9375rem;
+  font-weight: 500;
   cursor: pointer;
+}
+
+.sl-legacy-choice--primary {
+  border-color: var(--sl-legacy-brand-line);
+  color: var(--sl-legacy-brand-text);
+  background: var(--sl-legacy-brand-wash);
+}
+
+.sl-legacy-choice--primary:hover,
+.sl-legacy-choice--primary:active {
+  border-color: var(--sl-legacy-brand-line-hover);
+  color: var(--sl-legacy-brand-text);
+  background: var(--sl-legacy-brand-wash-hover);
 }
 
 .sl-legacy-choice img,
@@ -414,6 +619,54 @@ a:hover {
 
 .sl-legacy-choice svg {
   color: var(--sl-legacy-subtle);
+}
+
+/* The login page's choices read as a list of ways in, like the authenticator
+   list on the other pages: icon, label, then an arrow at the far edge. */
+.sl-legacy-choice--row {
+  min-height: 3rem;
+  justify-content: flex-start;
+  padding: 0.5rem 0.875rem 0.5rem 0.75rem;
+  text-align: left;
+}
+
+.sl-legacy-choice__icon {
+  width: 2rem;
+  height: 2rem;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: calc(var(--sl-legacy-radius) - 2px);
+  color: var(--sl-legacy-muted);
+  background: var(--sl-legacy-surface-raised);
+}
+
+.sl-legacy-choice--row .sl-legacy-choice__icon svg {
+  width: 1.125rem;
+  height: 1.125rem;
+  color: currentColor;
+}
+
+.sl-legacy-choice--primary .sl-legacy-choice__icon {
+  color: var(--sl-legacy-brand-text);
+  background: var(--sl-legacy-brand-wash);
+}
+
+.sl-legacy-choice__label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sl-legacy-choice--row svg.sl-legacy-choice__arrow {
+  width: 1rem;
+  height: 1rem;
+  color: var(--sl-legacy-subtle);
+  transition: translate var(--motion-duration-fast) var(--motion-ease-enter), color var(--motion-duration-fast) ease;
+}
+
+.sl-legacy-choice--row:hover svg.sl-legacy-choice__arrow {
+  color: currentColor;
+  translate: 2px 0;
 }
 
 .sl-legacy-choice:hover,
@@ -432,14 +685,25 @@ a:hover {
   background: var(--sl-legacy-surface-active);
 }
 
+.sl-legacy-passkey .sl-key-icon {
+  width: 1rem;
+  height: 1rem;
+}
+
 .sl-legacy-passkey-wrap {
-  margin-top: 1rem;
+  margin-top: 1.25rem;
   padding-top: 1rem;
-  border-top: 1px solid var(--sl-legacy-border);
+  border-top: 1px solid var(--sl-legacy-surface-raised);
 }
 
 .sl-legacy-passkey {
   min-height: 2.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-color: transparent;
+  background: transparent;
   padding: 0.5rem 0.75rem;
   border-radius: 0.5rem;
   color: var(--sl-legacy-muted);
@@ -478,7 +742,7 @@ a:hover {
   margin-bottom: 1rem;
   padding: 0.75rem 1rem;
   border: 1px solid rgba(48, 128, 255, 0.2);
-  border-radius: 0.75rem;
+  border-radius: var(--sl-legacy-radius);
   color: var(--sl-legacy-info);
   background: rgba(48, 128, 255, 0.1);
   font-size: 0.875rem;
@@ -493,9 +757,9 @@ a:hover {
 }
 
 .sl-legacy-alert--error {
-  border-color: rgba(251, 44, 54, 0.2);
+  border-color: rgba(248, 113, 113, 0.2);
   color: var(--sl-legacy-danger);
-  background: rgba(251, 44, 54, 0.1);
+  background: rgba(248, 113, 113, 0.1);
 }
 
 .sl-legacy-alert--success {
@@ -522,9 +786,9 @@ a:hover {
 .sl-legacy-field > label,
 .sl-legacy-label {
   display: block;
-  margin-bottom: 0.25rem;
+  margin-bottom: 0.375rem;
   color: var(--sl-legacy-label);
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   font-weight: 500;
 }
 
@@ -538,9 +802,9 @@ select.sl-legacy-input,
 textarea.sl-legacy-input {
   width: 100%;
   min-height: 2.75rem;
-  padding: 0.625rem 1rem;
-  border: 2px solid var(--sl-legacy-border);
-  border-radius: 0.75rem;
+  padding: 0.625rem 0.875rem;
+  border: 1px solid var(--sl-legacy-input-border);
+  border-radius: var(--sl-legacy-radius);
   outline: none;
   color: var(--sl-legacy-ink);
   background: var(--sl-legacy-input-bg);
@@ -548,13 +812,23 @@ textarea.sl-legacy-input {
   transition: border-color 150ms ease, box-shadow 150ms ease;
 }
 
-.sl-legacy-input:focus {
-  border-color: var(--sl-legacy-blue);
-  box-shadow: 0 0 0 3px rgba(26, 115, 196, 0.25);
+.sl-legacy-input:hover {
+  border-color: var(--sl-legacy-brand-line);
+}
+
+/* The ring is the focus indicator for fields, so the shared outline would double
+   it. The outline stays, transparent: forced colors drop the box-shadow ring and
+   paint this outline in the system colour instead (WCAG 2.4.7). */
+.sl-legacy-input:focus,
+.sl-legacy-shell .sl-legacy-input:focus-visible {
+  border-color: var(--sl-legacy-brand-line-hover);
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--sl-legacy-ring);
 }
 
 .sl-legacy-input[aria-invalid="true"] {
-  border-color: rgba(255, 101, 104, 0.5);
+  border-color: rgba(248, 113, 113, 0.5);
 }
 
 .sl-legacy-input:disabled {
@@ -575,8 +849,11 @@ textarea.sl-legacy-input {
   position: absolute;
   top: 50%;
   right: 0.75rem;
+  display: grid;
+  place-items: center;
   padding: 0.25rem;
   border: 0;
+  border-radius: calc(var(--sl-legacy-radius) - 2px);
   color: var(--sl-legacy-subtle);
   background: transparent;
   transform: translateY(-50%);
@@ -587,13 +864,18 @@ textarea.sl-legacy-input {
   color: var(--sl-legacy-label);
 }
 
-.sl-eye::before {
-  content: "◉";
-  font-style: normal;
+.sl-eye {
+  --sl-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0'/%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3C/svg%3E");
+  display: block;
+  width: 1.125rem;
+  height: 1.125rem;
+  background: currentColor;
+  -webkit-mask: var(--sl-icon) center / contain no-repeat;
+  mask: var(--sl-icon) center / contain no-repeat;
 }
 
-.sl-eye--hide::before {
-  content: "⊘";
+.sl-eye--hide {
+  --sl-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10.73 5.08A10.43 10.43 0 0 1 12 5c4.39 0 8.13 2.81 9.94 6.65a1 1 0 0 1 0 .7 10.75 10.75 0 0 1-1.44 2.49'/%3E%3Cpath d='M14.08 14.16a3 3 0 0 1-4.17-4.17'/%3E%3Cpath d='M17.48 17.5A10.75 10.75 0 0 1 2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 4.45-5.14'/%3E%3Cpath d='m2 2 20 20'/%3E%3C/svg%3E");
 }
 
 .sl-legacy-field-error {
@@ -658,33 +940,33 @@ textarea.sl-legacy-input {
 .sl-legacy-remember input {
   width: 1rem;
   height: 1rem;
-  accent-color: var(--sl-legacy-blue);
+  accent-color: var(--sl-legacy-accent);
 }
 
 .sl-legacy-submit {
   display: block;
   width: 100%;
-  min-height: 3rem;
-  padding: 0.75rem 1rem;
+  min-height: 2.75rem;
+  padding: 0.625rem 1rem;
   border: 0;
-  border-radius: 0.75rem;
-  color: var(--sl-legacy-ink);
-  background: var(--sl-legacy-blue);
-  font-size: 1rem;
-  font-weight: 700;
+  border-radius: var(--sl-legacy-radius);
+  color: var(--sl-legacy-on-primary);
+  background: var(--sl-legacy-primary);
+  font-size: 0.9375rem;
+  font-weight: 600;
   cursor: pointer;
   transition: background 150ms ease, transform 150ms ease, opacity 150ms ease;
 }
 
 .sl-legacy-submit:hover {
-  color: var(--sl-legacy-ink);
-  background: var(--sl-legacy-pink);
+  color: var(--sl-legacy-on-primary);
+  background: var(--sl-legacy-primary-hover);
 }
 
 .sl-legacy-submit:active {
   transform: scale(0.98);
-  color: var(--sl-legacy-ink);
-  background: var(--sl-legacy-pink);
+  color: var(--sl-legacy-on-primary);
+  background: var(--sl-legacy-primary-active);
 }
 
 .sl-legacy-submit:disabled,
@@ -703,10 +985,10 @@ textarea.sl-legacy-input {
 .sl-passkey-offer__privacy {
   margin: 0 0 1.25rem;
   padding: 0.875rem 1rem;
-  border: 1px solid rgba(26, 115, 196, 0.3);
-  border-radius: 0.75rem;
+  border: 1px solid rgba(224, 200, 229, 0.3);
+  border-radius: var(--sl-legacy-radius);
   color: var(--sl-legacy-label);
-  background: rgba(26, 115, 196, 0.1);
+  background: rgba(224, 200, 229, 0.1);
   font-size: 0.8125rem;
   line-height: 1.55;
 }
@@ -741,7 +1023,7 @@ textarea.sl-legacy-input {
   margin: 0 0 1rem;
   padding: 0.75rem 1rem;
   border: 1px solid var(--sl-legacy-border);
-  border-radius: 0.75rem;
+  border-radius: var(--sl-legacy-radius);
   background: var(--sl-legacy-surface-raised);
   text-align: center;
   font-size: 0.875rem;
@@ -830,7 +1112,7 @@ textarea.sl-legacy-input {
   height: 1rem;
   margin: 0;
   flex: 0 0 auto;
-  accent-color: var(--sl-legacy-blue);
+  accent-color: var(--sl-legacy-accent);
 }
 
 .sl-choice__label--disabled {
@@ -971,7 +1253,7 @@ textarea.sl-legacy-input {
   margin: 0;
   padding: 0.875rem 1rem;
   border: 1px solid var(--sl-legacy-border);
-  border-radius: 0.75rem;
+  border-radius: var(--sl-legacy-radius);
   color: var(--sl-legacy-text);
   background: var(--sl-legacy-surface-raised);
   font-size: 1rem;
@@ -1022,7 +1304,7 @@ div.sl-auth-item__arrow-mark {
 }
 
 .sl-auth-item__title {
-  font-weight: 600;
+  font-weight: 500;
   overflow-wrap: anywhere;
 }
 
@@ -1097,7 +1379,7 @@ i.sl-auth-item__arrow-mark {
   margin-bottom: 0.75rem;
   padding: 0.75rem 1rem;
   border: 1px solid var(--sl-legacy-border);
-  border-radius: 0.75rem;
+  border-radius: var(--sl-legacy-radius);
   background: var(--sl-legacy-surface-raised);
   cursor: pointer;
   transition: background 150ms ease, border-color 150ms ease;
@@ -1108,8 +1390,8 @@ i.sl-auth-item__arrow-mark {
 }
 
 .sl-otp-list__input:checked + .sl-otp-list {
-  border-color: var(--sl-legacy-blue);
-  background: rgba(26, 115, 196, 0.16);
+  border-color: var(--sl-legacy-accent);
+  background: rgba(224, 200, 229, 0.16);
 }
 
 .sl-otp-list__input:focus-visible + .sl-otp-list {
@@ -1124,7 +1406,7 @@ i.sl-auth-item__arrow-mark {
 }
 
 .sl-otp-list__title {
-  font-weight: 600;
+  font-weight: 500;
   overflow-wrap: anywhere;
 }
 
@@ -1144,7 +1426,7 @@ i.sl-auth-item__arrow-mark {
   margin-bottom: 1rem;
   padding: 0.875rem 1rem;
   border: 1px solid rgba(251, 191, 36, 0.24);
-  border-radius: 0.75rem;
+  border-radius: var(--sl-legacy-radius);
   color: var(--sl-legacy-warning);
   background: rgba(251, 191, 36, 0.1);
   font-size: 0.875rem;
@@ -1192,10 +1474,10 @@ i.sl-auth-item__arrow-mark {
 
 .sl-legacy-content #kc-error-message > p.instruction {
   padding: 0.75rem 1rem;
-  border: 1px solid rgba(251, 44, 54, 0.2);
-  border-radius: 0.75rem;
+  border: 1px solid rgba(248, 113, 113, 0.2);
+  border-radius: var(--sl-legacy-radius);
   color: var(--sl-legacy-danger);
-  background: rgba(251, 44, 54, 0.1);
+  background: rgba(248, 113, 113, 0.1);
   font-weight: 500;
 }
 
@@ -1244,7 +1526,7 @@ i.sl-auth-item__arrow-mark {
   height: 11rem;
   margin: 0.75rem auto;
   padding: 0.5rem;
-  border-radius: 0.75rem;
+  border-radius: var(--sl-legacy-radius);
   background: var(--sl-legacy-ink);
   image-rendering: pixelated;
 }
@@ -1272,14 +1554,14 @@ i.sl-auth-item__arrow-mark {
   margin: 20vh auto;
   padding: 2rem;
   border: 1px solid var(--sl-legacy-border);
-  border-radius: 1.5rem;
+  border-radius: calc(var(--sl-legacy-radius) * 2);
   color: var(--sl-legacy-ink);
   background: var(--sl-legacy-surface);
   font-family: var(--sl-legacy-font);
 }
 
 .sl-legacy-shell :focus-visible {
-  outline: 3px solid var(--sl-legacy-focus);
+  outline: 2px solid var(--sl-legacy-focus);
   outline-offset: 3px;
 }
 
@@ -1288,6 +1570,27 @@ i.sl-auth-item__arrow-mark {
 @keyframes sl-legacy-bloom {
   to {
     opacity: 1;
+  }
+}
+
+@keyframes sl-legacy-mark {
+  0% {
+    opacity: 0;
+    filter: blur(8px);
+  }
+  60% {
+    opacity: 0.12;
+    filter: blur(0);
+  }
+  to {
+    opacity: 0.07;
+    filter: blur(0);
+  }
+}
+
+@keyframes sl-legacy-teams {
+  to {
+    transform: translateX(-50%);
   }
 }
 
@@ -1304,21 +1607,6 @@ i.sl-auth-item__arrow-mark {
   to {
     opacity: 0;
     transform: translateX(-50%) scale(1.2);
-  }
-}
-
-@keyframes sl-legacy-mark {
-  0% {
-    opacity: 0;
-    filter: blur(8px) drop-shadow(0 0 0 rgba(224, 200, 229, 0));
-  }
-  60% {
-    opacity: 0.22;
-    filter: blur(0) drop-shadow(0 0 100px rgba(224, 200, 229, 0.35));
-  }
-  to {
-    opacity: 0.14;
-    filter: blur(0) drop-shadow(0 0 80px rgba(224, 200, 229, 0.22));
   }
 }
 
@@ -1340,34 +1628,39 @@ i.sl-auth-item__arrow-mark {
   }
 }
 
-@media (max-width: 48rem) {
-  .sl-legacy-background__mark {
-    right: -70%;
-    opacity: 0.12;
-  }
-}
-
 @media (max-width: 39.999rem) {
+  .sl-legacy-teams {
+    padding: 1rem 0;
+  }
+
+  .sl-legacy-teams--right {
+    display: none;
+  }
+
+  .sl-legacy-teams__item {
+    height: 1.5rem;
+    margin-right: 2.5rem;
+  }
+
   .sl-legacy-stack {
     max-width: 24rem;
   }
 
   .sl-legacy-logo__animation {
-    width: 6.4rem;
-    height: 6rem;
+    width: 3.75rem;
+    height: 3.5rem;
   }
 
-  .sl-legacy-card {
-    padding: 1.5rem 1.25rem;
-    border-radius: 1rem;
+  .sl-legacy-card__body {
+    padding: 1.25rem 1.25rem 1.5rem;
   }
 
-  .sl-legacy-footer {
-    border-radius: 1rem;
+  .sl-legacy-brand {
+    padding: 1.5rem 1.25rem 0;
   }
 
   .sl-legacy-intro h1 {
-    font-size: 1.125rem;
+    font-size: 1.25rem;
   }
 
   .sl-legacy-intro p,
@@ -1393,8 +1686,13 @@ i.sl-auth-item__arrow-mark {
   .sl-legacy-background__iris,
   .sl-legacy-background__stars,
   .sl-legacy-background__grain,
-  .sl-legacy-background__mark {
+  .sl-legacy-brand__mark,
+  .sl-legacy-teams__track {
     animation: none;
+  }
+
+  .sl-legacy-brand__mark {
+    opacity: 0.07;
   }
 
   .sl-legacy-background__layers,
@@ -1411,10 +1709,6 @@ i.sl-auth-item__arrow-mark {
     opacity: 0.55;
   }
 
-  .sl-legacy-background__mark {
-    opacity: 0.14;
-  }
-
   .sl-legacy-logo__svg path {
     animation: none;
     fill-opacity: 1;
@@ -1427,11 +1721,22 @@ i.sl-auth-item__arrow-mark {
   .sl-legacy-shell *::after {
     transition-duration: 0.01ms !important;
   }
+
+  .sl-legacy-choice--row:hover svg.sl-legacy-choice__arrow {
+    translate: none;
+  }
 }
 
 @media (forced-colors: active) {
+  .sl-legacy-teams {
+    display: none;
+  }
+
+  .sl-legacy-grid {
+    display: none;
+  }
+
   .sl-legacy-card,
-  .sl-legacy-footer,
   .sl-legacy-choice,
   .sl-legacy-submit,
   .sl-legacy-alert,
@@ -1443,7 +1748,12 @@ i.sl-auth-item__arrow-mark {
 
   .sl-authenticator-icon,
   .sl-key-icon,
-  i.sl-auth-item__arrow-mark {
+  i.sl-auth-item__arrow-mark,
+  .sl-eye {
     background: CanvasText;
+  }
+
+  .sl-legacy-shell .sl-legacy-input:focus-visible {
+    outline: 2px solid Highlight;
   }
 }

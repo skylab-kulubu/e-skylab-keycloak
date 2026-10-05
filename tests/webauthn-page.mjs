@@ -4,6 +4,9 @@
 // and a disallowed origin. The page only exposes base64url<->ArrayBuffer helpers and thin
 // wrappers over the WebAuthn API; every option comes from the sky-account SPI and every result
 // is handed straight back to the harness. localhost is a secure context, so no TLS is needed.
+// The parent-domain run opens the same ports under other names (my.yildizskylab.test,
+// other.yildizskylab.test, my.attacker.test) that Chromium resolves to 127.0.0.1; the page
+// does not look at the Host header, so the browser's origin is the only thing that changes.
 import { createServer } from "node:http";
 
 const allowedPort = parsePort(process.env.WEBAUTHN_PAGE_PORT ?? "18081");

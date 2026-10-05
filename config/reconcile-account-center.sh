@@ -50,6 +50,13 @@ FRONTEND_ARGE_CLIENT_ID=frontend-arge
 FRONTEND_ARGE_SCOPE_NAME=frontend-arge-core-audience
 SKYFORMS_CLIENT_ID=skyforms
 SKYFORMS_SCOPE_NAME=skyforms-forms-audience
+# Login clients whose token is narrowed to the APIs their app calls (ADR-0058, ADR-0059; see
+# reconcile_login_clients). skycms-audience is the realm scope that puts inscribed's audience into
+# the Site clients' tokens: the event sites' clients (site-clients.sh) and skyapp
+# (skyapp-cms-editor.sh) carry it too, in the same shape. SkyMail's login client is also SkyMail's
+# API client (SKYMAIL_CLIENT_ID, mailer-client-contract.sh): its own scope names it as the audience.
+SKYCMS_SCOPE_NAME=skycms-audience
+SKYMAIL_SCOPE_NAME=skymail-api-audience
 # The admin panel's login client (ADR-0058; see reconcile_admin_panel_client): admin, superadmin in
 # the sandbox realm (as in inscribed-cms-roles.sh); KEYCLOAK_ADMIN_PANEL_CLIENT_ID names another.
 if [[ $TARGET_REALM == e-skylab-sandbox ]]; then
@@ -79,9 +86,9 @@ EVENT_RETENTION_SETTINGS="{\"eventsEnabled\":true,\"eventsExpiration\":$EVENT_RE
 ADMIN_EVENTS_EXPIRATION_ATTRIBUTE=adminEventsExpiration
 ACCOUNT_ROLE_ALLOWLIST=(manage-account view-profile manage-account-links)
 case $RECONCILE_ONLY in
-  '' | admin-panel-client | core-roles | media-attach) ;;
+  '' | admin-panel-client | login-clients | core-roles | media-attach) ;;
   *)
-    printf 'KEYCLOAK_RECONCILE_ONLY must be empty, admin-panel-client, core-roles or media-attach, not %s\n' "$RECONCILE_ONLY" >&2
+    printf 'KEYCLOAK_RECONCILE_ONLY must be empty, admin-panel-client, login-clients, core-roles or media-attach, not %s\n' "$RECONCILE_ONLY" >&2
     exit 2
     ;;
 esac
@@ -1029,8 +1036,9 @@ reconcile_skyapp_audience() {
 # once its CMS uploads go through core with the move to inscribed (ADR-0056); skyforms needs forms
 # (forms-backend requires it: without it members get 401). The scopes were made by hand in
 # production with these exact names, so they are adopted by name (never recreated), repaired when
-# they drift and kept among the client's default scopes. A realm without the client (the sandbox
-# has neither site client) skips the item with a warning.
+# they drift and kept among the client's default scopes. A realm without the client skips the item
+# with a warning. Today it runs for skyforms; frontend-main and frontend-arge get their core scope in
+# reconcile_login_clients together with the rest of their narrowed token.
 reconcile_login_client_audience() {
   local client_id=$1 scope_name=$2 mappers_file=$3
   local client_uuid
@@ -1062,6 +1070,128 @@ ensure_default_audience_scope() {
     log "client $client_id: detached optional scope $scope_name (it must be a default scope)"
   fi
   ensure_default_client_scope "$client_uuid" "$scope_uuid" "$scope_name"
+}
+
+# Login clients narrowed to the APIs their app calls (ADR-0058, ADR-0059; admin-token-authz tickets
+# 16, 17 and 18). They were made by hand in production with "Full scope allowed" on, so their
+# tokens carried every audience, realm role and client role of the person, most of it read by no
+# service. What each app sends its token to and what that API reads was measured on the apps'
+# origin/main (2026-10-05; sky_lab_genel .scratch/admin-token-authz/issues/16-18):
+#   frontend-main (the main site and its CMS editor) and frontend-arge (arge) call inscribed (aud
+#     skycms, tenant azp, the flat roles claim of the client's own roles, collection rules on
+#     full-path groups, the teams collection among them) and core POST /v1/media for images (aud
+#     core, no core role); the sites' editor gate looks for cms:access in any client of
+#     resource_access, so with full scope another site's cms:access opened this site's editor;
+#   skymail (the SkyMail UI) calls SkyMail only, which reads the client's own roles
+#     (resource_access.skymail) and sub, name and e-mail from Keycloak's userinfo, and no groups
+#     (mailing lists read groups with SkyMail's own service account).
+# The contract per client: the API audiences come from hardcoded Audience mappers in default scopes
+# (a person without a role of the API keeps them; audience-resolve adds nothing once the full scope
+# is off, and production's skycms reached the sites' tokens only through it), no realm role and no
+# other client's role in the role scope (the client's own roles always pass Keycloak's filter, so
+# cms:access, content:* and the skymail:* roles stay), "Full scope allowed" off. The sites keep
+# their full-path groups (inscribed reads them); SkyMail's token carries none: every default or
+# optional scope writing the claim groups is detached from skymail only (the realm scope and every
+# other client keep it) and a mapper of skymail itself writing it is deleted. The order keeps the
+# apps working during the run: audiences first, full scope off last. The client's secret, URIs,
+# flags and other mappers are not touched. A missing client is skipped with a warning (the sandbox
+# realm may lack one); the operator runs this step alone there (KEYCLOAK_RECONCILE_ONLY=login-clients).
+reconcile_login_clients() {
+  reconcile_narrowed_login_client "$FRONTEND_MAIN_CLIENT_ID" keep-groups \
+    "$FRONTEND_MAIN_SCOPE_NAME=$CONFIG_DIR/frontend-main-core-audience-mappers.json" \
+    "$SKYCMS_SCOPE_NAME=$CONFIG_DIR/skycms-audience-mappers.json"
+  reconcile_narrowed_login_client "$FRONTEND_ARGE_CLIENT_ID" keep-groups \
+    "$FRONTEND_ARGE_SCOPE_NAME=$CONFIG_DIR/frontend-arge-core-audience-mappers.json" \
+    "$SKYCMS_SCOPE_NAME=$CONFIG_DIR/skycms-audience-mappers.json"
+  reconcile_narrowed_login_client "$SKYMAIL_CLIENT_ID" drop-groups \
+    "$SKYMAIL_SCOPE_NAME=$CONFIG_DIR/skymail-api-audience-mappers.json"
+}
+
+# reconcile_narrowed_login_client CLIENT keep-groups|drop-groups SCOPE=MAPPERS_FILE...
+reconcile_narrowed_login_client() {
+  local client_id=$1 groups=$2
+  shift 2
+  local client_uuid spec scopes='' desired_file="$WORK_DIR/narrowed-$client_id.json"
+  for spec in "$@"; do
+    scopes="$scopes${scopes:+, }${spec%%=*}"
+  done
+  if ! client_uuid=$(optional_lookup client_id_by_client_id "$client_id"); then
+    return 2
+  fi
+  if [[ -z $client_uuid ]]; then
+    warn "client $client_id does not exist in realm $TARGET_REALM; skipped client scope $scopes and its token narrowing"
+    return 0
+  fi
+  for spec in "$@"; do
+    ensure_default_audience_scope "$client_id" "$client_uuid" "${spec%%=*}" "${spec#*=}"
+  done
+  reconcile_role_scope "$client_id" "$client_uuid"
+  if [[ $groups == drop-groups ]]; then
+    remove_groups_claim "$client_id" "$client_uuid"
+  fi
+  printf '{"fullScopeAllowed":false}\n' >"$desired_file"
+  apply_fields_if_changed "client $client_id (no full scope)" "$desired_file" \
+    "clients/$client_uuid" -r "$TARGET_REALM"
+}
+
+# writes_groups TYPE CLAIM: a mapper of TYPE writing CLAIM puts group data into a token: Keycloak's
+# Group Membership mapper, SKY LAB's group overage mapper, or any mapper whose claim is groups
+# (microprofile-jwt's "groups" writes the realm roles there).
+writes_groups() {
+  [[ $1 == oidc-group-membership-mapper || $1 == sky-group-overage-mapper || $2 == groups || $2 == groups.* ]]
+}
+
+# mappers_write_groups ENDPOINT: one of the protocol mappers at ENDPOINT writes group data.
+mappers_write_groups() {
+  local mappers_csv id type claim name
+  mappers_csv=$(kcadm get "$1" -r "$TARGET_REALM" \
+    --fields 'id,protocolMapper,config(claim.name),name' \
+    --format csv \
+    --noquotes)
+  while IFS=, read -r id type claim name; do
+    [[ -n $id ]] || continue
+    if writes_groups "$type" "$claim"; then
+      return 0
+    fi
+  done <<<"$mappers_csv"
+  return 1
+}
+
+# The claim groups out of one client's tokens (ADR-0059: an app whose APIs read no groups gets none,
+# Entra's "groups assigned to the application"): every default or optional scope with a mapper that
+# writes group data is detached from this client only, and such a mapper of the client is deleted.
+remove_groups_claim() {
+  local client_id=$1 client_uuid=$2
+  local kind scopes_csv scope_id scope_name mappers_csv id type claim name changed=''
+  for kind in default optional; do
+    scopes_csv=$(kcadm get "clients/$client_uuid/$kind-client-scopes" -r "$TARGET_REALM" \
+      --fields id,name \
+      --format csv \
+      --noquotes)
+    while IFS=, read -r scope_id scope_name; do
+      [[ -n $scope_id ]] || continue
+      if mappers_write_groups "client-scopes/$scope_id/protocol-mappers/models"; then
+        kcadm delete "clients/$client_uuid/$kind-client-scopes/$scope_id" -r "$TARGET_REALM" >/dev/null
+        changed="$changed -$kind scope $scope_name"
+      fi
+    done <<<"$scopes_csv"
+  done
+  mappers_csv=$(kcadm get "clients/$client_uuid/protocol-mappers/models" -r "$TARGET_REALM" \
+    --fields 'id,protocolMapper,config(claim.name),name' \
+    --format csv \
+    --noquotes)
+  while IFS=, read -r id type claim name; do
+    [[ -n $id ]] || continue
+    if writes_groups "$type" "$claim"; then
+      kcadm delete "clients/$client_uuid/protocol-mappers/models/$id" -r "$TARGET_REALM" >/dev/null
+      changed="$changed -mapper $name"
+    fi
+  done <<<"$mappers_csv"
+  if [[ -z $changed ]]; then
+    log "groups claim of $client_id (none): unchanged"
+  else
+    log "groups claim of $client_id (none): updated (${changed# })"
+  fi
 }
 
 # The admin panel's login client (ADR-0058, admin-token-authz ticket 02), made by hand and
@@ -1105,7 +1235,7 @@ reconcile_admin_panel_client() {
   fi
   ensure_default_audience_scope "$ADMIN_PANEL_CLIENT_ID" "$client_uuid" "$ADMIN_PANEL_SCOPE_NAME" \
     "$CONFIG_DIR/admin-panel-api-audience-mappers.json"
-  reconcile_admin_panel_role_scope "$client_uuid"
+  reconcile_role_scope "$ADMIN_PANEL_CLIENT_ID" "$client_uuid" "${ADMIN_PANEL_API_CLIENTS[@]}"
   printf '{"fullScopeAllowed":false,"attributes":{"standard.token.exchange.enabled":"true"}}\n' >"$desired_file"
   apply_fields_if_changed "client $ADMIN_PANEL_CLIENT_ID (no full scope, standard token exchange)" \
     "$desired_file" "clients/$client_uuid" -r "$TARGET_REALM"
@@ -1118,22 +1248,30 @@ role_reference() {
   printf '{"id":"%s","name":"%s"}' "$1" "$name"
 }
 
-# The role scope of the admin panel's client: every role of the API clients, no other client role
-# and no realm role. A missing API client is reported; its roles are added once it exists.
-reconcile_admin_panel_role_scope() {
-  local client_uuid=$1
+# The role scope of a login client whose full scope is turned off: every role of the API clients
+# given after its id and uuid (the admin panel: core, forms; the sites and SkyMail: none), no other
+# client role and no realm role. The client's own roles always pass Keycloak's filter and need no
+# mapping. A missing API client is reported; its roles are added once it exists.
+reconcile_role_scope() {
+  local client_id=$1 client_uuid=$2
+  shift 2
+  local apis=("$@")
   local live_file mapped api api_uuid roles_csv role_id role_name body owner owner_uuid is_api
   local changed='' label
-  label="role scope mappings of $ADMIN_PANEL_CLIENT_ID (every role of $(printf '%s, ' "${ADMIN_PANEL_API_CLIENTS[@]}" | sed 's/, $//'))"
-  live_file=$(mktemp "$WORK_DIR/admin-panel-scope.XXXXXX")
+  if [[ ${#apis[@]} -gt 0 ]]; then
+    label="role scope mappings of $client_id (every role of $(printf '%s, ' "${apis[@]}" | sed 's/, $//'))"
+  else
+    label="role scope mappings of $client_id (none: only its own roles)"
+  fi
+  live_file=$(mktemp "$WORK_DIR/role-scope.XXXXXX")
   kcadm_json "clients/$client_uuid/scope-mappings" -r "$TARGET_REALM" >"$live_file"
   mapped=$(json_tool scope-mappings <"$live_file")
-  for api in "${ADMIN_PANEL_API_CLIENTS[@]}"; do
+  for api in ${apis[@]+"${apis[@]}"}; do
     if ! api_uuid=$(optional_lookup client_id_by_client_id "$api"); then
       return 2
     fi
     if [[ -z $api_uuid ]]; then
-      warn "client $api does not exist in realm $TARGET_REALM; no $api role is in the scope of $ADMIN_PANEL_CLIENT_ID"
+      warn "client $api does not exist in realm $TARGET_REALM; no $api role is in the scope of $client_id"
       continue
     fi
     roles_csv=$(kcadm get "clients/$api_uuid/roles" -r "$TARGET_REALM" \
@@ -1157,7 +1295,7 @@ reconcile_admin_panel_role_scope() {
   while IFS=$'\t' read -r owner owner_uuid role_id role_name; do
     [[ -n $owner ]] || continue
     is_api=false
-    for api in "${ADMIN_PANEL_API_CLIENTS[@]}"; do
+    for api in ${apis[@]+"${apis[@]}"}; do
       [[ $owner == "$api" ]] && is_api=true
     done
     [[ $is_api == false ]] || continue
@@ -1690,6 +1828,11 @@ if [[ $RECONCILE_ONLY == admin-panel-client ]]; then
   printf 'Admin panel client configuration is reconciled.\n'
   exit 0
 fi
+if [[ $RECONCILE_ONLY == login-clients ]]; then
+  reconcile_login_clients
+  printf 'Login client configuration is reconciled.\n'
+  exit 0
+fi
 if [[ $RECONCILE_ONLY == core-roles ]]; then
   reconcile_core_roles
   printf 'Core resource roles are reconciled.\n'
@@ -1723,10 +1866,9 @@ ensure_client_scope "$CORE_SCOPE_NAME" \
   "$CONFIG_DIR/account-center-core-claims-mappers.json"
 core_scope_uuid=$ENSURED_SCOPE_ID
 reconcile_skyapp_audience
-reconcile_login_client_audience "$FRONTEND_MAIN_CLIENT_ID" "$FRONTEND_MAIN_SCOPE_NAME" \
-  "$CONFIG_DIR/frontend-main-core-audience-mappers.json"
-reconcile_login_client_audience "$FRONTEND_ARGE_CLIENT_ID" "$FRONTEND_ARGE_SCOPE_NAME" \
-  "$CONFIG_DIR/frontend-arge-core-audience-mappers.json"
+# frontend-main and frontend-arge get their core audience scopes here as well (the scopes of
+# reconcile_login_client_audience), together with the narrowing.
+reconcile_login_clients
 reconcile_login_client_audience "$SKYFORMS_CLIENT_ID" "$SKYFORMS_SCOPE_NAME" \
   "$CONFIG_DIR/skyforms-forms-audience-mappers.json"
 reconcile_account_center_client_scopes "$scope_uuid" "$core_scope_uuid"

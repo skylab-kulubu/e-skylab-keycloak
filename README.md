@@ -285,7 +285,8 @@ Sandbox realm'inde (`e-skylab-sandbox`) site istemcisi yoktu; sandbox arge giri�
 çalışıyor, editörü denenemiyordu. Operatör `frontend-arge`'ı imajdaki idempotent
 `config/sandbox-site-clients.sh` ile kurar (varsayılan `--check`, `--apply`; kcadm prompt
 düzeni ya da `--kcadm-config`). İstemci production'dakinin biçimindedir: gizli, standard
-flow ve service account açık, implicit ve direct grant kapalı, `fullScopeAllowed=true`;
+flow ve service account açık, implicit ve direct grant kapalı, `fullScopeAllowed=false` (uzlaştırıcı
+production'dakini de daraltır, runbook §21);
 redirect `https://sandbox-arge.yildizskylab.com/*`, web origin ve post-logout adresi aynı
 host (istemcideki başka adresler korunur). Access token'a `skycms` audience'ı, realm'de
 `core` istemcisi varsa uzlaştırıcının biçimindeki `frontend-arge-core-audience` kapsamı ve
@@ -342,6 +343,37 @@ kendi kcadm oturumuyla tek başına koşar (`KEYCLOAK_RECONCILE_KCADM_CONFIG` +
 `KEYCLOAK_RECONCILE_ONLY=admin-panel-client`; tam uzlaştırma operatör oturumuyla koşmaz).
 Sunucuda sky_lab_genel'deki `ops/wizards/admin-panel-keycloak-sandbox-wizard.sh` koşar
 (runbook §16).
+
+Giriş istemcilerini (`frontend-main`, `frontend-arge`, `skymail`; ADR-0058, ADR-0059) de uzlaştırıcı
+uygulamalarının çağırdığı API'lere daraltır (`reconcile_login_clients`). Üçü production'da elle ve tam
+kapsamla kurulmuştu: token kişinin bütün audience'larını, realm rollerini ve başka istemcilerin
+rollerini taşıyordu. Ne gerektiği uygulamaların `origin/main`'inden ölçüldü (2026-10-05): siteler (ana
+site ve editörü, arge) inscribed'a (`aud` `skycms`, tenant `azp`, istemcinin kendi rollerinden düz
+`roles`, koleksiyon kurallarında tam yollu `groups`) ve görsel yüklemede core `POST /v1/media`'ya (`aud`
+`core`, rol ya da grup gerekmez) gider; SkyMail arayüzü yalnız SkyMail'e gider, SkyMail de kendi
+rollerini (`resource_access.skymail`) ve Keycloak userinfo'dan `sub`, ad ve e-postayı okur, grup okumaz
+(posta listelerinin grupları kendi servis hesabıyla okunur). Sözleşme: audience'lar varsayılan
+kapsamlardaki sabit Audience mapper'larından gelir (sitelerde `frontend-<site>-core-audience` ve ortak
+`skycms-audience`, SkyMail'de `skymail-api-audience` → `aud` `skymail`); rol kapsamında realm rolü ve
+başka istemcinin rolü yoktur (istemcinin kendi rolleri, yani `cms:access`, `content:*`, `client:admin`,
+`skymail:*`, her zaman geçer); "Full scope allowed" kapanır. Siteler tam yollu `groups`'u tutar;
+SkyMail'in token'ında `groups` olmaz: `groups` yazan varsayılan ya da isteğe bağlı kapsamlar (realm'in
+`groups` kapsamı, `microprofile-jwt`) yalnız `skymail`'den ayrılır, `skymail`'in kendi grup mapper'ı
+silinir. Ortak `skycms-audience` kapsamı `site-clients.sh`'in kurduğu biçime getirilir: production'daki
+tek mapper'ı hiçbir audience adlandırmıyordu ve sitelerin `skycms`'i yalnız audience-resolve'dan, yani
+tam kapsamdan geliyordu; tam kapsam kapanmadan önce sabit audience gelmeseydi editör 401 alırdı. Sıra
+uygulamaları bozmaz: önce audience'lar, en son tam kapsamın kapanması. Secret'a, adreslere, bayraklara
+ve istemcilerin kendi mapper'larına dokunulmaz; eksik istemci uyarıyla atlanır. Sitelerin editör kapısı
+(`@skylab-kulubu/inscribed-auth` 0.3.1) `cms:access`'i token'daki herhangi bir istemcide aradığı için
+tam kapsamda başka bir sitenin `cms:access`'i bu sitenin editörünü açıyordu (inscribed yazmayı yine
+reddediyordu); daraltmadan sonra her site yalnız kendi `cms:access`'ine bakar. Keycloak kapsamdaki
+rollerin bileşenlerini de açar ve istemcinin kendi rolleri hep kapsamdadır: `skyapp-cms-editor.sh`
+SkyApp'in CMS rollerini `frontend-main`'in `cms:access` ve `client:admin`'ine bağladıktan sonra bir
+editörün ana site token'ı o `skyapp` rollerini ve `aud skyapp`'i de taşır (hiçbir servis okumaz;
+inscribed sitenin kendi düz `roles`'una bakar). Sandbox realm'inde
+operatör adımı tek başına koşar (`KEYCLOAK_RECONCILE_KCADM_CONFIG` +
+`KEYCLOAK_RECONCILE_ONLY=login-clients`). Harness `tests/login-clients.sh` tek başına çalışır
+(runbook §21).
 
 Admin paneli (core-frontend) yerelde `next dev` ile `http://localhost:3000`'te sandbox'a karşı
 geliştirilir. Sandbox panelinin istemcisi `superadmin` localhost dönüşünü kabul etmez ve öyle kalır

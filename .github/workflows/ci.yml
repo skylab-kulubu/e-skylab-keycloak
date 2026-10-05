@@ -132,6 +132,20 @@ jobs:
       - name: SkyApp CMS editing against a throwaway Keycloak
         run: bash tests/skyapp-cms-editor.sh
 
+  # The reconciler's login client step (frontend-main, frontend-arge, skymail narrowed to the APIs
+  # their apps call; KEYCLOAK_RECONCILE_ONLY=login-clients) against the stock Keycloak image in dev
+  # mode, with production-shaped full-scope clients, real logins (PKCE) before and after, userinfo,
+  # and the operator scripts that share these clients; needs no build of this repository's image.
+  login-clients:
+    runs-on: ubuntu-latest
+    # ~21 minutes on a loaded developer Mac (2026-10-05); every kcadm call starts a JVM.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: login client narrowing against a throwaway Keycloak
+        run: bash tests/login-clients.sh
+
   integration:
     runs-on: ubuntu-latest
     # The full harness takes 56-83 minutes depending on the runner (2026-10); 120 leaves headroom.

@@ -416,6 +416,13 @@ kcadm create "roles-by-id/$arge_editor_role/composites" -r "$REALM" \
   -b "$(kcadm get "clients/$app/roles/cms:access" -r "$REALM" | jq -c '[{id, name}]')" >/dev/null
 grant "$arge_site" cms:access "$arge"
 person argeeditor "$arge"
+# Not SkyApp CMS editing: a realm role that includes another skyapp role. Neither a PROBLEM nor taken
+# away by --revoke.
+kcadm create "clients/$app/roles" -r "$REALM" -s name=app-user >/dev/null
+kcadm create roles -r "$REALM" -s name=skyapp-users >/dev/null
+unrelated_role=$(kcadm get roles/skyapp-users -r "$REALM" | jq -r .id)
+kcadm create "roles-by-id/$unrelated_role/composites" -r "$REALM" \
+  -b "$(kcadm get "clients/$app/roles/app-user" -r "$REALM" | jq -c '[{id, name}]')" >/dev/null
 access=$(access_of "$(app_tokens argeeditor)")
 json_assert "$access" "($CMS_ROLES) == [\"cms:access\", \"content:read\", \"content:write\"]" \
   'the fixture is wrong: frontend-arge/cms:access does not make argeeditor a SkyApp editor'
@@ -426,6 +433,7 @@ for mode in --check --apply; do
   expect_line "$out" 'PROBLEM: frontend-arge/cms:access includes skyapp/cms:access: only frontend-main/cms:access and frontend-main/client:admin may lead to' \
     "$mode: the extra link was not reported"
   expect_line "$out" 'nothing was changed: 1 problem(s)' "$mode did not stop on the extra link"
+  reject_line "$out" 'skyapp-users' "$mode: a link into a non-CMS skyapp role was reported"
 done
 no_admin_event_since "$event_before" '--apply wrote to the realm although another role includes skyapp/cms:access'
 printf '    frontend-arge/cms:access includes skyapp/cms:access: PROBLEM, --check and --apply stop, no admin event\n'
@@ -445,6 +453,9 @@ expect_line "$out" 'frontend-main/cms:access <- /ADMIN /UYELER/ARGE/MOBILAB/LIDE
 expect_line "$out" 'applied 3 change(s), 1 warning(s), 0 problem(s)' 'revoke did not take away exactly the three links'
 json_assert "$(kcadm get "roles-by-id/$arge_editor_role/composites/clients/$app" -r "$REALM")" 'length == 0' \
   'frontend-arge/cms:access still includes a skyapp role'
+reject_line "$out" 'skyapp-users' '--revoke touched the link into a non-CMS skyapp role'
+json_assert "$(kcadm get "roles-by-id/$unrelated_role/composites/clients/$app" -r "$REALM")" '[.[].name] == ["app-user"]' \
+  '--revoke took away a link into a skyapp role that is not a CMS role'
 for session in "$leader_session" "$arge_session"; do
   access=$(access_of "$(app_refresh "$(jq -r .refresh_token <<<"$session")")")
   json_assert "$access" "(($CMS_ROLES) == []) and (($APP_GATE) | not)" 'after --revoke a refreshed token still has CMS roles'
@@ -455,6 +466,7 @@ kcadm delete "groups/$stale_editors/role-mappings/clients/$app" -r "$REALM" \
 out=$(editor --apply) || { printf '%s\n' "$out" >&2; fail 're-apply failed'; }
 expect_line "$out" 'applied 2 change(s), 0 warning(s), 0 problem(s)' 're-apply did not restore exactly the two links'
 reject_line "$out" 'frontend-arge' 're-apply touched frontend-arge'
+reject_line "$out" 'skyapp-users' 're-apply reported the link into a non-CMS skyapp role'
 access=$(access_of "$(app_tokens mobilead)")
 json_assert "$access" "($CMS_ROLES) == [\"cms:access\", \"content:read\", \"content:write\"]" 're-apply did not restore the roles'
 access=$(access_of "$(app_tokens argeeditor)")

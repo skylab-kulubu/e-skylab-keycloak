@@ -14,7 +14,7 @@
 # so a grant of frontend-main/cms:access in the SKY LAB admin panel is the one place that makes a
 # Site editor, on the site and in the app. Both realms have frontend-main (the sandbox's since
 # e-skylab-keycloak #65), so there is no other source: any other role that includes one of skyapp's
-# roles is a PROBLEM.
+# four CMS roles is a PROBLEM (a link into another skyapp role is not this script's business).
 #
 # For skyapp it
 #   1. creates the client roles content:read, content:write, cms:access (a composite of the first
@@ -33,11 +33,11 @@
 #      accounts that hold the role directly) and warns about any direct grant of skyapp's roles (to
 #      a group or a person; take it away in the admin panel).
 # Every PROBLEM (another emitter of roles or groups, a mapper name taken, another role that includes
-# one of skyapp's roles) is found before anything is written and stops the run like a missing
+# one of skyapp's CMS roles) is found before anything is written and stops the run like a missing
 # prerequisite: nothing is written, exit 1. Fix it by hand (or --revoke, below) and run again.
 # It never grants a role to a group or a person and never changes skyapp's flags, redirects,
-# secrets or other scopes. --revoke (with --apply) takes away every link into skyapp's roles from a
-# role that is not skyapp's own: frontend-main's two and any other client's or realm role's. From
+# secrets or other scopes. --revoke (with --apply) takes away every link into skyapp's CMS roles from
+# a role that is not one of them: frontend-main's two and any other client's or realm role's. From
 # the next token refresh on nobody reaches skyapp's CMS roles through a composite (the roles and
 # mappers stay, empty). A direct grant of a skyapp role is not touched and keeps working: --revoke
 # reports it as a WARNING; take it away in the admin panel.
@@ -381,7 +381,9 @@ composite_roles() {
 }
 
 # links: "PARENT_ID,CHILD_ID,CHILD_ROLE,PARENT_LABEL" for every role that directly includes one of
-# skyapp's roles (skyapp's own cms:access too). A failed read stops the run before any write.
+# skyapp's CMS roles (skyapp's own cms:access too). A link into another skyapp role is not this
+# script's business: it is neither a PROBLEM nor taken away by --revoke. A failed read stops the run
+# before any write.
 links=()
 if [[ $app_role_ids != ' ' ]]; then
   composites=$(composite_roles)
@@ -389,7 +391,7 @@ if [[ $app_role_ids != ' ' ]]; then
     [[ -n $parent_id ]] || continue
     children=$(csv "roles-by-id/$parent_id/composites/clients/$app_uuid" id,name)
     while IFS=, read -r child_id child_name; do
-      [[ -n $child_id ]] || continue
+      [[ -n $child_id && $app_role_ids == *" $child_id "* ]] || continue
       links+=("$parent_id,$child_id,$child_name,$parent_label")
     done <<<"$children"
   done <<<"$composites"
@@ -418,7 +420,7 @@ link() {
 }
 
 if [[ $REVOKE == true ]]; then
-  # --- --revoke: every link into skyapp's roles from a role that is not skyapp's own goes ----------
+  # --- --revoke: every link into skyapp's CMS roles from a role that is not one of them goes -------
   taken=0
   for entry in "${links[@]}"; do
     IFS=, read -r parent_id child_id child_name parent_label <<<"$entry"
@@ -429,7 +431,7 @@ if [[ $REVOKE == true ]]; then
       kcadm_write delete "roles-by-id/$parent_id/composites" -r "$TARGET_REALM" -b "$(role_body "$child_id" "$child_name")"
     fi
   done
-  [[ $taken != 0 ]] || log "no role outside $APP_CLIENT includes one of its roles; nothing to take away"
+  [[ $taken != 0 ]] || log "no other role includes one of $APP_CLIENT's CMS roles; nothing to take away"
 else
   # --- PROBLEM checks: everything below is read before anything is written ------------------------
   for entry in "${links[@]}"; do

@@ -343,6 +343,28 @@ kendi kcadm oturumuyla tek başına koşar (`KEYCLOAK_RECONCILE_KCADM_CONFIG` +
 Sunucuda sky_lab_genel'deki `ops/wizards/admin-panel-keycloak-sandbox-wizard.sh` koşar
 (runbook §16).
 
+Admin paneli (core-frontend) yerelde `next dev` ile `http://localhost:3000`'te sandbox'a karşı
+geliştirilir. Sandbox panelinin istemcisi `superadmin` localhost dönüşünü kabul etmez ve öyle kalır
+(adresleri ve secret'ı yayındaki sandbox panelinindir). Yerel geliştirme için ayrı istemciyi,
+`admin-local`'ı, idempotent `config/sandbox-admin-local-client.sh` kurar (varsayılan `--check`,
+`--apply`, `--revoke`; kcadm prompt düzeni ya da `--kcadm-config`). İstemci public'tir: secret yok,
+core-frontend PKCE `S256` ile girer ve secret'ı yalnız `OAUTH2_CLIENT_SECRET` doluysa gönderir;
+yalnız standard flow, dönüş adresi tam olarak `http://localhost:3000/api/auth/callback`, web origin
+`http://localhost:3000`, çıkış dönüşü `http://localhost:3000/*`; başka adres silinir. Token'ı
+uzlaştırıcının daralttığı panel token'ıdır: `fullScopeAllowed=false`, rol kapsamında `core` ve
+`forms`'un her rolü ve panel istemcisinin kendi rolleri; varsayılan ve isteğe bağlı kapsamlar
+`superadmin`'inkiler, ek olarak `admin-panel-api-audience` (`aud` core, forms, skycms; kapsam
+uzlaştırıcınındır, burada yazılmaz, yoksa koşu hiçbir şey yazmadan durur); `superadmin`'in rollerini
+düz `roles` claim'ine yazan `inscribed-roles` mapper'ı; tam yollu `groups` bir varsayılan kapsamdan
+gelmiyorsa `groups` mapper'ı. `superadmin` yalnız okunur. İki fark istemci adından gelir: `azp`
+`admin-local`'dır ve kişi panelin bir rolünü taşıyorsa `aud`'da `superadmin` de bulunur.
+`superadmin`'de bunların dışında kalan bir mapper NOTE olarak bildirilir, kopyalanmaz. Public
+istemci Standard Token Exchange yapamaz: panelin sunucusu token değiştirdiğinde (BFF) istemci
+gizliye döner ve secret geliştiriciye şifreli ulaştırılır. `e-skylab`'ı adıyla, `e-skylab-sandbox`
+dışındaki her realm'i girişten önce reddeder. Sunucuda sky_lab_genel'deki
+`ops/wizards/sandbox-admin-local-client-wizard.sh` koşar; harness
+`tests/sandbox-admin-local-client.sh` tek başına çalışır.
+
 core'un kaynak rollerini (ADR-0059: `event:manage`, `ticket:manage`, `certificate:manage`,
 `users:manage` gibi 11 yeni rol ve var olan `url:moderator`, `url:access`) uzlaştırıcı her koşuda
 `core` istemcisinde var eder ve admin panelinin adımından önce koşar. Roller Privileged gruplara

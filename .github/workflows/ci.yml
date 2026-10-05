@@ -96,6 +96,18 @@ jobs:
       - name: Forms SkyMail grants script against a throwaway Keycloak
         run: bash tests/forms-skymail-grants.sh
 
+  # config/sandbox-admin-local-client.sh (the admin panel's local-development client admin-local,
+  # sandbox realm only) against the stock Keycloak image in dev mode, with real authorization code
+  # flows (PKCE) through admin-local and the panel's client; needs no build of this repository's image.
+  sandbox-admin-local-client:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: sandbox admin-local client script against a throwaway Keycloak
+        run: bash tests/sandbox-admin-local-client.sh
+
   # config/site-clients.sh and config/site-editor-grants.sh (the event sites' Site clients, with
   # inscribed-cms-roles.sh between them) against the stock Keycloak image in dev mode, with a real
   # authorization code flow (PKCE); needs no build of this repository's image.

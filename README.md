@@ -353,7 +353,11 @@ kalkar, `resource_access` yalnız `core`, `forms` ve istemcinin kendi rollerini 
 allowed" kapanır, rol kapsamında `core` ve `forms` istemcilerinin her rolü bulunur, başka istemci
 ya da realm rolü bulunmaz. `groups` ve inscribed'ın düz `roles` claim'i kalır. Standard Token
 Exchange açılır: panelin sunucusu token'ı `audience=core|forms|skycms` ile tek audience'lı bir
-token'a çevirebilir; başka bir audience reddedilir. Sıra canlı paneli bozmaz: önce audience ve
+token'a çevirebilir; başka bir audience reddedilir. Exchange yalnız daraltır: `aud` tek API olur,
+`resource_access` yalnız o API'nin rollerini taşır; `sub`, `azp`, `sid`, `groups`, düz `roles` ve
+profil claim'leri aynen kalır, yeni claim eklenmez, token panelin token'ından uzun yaşamaz. Bu
+sözleşme ve core, forms-backend ve inscribed'ın token'dan okuduğu claim'ler
+`tests/admin-panel-exchanged-token.jq`'dadır (runbook §16). Sıra canlı paneli bozmaz: önce audience ve
 API rolleri, en son tam kapsamın kapanması. `core` ya da `forms`'ta uzlaştırıcı dışında
 oluşturulan bir rol panelin token'ına bir sonraki koşuda girer. Adım en son koşar. İstemci yoksa
 uyarıyla atlanır; public ise koşu ona hiçbir şey yazmadan hata verir (gizliye çevirmek panelin

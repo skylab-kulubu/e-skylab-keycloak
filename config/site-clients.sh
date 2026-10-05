@@ -401,7 +401,7 @@ names_at_most() {
 # subshell: its changes and problems are counted.
 SCOPE_ID=''
 ensure_audience_scope() {
-  local name=$1 audience=$2 mapper=$3 list count id='' shape line mapper_line='' redundant=()
+  local name=$1 audience=$2 mapper=$3 list count id='' shape line mapper_line='' redundant=() own_written=true
   SCOPE_ID=''
   list=$(scope_ids "$name")
   count=$(sed '/^$/d' <<<"$list" | wc -l | tr -d ' ')
@@ -444,7 +444,7 @@ ensure_audience_scope() {
     change "add mapper $mapper to $name (aud += $audience; access token and introspection, not the ID token)"
     if [[ $MODE == apply ]]; then
       kcadm_write create "client-scopes/$id/protocol-mappers/models" -r "$TARGET_REALM" \
-        -b "$(audience_mapper_body "$mapper" "$audience")"
+        -b "$(audience_mapper_body "$mapper" "$audience")" || own_written=false
     fi
   elif own_audience_ok "$(mapper_rest "$mapper_line")" "$audience"; then
     log "client scope $name: mapper $mapper unchanged"
@@ -452,8 +452,15 @@ ensure_audience_scope() {
     change "repair mapper $mapper in $name ($(mapper_rest "$mapper_line") -> aud $audience, access token and introspection, not the ID token)"
     if [[ $MODE == apply ]]; then
       kcadm_write update "client-scopes/$id/protocol-mappers/models/${mapper_line%%,*}" -r "$TARGET_REALM" \
-        -b "$(audience_mapper_body "$mapper" "$audience" "${mapper_line%%,*}")"
+        -b "$(audience_mapper_body "$mapper" "$audience" "${mapper_line%%,*}")" || own_written=false
     fi
+  fi
+  # The caller runs this function in a || list, where set -e does not apply: a failed write of the
+  # scope's own mapper is checked here, and then no other mapper is removed.
+  if [[ $own_written != true ]]; then
+    problem "the mapper $mapper could not be written to client scope $name; no other mapper was removed from it"
+    SCOPE_ID=$id
+    return 1
   fi
   for line in "${redundant[@]}"; do
     change "remove the mapper ${line##*,} from $name (an Audience mapper that names no audience but $audience; $mapper puts $audience into the access token)"

@@ -402,7 +402,13 @@ Privileged gruplara, sahip lab takımının ve etkinliğin organizasyon takımı
 (`/UYELER/ORGANIZASYON/<ETKİNLİK>`) `LIDERLER`/`KOORDINATORLER` gruplarına, `client:admin`'i
 yalnız `ADMIN`'e verir; kişiye vermez, hiçbir şeyi geri almaz. sky_lab_genel'deki
 `ops/wizards/site-cms-setup-wizard.sh` üçünü koşar, secret'ı OpenBao'ya taşır. Harness
-`tests/site-clients.sh` tek başına çalışır (runbook §18).
+`tests/site-clients.sh` tek başına çalışır (runbook §18). `site-clients.sh --shared-scope`
+yalnız ortak `skycms-audience` kapsamını kurar ya da onarır, hiçbir site istemcisine dokunmaz
+(`--site` ile birlikte verilemez). Production'daki kapsam elle yapılmıştı ve tek mapper'ı
+`audience-mapper` hiçbir audience adlandırmıyordu (2026-09-21 realm dökümü): `skycms`'i yalnız
+bir `skycms` rolü taşıyanın token'ına audience-resolve koyuyordu. Kapsamda yalnız `skycms`'i
+adlandıran (ya da hiç adlandırmayan) başka bir Audience mapper'ı, kapsamın kendi mapper'ı
+yerindeyken silinir; başka audience adlandıran mapper PROBLEM'dir ve kalır.
 
 SkyApp de ana sitenin haber ve takım sayfalarını düzenler (ADR-0056 eki, 2026-10-03): uygulama
 inscribed'ın ortak `news`/`teams` koleksiyonlarına kişinin kendi `skyapp` token'ıyla doğrudan
@@ -422,8 +428,9 @@ rollerine başka rollerden giden her bağı alır (`frontend-main`'in ikisi ve v
 da realm rolünden gelenler): sonraki token yenilemesinde kimse bir composite üzerinden SkyApp
 rolü almaz. `skyapp` rolünün bir gruba ya da kişiye doğrudan atanması `--revoke`'la gitmez; betik
 bunu WARNING olarak gösterir, panelden kaldırılır. Önce `inscribed-cms-roles.sh --client
-frontend-main` gerekir; eksik önkoşulda hiçbir şey yazmaz. Harness `tests/skyapp-cms-editor.sh`
-tek başına çalışır.
+frontend-main` ve `skycms`'i access token'a yazan bir `skycms-audience` kapsamı gerekir
+(`site-clients.sh --shared-scope` kurar ya da onarır); eksik önkoşulda hiçbir şey yazmaz. Harness
+`tests/skyapp-cms-editor.sh` tek başına çalışır.
 
 `account-center` realm'in etkin tarayıcı akışını kullanır; böylece
 production'a özel parola, OTP ve passkey davranışı olduğu gibi geçerlidir ve

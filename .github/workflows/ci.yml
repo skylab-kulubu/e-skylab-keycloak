@@ -113,7 +113,8 @@ jobs:
   # authorization code flow (PKCE); needs no build of this repository's image.
   site-clients:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 19-28 minutes on main before the --shared-scope stage (about 5 more).
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
 

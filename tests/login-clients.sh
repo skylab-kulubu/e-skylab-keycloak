@@ -47,6 +47,11 @@
 #     those skyapp roles and aud skyapp (Keycloak expands the composites of a client's own roles even
 #     without full scope; nothing reads them there), a member's does not; the step after it writes
 #     nothing;
+#   - skycms-audience has two writers, this step and site-clients.sh --shared-scope (e-skylab-keycloak
+#     #71, run alone before a release): after the step site-clients.sh --shared-scope --check plans
+#     nothing; back on production's hand-made shape, site-clients.sh --shared-scope --apply writes
+#     the same scope attributes and the same mapper as the step, byte for byte, and the step then
+#     writes nothing;
 #   - drift (full scope on, a realm and a foreign role in the role scope, skycms-audience among the
 #     optional scopes and its mapper changed, a foreign mapper in it, groups back on SkyMail through
 #     the realm scope and a client mapper, SkyMail's audience scope detached) is repaired;
@@ -598,6 +603,42 @@ json_assert "$(access_of "$(tokens frontend-main "$MAIN_CALLBACK" member)")" '((
 json_assert "$(access_of "$(tokens skyapp "$APP_CALLBACK" leader)")" '((.resource_access.skyapp.roles // []) | index("cms:access")) != null and ((.aud | if type == "array" then . else [.] end) | index("skycms")) != null' \
   'SkyApp lost the CMS role it gets through frontend-main'"'"'s cms:access'
 printf '    skyapp-cms-editor.sh applies after the step; SkyApp gets cms:access through frontend-main; the site token adds only the SkyApp roles of its own composites; the step after it writes nothing\n'
+
+# ---------------------------------------------------------------------------------------------
+CURRENT_STAGE='skycms-audience: the step and site-clients.sh --shared-scope agree'
+# Two writers of the shared scope: this step (config/skycms-audience-mappers.json) and
+# site-clients.sh --shared-scope, which repairs it on its own before a release. Each must leave
+# nothing for the other to do.
+out=$(run site-clients.sh "$REALM" --check --shared-scope) \
+  || { printf '%s\n' "$out" >&2; fail 'site-clients.sh --shared-scope --check failed after the step'; }
+expect_line "$out" 'client scope skycms-audience: attributes unchanged' 'site-clients.sh wants other attributes than the step wrote'
+expect_line "$out" 'client scope skycms-audience: mapper skycms-audience unchanged' 'site-clients.sh wants another mapper than the step wrote'
+expect_line "$out" 'check: 0 change(s) pending, 0 warning(s), 0 problem(s)' 'site-clients.sh --shared-scope plans changes after the step'
+skycms_mappers() { kcadm get "client-scopes/$skycms_scope/protocol-mappers/models" -r "$REALM" | jq -cS 'map(del(.id)) | sort_by(.name)'; }
+skycms_shape() { kcadm get "client-scopes/$skycms_scope" -r "$REALM" | jq -cS 'del(.id, .protocolMappers)'; }
+step_mappers=$(skycms_mappers)
+step_shape=$(skycms_shape)
+# Back to production's hand-made shape; this time site-clients.sh repairs it.
+kcadm delete "client-scopes/$skycms_scope/protocol-mappers/models/$(kcadm get "client-scopes/$skycms_scope/protocol-mappers/models" -r "$REALM" \
+  | jq -r '.[] | select(.name == "skycms-audience") | .id')" -r "$REALM" >/dev/null
+kcadm create "client-scopes/$skycms_scope/protocol-mappers/models" -r "$REALM" \
+  -b '{"name":"audience-mapper","protocol":"openid-connect","protocolMapper":"oidc-audience-mapper","config":{"access.token.claim":"true","id.token.claim":"false","introspection.token.claim":"true"}}' >/dev/null
+kcadm update "client-scopes/$skycms_scope" -r "$REALM" -s 'attributes."include.in.token.scope"=true' \
+  -s 'attributes."display.on.consent.screen"=true' >/dev/null
+out=$(run site-clients.sh "$REALM" --apply --shared-scope) \
+  || { printf '%s\n' "$out" >&2; fail 'site-clients.sh --shared-scope --apply failed'; }
+expect_line "$out" 'applied 3 change(s), 0 warning(s), 0 problem(s)' 'site-clients.sh --shared-scope did not repair the hand-made shape'
+[[ $(skycms_mappers) == "$step_mappers" ]] \
+  || { printf 'step: %s\nsite-clients.sh: %s\n' "$step_mappers" "$(skycms_mappers)" >&2; fail 'site-clients.sh wrote another skycms-audience mapper than the step'; }
+[[ $(skycms_shape) == "$step_shape" ]] \
+  || { printf 'step: %s\nsite-clients.sh: %s\n' "$step_shape" "$(skycms_shape)" >&2; fail 'site-clients.sh left the skycms-audience scope otherwise than the step'; }
+event_before=$(newest_admin_event)
+sleep 1
+output=$(step) || { printf '%s\n' "$output" >&2; fail 'the step failed after site-clients.sh --shared-scope'; }
+no_admin_event_since "$event_before" 'the step rewrote the skycms-audience scope site-clients.sh had repaired'
+json_assert "$(access_of "$(tokens frontend-main "$MAIN_CALLBACK" member)")" "$AUD == [\"core\", \"skycms\"]" \
+  'a member lost aud skycms on the main site after site-clients.sh repaired the scope'
+printf '    skycms-audience: site-clients.sh --shared-scope plans nothing after the step; it writes the same scope and mapper as the step, and the step then writes nothing\n'
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='drift is repaired'

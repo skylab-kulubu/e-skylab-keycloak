@@ -53,8 +53,14 @@ SKYFORMS_SCOPE_NAME=skyforms-forms-audience
 # Login clients whose token is narrowed to the APIs their app calls (ADR-0058, ADR-0059; see
 # reconcile_login_clients). skycms-audience is the realm scope that puts inscribed's audience into
 # the Site clients' tokens: the event sites' clients (site-clients.sh) and skyapp
-# (skyapp-cms-editor.sh) carry it too, in the same shape. SkyMail's login client is also SkyMail's
-# API client (SKYMAIL_CLIENT_ID, mailer-client-contract.sh): its own scope names it as the audience.
+# (skyapp-cms-editor.sh) carry it too. It has two writers: this step, which must not turn the full
+# scope off without it, and site-clients.sh --shared-scope, which repairs it alone before a release.
+# Both write the same attributes and the same mapper (config/skycms-audience-mappers.json is
+# site-clients.sh's audience_mapper_body); tests/login-clients.sh proves that neither changes what
+# the other wrote. They differ only on another mapper in the scope: this step prunes it, as in every
+# scope it owns, while site-clients.sh stops on a foreign audience. SkyMail's login client is also
+# SkyMail's API client (SKYMAIL_CLIENT_ID, mailer-client-contract.sh): its own scope names it as the
+# audience.
 SKYCMS_SCOPE_NAME=skycms-audience
 SKYMAIL_SCOPE_NAME=skymail-api-audience
 # The admin panel's login client (ADR-0058; see reconcile_admin_panel_client): admin, superadmin in

@@ -29,7 +29,7 @@
 #   - a direct grant of a skyapp CMS role is a WARNING and is not taken away;
 #   - --revoke takes away only the two links: the next refresh carries no CMS role; --apply restores
 #     them.
-# Requirements on the host: docker, curl, jq, openssl, base64. SKYAPP_CMS_TEST_PORT (default 18094).
+# Requirements on the host: docker, curl, jq, openssl, base64. SKYAPP_CMS_TEST_PORT (default 18095).
 # The jq programs name jq variables ($t, $m), not shell ones:
 # shellcheck disable=SC2016
 set -Eeuo pipefail
@@ -39,7 +39,7 @@ REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 EDITOR_SCRIPT="$REPOSITORY_ROOT/config/skyapp-cms-editor.sh"
 ROLES_SCRIPT="$REPOSITORY_ROOT/config/inscribed-cms-roles.sh"
 IMAGE=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' "$REPOSITORY_ROOT/Dockerfile")
-PORT=${SKYAPP_CMS_TEST_PORT:-18094}
+PORT=${SKYAPP_CMS_TEST_PORT:-18095}
 BASE_URL="http://127.0.0.1:$PORT"
 REALM=e-skylab
 SANDBOX_REALM=e-skylab-sandbox

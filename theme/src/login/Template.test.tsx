@@ -184,4 +184,31 @@ describe("every Keycloak page renders inside the login page chrome", () => {
     await waitFor(() => expect(warning.container.querySelector("#kc-passwd-update-form")).not.toBeNull());
     expect(warning.container.querySelector(".sl-legacy-alert")).toBeNull();
   });
+
+  it("shows the brand panel's copy on the login page only; every other page keeps the logo", async () => {
+    const login = await renderPage("login.ftl");
+    expect(login.container.querySelector(".sl-legacy-card--brand .sl-legacy-brand__copy")).not.toBeNull();
+    expect(login.container.querySelector("aside")).toBeNull();
+    login.unmount();
+
+    for (const pageId of ["login-otp.ftl", "error.ftl", "logout-confirm.ftl"] as const) {
+      const view = await renderPage(pageId);
+      expect(view.container.querySelector(".sl-legacy-card--brand"), pageId).toBeNull();
+      expect(view.container.querySelector(".sl-legacy-brand__copy"), pageId).toBeNull();
+      expect(view.container.querySelector('.sl-legacy-brand [data-skylab-logo-animation="draw"]'), pageId).not.toBeNull();
+      view.unmount();
+    }
+  });
+
+  it("shows the team strips on the login page only, like the brand panel", async () => {
+    const login = await renderPage("login.ftl");
+    expect(login.container.querySelectorAll(".sl-legacy-teams")).toHaveLength(2);
+    login.unmount();
+
+    for (const pageId of ["login-otp.ftl", "error.ftl", "logout-confirm.ftl", "passkey-offer.ftl", "sky-handoff-failed.ftl"] as const) {
+      const view = await renderPage(pageId);
+      expect(view.container.querySelector(".sl-legacy-teams"), pageId).toBeNull();
+      view.unmount();
+    }
+  });
 });

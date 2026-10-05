@@ -17,9 +17,9 @@ async function renderPage(pageId: ThemedPageId, state: string | null = null) {
   return { ...view, kcContext };
 }
 
-/** The card's own children in order: intro, page message, then the page body. */
+/** The page column's children in order: intro, page message, then the page body. */
 function cardChildren(container: HTMLElement): Element[] {
-  return Array.from(container.querySelector(".sl-legacy-card")?.children ?? []);
+  return Array.from(container.querySelector(".sl-legacy-card__body")?.children ?? []);
 }
 
 function loginContext(): Extract<KcContext, { pageId: "login.ftl" }> {
@@ -47,7 +47,7 @@ describe("login page: page-wide messages", () => {
     const message = container.querySelector("#sl-page-message");
     expect(message).toHaveClass("sl-legacy-alert", "sl-legacy-alert--success");
     expect(message).toHaveAttribute("role", "status");
-    expect(message).toHaveTextContent("kısa sürede bir e-posta almalısınız");
+    expect(message).toHaveTextContent("birincil e-posta adresine bir bağlantı gönderdik");
 
     // Directly under the heading, before the sign-in choices; nothing to expand first.
     const children = cardChildren(container);
@@ -76,7 +76,7 @@ describe("login page: page-wide messages", () => {
     const message = container.querySelector("#sl-page-message");
     expect(message).toHaveClass("sl-legacy-alert--error");
     expect(message).toHaveAttribute("role", "alert");
-    expect(message).toHaveTextContent("beklenmeyen bir hata");
+    expect(message).toHaveTextContent("beklenmeyen bir sorun");
     expect(cardChildren(container)[1]).toBe(message);
   });
 
@@ -94,7 +94,7 @@ describe("login page: page-wide messages", () => {
 
     expect(container.querySelector("#kc-form-login")).not.toBeNull();
     expect(container.querySelector(".sl-legacy-alert")).toBeNull();
-    expect(container.querySelector("#input-error")).toHaveTextContent("Geçersiz kullanıcı adı veya şifre.");
+    expect(container.querySelector("#input-error")).toHaveTextContent("Kullanıcı adı, e-posta veya parola hatalı.");
     expect(container.querySelector("#username")).toHaveAttribute("aria-describedby", "input-error");
     expect(container.querySelector("#password")).toHaveAttribute("aria-describedby", "input-error");
     expect(container.querySelector("#username")).toHaveFocus();
@@ -226,7 +226,7 @@ describe("every other page: the message sits at the top of the card", () => {
 
     await waitFor(() => expect(container.querySelector("#kc-reset-password-form")).not.toBeNull());
     expect(container.querySelector(".sl-legacy-alert")).toBeNull();
-    expect(container.querySelector("#input-error-username")).toHaveTextContent("Lütfen kullanıcı adını belirtin.");
+    expect(container.querySelector("#input-error-username")).toHaveTextContent("Kullanıcı adını veya e-postanı yaz.");
   });
 
   it("does not take focus away from a field the page focuses itself", async () => {

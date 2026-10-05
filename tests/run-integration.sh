@@ -69,6 +69,18 @@ json_assert() {
 # The audience scopes of the skyforms and frontend-main login clients; stages called below.
 # shellcheck source=login-client-audiences.sh
 source "$SCRIPT_DIR/login-client-audiences.sh"
+# The admin panel's narrowed token and Standard Token Exchange (ADR-0058); stages called below.
+# shellcheck source=admin-panel-client.sh
+source "$SCRIPT_DIR/admin-panel-client.sh"
+# Group overage: the SPI's sky-group-overage-mapper (ADR-0059); stage called below.
+# shellcheck source=group-overage-mapper.sh
+source "$SCRIPT_DIR/group-overage-mapper.sh"
+# core's per-resource client roles and their one-time seeding (ADR-0059); stages called below.
+# shellcheck source=core-roles.sh
+source "$SCRIPT_DIR/core-roles.sh"
+# core's service attach role media:attach on the forms service account; stages called below.
+# shellcheck source=media-attach.sh
+source "$SCRIPT_DIR/media-attach.sh"
 # The realm's user and admin event retention (account erasure ticket 09); stages called below.
 # shellcheck source=event-retention.sh
 source "$SCRIPT_DIR/event-retention.sh"
@@ -623,7 +635,8 @@ stage_v2_identity_guardrails() {
   if grep -Fq 'would create client role certificate:issue' <<<"$output"; then
     fail 'identity guardrails dry run planned an existing certificate role'
   fi
-  [[ $(kcadm get "clients/$core_uuid/roles" -r "$V2_REALM" -c | jq '[.[] | select(.name | startswith("certificate:"))] | length') == 1 ]] \
+  # certificate:manage is core's resource role (tests/core-roles.sh), not one of the guardrails' four.
+  [[ $(kcadm get "clients/$core_uuid/roles" -r "$V2_REALM" -c | jq '[.[] | select((.name | startswith("certificate:")) and .name != "certificate:manage")] | length') == 1 ]] \
     || fail 'identity guardrails dry run created a role'
   [[ $(kcadm get "identity-provider/instances/OBS/mappers/$department_id" -r "$V2_REALM" -c | jq -r .config.syncMode) == INHERIT ]] \
     || fail 'identity guardrails dry run changed the department mapper'
@@ -635,7 +648,7 @@ stage_v2_identity_guardrails() {
   grep -Fq 'applied 5 change(s)' <<<"$output" \
     || { printf '%s\n' "$output" >&2; fail 'identity guardrails apply did not perform the five planned changes'; }
   json_assert "$(kcadm get "clients/$core_uuid/roles" -r "$V2_REALM" -c)" \
-    '([.[] | select(.name | startswith("certificate:")) | .name] | sort) == ["certificate:binding:manage","certificate:issue","certificate:revoke","certificate:template:manage"] and ([.[] | select(.name | startswith("certificate:")) | .description // ""] | unique) == [""]' \
+    '[.[] | select((.name | startswith("certificate:")) and .name != "certificate:manage")] as $team | ([$team[].name] | sort) == ["certificate:binding:manage","certificate:issue","certificate:revoke","certificate:template:manage"] and ([$team[].description // ""] | unique) == [""]' \
     'core does not hold exactly the four certificate roles without descriptions, the way core created them'
   json_assert "$(kcadm get "identity-provider/instances/OBS/mappers/$department_id" -r "$V2_REALM" -c)" \
     '.name == "department mapper" and .identityProviderMapper == "microsoft-department-mapper" and .config == {"syncMode": "FORCE"}' \
@@ -733,6 +746,9 @@ v2_state_snapshot() {
       kcadm get "client-scopes/$scope_uuid/protocol-mappers/models" -r "$V2_REALM" -c
     done
     lca_state_snapshot
+    ap_state_snapshot
+    cr_state_snapshot
+    ma_state_snapshot
     kcadm get authentication/flows -r "$V2_REALM" -c
   } | jq -S -c '.'
 }
@@ -1165,6 +1181,21 @@ stage_v2_passkey_cleanup() {
 CURRENT_STAGE='Keycloak readiness'
 wait_for_url http://localhost:19000/health/ready
 
+# The event exchange exists before the first event, as it does in production. Every publish of the
+# run then succeeds and its channel stays open until the provider closes it, so a provider that
+# leaks channels runs its connection out of them (2047) within this run and the RabbitMQ provider
+# contract at the end fails. keycloak-to-rabbit 3.1.0 did: Keycloak never closes the listeners of
+# admin events, and each held a channel; 3.1.1 (#50) opens and closes one per message. Without
+# the exchange, RabbitMQ would close every publishing channel itself (404) and hide most of such a
+# leak. The contract stage declares the exchange again (idempotent) and still proves that an admin
+# event reaches a bound queue.
+CURRENT_STAGE='RabbitMQ event exchange'
+curl --fail --silent --show-error --retry 10 --retry-delay 2 --retry-all-errors \
+  --user keycloak:integration-rabbit-password \
+  -X PUT -H 'content-type: application/json' \
+  -d '{"type":"topic","durable":true,"auto_delete":false,"internal":false,"arguments":{}}' \
+  http://localhost:15673/api/exchanges/%2F/keycloak.events >/dev/null
+
 "${KCADM[@]}" config credentials \
   --config "$ADMIN_CONFIG" \
   --server http://localhost:8080 \
@@ -1238,6 +1269,7 @@ built_in_scope_snapshot=$(kcadm get client-scopes -r e-skylab-test -c \
   | jq -c '[.[] | {id, name}] | sort_by(.id)')
 
 stage_login_audiences_hand_made
+stage_admin_panel_hand_made
 stage_event_retention_before_first_reconciliation
 
 CURRENT_STAGE='first reconciliation'
@@ -1270,6 +1302,9 @@ stage_reset_choose_user_after_first_reconciliation "$reset_flow_before"
 
 stage_v2_after_first_reconciliation
 stage_login_audiences_after_first_reconciliation
+stage_admin_panel_after_first_reconciliation
+stage_core_roles_after_first_reconciliation
+stage_media_attach_after_first_reconciliation
 stage_event_retention_after_first_reconciliation
 
 # Inject drift before the second pass. Reconciliation must repair the existing
@@ -1470,7 +1505,7 @@ skyapp_scope_count=$(kcadm get client-scopes -r e-skylab-test -c \
 [[ $skyapp_scope_count == 1 ]] || fail "skyapp audience scope is missing or duplicated"
 
 built_in_scope_after=$(kcadm get client-scopes -r e-skylab-test -c \
-  | jq -c '[.[] | select(.name != "account-center-account-api" and .name != "account-center-core-claims" and .name != "skyapp-account-center-audience" and .name != "skyforms-forms-audience" and .name != "frontend-main-core-audience" and .name != "frontend-arge-core-audience") | {id, name}] | sort_by(.id)')
+  | jq -c '[.[] | select(.name != "account-center-account-api" and .name != "account-center-core-claims" and .name != "skyapp-account-center-audience" and .name != "skyforms-forms-audience" and .name != "frontend-main-core-audience" and .name != "frontend-arge-core-audience" and .name != "admin-panel-api-audience") | {id, name}] | sort_by(.id)')
 [[ $built_in_scope_after == "$built_in_scope_snapshot" ]] \
   || fail "a built-in client scope id or name was mutated"
 
@@ -1550,6 +1585,7 @@ json_assert "$skyapp_default_scopes" \
   'skyapp audience scope is not attached as a default scope' \
   --arg scope "$skyapp_scope_uuid"
 stage_login_audiences_after_second_reconciliation
+stage_admin_panel_after_second_reconciliation
 
 default_scopes=$(kcadm get "clients/$client_uuid/default-client-scopes" -r e-skylab-test -c)
 json_assert "$default_scopes" \
@@ -1607,6 +1643,15 @@ ERASURE_COMPOSE_FILE="$COMPOSE_FILE" \
   ERASURE_REALM="$V2_REALM" \
   "$SCRIPT_DIR/core-erasure-client.sh"
 
+# After core-erasure-client.sh made forms and skycms: the admin panel's token and token exchange,
+# before the no-op reconciliation so that run proves the step writes nothing more.
+stage_admin_panel_tokens
+# The operator seeds core's resource roles; the no-op reconciliation after it must leave them.
+stage_core_roles_seeded_by_operator
+# The operator grants media:attach to the forms service account (forms exists since
+# core-erasure-client.sh); the no-op reconciliation after it must only verify.
+stage_media_attach_granted_by_operator
+
 stage_v2_reconcile_noop
 stage_event_retention_after_noop_reconciliation
 stage_reset_choose_user_after_noop_reconciliation
@@ -1628,6 +1673,8 @@ EVENT_PII_COMPOSE_FILE="$COMPOSE_FILE" \
   EVENT_PII_ADMIN_CONFIG="$ADMIN_CONFIG" \
   EVENT_PII_SOURCE_REALM="$V2_REALM" \
   "$SCRIPT_DIR/erasure-event-pii.sh"
+
+stage_group_overage_mapper
 
 CURRENT_STAGE='minimal openid PAR contract'
 discovery=$(curl --fail --silent --show-error \
@@ -1913,29 +1960,24 @@ SKY_ACCOUNT_COMPOSE_FILE="$COMPOSE_FILE" \
 
 # The passkey ceremony runs a Chromium virtual authenticator against the SPI: register a
 # passkey from an allowed my.-like origin, see it in GET identity, log in on Keycloak's own
-# login page with it (RP-ID compatibility), sudo by passkey, and prove the refusals. The
-# fixture passwordless policy is set to rpId=localhost and the served page origin as an extra
-# origin so the ceremony's clientData origin is allowed; the disallowed origin proves rejection.
+# login page with it (RP-ID compatibility), sudo by passkey, and prove the refusals. It runs
+# twice on the same page server, each time with its own throwaway person and the passwordless
+# policy pointed at that run: the page origin is the one extra origin (production names only
+# https://my.yildizskylab.com) and Keycloak's own origin comes from its base URI.
+#   1. localhost: rpId=localhost, the page on http://localhost:18081, Keycloak on
+#      http://localhost:18080; the disallowed origin http://localhost:18082 proves rejection.
+#   2. parent domain (K3b-t), the production relationship (my.yildizskylab.com and
+#      e.yildizskylab.com share rpId=yildizskylab.com): the passkey is registered on
+#      http://my.yildizskylab.test:18081 and signs in on Keycloak at
+#      http://e.yildizskylab.test:18080 (the realm frontend URL, for this run only) under
+#      rpId=yildizskylab.test. The sibling http://other.yildizskylab.test:18082 is refused by the
+#      server, a page on another registrable domain (http://my.attacker.test:18082) by the
+#      browser. The spec maps these names to 127.0.0.1 inside Chromium only; the harness keeps
+#      calling Keycloak on http://localhost:18080. A single-label parent (my.localtest under
+#      rpId=localtest) is not possible: browsers accept only a registrable domain as RP ID.
 CURRENT_STAGE='sky-account passkey ceremony'
 webauthn_realm_before=$(kcadm get "realms/e-skylab-test" -c \
-  | jq -c '{webAuthnPolicyPasswordlessRpId, webAuthnPolicyPasswordlessExtraOrigins}')
-kcadm update realms/e-skylab-test \
-  -s 'webAuthnPolicyPasswordlessRpId=localhost' \
-  -s 'webAuthnPolicyPasswordlessExtraOrigins=["http://localhost:18081"]' >/dev/null
-# The ceremony gets its own person: sky-account rate limits are per user and per fixed
-# 15-minute window, and the contract stage above deliberately exhausts the fixture user's
-# sudo budget. A throwaway user keeps the ceremony independent of that and of leftover
-# credentials; it is removed (with its passkey) at the end of the stage.
-while IFS= read -r stale_passkey_user; do
-  [[ -n $stale_passkey_user ]] || continue
-  kcadm delete "users/$stale_passkey_user" -r e-skylab-test >/dev/null
-done < <(kcadm get users -r e-skylab-test -c -q username=passkey-fixture -q exact=true | jq -r '.[].id')
-passkey_user_password=$(openssl rand -base64 24 | tr -d '\n')
-passkey_user_uuid=$(kcadm create users -r e-skylab-test -i \
-  -s username=passkey-fixture -s enabled=true -s emailVerified=true \
-  -s firstName=Passkey -s lastName=Fixture -s email=passkey-fixture@example.invalid)
-kcadm set-password -r e-skylab-test --userid "$passkey_user_uuid" \
-  --new-password "$passkey_user_password" --temporary=false >/dev/null
+  | jq -c '{webAuthnPolicyPasswordlessRpId, webAuthnPolicyPasswordlessExtraOrigins, frontendUrl: (.attributes.frontendUrl // "")}')
 webauthn_page_log="$TEST_STATE_DIR/webauthn-page.log"
 WEBAUTHN_PAGE_PORT=18081 WEBAUTHN_PAGE_DISALLOWED_PORT=18082 \
   node "$SCRIPT_DIR/webauthn-page.mjs" >"$webauthn_page_log" 2>&1 &
@@ -1960,44 +2002,87 @@ if ! curl --fail --silent --show-error http://localhost:18081/ >/dev/null 2>&1; 
   webauthn_stop_page
   fail 'the WebAuthn ceremony page did not become ready on http://localhost:18081'
 fi
-webauthn_config="$TEST_STATE_DIR/webauthn-integration.json"
-jq -n \
-  --arg baseUrl 'http://localhost:18080' \
-  --arg realm 'e-skylab-test' \
-  --arg callbackUrl 'https://my.yildizskylab.com/api/auth/callback' \
-  --arg clientId 'account-center' \
-  --arg clientSecret "$client_secret" \
-  --arg username 'passkey-fixture' \
-  --arg password "$passkey_user_password" \
-  --arg pageOrigin 'http://localhost:18081' \
-  --arg disallowedOrigin 'http://localhost:18082' \
-  --arg rpId 'localhost' \
-  --arg userId "$passkey_user_uuid" \
-  '{baseUrl:$baseUrl, realm:$realm, callbackUrl:$callbackUrl, clientId:$clientId, clientSecret:$clientSecret, username:$username, password:$password, pageOrigin:$pageOrigin, disallowedOrigin:$disallowedOrigin, rpId:$rpId, userId:$userId}' \
-  >"$webauthn_config"
-chmod 0600 "$webauthn_config"
-if ! (
-  cd "$SCRIPT_DIR/../theme"
-  WEBAUTHN_INTEGRATION_CONFIG="$webauthn_config" \
-    npx --no-install playwright test \
-      --config=playwright.integration.config.ts \
-      tests/integration/webauthn-passkey.spec.ts
-); then
-  webauthn_stop_page
-  fail 'the passkey ceremony Playwright test failed'
-fi
+
+# One ceremony run. The ceremony gets its own person: sky-account rate limits are per user and
+# per fixed 15-minute window, and the contract stage above deliberately exhausts the fixture
+# user's sudo budget. A throwaway user keeps the ceremony independent of that and of leftover
+# credentials; it is removed (with its passkey) at the end of the run.
+webauthn_ceremony() {
+  local label=$1 rp_id=$2 page_origin=$3 disallowed_origin=$4 foreign_origin=$5
+  local username="passkey-$label" config_file="$TEST_STATE_DIR/webauthn-integration-$label.json"
+  local stale_user user_uuid user_password
+  kcadm update realms/e-skylab-test \
+    -s "webAuthnPolicyPasswordlessRpId=$rp_id" \
+    -s "webAuthnPolicyPasswordlessExtraOrigins=[\"$page_origin\"]" >/dev/null
+  while IFS= read -r stale_user; do
+    [[ -n $stale_user ]] || continue
+    kcadm delete "users/$stale_user" -r e-skylab-test >/dev/null
+  done < <(kcadm get users -r e-skylab-test -c -q "username=$username" -q exact=true | jq -r '.[].id')
+  user_password=$(openssl rand -base64 24 | tr -d '\n')
+  user_uuid=$(kcadm create users -r e-skylab-test -i \
+    -s "username=$username" -s enabled=true -s emailVerified=true \
+    -s firstName=Passkey -s lastName=Fixture -s "email=$username@example.invalid")
+  kcadm set-password -r e-skylab-test --userid "$user_uuid" \
+    --new-password "$user_password" --temporary=false >/dev/null
+  jq -n \
+    --arg baseUrl 'http://localhost:18080' \
+    --arg frontendUrl "$(kcadm get realms/e-skylab-test -c | jq -r '.attributes.frontendUrl // ""')" \
+    --arg realm 'e-skylab-test' \
+    --arg callbackUrl 'https://my.yildizskylab.com/api/auth/callback' \
+    --arg clientId 'account-center' \
+    --arg clientSecret "$client_secret" \
+    --arg username "$username" \
+    --arg password "$user_password" \
+    --arg pageOrigin "$page_origin" \
+    --arg disallowedOrigin "$disallowed_origin" \
+    --arg foreignOrigin "$foreign_origin" \
+    --arg rpId "$rp_id" \
+    --arg userId "$user_uuid" \
+    '{baseUrl:$baseUrl, realm:$realm, callbackUrl:$callbackUrl, clientId:$clientId, clientSecret:$clientSecret, username:$username, password:$password, pageOrigin:$pageOrigin, disallowedOrigin:$disallowedOrigin, rpId:$rpId, userId:$userId}
+      + (if $frontendUrl == "" then {} else {frontendUrl:$frontendUrl} end)
+      + (if $foreignOrigin == "" then {} else {foreignOrigin:$foreignOrigin} end)' \
+    >"$config_file"
+  chmod 0600 "$config_file"
+  unset user_password
+  if ! (
+    cd "$SCRIPT_DIR/../theme"
+    WEBAUTHN_INTEGRATION_CONFIG="$config_file" \
+      npx --no-install playwright test \
+        --config=playwright.integration.config.ts \
+        tests/integration/webauthn-passkey.spec.ts
+  ); then
+    webauthn_stop_page
+    fail "the $label passkey ceremony Playwright test failed"
+  fi
+  # The ceremony must have left exactly one passkey on the throwaway user (every other
+  # registration was refused); then remove the user.
+  json_assert "$(kcadm get "users/$user_uuid/credentials" -r e-skylab-test -c)" \
+    '[.[] | select(.type == "webauthn-passwordless")] | length == 1' \
+    "the $label passkey ceremony must leave exactly one passwordless credential on the throwaway user"
+  kcadm delete "users/$user_uuid" -r e-skylab-test >/dev/null
+}
+
+webauthn_ceremony localhost localhost http://localhost:18081 http://localhost:18082 ''
+
+CURRENT_STAGE='sky-account passkey ceremony on the parent domain (my. registers, e. signs in)'
+kcadm update realms/e-skylab-test -s 'attributes.frontendUrl=http://e.yildizskylab.test:18080' >/dev/null
+# Keycloak now names e.yildizskylab.test as itself whichever host the harness calls it on, so
+# its login page, cookies, token issuer and the origin its WebAuthn check expects all follow.
+json_assert "$(curl --fail --silent --show-error http://localhost:18080/realms/e-skylab-test/.well-known/openid-configuration)" \
+  '.issuer == "http://e.yildizskylab.test:18080/realms/e-skylab-test"' \
+  'the realm frontend URL did not move Keycloak to http://e.yildizskylab.test:18080'
+webauthn_ceremony parent-domain yildizskylab.test \
+  http://my.yildizskylab.test:18081 http://other.yildizskylab.test:18082 http://my.attacker.test:18082
 webauthn_stop_page
-# The ceremony must have left exactly one passkey on the throwaway user (the disallowed-origin
-# registration was refused); then remove the user and restore the passwordless policy.
-passkey_credentials=$(kcadm get "users/$passkey_user_uuid/credentials" -r e-skylab-test -c)
-json_assert "$passkey_credentials" \
-  '[.[] | select(.type == "webauthn-passwordless")] | length == 1' \
-  'the passkey ceremony must leave exactly one passwordless credential on the throwaway user'
-kcadm delete "users/$passkey_user_uuid" -r e-skylab-test >/dev/null
-unset passkey_user_password
+
+CURRENT_STAGE='sky-account passkey ceremony realm restore'
 kcadm update realms/e-skylab-test \
   -s "webAuthnPolicyPasswordlessRpId=$(jq -r '.webAuthnPolicyPasswordlessRpId // ""' <<<"$webauthn_realm_before")" \
-  -s "webAuthnPolicyPasswordlessExtraOrigins=$(jq -c '.webAuthnPolicyPasswordlessExtraOrigins // []' <<<"$webauthn_realm_before")" >/dev/null
+  -s "webAuthnPolicyPasswordlessExtraOrigins=$(jq -c '.webAuthnPolicyPasswordlessExtraOrigins // []' <<<"$webauthn_realm_before")" \
+  -s "attributes.frontendUrl=$(jq -r '.frontendUrl' <<<"$webauthn_realm_before")" >/dev/null
+json_assert "$(curl --fail --silent --show-error http://localhost:18080/realms/e-skylab-test/.well-known/openid-configuration)" \
+  '.issuer == "http://localhost:18080/realms/e-skylab-test"' \
+  'restoring the realm frontend URL did not bring Keycloak back to http://localhost:18080'
 
 # Provision the RabbitMQ topology expected by the provider, then use an admin
 # event to prove the rebuilt provider can publish on Keycloak 26.7.4.

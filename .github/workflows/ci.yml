@@ -108,6 +108,18 @@ jobs:
       - name: sandbox admin-local client script against a throwaway Keycloak
         run: bash tests/sandbox-admin-local-client.sh
 
+  # config/fill-missing-primary-from-school.sh (eskylab-login-ux 06: an account without a Primary
+  # e-mail gets its School e-mail) against the stock Keycloak image in dev mode, with the production
+  # User Profile and one account per case; needs no build of this repository's image.
+  fill-missing-primary-from-school:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Primary e-mail fill script against a throwaway Keycloak
+        run: bash tests/fill-missing-primary-from-school.sh
+
   # config/site-clients.sh and config/site-editor-grants.sh (the event sites' Site clients, with
   # inscribed-cms-roles.sh between them) against the stock Keycloak image in dev mode, with a real
   # authorization code flow (PKCE); needs no build of this repository's image.

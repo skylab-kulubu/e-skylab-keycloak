@@ -7,7 +7,8 @@
 # removed on exit (docker rm -fv).
 #
 # The fixture realm e-skylab: skycms (confidential, no login); frontend-main (confidential, full
-# scope, as in production) with the shared skycms-audience scope; skyapp (public, full scope,
+# scope, as in production) with production's hand-made skycms-audience scope (2026-09-21 realm
+# facts: its one mapper audience-mapper names no audience); skyapp (public, full scope,
 # redirect com.yildizskylab.app:/oauth2redirect, as in production); a realm scope groups (full-path
 # Group Membership) that both use; groups /ADMIN, /UYELER, /UYELER/YK, /UYELER/DK,
 # /UYELER/ARGE/MOBILAB/LIDERLER, /UYELER/ESKI-EDITORLER; people in some of them. frontend-main's
@@ -17,6 +18,11 @@
 #   - every realm but e-skylab and e-skylab-sandbox (and an unset KEYCLOAK_REALM) is refused before a
 #     login (exit 2); the removed --editors-from is a usage error (exit 2); a missing skyapp,
 #     frontend-main, skycms or scope stops the run before any write (exit 1);
+#   - production's hand-made skycms-audience stops the run before any write with exactly the line
+#     production printed on 2026-10-05 ("MISSING: client scope skycms-audience has no audience
+#     mapper that puts skycms into the access token"): its mapper adds nothing, a person without a
+#     skycms role gets no aud skycms through frontend-main; config/site-clients.sh --shared-scope
+#     --apply repairs the scope (the main site's token then names skycms) and the run goes on;
 #   - a PROBLEM (here another emitter of the roles claim on skyapp) stops --check and --apply before
 #     any write while ten changes are pending: exit 1, no admin event, skyapp gets no role;
 #   - --check writes nothing and plans skyapp's four roles, its cms:access composite, the two links
@@ -45,6 +51,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 EDITOR_SCRIPT="$REPOSITORY_ROOT/config/skyapp-cms-editor.sh"
 ROLES_SCRIPT="$REPOSITORY_ROOT/config/inscribed-cms-roles.sh"
+CLIENTS_SCRIPT="$REPOSITORY_ROOT/config/site-clients.sh"
 IMAGE=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' "$REPOSITORY_ROOT/Dockerfile")
 PORT=${SKYAPP_CMS_TEST_PORT:-18095}
 BASE_URL="http://127.0.0.1:$PORT"
@@ -207,6 +214,7 @@ docker exec "$CONTAINER" /opt/keycloak/bin/kcadm.sh config credentials --config 
   || fail 'kcadm login failed'
 docker exec -i "$CONTAINER" sh -c 'cat > /tmp/skyapp-cms-editor.sh' <"$EDITOR_SCRIPT"
 docker exec -i "$CONTAINER" sh -c 'cat > /tmp/inscribed-cms-roles.sh' <"$ROLES_SCRIPT"
+docker exec -i "$CONTAINER" sh -c 'cat > /tmp/site-clients.sh' <"$CLIENTS_SCRIPT"
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='only the club realms'
@@ -250,11 +258,14 @@ kcadm create clients -r "$REALM" -s clientId="$APP" -s publicClient=true -s full
   -s "redirectUris=[\"$APP_CALLBACK\",\"https://app.yildizskylab.com/*\"]" >/dev/null
 main=$(client_uuid frontend-main)
 app=$(client_uuid "$APP")
-# The realm scope groups (full path) and the shared skycms-audience scope, production's shapes.
+# The realm scope groups (full path) and the shared skycms-audience scope, production's shapes: the
+# latter made by hand, shown on the consent screen, its one mapper an Audience mapper that names no
+# audience (realm facts of 2026-09-21), so Keycloak adds nothing for it.
 groups_scope=$(kcadm create client-scopes -r "$REALM" -i -s name=groups -s protocol=openid-connect)
 kcadm create "client-scopes/$groups_scope/protocol-mappers/models" -r "$REALM" -b '{"name":"groups","protocol":"openid-connect","protocolMapper":"oidc-group-membership-mapper","config":{"claim.name":"groups","full.path":"true","multivalued":"true","access.token.claim":"true","id.token.claim":"true","userinfo.token.claim":"true","introspection.token.claim":"true"}}' >/dev/null
-audience_scope=$(kcadm create client-scopes -r "$REALM" -i -s name=skycms-audience -s protocol=openid-connect)
-kcadm create "client-scopes/$audience_scope/protocol-mappers/models" -r "$REALM" -b '{"name":"audience-mapper","protocol":"openid-connect","protocolMapper":"oidc-audience-mapper","config":{"included.client.audience":"skycms","access.token.claim":"true","id.token.claim":"false","introspection.token.claim":"true"}}' >/dev/null
+audience_scope=$(kcadm create client-scopes -r "$REALM" -i -s name=skycms-audience -s protocol=openid-connect \
+  -s 'attributes."include.in.token.scope"=true' -s 'attributes."display.on.consent.screen"=true')
+kcadm create "client-scopes/$audience_scope/protocol-mappers/models" -r "$REALM" -b '{"name":"audience-mapper","protocol":"openid-connect","protocolMapper":"oidc-audience-mapper","config":{"id.token.claim":"false","lightweight.claim":"false","access.token.claim":"true","introspection.token.claim":"true"}}' >/dev/null
 for client in "$main" "$app"; do
   kcadm update "clients/$client/default-client-scopes/$groups_scope" -r "$REALM" -n -b '{}' >/dev/null
 done
@@ -294,6 +305,27 @@ expect_line "$missing" 'MISSING: client scope skycms-audience does not exist' 'm
 expect_line "$missing" 'nothing was changed: 4 prerequisite(s) missing' 'missing run went on'
 no_admin_event_since "$event_before" 'a run with a missing prerequisite wrote to the realm' "$SANDBOX_REALM"
 printf '    --editors-from is a usage error (exit 2); a missing skyapp, frontend-main, skycms or scope stops the run before any write (exit 1)\n'
+
+# ---------------------------------------------------------------------------------------------
+CURRENT_STAGE="production's hand-made skycms-audience adds nothing"
+event_before=$(newest_admin_event)
+sleep 1
+missing=$(run_expecting 1 skyapp-cms-editor.sh "$REALM" --check)
+expect_line "$missing" 'MISSING: client scope skycms-audience has no audience mapper that puts skycms into the access token' 'the hand-made audience mapper that names no audience was accepted'
+expect_line "$missing" 'nothing was changed: 1 prerequisite(s) missing' 'the run went on without the audience'
+no_admin_event_since "$event_before" 'a run with a missing prerequisite wrote to the realm'
+access=$(access_of "$(site_tokens member)")
+json_assert "$access" ".azp == \"frontend-main\" and ((($AUD) | index(\"skycms\")) == null)" \
+  'the hand-made scope put skycms into the site token of a person without a skycms role'
+out=$(run site-clients.sh "$REALM" --apply --shared-scope) || { printf '%s\n' "$out" >&2; fail 'site-clients.sh --shared-scope --apply failed'; }
+expect_line "$out" 'add mapper skycms-audience to skycms-audience (aud += skycms' 'the scope'"'"'s own mapper not added'
+expect_line "$out" 'remove the mapper audience-mapper from skycms-audience' 'the hand-made mapper not removed'
+expect_line "$out" 'applied 3 change(s), 0 warning(s), 0 problem(s)' 'unexpected site-clients.sh --shared-scope run'
+access=$(access_of "$(site_tokens member)")
+json_assert "$access" ".azp == \"frontend-main\" and ((($AUD) | index(\"skycms\")) != null)" \
+  'after site-clients.sh --shared-scope the site token of a person without a skycms role has no aud skycms'
+printf '    hand-made skycms-audience: MISSING (exit 1, no admin event); site-clients.sh --shared-scope --apply: member @ frontend-main aud=%s\n' \
+  "$(jq -c "$AUD" <<<"$access")"
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='a PROBLEM stops the run before any write'

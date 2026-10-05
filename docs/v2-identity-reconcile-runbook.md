@@ -1357,6 +1357,60 @@ panel secret'ını alır, sonra istemci gizliye çevrilir, sonra uzlaştırıcı
 İstemci adı realm'den gelir (`e-skylab-sandbox` → `superadmin`, diğerleri → `admin`;
 `inscribed-cms-roles.sh` ile aynı); `KEYCLOAK_ADMIN_PANEL_CLIENT_ID` başka bir ad verir.
 
+### Token exchange'ten sonra API'lerin okuduğu claim'ler (admin-token-authz K1)
+
+Panelin sunucusu (BFF) her API'ye exchange'li bir token gönderir: `audience` tek API, `scope`
+yok. Keycloak 26.7 bu token'ı panelin kendi token'ıyla aynı oturumda (`sid` aynı), aynı istemciyle
+(`azp`) ve aynı varsayılan kapsamlarla üretir. Sonra `aud`'u istenen API'ye, `resource_access`'i o
+API'nin anahtarına indirir (`TokenManager.restrictRequestedAudience`). İstemcinin kendi
+mapper'ları (`inscribed-roles`, `groups`) ve profil kapsamları yeniden çalışır. Yani düz `roles` ve
+`groups` kalır, `resource_access.admin` düşer. Yanıtta refresh token ve ID token yoktur.
+`requested_token_type=…:refresh_token` istenirse `400 invalid_request` döner.
+
+Sözleşme `tests/admin-panel-exchanged-token.jq`'dadır. İki harness de onu çalıştırır:
+
+- `aud` tam olarak istenen API'dir.
+- `resource_access`, panel token'ının yalnız o API'ye ait kısmıdır. skycms için boştur.
+- `realm_access` ve `client_id` yoktur. core, `client_id`'yi servis hesabı işareti sayar.
+- Panel token'ındaki her claim aynı değerle kalır. Bunun dışında kalanlar yalnız `aud`,
+  `resource_access`, `exp`, `iat` ve `jti`'dir.
+- Yeni claim eklenmez.
+- Token, panelin token'ından uzun yaşamaz.
+
+| API | Token'dan okuduğu claim'ler (kaynak) | Exchange'ten sonra |
+| --- | --- | --- |
+| core (`aud` ∋ `core`) | `iss`, `sub` (UUID), `azp`, `email`, `given_name`, `family_name`, `preferred_username`, (varsa) `school_email`, `sky_number`, `university`, `department`, `groups` (tam yol; ya da Group overage işareti `_claim_names.groups`), `resource_access.core.roles`; `client_id` = `azp` servis hesabı demektir (core-backend `internal/authn/jwt.go`) | hepsi aynen; `resource_access` yalnız `core` |
+| forms-backend (`aud` ∋ `forms`) | `iss`, `sub` (GUID; erişim kapısı), `resource_access.forms.roles` (`skyforms:*`) (`FormsJwtAuthenticationExtensions.cs`, `JwtCurrentUserService.cs`) | hepsi aynen; `resource_access` yalnız `forms` |
+| inscribed (`aud` ∋ `skycms`) | `azp` (tenant), `sub` (`updatedBy`), düz `roles` (`content:*`), `groups` (tam yol; koleksiyon kuralları, takım slug'ı), `email` (yalnız `/admin/*` yolları) (inscribed-dotnet 2.0.1: `ConfigureJwtBearerOptions.cs`, `ClaimPrincipalTenant.cs`, `AccessRuleEvaluator.cs`) | hepsi aynen; `resource_access` boş |
+
+Harness'ler:
+
+- **Production biçimi:** `tests/admin-panel-client.sh`, aşama
+  `stage_admin_panel_exchange_claims`. Roller production'daki gibi gruplardan gelir. Üç kişi
+  panelden gerçekten giriş yapar:
+  - Privileged kişi `/UYELER/YK`'dadır. Operatörün tohumladığı core rolleri, `content:read`,
+    `content:write` ve forms'un `skyforms:*` rolü bu gruptan gelir.
+  - Lider `/UYELER/ARGE/WEBLAB` ve `…/LIDERLER`'dedir. `content:*` rolleri `LIDERLER`'den
+    gelir.
+  - Sıradan üyenin rolü yoktur.
+
+  Panel token'ı kişinin Admin API'deki etkin rollerini ve grup yollarını birebir taşır. Üç API'ye
+  yapılan exchange sözleşmeyi korur.
+- **Evaluate:** Keycloak'ın Evaluate'i (`evaluate-scopes/generate-example-access-token`,
+  `userId`, `audience`, `scope=openid`) exchange'le aynı token'ı verir; yalnız `sid`, `iss` ve
+  zamanlar farklıdır. Bu yüzden canlı bir realm, kimsenin parolası olmadan Evaluate'le
+  denetlenebilir.
+- **Sandbox biçimi:** `tests/sandbox-admin-local-client.sh`. Burada `groups` bir realm
+  kapsamından gelir ve istemcide elle konmuş bir claim vardır. `superadmin`'in exchange'i aynı
+  sözleşmeyi korur. `admin-local` public'tir ve exchange kapalıdır, bu yüzden `400
+  invalid_request` alır. Exchange açılsa bile Keycloak public istemciye `invalid_client`
+  döndürür. BFF yerelde çalışmadan önce `admin-local` gizli istemciye dönmelidir.
+
+Kalan risk elle kurulmuş canlı istemcilerdedir. `profile`, `email` ve `basic` `admin`'in
+varsayılan kapsamı değil de isteğe bağlı kapsamıysa durum değişir: panelin girişi bunları
+`scope` ile ister, exchange istemez. O durumda `email`, profil ve `sub` exchange'li token'da
+olmaz. Bu, canlıda bir kişi ve `audience` ile Evaluate'le görülür.
+
 ### Operatör oturumuyla tek adım (sandbox)
 
 Sandbox realm'inde uzlaştırıcı kimliği (`account-center-config`) yoktur ve tam uzlaştırma sandbox'a
@@ -1623,6 +1677,26 @@ Privileged gruplardır (takım yok; `--team main=/YOL` eklenebilir), `client:adm
 Harness bunu da dener: production reddi, istemcinin biçimi, ADMIN üyesinin token'ında `cms:access` +
 `client:admin`, düz üyede CMS rolü olmadığı, servis hesabının salt okuma kaldığı, ikinci koşunun
 yazmadığı. Operatör: `ops/wizards/site-cms-setup-wizard.sh --site main --sandbox`.
+
+**Yalnız ortak kapsam (`--shared-scope`, 2026-10-05).** `site-clients.sh --shared-scope [--apply]`
+yalnız ortak `skycms-audience` kapsamını kurar ya da onarır ve elle yapılmış istemcileri raporlar;
+hiçbir site istemcisini okumaz, yazmaz (`--site` ile birlikte kullanım hatasıdır, çıkış 2). Kapsam
+bugün etkinlik sitelerinden önce gerekiyor: production'da `frontend-main` ve `frontend-arge`'ın
+varsayılan kapsamıdır, `config/skyapp-cms-editor.sh` de `skyapp`'e bağlar ve kapsamda `skycms`'i
+access token'a yazan bir Audience mapper'ı yoksa `MISSING` ile durur. Production'daki kapsam elle
+yapılmıştı; 2026-09-21 realm dökümünde tek mapper'ı `audience-mapper`'dır ve ne
+`included.client.audience` ne `included.custom.audience` taşır, yani Keycloak onun için hiçbir şey
+eklemez. `skycms` o güne kadar `frontend-main` token'ına yalnız audience-resolve ile, kişi bir
+`skycms` rolü taşıyorsa giriyordu. Betik kapsamın kendi `skycms-audience` mapper'ını ekler
+(access token ve introspection, ID token değil), öznitelikleri `include.in.token.scope=false`,
+`display.on.consent.screen=false` yapar ve yalnız `skycms`'i adlandıran (ya da hiçbir audience
+adlandırmayan) başka bir Audience mapper'ını kendi mapper'ı yerindeyken siler: o mapper'ın
+ekleyebileceği her şeyi kendi mapper'ı da ekler. Başka bir audience adlandıran mapper `PROBLEM`'dir
+ve kalır. Harness: `tests/site-clients.sh` (production'ın biçimi, plan, yazılanlar, `skycms`'siz
+kişinin `frontend-main` token'ında önce yok sonra var olan `skycms`, ikinci koşu, özel audience,
+başka audience) ve `tests/skyapp-cms-editor.sh` (production'ın 2026-10-05'te bastığı `MISSING`
+satırı, `--shared-scope --apply`'dan sonra koşunun sürmesi). Operatör: sky_lab_genel'deki
+`ops/wizards/skyapp-cms-editor-wizard.sh` bunu `skyapp-cms-editor.sh`'tan önce koşar.
 
 ## 19. core'un kaynak rolleri ve Privileged gruplara bir kez verilmesi (ADR-0059)
 

@@ -108,12 +108,25 @@ jobs:
       - name: sandbox admin-local client script against a throwaway Keycloak
         run: bash tests/sandbox-admin-local-client.sh
 
+  # config/fill-missing-primary-from-school.sh (eskylab-login-ux 06: an account without a Primary
+  # e-mail gets its School e-mail) against the stock Keycloak image in dev mode, with the production
+  # User Profile and one account per case; needs no build of this repository's image.
+  fill-missing-primary-from-school:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Primary e-mail fill script against a throwaway Keycloak
+        run: bash tests/fill-missing-primary-from-school.sh
+
   # config/site-clients.sh and config/site-editor-grants.sh (the event sites' Site clients, with
   # inscribed-cms-roles.sh between them) against the stock Keycloak image in dev mode, with a real
   # authorization code flow (PKCE); needs no build of this repository's image.
   site-clients:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 19-28 minutes on main before the --shared-scope stage (about 5 more).
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
 
@@ -132,17 +145,29 @@ jobs:
       - name: SkyApp CMS editing against a throwaway Keycloak
         run: bash tests/skyapp-cms-editor.sh
 
-  # config/fill-missing-primary-from-school.sh (eskylab-login-ux 06: an account without a Primary
-  # e-mail gets its School e-mail) against the stock Keycloak image in dev mode, with the production
-  # User Profile and one account per case; needs no build of this repository's image.
-  fill-missing-primary-from-school:
+  # The landing page at / (the e-skylab-welcome theme, rendered from theme/src/welcome) served by
+  # the stock Keycloak image in dev mode with the built theme mounted; needs no build of this
+  # repository's image.
+  welcome-page:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 
-      - name: Primary e-mail fill script against a throwaway Keycloak
-        run: bash tests/fill-missing-primary-from-school.sh
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.22.1
+          cache: npm
+          cache-dependency-path: theme/package-lock.json
+
+      - name: Build the landing page theme
+        working-directory: theme
+        run: |
+          npm ci --ignore-scripts
+          npm run build-welcome-theme
+
+      - name: Landing page at / against a throwaway Keycloak
+        run: bash tests/welcome-page.sh
 
   integration:
     runs-on: ubuntu-latest
@@ -172,6 +197,8 @@ jobs:
           npx playwright install --with-deps chromium
           npm run build-keycloak-theme
           bash ../tests/check-theme-contract.sh
+          npm run build-welcome-theme
+          bash ../tests/check-welcome-theme.sh
 
       - uses: docker/setup-buildx-action@v4
 

@@ -1651,6 +1651,9 @@ stage_core_roles_seeded_by_operator
 # The operator grants media:attach to the forms service account (forms exists since
 # core-erasure-client.sh); the no-op reconciliation after it must only verify.
 stage_media_attach_granted_by_operator
+# admin-token-authz K1: what core, forms and inscribed read survives the panel's token exchange for
+# a Privileged person (core's roles as seeded above), a Leader and a plain member.
+stage_admin_panel_exchange_claims
 
 stage_v2_reconcile_noop
 stage_event_retention_after_noop_reconciliation

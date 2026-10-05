@@ -31,6 +31,11 @@
 #     core, forms, skycms, superadmin; no realm_access; resource_access core, forms, superadmin;
 #     the flat roles; full-path groups; the refresh grant works without a secret; uye-fixture gets
 #     only aud core, forms, skycms and /UYELER;
+#   - Standard Token Exchange by superadmin (as the reconciler leaves it: exchange on) turns each
+#     person's token into a token for core, forms or skycms that keeps the panel BFF's contract
+#     tests/admin-panel-exchanged-token.jq (one aud, resource_access cut to that API, every other
+#     claim kept: groups from the realm scope, the flat roles, azp, sid, the profile, the hand-made
+#     claim); admin-local (public, exchange off) is refused with 400 invalid_request;
 #   - Keycloak refuses another redirect URI (the sandbox panel's, localhost:3001, 127.0.0.1:3000), a
 #     request without PKCE or with the plain method, the password and client_credentials grants;
 #     superadmin still refuses the localhost callback;
@@ -52,6 +57,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 OPERATOR_SCRIPT="$REPOSITORY_ROOT/config/sandbox-admin-local-client.sh"
 AUDIENCE_MAPPERS_FILE="$REPOSITORY_ROOT/config/admin-panel-api-audience-mappers.json"
+EXCHANGE_CONTRACT="$SCRIPT_DIR/admin-panel-exchanged-token.jq"
 IMAGE=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' "$REPOSITORY_ROOT/Dockerfile")
 PORT=${SANDBOX_ADMIN_LOCAL_TEST_PORT:-18095}
 BASE_URL="http://127.0.0.1:$PORT"
@@ -223,6 +229,22 @@ code_flow() {
   fi
 }
 
+# exchange CLIENT SUBJECT_TOKEN AUDIENCE [secret]: the response body of Standard Token Exchange by
+# CLIENT for one audience, as the panel's server asks (no scope), and a last line with the HTTP
+# status; the confidential reference sends its secret on curl's stdin.
+exchange() {
+  local client=$1 token=$2 audience=$3 with_secret=${4:-} arguments
+  arguments=(-sS -w '\n%{http_code}' "$BASE_URL/realms/$REALM/protocol/openid-connect/token"
+    --data-urlencode grant_type=urn:ietf:params:oauth:grant-type:token-exchange --data-urlencode "client_id=$client"
+    --data-urlencode "subject_token=$token" --data-urlencode subject_token_type=urn:ietf:params:oauth:token-type:access_token
+    --data-urlencode "audience=$audience")
+  if [[ $with_secret == secret ]]; then
+    reference_secret | curl "${arguments[@]}" --data-urlencode 'client_secret@-'
+  else
+    curl "${arguments[@]}"
+  fi
+}
+
 # token_error GRANT_TYPE [PARAMETER=VALUE...]: the error of a token request of admin-local (no secret).
 token_error() {
   local grant=$1 arguments=() pair
@@ -288,7 +310,7 @@ kcadm create "client-scopes/$groups_scope/protocol-mappers/models" -r "$REALM" -
 # The panel's client as the reconciler and inscribed-cms-roles.sh leave it.
 kcadm create clients -r "$REALM" -s clientId="$REFERENCE" -s publicClient=false -s standardFlowEnabled=true \
   -s directAccessGrantsEnabled=false -s fullScopeAllowed=false -s "redirectUris=[\"$PANEL_CALLBACK\"]" \
-  -s 'webOrigins=["https://sandbox-admin.yildizskylab.com"]' >/dev/null
+  -s 'webOrigins=["https://sandbox-admin.yildizskylab.com"]' -s 'attributes."standard.token.exchange.enabled"=true' >/dev/null
 reference_id=$(client_uuid "$REFERENCE")
 for role in content:read content:write schema:sync; do kcadm create "clients/$reference_id/roles" -r "$REALM" -s "name=$role" >/dev/null; done
 kcadm create "clients/$reference_id/protocol-mappers/models" -r "$REALM" -b '{"name":"inscribed-roles","protocol":"openid-connect","protocolMapper":"oidc-usermodel-client-role-mapper","config":{"usermodel.clientRoleMapping.clientId":"superadmin","usermodel.clientRoleMapping.rolePrefix":"","claim.name":"roles","jsonType.label":"String","multivalued":"true","access.token.claim":"true","id.token.claim":"false","userinfo.token.claim":"false","introspection.token.claim":"true"}}' >/dev/null
@@ -425,6 +447,44 @@ member=$(jwt_payload "$(jq -r .access_token <<<"$(code_flow "$CLIENT" "$CALLBACK
 json_assert "$member" "($AUD) == [\"core\", \"forms\", \"skycms\"] and .groups == [\"/UYELER\"] and (has(\"roles\") | not)
   and ((.resource_access // {}) | keys | length == 0) and (has(\"realm_access\") | not)" 'uye-fixture token'
 printf '    refresh without a secret: ok; uye-fixture: aud=%s groups=%s, no roles\n' "$(jq -c "$AUD" <<<"$member")" "$(jq -c .groups <<<"$member")"
+
+# ---------------------------------------------------------------------------------------------
+CURRENT_STAGE='token exchange: superadmin to one API; admin-local cannot'
+# The sandbox panel's BFF (admin-token-authz 08) exchanges superadmin's token for one API: each
+# exchanged token keeps tests/admin-panel-exchanged-token.jq (the contract the integration harness
+# checks for production's admin) with the sandbox shape (groups from a realm scope, the flat roles
+# of superadmin, a hand-made claim). admin-local is public with token exchange off: refused.
+for user in kaan-fixture uye-fixture; do
+  token=$(jq -r .access_token <<<"$(code_flow "$REFERENCE" "$PANEL_CALLBACK" "$user" secret)")
+  subject=$(jwt_payload "$token")
+  for audience in core forms skycms; do
+    response=$(exchange "$REFERENCE" "$token" "$audience" secret)
+    [[ $(tail -n 1 <<<"$response") == 200 ]] \
+      || fail "the exchange of superadmin to $audience for $user was refused ($(sed '$d' <<<"$response" | jq -r .error))"
+    payload=$(jwt_payload "$(sed '$d' <<<"$response" | jq -r .access_token)")
+    violations=$(jq -c --arg aud "$audience" --argjson subject "$subject" -f "$EXCHANGE_CONTRACT" <<<"$payload")
+    [[ $violations == '[]' ]] \
+      || fail "the token exchanged to $audience for $user breaks the contract: $(jq -r 'join("; ")' <<<"$violations")"
+    if [[ $user == kaan-fixture ]]; then
+      case $audience in
+        core) expected='(.resource_access.core.roles | sort) == ["event:manage", "url:moderator"]' ;;
+        forms) expected='.resource_access.forms.roles == ["forms:manage"]' ;;
+        skycms) expected='(.roles | sort) == ["content:read", "content:write"] and ((.resource_access // {}) | length) == 0' ;;
+      esac
+      json_assert "$payload" "$expected and .azp == \"$REFERENCE\" and (.groups | sort) == [\"/ADMIN\", \"/UYELER/YK\"] and .panel == \"sandbox\"" \
+        "kaan-fixture's $audience token lacks what $audience reads"
+    else
+      json_assert "$payload" '.groups == ["/UYELER"] and (has("roles") | not) and ((.resource_access // {}) | length) == 0' \
+        "uye-fixture's $audience token carries a role or lost the group path"
+    fi
+  done
+  printf '    %s through superadmin: core, forms and skycms tokens keep the contract (claims %s)\n' "$user" \
+    "$(jq -c '[keys[] | select(IN("exp", "iat", "jti", "aud", "resource_access") | not)]' <<<"$payload")"
+done
+response=$(exchange "$CLIENT" "$(jq -r .access_token <<<"$(code_flow "$CLIENT" "$CALLBACK" kaan-fixture)")" core)
+[[ $(tail -n 1 <<<"$response") == 400 && $(sed '$d' <<<"$response" | jq -r '.error + " " + (has("access_token") | tostring)') == 'invalid_request false' ]] \
+  || fail "admin-local's exchange was not refused ($(tail -n 1 <<<"$response"))"
+printf '    admin-local (public, token exchange off): 400 invalid_request; it becomes confidential with the BFF\n'
 
 CURRENT_STAGE='what Keycloak refuses'
 for redirect in "$PANEL_CALLBACK" http://localhost:3001/api/auth/callback http://127.0.0.1:3000/api/auth/callback; do

@@ -392,10 +392,16 @@ vermez, `frontend-main`'in `cms:access`'ine ve `client:admin`'ine composite olar
 Site editor tek yerden (panelde `frontend-main`) atanır. `skyapp`'e ortak `skycms-audience`
 kapsamını ve `inscribed-roles` mapper'ını ekler; tam yollu `groups`'u doğrular. `skyapp`'in
 bayraklarına, adreslerine ve öteki kapsamlarına dokunmaz; `skyapp` rolünün doğrudan atanmasını
-uyarır. `--revoke` yalnız iki composite bağını alır (sonraki token yenilemesinde kimse SkyApp'ten
-yazamaz). `--editors-from frontend-<site>` kaynağı değiştirir (ana sitesi olmayan sandbox için).
-Önce `inscribed-cms-roles.sh --client frontend-main` gerekir; eksik önkoşulda hiçbir şey yazmaz.
-Harness `tests/skyapp-cms-editor.sh` tek başına çalışır.
+uyarır, `frontend-main` rollerini doğrudan (grupsuz) taşıyan kişi ve servis hesaplarını sayar.
+Kaynak her iki realm'de `frontend-main`'dir (sandbox'ınki #65'ten beri var); `skyapp` rollerini
+içeren başka her rol, başka bir `roles`/`groups` yayıcısı ya da mapper adı çakışması PROBLEM'dir ve
+eksik önkoşul gibi hiçbir şey yazılmadan koşuyu durdurur (çıkış 1). `--revoke`, `skyapp` dışındaki
+her rolden `skyapp` rollerine giden bağı alır (`frontend-main`'in ikisi ve varsa başka istemci ya
+da realm rolünden gelenler): sonraki token yenilemesinde kimse bir composite üzerinden SkyApp
+rolü almaz. `skyapp` rolünün bir gruba ya da kişiye doğrudan atanması `--revoke`'la gitmez; betik
+bunu WARNING olarak gösterir, panelden kaldırılır. Önce `inscribed-cms-roles.sh --client
+frontend-main` gerekir; eksik önkoşulda hiçbir şey yazmaz. Harness `tests/skyapp-cms-editor.sh`
+tek başına çalışır.
 
 `account-center` realm'in etkin tarayıcı akışını kullanır; böylece
 production'a özel parola, OTP ve passkey davranışı olduğu gibi geçerlidir ve

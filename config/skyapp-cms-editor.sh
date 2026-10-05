@@ -12,45 +12,53 @@
 #   frontend-main/cms:access   includes skyapp/cms:access   (= skyapp/content:read + content:write)
 #   frontend-main/client:admin includes skyapp/client:admin
 # so a grant of frontend-main/cms:access in the SKY LAB admin panel is the one place that makes a
-# Site editor, on the site and in the app. (--editors-from names another site client, e.g.
-# frontend-arge in the sandbox realm, which has no main site.)
+# Site editor, on the site and in the app. Both realms have frontend-main (the sandbox's since
+# e-skylab-keycloak #65), so there is no other source: any other role that includes one of skyapp's
+# roles is a PROBLEM.
 #
 # For skyapp it
 #   1. creates the client roles content:read, content:write, cms:access (a composite of the first
 #      two; SkyApp's editor buttons look for it in resource_access.skyapp.roles) and client:admin;
-#   2. makes the source client's cms:access and client:admin include skyapp's;
+#   2. makes frontend-main's cms:access and client:admin include skyapp's;
 #   3. attaches the realm scope skycms-audience (aud += skycms, inscribed checks it) as a default
 #      client scope of skyapp;
 #   4. adds the mapper inscribed-roles: skyapp's own roles, composites expanded, as the flat
 #      multivalued claim roles, access token and introspection only (inscribed reads that claim);
-#      another emitter of roles on skyapp or a default scope is a PROBLEM and blocks the mapper;
+#      another emitter of roles on skyapp or a default scope is a PROBLEM;
 #   5. makes sure the access token carries groups as full paths (inscribed's teams and SkyApp read
 #      them): a full-path Group Membership mapper on skyapp or a default scope is enough; a groups
-#      claim of another shape is a PROBLEM and is not changed (SkyApp reads it); none at all gets
-#      the client mapper inscribed-groups;
-#   6. reports who reaches skyapp's roles through the source client and warns about any direct
-#      grant of skyapp's roles (to a group or a person; take it away in the admin panel).
+#      claim of another shape is a PROBLEM (SkyApp reads it); none at all gets the client mapper
+#      inscribed-groups;
+#   6. reports who reaches skyapp's roles through frontend-main (groups, and the users and service
+#      accounts that hold the role directly) and warns about any direct grant of skyapp's roles (to
+#      a group or a person; take it away in the admin panel).
+# Every PROBLEM (another emitter of roles or groups, a mapper name taken, another role that includes
+# one of skyapp's roles) is found before anything is written and stops the run like a missing
+# prerequisite: nothing is written, exit 1. Fix it by hand (or --revoke, below) and run again.
 # It never grants a role to a group or a person and never changes skyapp's flags, redirects,
-# secrets or other scopes. --revoke (with --apply) takes away only the two links of step 2: nobody
-# gets skyapp's CMS roles from the next token refresh on (the roles and mappers stay, empty).
+# secrets or other scopes. --revoke (with --apply) takes away every link into skyapp's roles from a
+# role that is not skyapp's own: frontend-main's two and any other client's or realm role's. From
+# the next token refresh on nobody reaches skyapp's CMS roles through a composite (the roles and
+# mappers stay, empty). A direct grant of a skyapp role is not touched and keeps working: --revoke
+# reports it as a WARNING; take it away in the admin panel.
 #
 # It refuses every realm but e-skylab and e-skylab-sandbox before it logs in; KEYCLOAK_REALM has no
-# default. Missing skyapp, skycms, skycms-audience (with an audience mapper to skycms) or the source
-# client's cms:access/client:admin (config/inscribed-cms-roles.sh makes them) stop the run before
-# anything is written (exit 1).
+# default. Missing skyapp, skycms, skycms-audience (with an audience mapper to skycms) or
+# frontend-main's cms:access/client:admin (config/inscribed-cms-roles.sh makes them) stop the run
+# before anything is written (exit 1).
 #
 # Usage (inside the Keycloak image, as an operator):
 #   KEYCLOAK_REALM=<realm> skyapp-cms-editor.sh --admin-user <admin>             # --check (default)
 #   KEYCLOAK_REALM=<realm> skyapp-cms-editor.sh --admin-user <admin> --apply     # writes
 #   KEYCLOAK_REALM=<realm> skyapp-cms-editor.sh --kcadm-config <file> [--apply] [--revoke]
-#   ... [--editors-from <site client>]                                           # default frontend-main
 #
 # The administrator password is typed into kcadm's own prompt and never passes through this script.
 # Environment: KEYCLOAK_ADMIN_URL (default http://keycloak:8080), KEYCLOAK_REALM (required),
 # KEYCLOAK_ADMIN_REALM (default master), KEYCLOAK_SKYAPP_CMS_ADMIN_USERNAME (or --admin-user).
 # Output: "[skyapp-cms] ..." lines, then "check: N change(s) pending, W warning(s), P problem(s)" or
-# "applied N change(s), ...". Exit 0 unless a PROBLEM or a missing prerequisite (1) or a usage error
-# or a refused realm (2). No token or secret is ever read.
+# "applied N change(s), ..."; a PROBLEM or a missing prerequisite ends with "nothing was changed: ...".
+# Exit 0 unless a PROBLEM or a missing prerequisite (1, nothing written) or a usage error or a
+# refused realm (2). No token or secret is ever read.
 set -Eeuo pipefail
 shopt -s inherit_errexit
 
@@ -88,7 +96,7 @@ GROUPS_MAPPER=inscribed-groups
 MAPPER_FIELDS='id,protocolMapper,config(claim.name,full.path,access.token.claim,id.token.claim,userinfo.token.claim,introspection.token.claim,multivalued,jsonType.label,usermodel.clientRoleMapping.clientId,usermodel.clientRoleMapping.rolePrefix,included.client.audience),name'
 
 usage() {
-  printf 'usage: KEYCLOAK_REALM=(e-skylab|e-skylab-sandbox) %s (--admin-user <administrator> | --kcadm-config <file>) [--check | --apply] [--revoke] [--editors-from <site client>]\n' \
+  printf 'usage: KEYCLOAK_REALM=(e-skylab|e-skylab-sandbox) %s (--admin-user <administrator> | --kcadm-config <file>) [--check | --apply] [--revoke]\n' \
     "${BASH_SOURCE[0]##*/}" >&2
   exit 2
 }
@@ -103,11 +111,6 @@ while [[ $# -gt 0 ]]; do
     --kcadm-config)
       [[ $# -ge 2 ]] || usage
       KCADM_CONFIG=$2
-      shift 2
-      ;;
-    --editors-from)
-      [[ $# -ge 2 && $2 =~ ^frontend-[a-z0-9-]+$ ]] || { printf 'bad --editors-from %s (a site client, frontend-<site>)\n' "${2:-}" >&2; exit 2; }
-      SOURCE_CLIENT=$2
       shift 2
       ;;
     --apply)
@@ -304,7 +307,7 @@ if [[ $OWN_CONFIG == true ]]; then
 fi
 revoke_note=''
 [[ $REVOKE != true ]] || revoke_note=' revoke'
-log "realm=$TARGET_REALM mode=$MODE$revoke_note editors-from=$SOURCE_CLIENT"
+log "realm=$TARGET_REALM mode=$MODE$revoke_note editors=$SOURCE_CLIENT"
 
 if ! realm_name=$(kcadm get "realms/$TARGET_REALM" --fields realm --format csv --noquotes 2>/dev/null | tr -d '\r') \
   || [[ $realm_name != "$TARGET_REALM" ]]; then
@@ -348,25 +351,58 @@ fi
 IFS=, read -r public_client full_scope < <(csv "clients/$app_uuid" publicClient,fullScopeAllowed)
 log "$APP_CLIENT: publicClient=$public_client fullScopeAllowed=$full_scope (left as is)"
 
-# --- 1. skyapp's roles ---------------------------------------------------------------------------
+# --- 1. read: skyapp's roles and every role that includes one of them -----------------------------
 declare -A app_role=()
+app_role_ids=' '
 for role in "${APP_ROLES[@]}"; do
   app_role[$role]=$(role_id "$app_uuid" "$role")
   if [[ -n ${app_role[$role]} ]]; then
     log "$APP_CLIENT: role $role exists"
-    continue
-  fi
-  if [[ $REVOKE == true ]]; then
-    continue
-  fi
-  change "create client role $role on $APP_CLIENT"
-  if [[ $MODE == apply ]]; then
-    kcadm_write create "clients/$app_uuid/roles" -r "$TARGET_REALM" \
-      -s "name=$role" -s "description=${ROLE_DESCRIPTION[$role]}"
-    app_role[$role]=$(role_id "$app_uuid" "$role")
-    [[ -n ${app_role[$role]} ]] || { printf 'role %s on %s was not created\n' "$role" "$APP_CLIENT" >&2; exit 1; }
+    app_role_ids+="${app_role[$role]} "
   fi
 done
+
+# composite_roles: "ID,LABEL" of every composite role of the realm (its realm roles and every
+# client's roles); LABEL is "realm role NAME" or "CLIENT/NAME".
+composite_roles() {
+  local listing roles client_id client_name id composite name
+  listing=$(csv roles id,composite,name -q max=100000)
+  while IFS=, read -r id composite name; do
+    if [[ $composite == true ]]; then printf '%s,realm role %s\n' "$id" "$name"; fi
+  done <<<"$listing"
+  listing=$(csv clients id,clientId -q max=100000)
+  while IFS=, read -r client_id client_name; do
+    [[ -n $client_id ]] || continue
+    roles=$(csv "clients/$client_id/roles" id,composite,name -q max=100000)
+    while IFS=, read -r id composite name; do
+      if [[ $composite == true ]]; then printf '%s,%s/%s\n' "$id" "$client_name" "$name"; fi
+    done <<<"$roles"
+  done <<<"$listing"
+}
+
+# links: "PARENT_ID,CHILD_ID,CHILD_ROLE,PARENT_LABEL" for every role that directly includes one of
+# skyapp's roles (skyapp's own cms:access too). A failed read stops the run before any write.
+links=()
+if [[ $app_role_ids != ' ' ]]; then
+  composites=$(composite_roles)
+  while IFS=, read -r parent_id parent_label; do
+    [[ -n $parent_id ]] || continue
+    children=$(csv "roles-by-id/$parent_id/composites/clients/$app_uuid" id,name)
+    while IFS=, read -r child_id child_name; do
+      [[ -n $child_id ]] || continue
+      links+=("$parent_id,$child_id,$child_name,$parent_label")
+    done <<<"$children"
+  done <<<"$composites"
+fi
+
+# expected_link PARENT_ID CHILD_ROLE: whether PARENT including skyapp's CHILD_ROLE is a link this
+# script makes (skyapp's cms:access includes content:*, frontend-main's two roles skyapp's).
+expected_link() {
+  case $2 in
+    content:read | content:write) [[ $1 == "${app_role[$EDITOR_ROLE]:-}" ]] ;;
+    *) [[ $1 == "${source_role[$2]:-}" ]] ;;
+  esac
+}
 
 # link PARENT_ID PARENT_LABEL CHILD_ROLE: makes the composite PARENT include skyapp's CHILD_ROLE.
 link() {
@@ -382,47 +418,29 @@ link() {
 }
 
 if [[ $REVOKE == true ]]; then
-  # --- --revoke: only the two links to the source client go -------------------------------------
-  for role in "${LINKED_ROLES[@]}"; do
-    if [[ -z ${app_role[$role]:-} ]] || ! includes "${source_role[$role]}" "${app_role[$role]}"; then
-      log "$SOURCE_CLIENT/$role does not include $APP_CLIENT/$role"
-      continue
-    fi
-    change "take $APP_CLIENT/$role out of $SOURCE_CLIENT/$role (nobody reaches it from the next token refresh on)"
+  # --- --revoke: every link into skyapp's roles from a role that is not skyapp's own goes ----------
+  taken=0
+  for entry in "${links[@]}"; do
+    IFS=, read -r parent_id child_id child_name parent_label <<<"$entry"
+    [[ $app_role_ids != *" $parent_id "* ]] || continue
+    taken=$((taken + 1))
+    change "take $APP_CLIENT/$child_name out of $parent_label (nobody reaches it through $parent_label from the next token refresh on)"
     if [[ $MODE == apply ]]; then
-      kcadm_write delete "roles-by-id/${source_role[$role]}/composites" -r "$TARGET_REALM" \
-        -b "$(role_body "${app_role[$role]}" "$role")"
+      kcadm_write delete "roles-by-id/$parent_id/composites" -r "$TARGET_REALM" -b "$(role_body "$child_id" "$child_name")"
     fi
   done
+  [[ $taken != 0 ]] || log "no role outside $APP_CLIENT includes one of its roles; nothing to take away"
 else
-  # --- 2. composites: skyapp's cms:access, and the source client's roles include skyapp's -------
-  if [[ -n ${app_role[$EDITOR_ROLE]:-} ]]; then
-    for role in "${CAPABILITY_ROLES[@]}"; do link "${app_role[$EDITOR_ROLE]}" "$APP_CLIENT/$EDITOR_ROLE" "$role"; done
-  else
-    for role in "${CAPABILITY_ROLES[@]}"; do change "make $APP_CLIENT/$EDITOR_ROLE include $APP_CLIENT/$role"; done
-  fi
-  for role in "${LINKED_ROLES[@]}"; do link "${source_role[$role]}" "$SOURCE_CLIENT/$role" "$role"; done
+  # --- PROBLEM checks: everything below is read before anything is written ------------------------
+  for entry in "${links[@]}"; do
+    IFS=, read -r parent_id _ child_name parent_label <<<"$entry"
+    expected_link "$parent_id" "$child_name" \
+      || problem "$parent_label includes $APP_CLIENT/$child_name: only $SOURCE_CLIENT/cms:access and $SOURCE_CLIENT/client:admin may lead to $APP_CLIENT's roles. Take the link away by hand, or run --revoke --apply (it takes away every such link, $SOURCE_CLIENT's two too) and then --apply"
+  done
 
-  # --- 3. aud skycms -------------------------------------------------------------------------------
-  if csv "clients/$app_uuid/default-client-scopes" name | grep -Fx "$AUDIENCE_SCOPE" >/dev/null; then
-    log "$APP_CLIENT: $AUDIENCE_SCOPE is a default scope (aud += $RESOURCE_CLIENT)"
-  else
-    if csv "clients/$app_uuid/optional-client-scopes" name | grep -Fx "$AUDIENCE_SCOPE" >/dev/null; then
-      change "detach the optional scope $AUDIENCE_SCOPE from $APP_CLIENT (it becomes a default scope)"
-      if [[ $MODE == apply ]]; then
-        kcadm_write delete "clients/$app_uuid/optional-client-scopes/$audience_scope" -r "$TARGET_REALM"
-      fi
-    fi
-    change "attach $AUDIENCE_SCOPE as a default scope of $APP_CLIENT (aud += $RESOURCE_CLIENT in every skyapp access token)"
-    if [[ $MODE == apply ]]; then
-      kcadm_write update "clients/$app_uuid/default-client-scopes/$audience_scope" -r "$TARGET_REALM" -n -b '{}'
-    fi
-  fi
-
-  # --- 4 and 5. who emits roles and groups ---------------------------------------------------------
+  # 4 and 5: who emits roles and groups (skycms-audience counted as the default scope it becomes).
   own_roles_line=''
   own_groups_line=''
-  own_name_clash=false
   foreign_roles=()
   good_groups=()
   bad_groups=()
@@ -450,14 +468,16 @@ else
         own_groups_line=$line
       else
         problem "$APP_CLIENT has a mapper named $m_name of type $m_type; rename or remove it by hand"
-        own_name_clash=true
       fi
       continue
     fi
     scan "client mapper $m_name" "$m_type" "$m_claim" "$m_full" "$m_access"
   done < <(csv "clients/$app_uuid/protocol-mappers/models" "$MAPPER_FIELDS")
   default_scopes=$(csv "clients/$app_uuid/default-client-scopes" id,name)
-  if [[ $MODE == check && $default_scopes != *",$AUDIENCE_SCOPE"* ]]; then
+  audience_default=false
+  if grep -Fx "$audience_scope,$AUDIENCE_SCOPE" <<<"$default_scopes" >/dev/null; then
+    audience_default=true
+  else
     default_scopes+=$'\n'"$audience_scope,$AUDIENCE_SCOPE"
   fi
   while IFS=, read -r scope_id scope_name; do
@@ -478,15 +498,54 @@ else
   done < <(csv "clients/$app_uuid/optional-client-scopes" id,name)
   [[ ${#optional_notes[@]} -eq 0 ]] \
     || log "NOTE: $APP_CLIENT: optional scope(s) ${optional_notes[*]} overwrite these claims when SkyApp requests them; SkyApp must not request them"
-
-  if [[ ${#foreign_roles[@]} -gt 0 ]]; then
-    problem "$APP_CLIENT: something else already emits the claim $ROLES_CLAIM (${foreign_roles[*]}); mapper $ROLES_MAPPER not added. Decide by hand which one inscribed should read"
-  elif [[ $own_name_clash == false ]]; then
-    ensure_own_mapper roles "$own_roles_line"
+  [[ ${#foreign_roles[@]} -eq 0 ]] \
+    || problem "$APP_CLIENT: something else already emits the claim $ROLES_CLAIM (${foreign_roles[*]}); decide by hand which one inscribed should read"
+  [[ ${#bad_groups[@]} -eq 0 ]] \
+    || problem "$APP_CLIENT: the claim $GROUPS_CLAIM is emitted differently from what inscribed and SkyApp read (${bad_groups[*]}); fix it by hand"
+  if [[ $problems != 0 ]]; then
+    log "nothing was changed: $problems problem(s); fix them by hand and run again"
+    exit 1
   fi
-  if [[ ${#bad_groups[@]} -gt 0 ]]; then
-    problem "$APP_CLIENT: the claim $GROUPS_CLAIM is emitted differently from what inscribed and SkyApp read (${bad_groups[*]}); not changed. Fix it by hand"
-  elif [[ ${#good_groups[@]} -gt 0 ]]; then
+
+  # --- 1. skyapp's roles -------------------------------------------------------------------------
+  for role in "${APP_ROLES[@]}"; do
+    [[ -z ${app_role[$role]} ]] || continue
+    change "create client role $role on $APP_CLIENT"
+    if [[ $MODE == apply ]]; then
+      kcadm_write create "clients/$app_uuid/roles" -r "$TARGET_REALM" \
+        -s "name=$role" -s "description=${ROLE_DESCRIPTION[$role]}"
+      app_role[$role]=$(role_id "$app_uuid" "$role")
+      [[ -n ${app_role[$role]} ]] || { printf 'role %s on %s was not created\n' "$role" "$APP_CLIENT" >&2; exit 1; }
+    fi
+  done
+
+  # --- 2. composites: skyapp's cms:access, and frontend-main's roles include skyapp's -------------
+  if [[ -n ${app_role[$EDITOR_ROLE]:-} ]]; then
+    for role in "${CAPABILITY_ROLES[@]}"; do link "${app_role[$EDITOR_ROLE]}" "$APP_CLIENT/$EDITOR_ROLE" "$role"; done
+  else
+    for role in "${CAPABILITY_ROLES[@]}"; do change "make $APP_CLIENT/$EDITOR_ROLE include $APP_CLIENT/$role"; done
+  fi
+  for role in "${LINKED_ROLES[@]}"; do link "${source_role[$role]}" "$SOURCE_CLIENT/$role" "$role"; done
+
+  # --- 3. aud skycms -------------------------------------------------------------------------------
+  if [[ $audience_default == true ]]; then
+    log "$APP_CLIENT: $AUDIENCE_SCOPE is a default scope (aud += $RESOURCE_CLIENT)"
+  else
+    if csv "clients/$app_uuid/optional-client-scopes" name | grep -Fx "$AUDIENCE_SCOPE" >/dev/null; then
+      change "detach the optional scope $AUDIENCE_SCOPE from $APP_CLIENT (it becomes a default scope)"
+      if [[ $MODE == apply ]]; then
+        kcadm_write delete "clients/$app_uuid/optional-client-scopes/$audience_scope" -r "$TARGET_REALM"
+      fi
+    fi
+    change "attach $AUDIENCE_SCOPE as a default scope of $APP_CLIENT (aud += $RESOURCE_CLIENT in every skyapp access token)"
+    if [[ $MODE == apply ]]; then
+      kcadm_write update "clients/$app_uuid/default-client-scopes/$audience_scope" -r "$TARGET_REALM" -n -b '{}'
+    fi
+  fi
+
+  # --- 4 and 5. the mappers ------------------------------------------------------------------------
+  ensure_own_mapper roles "$own_roles_line"
+  if [[ ${#good_groups[@]} -gt 0 ]]; then
     log "$APP_CLIENT: $GROUPS_CLAIM (full path) comes from ${good_groups[*]}"
     if [[ -n $own_groups_line ]]; then
       change "remove the redundant mapper $GROUPS_MAPPER from $APP_CLIENT"
@@ -494,26 +553,48 @@ else
         kcadm_write delete "clients/$app_uuid/protocol-mappers/models/${own_groups_line%%,*}" -r "$TARGET_REALM"
       fi
     fi
-  elif [[ $own_name_clash == false ]]; then
+  else
     ensure_own_mapper groups "$own_groups_line"
   fi
 fi
 
 # --- 6. report (read-only) -------------------------------------------------------------------------
+# is_service_account USER_ID USERNAME: whether the user is the service-account user of the client its
+# name points to (the name alone proves nothing).
+is_service_account() {
+  local owner account
+  [[ $2 == service-account-* ]] || return 1
+  owner=$(uuid_by "${2#service-account-}")
+  [[ -n $owner ]] || return 1
+  account=$(csv "clients/$owner/service-account-user" id 2>/dev/null) || return 1
+  [[ $account == "$1" ]]
+}
+
 for role in "${APP_ROLES[@]}"; do
   [[ -n ${app_role[$role]:-} ]] || continue
   holders=$(csv "clients/$app_uuid/roles/$role/groups" path -q max=100000 | sort | paste -sd ' ' -)
-  [[ -z $holders ]] || warning "$APP_CLIENT/$role is granted directly to the group(s) $holders: grant $SOURCE_CLIENT/${role/content:*/cms:access} instead and take this grant away in the SKY LAB admin panel"
   people=$(csv "clients/$app_uuid/roles/$role/users" username -q max=100000 | paste -sd ' ' -)
-  [[ -z $people ]] || warning "$APP_CLIENT/$role is granted directly to user(s) $people: take it away; SkyApp editors come from $SOURCE_CLIENT/cms:access"
+  if [[ $REVOKE == true ]]; then
+    [[ -z $holders ]] || warning "$APP_CLIENT/$role is still granted directly to the group(s) $holders: --revoke does not take a direct grant away, they keep $APP_CLIENT/$role; take it away in the SKY LAB admin panel"
+    [[ -z $people ]] || warning "$APP_CLIENT/$role is still granted directly to user(s) $people: --revoke does not take a direct grant away, they keep $APP_CLIENT/$role; take it away in the SKY LAB admin panel"
+  else
+    [[ -z $holders ]] || warning "$APP_CLIENT/$role is granted directly to the group(s) $holders: grant $SOURCE_CLIENT/${role/content:*/cms:access} instead and take this grant away in the SKY LAB admin panel"
+    [[ -z $people ]] || warning "$APP_CLIENT/$role is granted directly to user(s) $people: take it away; SkyApp editors come from $SOURCE_CLIENT/cms:access"
+  fi
 done
 for role in "${LINKED_ROLES[@]}"; do
+  reach="(and so $APP_CLIENT/$role)"
+  [[ $REVOKE != true ]] || reach="(no longer reaches $APP_CLIENT)"
   holders=$(csv "clients/$source_uuid/roles/$role/groups" path -q max=100000 | sort | paste -sd ' ' -)
-  if [[ $REVOKE == true ]]; then
-    log "$SOURCE_CLIENT/$role <- ${holders:-no group} (no longer reaches $APP_CLIENT)"
-  else
-    log "$SOURCE_CLIENT/$role <- ${holders:-no group} (and so $APP_CLIENT/$role)"
-  fi
+  log "$SOURCE_CLIENT/$role <- ${holders:-no group} $reach"
+  direct=$(csv "clients/$source_uuid/roles/$role/users" id,username -q max=100000 | sort -t, -k2)
+  direct_people=()
+  direct_accounts=()
+  while IFS=, read -r user_id username; do
+    [[ -n $user_id ]] || continue
+    if is_service_account "$user_id" "$username"; then direct_accounts+=("$username"); else direct_people+=("$username"); fi
+  done <<<"$direct"
+  log "$SOURCE_CLIENT/$role <- directly ${#direct_people[@]} user(s)${direct_people[*]:+ (${direct_people[*]})}, ${#direct_accounts[@]} service account(s)${direct_accounts[*]:+ (${direct_accounts[*]})} $reach"
 done
 
 if [[ $MODE == apply ]]; then

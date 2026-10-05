@@ -15,7 +15,10 @@
 #
 # What it proves:
 #   - every realm but e-skylab and e-skylab-sandbox (and an unset KEYCLOAK_REALM) is refused before a
-#     login (exit 2); a missing skyapp or source client role stops the run before any write (exit 1);
+#     login (exit 2); the removed --editors-from is a usage error (exit 2); a missing skyapp,
+#     frontend-main, skycms or scope stops the run before any write (exit 1);
+#   - a PROBLEM (here another emitter of the roles claim on skyapp) stops --check and --apply before
+#     any write while ten changes are pending: exit 1, no admin event, skyapp gets no role;
 #   - --check writes nothing and plans skyapp's four roles, its cms:access composite, the two links
 #     from frontend-main, the skycms-audience scope and the roles mapper; --apply writes exactly that,
 #     grants no role to a group or a person and does not change frontend-main's own mappers; a second
@@ -26,9 +29,13 @@
 #     new login is needed; ADMIN also gets client:admin; a plain member gets aud skycms and no CMS
 #     role; the ID token carries no roles;
 #   - the main site's own token is unchanged (its flat roles claim holds only frontend-main's roles);
-#   - a direct grant of a skyapp CMS role is a WARNING and is not taken away;
-#   - --revoke takes away only the two links: the next refresh carries no CMS role; --apply restores
-#     them.
+#   - a direct grant of a skyapp CMS role is a WARNING and is not taken away; the users and service
+#     accounts that hold frontend-main/cms:access directly are counted and named;
+#   - another client's role that includes skyapp/cms:access (what --editors-from used to make) is a
+#     PROBLEM: --check and --apply stop with no admin event; --revoke takes it away together with
+#     frontend-main's two links (the next refresh carries no CMS role, also for a person who was an
+#     editor only through that client) and reports the surviving direct grant as a WARNING; --apply
+#     restores exactly frontend-main's two links.
 # Requirements on the host: docker, curl, jq, openssl, base64. SKYAPP_CMS_TEST_PORT (default 18095).
 # The jq programs name jq variables ($t, $m), not shell ones:
 # shellcheck disable=SC2016
@@ -112,6 +119,11 @@ scope_uuid() {
 }
 newest_admin_event() {
   kcadm get admin-events -r "${1:-$REALM}" -q max=1 | jq -r '.[0].time // 0'
+}
+# no_admin_event_since TIME MESSAGE [REALM]: fails when the realm logged an admin event after TIME.
+no_admin_event_since() {
+  json_assert "$(kcadm get admin-events -r "${3:-$REALM}" -q max=1000)" '[.[] | select(.time > $t)] | length == 0' \
+    "$2" --argjson t "$1"
 }
 jwt_payload() {
   local segment
@@ -268,20 +280,37 @@ printf '    before: aud=%s roles=%s skyapp gate=%s\n' "$(jq -c "$AUD" <<<"$acces
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='missing prerequisites'
-event_before=$(newest_admin_event)
+removed=$(run_expecting 2 skyapp-cms-editor.sh "$REALM" --apply --editors-from frontend-arge)
+expect_line "$removed" 'usage: KEYCLOAK_REALM=' 'the removed --editors-from was accepted'
+reject_line "$removed" 'realm=' 'a run with --editors-from went on'
+kcadm create realms -s realm="$SANDBOX_REALM" -s enabled=true -s adminEventsEnabled=true >/dev/null
+event_before=$(newest_admin_event "$SANDBOX_REALM")
 sleep 1
-missing=$(run_expecting 1 skyapp-cms-editor.sh "$REALM" --apply --editors-from frontend-arge)
-expect_line "$missing" 'MISSING: client frontend-arge (the editors'"'"' source) does not exist in realm e-skylab' 'missing source not reported'
-expect_line "$missing" 'nothing was changed: 1 prerequisite(s) missing' 'missing run went on'
-[[ $(newest_admin_event) == "$event_before" ]] || fail 'a run with a missing prerequisite wrote to the realm'
-bad=$(run_expecting 2 skyapp-cms-editor.sh "$REALM" --editors-from skyapp)
-expect_line "$bad" 'bad --editors-from skyapp' 'a non-site source was accepted'
-kcadm create realms -s realm="$SANDBOX_REALM" -s enabled=true >/dev/null
 missing=$(run_expecting 1 skyapp-cms-editor.sh "$SANDBOX_REALM" --apply)
 expect_line "$missing" "MISSING: client $APP does not exist in realm $SANDBOX_REALM" 'missing skyapp not reported'
+expect_line "$missing" "MISSING: client frontend-main (the editors' source) does not exist in realm $SANDBOX_REALM" 'missing source not reported'
 expect_line "$missing" "MISSING: client skycms (inscribed's audience) does not exist in realm $SANDBOX_REALM" 'missing skycms not reported'
 expect_line "$missing" 'MISSING: client scope skycms-audience does not exist' 'missing scope not reported'
-printf '    a missing source client, skyapp, skycms or scope stops the run before any write (exit 1)\n'
+expect_line "$missing" 'nothing was changed: 4 prerequisite(s) missing' 'missing run went on'
+no_admin_event_since "$event_before" 'a run with a missing prerequisite wrote to the realm' "$SANDBOX_REALM"
+printf '    --editors-from is a usage error (exit 2); a missing skyapp, frontend-main, skycms or scope stops the run before any write (exit 1)\n'
+
+# ---------------------------------------------------------------------------------------------
+CURRENT_STAGE='a PROBLEM stops the run before any write'
+kcadm create "clients/$app/protocol-mappers/models" -r "$REALM" -b '{"name":"legacy-roles","protocol":"openid-connect","protocolMapper":"oidc-hardcoded-claim-mapper","config":{"claim.name":"roles","claim.value":"legacy","jsonType.label":"String","access.token.claim":"true","id.token.claim":"false","userinfo.token.claim":"false"}}' >/dev/null
+event_before=$(newest_admin_event)
+sleep 1
+for mode in --check --apply; do
+  out=$(run_expecting 1 skyapp-cms-editor.sh "$REALM" "$mode")
+  expect_line "$out" 'PROBLEM: skyapp: something else already emits the claim roles (client mapper legacy-roles (oidc-hardcoded-claim-mapper))' "$mode: the foreign roles emitter was not reported"
+  expect_line "$out" 'nothing was changed: 1 problem(s)' "$mode did not stop on the PROBLEM"
+  reject_line "$out" 'create client role' "$mode went on to the plan"
+done
+no_admin_event_since "$event_before" '--apply wrote to the realm although a PROBLEM was found'
+[[ $(kcadm get "clients/$app/roles" -r "$REALM" | jq 'length') == 0 ]] || fail 'skyapp got roles although a PROBLEM was found'
+kcadm delete "clients/$app/protocol-mappers/models/$(kcadm get "clients/$app/protocol-mappers/models" -r "$REALM" \
+  | jq -r '.[] | select(.name == "legacy-roles") | .id')" -r "$REALM"
+printf '    a PROBLEM stops --check and --apply with ten changes pending: exit 1, no admin event, no role\n'
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='--check writes nothing'
@@ -290,7 +319,7 @@ sleep 1
 check=$(editor --check) || { printf '%s\n' "$check" >&2; fail '--check failed'; }
 printf '%s\n' "$check" | sed 's/^/    /'
 [[ $(newest_admin_event) == "$event_before" ]] || fail '--check wrote to the realm'
-expect_line "$check" 'realm=e-skylab mode=check editors-from=frontend-main' 'unexpected header'
+expect_line "$check" 'realm=e-skylab mode=check editors=frontend-main' 'unexpected header'
 expect_line "$check" 'skyapp: publicClient=true fullScopeAllowed=true (left as is)' 'client flags not reported'
 for role in content:read content:write cms:access client:admin; do
   expect_line "$check" "would create client role $role on skyapp" "$role not planned"
@@ -302,6 +331,7 @@ expect_line "$check" 'would attach skycms-audience as a default scope of skyapp'
 expect_line "$check" 'would add mapper inscribed-roles to skyapp (User Client Role' 'roles mapper not planned'
 expect_line "$check" 'skyapp: groups (full path) comes from default scope groups mapper groups' 'groups source not found'
 expect_line "$check" 'frontend-main/cms:access <- /ADMIN /UYELER/ARGE/MOBILAB/LIDERLER /UYELER/DK /UYELER/YK' 'editors not reported'
+expect_line "$check" 'frontend-main/cms:access <- directly 0 user(s), 0 service account(s) (and so skyapp/cms:access)' 'direct holders not counted'
 # 4 roles, 2 for skyapp's cms:access, 2 links, the scope, the mapper.
 expect_line "$check" 'check: 10 change(s) pending, 0 warning(s), 0 problem(s)' 'unexpected plan size'
 
@@ -355,25 +385,80 @@ printf '    mobilead @ frontend-main: roles=%s (its own, unchanged)\n' "$(jq -c 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='a direct grant is a WARNING'
 grant "$app" cms:access "$stale_editors"
+# Direct holders of frontend-main/cms:access, not through a group: a person and frontend-main's own
+# service account.
+yk_user=$(kcadm get users -r "$REALM" -q username=ykmember -q exact=true | jq -r '.[0].id')
+main_account=$(kcadm get "clients/$main/service-account-user" -r "$REALM" | jq -r .id)
+main_editor_role=$(kcadm get "clients/$main/roles/cms:access" -r "$REALM" | jq -c '[{id, name}]')
+for user in "$yk_user" "$main_account"; do
+  kcadm create "users/$user/role-mappings/clients/$main" -r "$REALM" -b "$main_editor_role" >/dev/null
+done
 out=$(editor --apply) || { printf '%s\n' "$out" >&2; fail 'run with a direct grant failed'; }
 expect_line "$out" 'WARNING: skyapp/cms:access is granted directly to the group(s) /UYELER/ESKI-EDITORLER' 'direct grant not reported'
+expect_line "$out" 'frontend-main/cms:access <- directly 1 user(s) (ykmember), 1 service account(s) (service-account-frontend-main) (and so skyapp/cms:access)' \
+  'the direct holders of frontend-main/cms:access were not counted and named'
 expect_line "$out" 'applied 0 change(s), 1 warning(s), 0 problem(s)' 'the direct grant changed the plan'
 [[ $(kcadm get "groups/$stale_editors/role-mappings/clients/$app" -r "$REALM" | jq 'length') == 1 ]] || fail 'the direct grant was taken away'
-kcadm delete "groups/$stale_editors/role-mappings/clients/$app" -r "$REALM" \
+for user in "$yk_user" "$main_account"; do
+  kcadm delete "users/$user/role-mappings/clients/$main" -r "$REALM" -b "$main_editor_role" >/dev/null
+done
+printf '    a direct grant of skyapp/cms:access: WARNING, kept; direct holders of frontend-main/cms:access counted\n'
+
+# ---------------------------------------------------------------------------------------------
+CURRENT_STAGE='another role that includes a skyapp role is a PROBLEM'
+# What --editors-from frontend-arge used to make: frontend-arge/cms:access includes skyapp/cms:access
+# and is granted to /UYELER/ARGE; argeeditor is a SkyApp editor only through it.
+kcadm create clients -r "$REALM" -s clientId=frontend-arge -s publicClient=false >/dev/null
+arge_site=$(client_uuid frontend-arge)
+kcadm create "clients/$arge_site/roles" -r "$REALM" -s name=cms:access >/dev/null
+arge_editor_role=$(kcadm get "clients/$arge_site/roles/cms:access" -r "$REALM" | jq -r .id)
+kcadm create "roles-by-id/$arge_editor_role/composites" -r "$REALM" \
   -b "$(kcadm get "clients/$app/roles/cms:access" -r "$REALM" | jq -c '[{id, name}]')" >/dev/null
+grant "$arge_site" cms:access "$arge"
+person argeeditor "$arge"
+access=$(access_of "$(app_tokens argeeditor)")
+json_assert "$access" "($CMS_ROLES) == [\"cms:access\", \"content:read\", \"content:write\"]" \
+  'the fixture is wrong: frontend-arge/cms:access does not make argeeditor a SkyApp editor'
+event_before=$(newest_admin_event)
+sleep 1
+for mode in --check --apply; do
+  out=$(run_expecting 1 skyapp-cms-editor.sh "$REALM" "$mode")
+  expect_line "$out" 'PROBLEM: frontend-arge/cms:access includes skyapp/cms:access: only frontend-main/cms:access and frontend-main/client:admin may lead to' \
+    "$mode: the extra link was not reported"
+  expect_line "$out" 'nothing was changed: 1 problem(s)' "$mode did not stop on the extra link"
+done
+no_admin_event_since "$event_before" '--apply wrote to the realm although another role includes skyapp/cms:access'
+printf '    frontend-arge/cms:access includes skyapp/cms:access: PROBLEM, --check and --apply stop, no admin event\n'
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='--revoke'
-session=$(app_tokens mobilead)
+leader_session=$(app_tokens mobilead)
+arge_session=$(app_tokens argeeditor)
 out=$(editor --apply --revoke) || { printf '%s\n' "$out" >&2; fail '--revoke failed'; }
 expect_line "$out" 'take skyapp/cms:access out of frontend-main/cms:access' 'editor link not taken away'
-expect_line "$out" 'applied 2 change(s), 0 warning(s), 0 problem(s)' 'revoke did more than the two links'
-access=$(access_of "$(app_refresh "$(jq -r .refresh_token <<<"$session")")")
-json_assert "$access" "(($CMS_ROLES) == []) and (($APP_GATE) | not)" 'after --revoke the refreshed token still has CMS roles'
-printf '    after --revoke the next refresh: roles=%s skyapp gate=%s\n' "$(jq -c "$CMS_ROLES" <<<"$access")" "$(jq -c "$APP_GATE" <<<"$access")"
+expect_line "$out" 'take skyapp/client:admin out of frontend-main/client:admin' 'admin link not taken away'
+expect_line "$out" 'take skyapp/cms:access out of frontend-arge/cms:access' 'the extra link was not taken away'
+expect_line "$out" 'WARNING: skyapp/cms:access is still granted directly to the group(s) /UYELER/ESKI-EDITORLER: --revoke does not take a direct grant away' \
+  'the direct grant that survives --revoke was not reported'
+expect_line "$out" 'frontend-main/cms:access <- /ADMIN /UYELER/ARGE/MOBILAB/LIDERLER /UYELER/DK /UYELER/YK (no longer reaches skyapp)' \
+  'the editors were not reported as cut off'
+expect_line "$out" 'applied 3 change(s), 1 warning(s), 0 problem(s)' 'revoke did not take away exactly the three links'
+json_assert "$(kcadm get "roles-by-id/$arge_editor_role/composites/clients/$app" -r "$REALM")" 'length == 0' \
+  'frontend-arge/cms:access still includes a skyapp role'
+for session in "$leader_session" "$arge_session"; do
+  access=$(access_of "$(app_refresh "$(jq -r .refresh_token <<<"$session")")")
+  json_assert "$access" "(($CMS_ROLES) == []) and (($APP_GATE) | not)" 'after --revoke a refreshed token still has CMS roles'
+done
+printf '    after --revoke the next refresh (mobilead, argeeditor): roles=%s skyapp gate=%s\n' "$(jq -c "$CMS_ROLES" <<<"$access")" "$(jq -c "$APP_GATE" <<<"$access")"
+kcadm delete "groups/$stale_editors/role-mappings/clients/$app" -r "$REALM" \
+  -b "$(kcadm get "clients/$app/roles/cms:access" -r "$REALM" | jq -c '[{id, name}]')" >/dev/null
 out=$(editor --apply) || { printf '%s\n' "$out" >&2; fail 're-apply failed'; }
 expect_line "$out" 'applied 2 change(s), 0 warning(s), 0 problem(s)' 're-apply did not restore exactly the two links'
+reject_line "$out" 'frontend-arge' 're-apply touched frontend-arge'
 access=$(access_of "$(app_tokens mobilead)")
 json_assert "$access" "($CMS_ROLES) == [\"cms:access\", \"content:read\", \"content:write\"]" 're-apply did not restore the roles'
+access=$(access_of "$(app_tokens argeeditor)")
+json_assert "$access" "(($CMS_ROLES) == []) and (($APP_GATE) | not)" 're-apply gave argeeditor CMS roles again'
+printf '    --apply restores frontend-main'"'"'s two links only\n'
 
 printf 'skyapp-cms-editor.sh contract holds against %s.\n' "$IMAGE"

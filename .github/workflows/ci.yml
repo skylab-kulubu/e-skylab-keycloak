@@ -185,8 +185,11 @@ jobs:
 
   integration:
     runs-on: ubuntu-latest
-    # The full harness takes 56-83 minutes depending on the runner (2026-10); 120 leaves headroom.
-    timeout-minutes: 120
+    # The full harness keeps growing: 56-83 minutes in early October, 102 on main 2026-10-06 00:45Z,
+    # 116.7 on #77 and over 120 on main 42ee69e (run 37455741780) and on #79 (run 37596391217), both
+    # cancelled at the limit with no assertion failed. 180 leaves headroom until it is split into
+    # parallel jobs.
+    timeout-minutes: 180
     needs: theme
     env:
       KEYCLOAK_TEST_IMAGE: account-keycloak:ci

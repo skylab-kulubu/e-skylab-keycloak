@@ -1,0 +1,14 @@
+[
+  {
+    "name": "skymail-audience",
+    "protocol": "openid-connect",
+    "protocolMapper": "oidc-audience-mapper",
+    "consentRequired": false,
+    "config": {
+      "included.client.audience": "skymail",
+      "id.token.claim": "false",
+      "access.token.claim": "true",
+      "introspection.token.claim": "true"
+    }
+  }
+]

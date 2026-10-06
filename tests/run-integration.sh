@@ -1181,6 +1181,20 @@ stage_v2_passkey_cleanup() {
 CURRENT_STAGE='Keycloak readiness'
 wait_for_url http://localhost:19000/health/ready
 
+# The optimized image serves the e-SKY LAB landing page at / (the e-skylab-welcome folder theme and
+# the Dockerfile's KC_SPI_THEME__WELCOME_THEME), not Keycloak's 302 to the Admin Console.
+# tests/welcome-page.sh covers the page itself against the stock image.
+CURRENT_STAGE='landing page at /'
+welcome_response=$(curl --silent --show-error --write-out '\n%{http_code}' http://localhost:18080/)
+[[ ${welcome_response##*$'\n'} == 200 ]] \
+  || fail "the image answers / with ${welcome_response##*$'\n'} instead of the landing page"
+grep -Fq 'Tek hesap, <span>bütün SKY LAB.</span>' <<<"$welcome_response" \
+  || fail 'the image does not serve the e-skylab-welcome landing page at /'
+welcome_stylesheet=$(grep -o 'resources/[^"]*/welcome/e-skylab-welcome/welcome\.css' <<<"$welcome_response" | head -n 1)
+[[ -n $welcome_stylesheet ]] || fail 'the landing page does not reference its stylesheet'
+curl --fail --silent --show-error --output /dev/null "http://localhost:18080/$welcome_stylesheet" \
+  || fail 'the landing page stylesheet does not load from the image'
+
 # The event exchange exists before the first event, as it does in production. Every publish of the
 # run then succeeds and its channel stays open until the provider closes it, so a provider that
 # leaks channels runs its connection out of them (2047) within this run and the RabbitMQ provider
@@ -1505,7 +1519,7 @@ skyapp_scope_count=$(kcadm get client-scopes -r e-skylab-test -c \
 [[ $skyapp_scope_count == 1 ]] || fail "skyapp audience scope is missing or duplicated"
 
 built_in_scope_after=$(kcadm get client-scopes -r e-skylab-test -c \
-  | jq -c '[.[] | select(.name != "account-center-account-api" and .name != "account-center-core-claims" and .name != "skyapp-account-center-audience" and .name != "skyforms-forms-audience" and .name != "frontend-main-core-audience" and .name != "frontend-arge-core-audience" and .name != "admin-panel-api-audience") | {id, name}] | sort_by(.id)')
+  | jq -c '[.[] | select(.name != "account-center-account-api" and .name != "account-center-core-claims" and .name != "skyapp-account-center-audience" and .name != "skyforms-forms-audience" and .name != "frontend-main-core-audience" and .name != "frontend-arge-core-audience" and .name != "skycms-audience" and .name != "skymail-api-audience" and .name != "admin-panel-api-audience") | {id, name}] | sort_by(.id)')
 [[ $built_in_scope_after == "$built_in_scope_snapshot" ]] \
   || fail "a built-in client scope id or name was mutated"
 
@@ -1651,6 +1665,9 @@ stage_core_roles_seeded_by_operator
 # The operator grants media:attach to the forms service account (forms exists since
 # core-erasure-client.sh); the no-op reconciliation after it must only verify.
 stage_media_attach_granted_by_operator
+# admin-token-authz K1: what core, forms and inscribed read survives the panel's token exchange for
+# a Privileged person (core's roles as seeded above), a Leader and a plain member.
+stage_admin_panel_exchange_claims
 
 stage_v2_reconcile_noop
 stage_event_retention_after_noop_reconciliation

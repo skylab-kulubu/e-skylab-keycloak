@@ -269,7 +269,7 @@ printf '%s\n' "$check" | sed 's/^/    /'
 [[ $(newest_admin_event) == "$event_before" ]] || fail '--check wrote to the realm'
 expect_line "$check" 'realm=e-skylab-sandbox mode=check clients=frontend-arge' 'unexpected header'
 expect_line "$check" 'NOTE: frontend-main is not made: there is no sandbox main-site app' 'frontend-main not explained'
-expect_line "$check" 'would create confidential client frontend-arge (standard flow and service account on, implicit and direct grants off, fullScopeAllowed=true; redirect https://sandbox-arge.yildizskylab.com/*, web origin https://sandbox-arge.yildizskylab.com, post-logout https://sandbox-arge.yildizskylab.com/*' 'client not planned'
+expect_line "$check" 'would create confidential client frontend-arge (standard flow and service account on, implicit and direct grants off, fullScopeAllowed=false; redirect https://sandbox-arge.yildizskylab.com/*, web origin https://sandbox-arge.yildizskylab.com, post-logout https://sandbox-arge.yildizskylab.com/*' 'client not planned'
 expect_line "$check" 'would add mapper skycms-audience to frontend-arge (aud += skycms' 'skycms audience not planned'
 expect_line "$check" 'would create client scope frontend-arge-core-audience (include.in.token.scope=false, display.on.consent.screen=false)' 'core scope not planned'
 expect_line "$check" 'would add mapper core-audience to frontend-arge-core-audience (aud += core' 'core mapper not planned'
@@ -291,7 +291,7 @@ arge=$(client_uuid "$CLIENT")
 live=$(kcadm get "clients/$arge" -r "$REALM")
 json_assert "$live" '.enabled and .protocol == "openid-connect" and (.publicClient | not) and (.bearerOnly | not)
   and .clientAuthenticatorType == "client-secret" and .standardFlowEnabled and (.implicitFlowEnabled | not)
-  and (.directAccessGrantsEnabled | not) and .serviceAccountsEnabled and .fullScopeAllowed and (.consentRequired | not)' \
+  and (.directAccessGrantsEnabled | not) and .serviceAccountsEnabled and (.fullScopeAllowed | not) and (.consentRequired | not)' \
   'the client flags are not production'"'"'s'
 json_assert "$live" '.redirectUris == [$s + "/*"] and .webOrigins == [$s] and .attributes["post.logout.redirect.uris"] == $s + "/*"' \
   'the client URIs are not the sandbox site'"'"'s' --arg s "$SITE"

@@ -15,6 +15,13 @@
 # The fixture realm has skyforms but neither site client, like the sandbox realm: the first
 # reconciliation must skip both with a warning. skyforms gets the scope the way
 # the Admin Console made it in production, so the first reconciliation must adopt it in place.
+#
+# The sites' scopes come from reconcile_login_clients, which also narrows frontend-main,
+# frontend-arge and skymail (admin-token-authz 16-18): aud skycms from the shared skycms-audience
+# scope, no full scope, no role scope mapping, and no groups on SkyMail. The fixture's skymail is
+# narrowed by the first reconciliation, the sites by the second; a real login of a person holding
+# roles of core, admin and skymail then shows the narrowed tokens. tests/login-clients.sh proves the
+# step in depth against production-shaped clients.
 
 LCA_USER='audience-fixture'
 LCA_PASSWORD='audience-fixture-password-change-me'
@@ -24,6 +31,7 @@ LCA_FRONTEND_ARGE_SCOPE=frontend-arge-core-audience
 LCA_SKYFORMS_REDIRECT=https://forms.yildizskylab.com/api/auth/callback/keycloak
 LCA_FRONTEND_MAIN_REDIRECT=https://yildizskylab.com/api/auth/callback/keycloak
 LCA_FRONTEND_ARGE_REDIRECT=https://arge.yildizskylab.com/api/auth/callback/keycloak
+LCA_SKYMAIL_REDIRECT=https://mail.yildizskylab.com/api/auth/callback/keycloak
 LCA_HAND_MADE_SCOPE_UUID=''
 LCA_HAND_MADE_MAPPER_UUID=''
 LCA_ACCESS_TOKEN=''
@@ -67,11 +75,17 @@ stage_login_audiences_hand_made() {
 stage_login_audiences_after_first_reconciliation() {
   CURRENT_STAGE='login client audiences: skip a missing client, adopt the hand-made scope'
   local log="$TEST_STATE_DIR/reconcile-first.log" skyforms_uuid scope mappers
-  grep -Fq "[reconcile] WARNING: client frontend-main does not exist in realm $V2_REALM; skipped client scope $LCA_FRONTEND_MAIN_SCOPE" "$log" \
+  grep -Fq "[reconcile] WARNING: client frontend-main does not exist in realm $V2_REALM; skipped client scope $LCA_FRONTEND_MAIN_SCOPE, skycms-audience and its token narrowing" "$log" \
     || fail 'the first reconciliation did not report skipping the missing frontend-main client'
+  [[ -z $(lca_scope_uuids skycms-audience) ]] \
+    || fail 'the reconciler created skycms-audience although no site client exists'
+  grep -Fq '[reconcile] client skymail (no full scope): updated (fullScopeAllowed)' "$log" \
+    || fail 'the first reconciliation did not narrow the skymail client'
+  grep -Fq '[reconcile] client scope skymail-api-audience: created' "$log" \
+    || fail 'the first reconciliation did not make the SkyMail audience scope'
   [[ -z $(lca_scope_uuids "$LCA_FRONTEND_MAIN_SCOPE") ]] \
     || fail 'the reconciler created a scope for a client that does not exist'
-  grep -Fq "[reconcile] WARNING: client frontend-arge does not exist in realm $V2_REALM; skipped client scope $LCA_FRONTEND_ARGE_SCOPE" "$log" \
+  grep -Fq "[reconcile] WARNING: client frontend-arge does not exist in realm $V2_REALM; skipped client scope $LCA_FRONTEND_ARGE_SCOPE, skycms-audience and its token narrowing" "$log" \
     || fail 'the first reconciliation did not report skipping the missing frontend-arge client'
   [[ -z $(lca_scope_uuids "$LCA_FRONTEND_ARGE_SCOPE") ]] \
     || fail 'the reconciler created the frontend-arge scope for a client that does not exist'
@@ -234,18 +248,44 @@ stage_login_audiences_after_second_reconciliation() {
   lca_assert_client skyforms "$LCA_SKYFORMS_SCOPE" forms-audience forms "$LCA_SKYFORMS_REDIRECT"
   lca_assert_client frontend-main "$LCA_FRONTEND_MAIN_SCOPE" core-audience core "$LCA_FRONTEND_MAIN_REDIRECT"
   lca_assert_client frontend-arge "$LCA_FRONTEND_ARGE_SCOPE" core-audience core "$LCA_FRONTEND_ARGE_REDIRECT"
+
+  # The narrowed login clients (reconcile_login_clients): the admin panel's fixture person holds
+  # roles of core, admin and skymail and the group /UYELER/YK.
+  local client redirect
+  grep -Fq '[reconcile] client scope skycms-audience: created' "$log" \
+    || fail 'the second reconciliation did not make the shared skycms-audience scope'
+  for client in frontend-main frontend-arge; do
+    grep -Fq "[reconcile] client $client (no full scope): updated (fullScopeAllowed)" "$log" \
+      || fail "the second reconciliation did not narrow the new $client client"
+    redirect=$LCA_FRONTEND_MAIN_REDIRECT
+    [[ $client == frontend-main ]] || redirect=$LCA_FRONTEND_ARGE_REDIRECT
+    lca_login "$client" "$redirect" '' "$AP_USER" "$AP_PASSWORD" 'openid email profile'
+    json_assert "$LCA_ACCESS_PAYLOAD" \
+      '((.aud | if type == "array" then . else [.] end) | sort) == ["core", "skycms"] and (has("realm_access") | not) and ((.resource_access // {}) | length) == 0' \
+      "the $client token is not narrowed to aud core and skycms without other clients' or realm roles"
+  done
+  lca_login skymail "$LCA_SKYMAIL_REDIRECT" '' "$AP_USER" "$AP_PASSWORD" 'openid email profile'
+  json_assert "$LCA_ACCESS_PAYLOAD" \
+    '(.aud | if type == "array" then . else [.] end) == ["skymail"] and .resource_access == {"skymail": {"roles": ["skymail:access"]}} and (has("realm_access") | not) and (has("groups") | not)' \
+    'the skymail token is not narrowed to aud skymail and its own roles without groups'
 }
 
 # Part of v2_state_snapshot: what the no-op reconciliation must leave byte for byte.
 lca_state_snapshot() {
   local client_id scope_name client_uuid scope_uuid
-  for client_id in skyforms frontend-main frontend-arge; do
+  for client_id in skyforms frontend-main frontend-arge skymail; do
     client_uuid=$(lca_client_uuid "$client_id")
     # Keycloak lists a client's scopes in hash-map order; compare them as sets.
     kcadm get "clients/$client_uuid/default-client-scopes" -r "$V2_REALM" -c | jq -c 'sort_by(.id)'
     kcadm get "clients/$client_uuid/optional-client-scopes" -r "$V2_REALM" -c | jq -c 'sort_by(.id)'
   done
-  for scope_name in "$LCA_SKYFORMS_SCOPE" "$LCA_FRONTEND_MAIN_SCOPE" "$LCA_FRONTEND_ARGE_SCOPE"; do
+  for client_id in frontend-main frontend-arge skymail; do
+    client_uuid=$(lca_client_uuid "$client_id")
+    kcadm get "clients/$client_uuid" -r "$V2_REALM" -c
+    kcadm get "clients/$client_uuid/scope-mappings" -r "$V2_REALM" -c | jq -c '{realmMappings: ((.realmMappings // []) | sort_by(.id)), clientMappings: ((.clientMappings // {}) | map_values(.mappings | sort_by(.id)))}'
+    kcadm get "clients/$client_uuid/protocol-mappers/models" -r "$V2_REALM" -c | jq -c 'sort_by(.id)'
+  done
+  for scope_name in "$LCA_SKYFORMS_SCOPE" "$LCA_FRONTEND_MAIN_SCOPE" "$LCA_FRONTEND_ARGE_SCOPE" skycms-audience skymail-api-audience; do
     scope_uuid=$(lca_scope_uuids "$scope_name")
     kcadm get "client-scopes/$scope_uuid" -r "$V2_REALM" -c
     kcadm get "client-scopes/$scope_uuid/protocol-mappers/models" -r "$V2_REALM" -c

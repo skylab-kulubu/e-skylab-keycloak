@@ -45,6 +45,10 @@ realm ayarı bırakmamaktır.
   sağlayıcısı (`3.1.1`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
   etkinleştirilir.
+- `/` adresi (Keycloak'ın karşılama sayfası) Admin Console'a yönlenmez, e-SKY LAB
+  tanıtım sayfasını gösterir: `/opt/keycloak/themes/e-skylab-welcome` klasör
+  teması, imajdaki `KC_SPI_THEME__WELCOME_THEME=e-skylab-welcome` ile seçilir
+  (çalışma zamanı seçeneği; Dokploy'da ayar gerekmez).
 - Realm ve istemci ayarları `config/reconcile-account-center.sh` ile sürekli
   uzlaştırılır; tek seferlik realm içe aktarımına güvenilmez.
 - Sistem e-postaları `sky-mail` sağlayıcılarıyla SkyMail üzerinden gönderilir;
@@ -70,6 +74,21 @@ bunları giriş rollerine bağlayan tek stil dosyasıdır. `Template.tsx` her sa
 giriş sayfasının `LegacyFrame` çerçevesinde (solda sayfa, geniş ekranda sağda
 animasyonlu SKY LAB logolu tanıtım paneli, KVKK altbilgisi, dil seçimi) çizer ve bütün metinler `i18n.ts` içinden gelir
 (önce Türkçe, sonra İngilizce).
+
+`https://e.yildizskylab.com/` adresini doğrudan açan kişi Keycloak'ın
+karşılama sayfası yerine e-SKY LAB'in tanıtım sayfasını görür: e-SKY LAB nedir,
+hangi uygulamalarda kullanılır, bugün nasıl giriş yapılır, okul şifresi ve
+Microsoft'tan alınan bilgiler (ADR-0063'ün güven metni), Hesap Merkezi ve KVKK
+Aydınlatma Metni bağlantıları. Sayfa `theme/src/welcome/` içindeki React
+bileşenlerinden (`AnimatedSkyLabLogo`, `YtuMark` giriş temasıyla ortak) derleme
+sırasında bir kez durağan HTML'e çevrilir (`npm run build-welcome-theme`); betik,
+form ve Admin Console bağlantısı yoktur, Keycloak'ın verdiği değerlerden yalnız
+`resourcesPath` kullanılır. Stil dosyası giriş temasının token'larını, yazı
+tipini ve `legacy-login.css`'ini aynen içe alır, yalnız sayfa düzenini ekler.
+Sayfa Keycloak'ın yalnız `/` yolunu kullanır; `/realms`, `/resources` (kaynaklar
+`/resources/<sürüm>/welcome/e-skylab-welcome/` altında), `/admin` ve `/js`
+değişmez. Giriş düğmelerinin metni değişince (e-postayla kod, kayıt) bu sayfa da
+değişir.
 
 İlk fiziksel doğrulama Touch ID üzerinde tamamlanmıştır. Face ID, Android
 Credential Manager, Windows Hello ve mobil WebView yüzeyleri sürüm sonrası
@@ -251,6 +270,21 @@ Doğrulanmamış, okul alan adındaki, başkasında olan ya da iki kişiye düş
 adresler yalnız sayılır. Entegrasyon testi ayrı bir realm'de kuru koşu →
 uygulama → yazmayan ikinci koşuyu doğrular (runbook §10).
 
+Faz 2'den önce YTÜ girişiyle açılan hesapların birincil e-postası (`email`) yoktur:
+`MicrosoftMapper` ilk girişte adresi siler. Operatör `config/fill-missing-primary-from-school.sh`
+ile bu hesaplara bir kereye mahsus okul adresini birincil yapar (eskylab-login-ux bilet 06, karar
+O5). Yalnız dört koşulun hepsi sağlanırsa yazar: `email` boş, OBS bağlantısı var, `schoolEmail`
+dolu ve geçerli bir adres, adres başka hiçbir hesabın `email`, `schoolEmail` ya da
+`personalEmail` değeri değil. Yazılan: `email` = kırpılmış, küçük harfli okul adresi,
+`emailVerified=true`; hesabın geri kalanı okunduğu gibi kalır, posta gönderilmez, her yazma bir
+UPDATE USER admin olayı bırakır. Koşulu tutmayanlar yalnız sayılır (`noObsLink`, `noSchoolEmail`,
+`invalidSchoolEmail`, `taken`); `--skipped-list` onları `0600` izinli yeni bir dosyaya yazar.
+Varsayılan kuru koşu, `--apply`; `--realm` yalnız `e-skylab` ya da `e-skylab-sandbox`; kcadm
+prompt düzeni ya da `--kcadm-config`. Seçim kodu betiğin içindedir ve imajın JDK'sı ile
+derlenir; imaj yayını gerekmez. sky_lab_genel'deki `ops/wizards/eskylab-missing-primary-wizard.sh`
+production sunucusunda koşar. Harness `tests/fill-missing-primary-from-school.sh` tek başına
+çalışır.
+
 Hesap silmede (ADR-0051) core, SkyMail, CMS ve Forms'a ayrı bir gizli service
 account istemcisinden, `core-erasure`'dan aldığı token'larla gider. Operatör
 istemciyi, üç isteğe bağlı `account-erase-*` kapsamını ve üç erase rolünü
@@ -285,7 +319,8 @@ Sandbox realm'inde (`e-skylab-sandbox`) site istemcisi yoktu; sandbox arge giri�
 çalışıyor, editörü denenemiyordu. Operatör `frontend-arge`'ı imajdaki idempotent
 `config/sandbox-site-clients.sh` ile kurar (varsayılan `--check`, `--apply`; kcadm prompt
 düzeni ya da `--kcadm-config`). İstemci production'dakinin biçimindedir: gizli, standard
-flow ve service account açık, implicit ve direct grant kapalı, `fullScopeAllowed=true`;
+flow ve service account açık, implicit ve direct grant kapalı, `fullScopeAllowed=false` (uzlaştırıcı
+production'dakini de daraltır, runbook §21);
 redirect `https://sandbox-arge.yildizskylab.com/*`, web origin ve post-logout adresi aynı
 host (istemcideki başka adresler korunur). Access token'a `skycms` audience'ı, realm'de
 `core` istemcisi varsa uzlaştırıcının biçimindeki `frontend-arge-core-audience` kapsamı ve
@@ -333,7 +368,11 @@ kalkar, `resource_access` yalnız `core`, `forms` ve istemcinin kendi rollerini 
 allowed" kapanır, rol kapsamında `core` ve `forms` istemcilerinin her rolü bulunur, başka istemci
 ya da realm rolü bulunmaz. `groups` ve inscribed'ın düz `roles` claim'i kalır. Standard Token
 Exchange açılır: panelin sunucusu token'ı `audience=core|forms|skycms` ile tek audience'lı bir
-token'a çevirebilir; başka bir audience reddedilir. Sıra canlı paneli bozmaz: önce audience ve
+token'a çevirebilir; başka bir audience reddedilir. Exchange yalnız daraltır: `aud` tek API olur,
+`resource_access` yalnız o API'nin rollerini taşır; `sub`, `azp`, `sid`, `groups`, düz `roles` ve
+profil claim'leri aynen kalır, yeni claim eklenmez, token panelin token'ından uzun yaşamaz. Bu
+sözleşme ve core, forms-backend ve inscribed'ın token'dan okuduğu claim'ler
+`tests/admin-panel-exchanged-token.jq`'dadır (runbook §16). Sıra canlı paneli bozmaz: önce audience ve
 API rolleri, en son tam kapsamın kapanması. `core` ya da `forms`'ta uzlaştırıcı dışında
 oluşturulan bir rol panelin token'ına bir sonraki koşuda girer. Adım en son koşar. İstemci yoksa
 uyarıyla atlanır; public ise koşu ona hiçbir şey yazmadan hata verir (gizliye çevirmek panelin
@@ -342,6 +381,59 @@ kendi kcadm oturumuyla tek başına koşar (`KEYCLOAK_RECONCILE_KCADM_CONFIG` +
 `KEYCLOAK_RECONCILE_ONLY=admin-panel-client`; tam uzlaştırma operatör oturumuyla koşmaz).
 Sunucuda sky_lab_genel'deki `ops/wizards/admin-panel-keycloak-sandbox-wizard.sh` koşar
 (runbook §16).
+
+Giriş istemcilerini (`frontend-main`, `frontend-arge`, `skymail`; ADR-0058, ADR-0059) de uzlaştırıcı
+uygulamalarının çağırdığı API'lere daraltır (`reconcile_login_clients`). Üçü production'da elle ve tam
+kapsamla kurulmuştu: token kişinin bütün audience'larını, realm rollerini ve başka istemcilerin
+rollerini taşıyordu. Ne gerektiği uygulamaların `origin/main`'inden ölçüldü (2026-10-05): siteler (ana
+site ve editörü, arge) inscribed'a (`aud` `skycms`, tenant `azp`, istemcinin kendi rollerinden düz
+`roles`, koleksiyon kurallarında tam yollu `groups`) ve görsel yüklemede core `POST /v1/media`'ya (`aud`
+`core`, rol ya da grup gerekmez) gider; SkyMail arayüzü yalnız SkyMail'e gider, SkyMail de kendi
+rollerini (`resource_access.skymail`) ve Keycloak userinfo'dan `sub`, ad ve e-postayı okur, grup okumaz
+(posta listelerinin grupları kendi servis hesabıyla okunur). Sözleşme: audience'lar varsayılan
+kapsamlardaki sabit Audience mapper'larından gelir (sitelerde `frontend-<site>-core-audience` ve ortak
+`skycms-audience`, SkyMail'de `skymail-api-audience` → `aud` `skymail`); rol kapsamında realm rolü ve
+başka istemcinin rolü yoktur (istemcinin kendi rolleri, yani `cms:access`, `content:*`, `client:admin`,
+`skymail:*`, her zaman geçer); "Full scope allowed" kapanır. Siteler tam yollu `groups`'u tutar;
+SkyMail'in token'ında `groups` olmaz: `groups` yazan varsayılan ya da isteğe bağlı kapsamlar (realm'in
+`groups` kapsamı, `microprofile-jwt`) yalnız `skymail`'den ayrılır, `skymail`'in kendi grup mapper'ı
+silinir. Ortak `skycms-audience` kapsamı `site-clients.sh`'in kurduğu biçime getirilir: production'daki
+tek mapper'ı hiçbir audience adlandırmıyordu ve sitelerin `skycms`'i yalnız audience-resolve'dan, yani
+tam kapsamdan geliyordu; tam kapsam kapanmadan önce sabit audience gelmeseydi editör 401 alırdı. Sıra
+uygulamaları bozmaz: önce audience'lar, en son tam kapsamın kapanması. Secret'a, adreslere, bayraklara
+ve istemcilerin kendi mapper'larına dokunulmaz; eksik istemci uyarıyla atlanır. Sitelerin editör kapısı
+(`@skylab-kulubu/inscribed-auth` 0.3.1) `cms:access`'i token'daki herhangi bir istemcide aradığı için
+tam kapsamda başka bir sitenin `cms:access`'i bu sitenin editörünü açıyordu (inscribed yazmayı yine
+reddediyordu); daraltmadan sonra her site yalnız kendi `cms:access`'ine bakar. Keycloak kapsamdaki
+rollerin bileşenlerini de açar ve istemcinin kendi rolleri hep kapsamdadır: `skyapp-cms-editor.sh`
+SkyApp'in CMS rollerini `frontend-main`'in `cms:access` ve `client:admin`'ine bağladıktan sonra bir
+editörün ana site token'ı o `skyapp` rollerini ve `aud skyapp`'i de taşır (hiçbir servis okumaz;
+inscribed sitenin kendi düz `roles`'una bakar). Sandbox realm'inde
+operatör adımı tek başına koşar (`KEYCLOAK_RECONCILE_KCADM_CONFIG` +
+`KEYCLOAK_RECONCILE_ONLY=login-clients`). Harness `tests/login-clients.sh` tek başına çalışır
+(runbook §21).
+
+Admin paneli (core-frontend) yerelde `next dev` ile `http://localhost:3000`'te sandbox'a karşı
+geliştirilir. Sandbox panelinin istemcisi `superadmin` localhost dönüşünü kabul etmez ve öyle kalır
+(adresleri ve secret'ı yayındaki sandbox panelinindir). Yerel geliştirme için ayrı istemciyi,
+`admin-local`'ı, idempotent `config/sandbox-admin-local-client.sh` kurar (varsayılan `--check`,
+`--apply`, `--revoke`; kcadm prompt düzeni ya da `--kcadm-config`). İstemci public'tir: secret yok,
+core-frontend PKCE `S256` ile girer ve secret'ı yalnız `OAUTH2_CLIENT_SECRET` doluysa gönderir;
+yalnız standard flow, dönüş adresi tam olarak `http://localhost:3000/api/auth/callback`, web origin
+`http://localhost:3000`, çıkış dönüşü `http://localhost:3000/*`; başka adres silinir. Token'ı
+uzlaştırıcının daralttığı panel token'ıdır: `fullScopeAllowed=false`, rol kapsamında `core` ve
+`forms`'un her rolü ve panel istemcisinin kendi rolleri; varsayılan ve isteğe bağlı kapsamlar
+`superadmin`'inkiler, ek olarak `admin-panel-api-audience` (`aud` core, forms, skycms; kapsam
+uzlaştırıcınındır, burada yazılmaz, yoksa koşu hiçbir şey yazmadan durur); `superadmin`'in rollerini
+düz `roles` claim'ine yazan `inscribed-roles` mapper'ı; tam yollu `groups` bir varsayılan kapsamdan
+gelmiyorsa `groups` mapper'ı. `superadmin` yalnız okunur. İki fark istemci adından gelir: `azp`
+`admin-local`'dır ve kişi panelin bir rolünü taşıyorsa `aud`'da `superadmin` de bulunur.
+`superadmin`'de bunların dışında kalan bir mapper NOTE olarak bildirilir, kopyalanmaz. Public
+istemci Standard Token Exchange yapamaz: panelin sunucusu token değiştirdiğinde (BFF) istemci
+gizliye döner ve secret geliştiriciye şifreli ulaştırılır. `e-skylab`'ı adıyla, `e-skylab-sandbox`
+dışındaki her realm'i girişten önce reddeder. Sunucuda sky_lab_genel'deki
+`ops/wizards/sandbox-admin-local-client-wizard.sh` koşar; harness
+`tests/sandbox-admin-local-client.sh` tek başına çalışır.
 
 core'un kaynak rollerini (ADR-0059: `event:manage`, `ticket:manage`, `certificate:manage`,
 `users:manage` gibi 11 yeni rol ve var olan `url:moderator`, `url:access`) uzlaştırıcı her koşuda
@@ -380,7 +472,42 @@ Privileged gruplara, sahip lab takımının ve etkinliğin organizasyon takımı
 (`/UYELER/ORGANIZASYON/<ETKİNLİK>`) `LIDERLER`/`KOORDINATORLER` gruplarına, `client:admin`'i
 yalnız `ADMIN`'e verir; kişiye vermez, hiçbir şeyi geri almaz. sky_lab_genel'deki
 `ops/wizards/site-cms-setup-wizard.sh` üçünü koşar, secret'ı OpenBao'ya taşır. Harness
-`tests/site-clients.sh` tek başına çalışır (runbook §18).
+`tests/site-clients.sh` tek başına çalışır (runbook §18). `site-clients.sh --shared-scope`
+yalnız ortak `skycms-audience` kapsamını kurar ya da onarır, hiçbir site istemcisine dokunmaz
+(`--site` ile birlikte verilemez). Production'daki kapsam elle yapılmıştı ve tek mapper'ı
+`audience-mapper` hiçbir audience adlandırmıyordu (2026-09-21 realm dökümü): `skycms`'i yalnız
+bir `skycms` rolü taşıyanın token'ına audience-resolve koyuyordu. Kapsamda yalnız `skycms`'i
+adlandıran (ya da hiç adlandırmayan) başka bir Audience mapper'ı, kapsamın kendi mapper'ı
+yerindeyken silinir; başka audience adlandıran mapper PROBLEM'dir ve kalır.
+
+SkyApp de ana sitenin haber ve takım sayfalarını düzenler (ADR-0056 eki, 2026-10-03): uygulama
+inscribed'ın ortak `news`/`teams` koleksiyonlarına kişinin kendi `skyapp` token'ıyla doğrudan
+yazar; köprü sunucu ve SkyApp tenant'ı yoktur. İdempotent `config/skyapp-cms-editor.sh`
+(`KEYCLOAK_REALM` açıkça; varsayılan `--check`, `--apply`) `skyapp`'te `content:read`,
+`content:write`, `cms:access` (ilk ikisinin composite'i; uygulamanın düğmeleri
+`resource_access.skyapp.roles`'e bakar) ve `client:admin` rollerini kurar; bunları hiçbir gruba
+vermez, `frontend-main`'in `cms:access`'ine ve `client:admin`'ine composite olarak bağlar. Böylece
+Site editor tek yerden (panelde `frontend-main`) atanır. `skyapp`'e ortak `skycms-audience`
+kapsamını ve `inscribed-roles` mapper'ını ekler; tam yollu `groups`'u doğrular. `skyapp`'in
+bayraklarına, adreslerine ve öteki kapsamlarına dokunmaz; `skyapp` rolünün doğrudan atanmasını
+uyarır, `frontend-main` rollerini doğrudan (grupsuz) taşıyan kişi ve servis hesaplarını sayar.
+Kaynak her iki realm'de `frontend-main`'dir (sandbox'ınki #65'ten beri var); `skyapp`'in CMS
+rollerini içeren başka her rol, başka bir `roles`/`groups` yayıcısı ya da mapper adı çakışması PROBLEM'dir ve
+eksik önkoşul gibi hiçbir şey yazılmadan koşuyu durdurur (çıkış 1). `--revoke`, `skyapp`'in CMS
+rollerine başka rollerden giden her bağı alır (`frontend-main`'in ikisi ve varsa başka istemci ya
+da realm rolünden gelenler): sonraki token yenilemesinde kimse bir composite üzerinden SkyApp
+rolü almaz. `skyapp` rolünün bir gruba ya da kişiye doğrudan atanması `--revoke`'la gitmez; betik
+bunu WARNING olarak gösterir, panelden kaldırılır. `--drop-covered-direct` (varsayılan
+`--check`, `--apply` ile yazar; `--revoke` ile verilemez) yalnız kurulumdan sonra kalan doğrudan
+atamaları temizler: bir `skyapp` CMS rolünün gruba ya da kişiye doğrudan atamasını, o grup (ya da üst
+grubu) veya kişi (doğrudan, bir grubu ya da composite üzerinden) aynı rolü içeren bir
+`frontend-main` rolünü (`cms:access`, `client:admin`) zaten taşıyorsa kaldırır. Kapsama her ilke
+ve her rol için yalnız `frontend-main`'den hesaplanır, yani kimsenin rolü değişmez; kapsanmayan
+atama WARNING olarak kalır. `skyapp`'in CMS rollerinden biri başka bir rol içeriyorsa bu modda
+PROBLEM'dir ve hiçbir şey yazılmaz. Önce `inscribed-cms-roles.sh --client
+frontend-main` ve `skycms`'i access token'a yazan bir `skycms-audience` kapsamı gerekir
+(`site-clients.sh --shared-scope` kurar ya da onarır); eksik önkoşulda hiçbir şey yazmaz. Harness
+`tests/skyapp-cms-editor.sh` tek başına çalışır.
 
 `account-center` realm'in etkin tarayıcı akışını kullanır; böylece
 production'a özel parola, OTP ve passkey davranışı olduğu gibi geçerlidir ve
@@ -646,6 +773,14 @@ gösterir; `?page=<sayfa>.ftl` ve `&lang=en` sorgu parametreleri
 cd theme
 npm ci --ignore-scripts
 npx vite            # http://localhost:5173/?page=login-config-totp.ftl
+```
+
+Tanıtım sayfası (`/`) derlenip gerçek Keycloak'ta (stok imaj, geliştirme
+kipi, derlenen tema salt okunur bağlı) şöyle açılır ve denetlenir:
+
+```bash
+(cd theme && npm run build-welcome-theme) && bash tests/check-welcome-theme.sh
+bash tests/welcome-page.sh   # Docker; stok Keycloak 26.7.4, port 18096
 ```
 
 `theme/tests/browser/visual.spec.ts`, her sayfanın masaüstü (1280×800) ve

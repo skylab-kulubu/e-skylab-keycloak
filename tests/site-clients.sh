@@ -36,6 +36,14 @@
 #     a localhost and a foreign redirect URI are refused; the service account token carries
 #     content:read + schema:sync, no content:write;
 #   - drift (Full scope on, a localhost redirect) is repaired and the extra URI removed;
+#   - --shared-scope (the prerequisite of config/skyapp-cms-editor.sh): with --site it is a usage
+#     error; on production's hand-made skycms-audience (2026-09-21 realm facts: shown on the consent
+#     screen, one mapper audience-mapper that names no audience, a default scope of frontend-main)
+#     a person without a skycms role gets no aud skycms through frontend-main; --check writes
+#     nothing, reads and writes no site client and plans the attributes, the scope's own mapper and
+#     the removal of audience-mapper; --apply writes exactly that, the same person's frontend-main
+#     token then names skycms and a second run writes nothing; an Audience mapper naming skycms as
+#     a custom audience is removed too, one naming another audience is a PROBLEM and stays;
 #   - in the sandbox realm the origin is sandbox-<site>, a missing core client is a NOTE, the
 #     Privileged group /UYELER/ADMIN is found and missing teams are WARNINGs;
 #   - --site main is refused in e-skylab (production's frontend-main is hand-made) by both scripts
@@ -443,6 +451,71 @@ expect_line "$drift" 'check: 2 change(s) pending' 'unexpected drift plan'
 repair=$(clients --apply --site artlab) || { printf '%s\n' "$repair" >&2; fail 'drift --apply failed'; }
 json_assert "$(kcadm get "clients/$artlab" -r "$REALM")" '(.fullScopeAllowed | not) and .redirectUris == [$c]' \
   'drift not repaired' --arg c "$CALLBACK"
+
+# ---------------------------------------------------------------------------------------------
+CURRENT_STAGE="production's hand-made shared scope (--shared-scope)"
+refused=$(run_expecting 2 site-clients.sh "$REALM" --check --shared-scope --site artlab)
+expect_line "$refused" '--shared-scope writes no site client; it cannot be combined with --site' '--shared-scope with --site accepted'
+reject_line "$refused" 'realm=' 'the refused --shared-scope run went on'
+# Production's scope as the realm facts of 2026-09-21 show it: made by hand, shown on the consent
+# screen, its one mapper audience-mapper an Audience mapper that names no audience (Keycloak adds
+# nothing for it), a default scope of the hand-made frontend-main.
+shared=$(scope_uuids skycms-audience)
+own_mapper=$(kcadm get "client-scopes/$shared/protocol-mappers/models" -r "$REALM" | jq -r '.[] | select(.name == "skycms-audience") | .id')
+kcadm delete "client-scopes/$shared/protocol-mappers/models/$own_mapper" -r "$REALM"
+kcadm update "client-scopes/$shared" -r "$REALM" -s 'attributes."include.in.token.scope"=true' \
+  -s 'attributes."display.on.consent.screen"=true'
+kcadm create "client-scopes/$shared/protocol-mappers/models" -r "$REALM" -b '{"name":"audience-mapper","protocol":"openid-connect","protocolMapper":"oidc-audience-mapper","config":{"id.token.claim":"false","lightweight.claim":"false","access.token.claim":"true","introspection.token.claim":"true"}}' >/dev/null
+kcadm update "clients/$main_uuid/default-client-scopes/$shared" -r "$REALM" -n -b '{}' >/dev/null
+access=$(jwt_payload "$(code_flow_response frontend-main member "$REALM" https://yildizskylab.com | jq -r .access_token)")
+json_assert "$access" ".azp == \"frontend-main\" and ((($AUD) | index(\"skycms\")) == null)" \
+  'the hand-made audience-mapper put skycms into the aud of a person without a skycms role'
+printf '    before: member @ frontend-main aud=%s (audience-mapper names no audience)\n' "$(jq -c "$AUD" <<<"$access")"
+event_before=$(newest_admin_event)
+sleep 1
+check=$(clients --check --shared-scope) || { printf '%s\n' "$check" >&2; fail '--shared-scope --check failed'; }
+printf '%s\n' "$check" | sed 's/^/    /'
+[[ $(newest_admin_event) == "$event_before" ]] || fail '--shared-scope --check wrote to the realm'
+expect_line "$check" 'realm=e-skylab mode=check clients=none (--shared-scope: only the shared skycms-audience scope)' 'unexpected --shared-scope header'
+expect_line "$check" 'would update client scope skycms-audience (protocol,include.in.token.scope,display.on.consent.screen: openid-connect,true,true -> openid-connect,false,false)' 'the scope attributes not planned'
+expect_line "$check" 'would add mapper skycms-audience to skycms-audience (aud += skycms' 'the scope'"'"'s own mapper not planned'
+expect_line "$check" 'would remove the mapper audience-mapper from skycms-audience (an Audience mapper that names no audience but skycms' 'the hand-made mapper not planned away'
+expect_line "$check" 'hand-made frontend-main (report only, never written here): fullScopeAllowed=true' 'frontend-main not reported'
+expect_line "$check" 'aud skycms from: nothing' 'the hand-made audience-mapper was taken for an audience'
+reject_line "$check" 'frontend-artlab' 'a site client was read or written'
+expect_line "$check" 'check: 3 change(s) pending, 0 warning(s), 0 problem(s)' 'unexpected --shared-scope plan'
+apply=$(clients --apply --shared-scope) || { printf '%s\n' "$apply" >&2; fail '--shared-scope --apply failed'; }
+expect_line "$apply" 'applied 3 change(s), 0 warning(s), 0 problem(s)' '--shared-scope --apply did not write the plan'
+expect_line "$apply" 'aud skycms from: default scope skycms-audience' 'the report does not see the repaired scope'
+json_assert "$(kcadm get "client-scopes/$shared" -r "$REALM")" \
+  '.attributes["include.in.token.scope"] == "false" and .attributes["display.on.consent.screen"] == "false"' 'the scope attributes not repaired'
+json_assert "$(kcadm get "client-scopes/$shared/protocol-mappers/models" -r "$REALM")" \
+  'length == 1 and .[0].name == "skycms-audience" and .[0].protocolMapper == "oidc-audience-mapper"
+   and .[0].config["included.client.audience"] == "skycms" and .[0].config["access.token.claim"] == "true"
+   and .[0].config["id.token.claim"] == "false" and .[0].config["introspection.token.claim"] == "true"' \
+  'the shared scope does not carry exactly its own skycms mapper'
+json_assert "$(kcadm get admin-events -r "$REALM" -q max=1000)" \
+  '[.[] | select(.time > $t and (.resourcePath | startswith("clients")))] | length == 0' \
+  '--shared-scope wrote a client' --argjson t "$event_before"
+access=$(jwt_payload "$(code_flow_response frontend-main member "$REALM" https://yildizskylab.com | jq -r .access_token)")
+json_assert "$access" ".azp == \"frontend-main\" and ((($AUD) | index(\"skycms\")) != null)" \
+  'after --shared-scope a person without a skycms role still gets no aud skycms through frontend-main'
+printf '    after:  member @ frontend-main aud=%s\n' "$(jq -c "$AUD" <<<"$access")"
+again=$(clients --check --shared-scope) || { printf '%s\n' "$again" >&2; fail 'second --shared-scope --check failed'; }
+expect_line "$again" 'check: 0 change(s) pending, 0 warning(s), 0 problem(s)' 'second --shared-scope --check plans changes'
+kcadm create "client-scopes/$shared/protocol-mappers/models" -r "$REALM" -b '{"name":"custom-skycms","protocol":"openid-connect","protocolMapper":"oidc-audience-mapper","config":{"included.custom.audience":"skycms","access.token.claim":"true","id.token.claim":"true"}}' >/dev/null
+kcadm create "client-scopes/$shared/protocol-mappers/models" -r "$REALM" -b '{"name":"core-too","protocol":"openid-connect","protocolMapper":"oidc-audience-mapper","config":{"included.client.audience":"core","access.token.claim":"true"}}' >/dev/null
+check=$(run_expecting 1 site-clients.sh "$REALM" --check --shared-scope)
+expect_line "$check" 'would remove the mapper custom-skycms from skycms-audience' 'a custom skycms audience not planned away'
+expect_line "$check" 'PROBLEM: client scope skycms-audience also has the mapper core-too; it should carry only skycms-audience. Remove it by hand' 'another audience is not a PROBLEM'
+expect_line "$check" 'check: 1 change(s) pending, 0 warning(s), 1 problem(s)' 'unexpected plan with two foreign mappers'
+kcadm delete "client-scopes/$shared/protocol-mappers/models/$(kcadm get "client-scopes/$shared/protocol-mappers/models" -r "$REALM" \
+  | jq -r '.[] | select(.name == "core-too") | .id')" -r "$REALM"
+apply=$(clients --apply --shared-scope) || { printf '%s\n' "$apply" >&2; fail '--shared-scope --apply of the custom audience failed'; }
+expect_line "$apply" 'applied 1 change(s), 0 warning(s), 0 problem(s)' 'the custom skycms audience not removed'
+json_assert "$(kcadm get "client-scopes/$shared/protocol-mappers/models" -r "$REALM")" '[.[].name] == ["skycms-audience"]' \
+  'the shared scope keeps a foreign mapper'
+printf '    --shared-scope: hand-made audience-mapper and a custom skycms audience removed, another audience a PROBLEM\n'
 
 CURRENT_STAGE='the secret is never printed'
 for client in frontend-artlab frontend-yildizjam frontend-skydays; do

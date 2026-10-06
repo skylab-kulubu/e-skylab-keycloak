@@ -67,6 +67,10 @@ grep -Fqx 'COPY --from=theme --chown=keycloak:keycloak --chmod=0644 /build/theme
 if grep -Fq 'providers/e-skylab-theme-1.1.1.jar' "$KEYCLOAK_DIR/Dockerfile"; then
   fail 'optimized image still installs the source-less legacy theme'
 fi
+grep -Fqx 'COPY --from=theme --chown=keycloak:keycloak /build/theme/dist_welcome/e-skylab-welcome /opt/keycloak/themes/e-skylab-welcome' "$KEYCLOAK_DIR/Dockerfile" \
+  || fail 'optimized image does not install the source-built landing page theme (e-skylab-welcome)'
+grep -Fqx 'ENV KC_SPI_THEME__WELCOME_THEME=e-skylab-welcome' "$KEYCLOAK_DIR/Dockerfile" \
+  || fail 'the image does not select the landing page theme for / (it would redirect to the Admin Console)'
 
 grep -Fq "image: $POSTGRES_IMAGE" "$SCRIPT_DIR/docker-compose.integration.yml" \
   || fail 'integration Compose does not use the approved digest-pinned PostgreSQL fixture image'

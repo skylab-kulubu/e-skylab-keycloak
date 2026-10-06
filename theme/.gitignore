@@ -1,6 +1,7 @@
 node_modules/
 dist/
 dist_keycloak/
+dist_welcome/
 public/keycloakify-dev-resources/
 playwright-report/
 test-results/

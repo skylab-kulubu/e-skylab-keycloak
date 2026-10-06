@@ -79,6 +79,9 @@ ADMIN_PANEL_API_CLIENTS=(core forms)
 # only as the scoped reconciler identity, so an operator session requires KEYCLOAK_RECONCILE_ONLY.
 OPERATOR_KCADM_CONFIG=${KEYCLOAK_RECONCILE_KCADM_CONFIG:-}
 RECONCILE_ONLY=${KEYCLOAK_RECONCILE_ONLY:-}
+# KEYCLOAK_RECONCILE_CHECK=true: a dry run of the operator's service-roles step (runbook §20); it
+# prints "would ..." for each change and writes nothing. No other step has a dry run.
+RECONCILE_CHECK=${KEYCLOAK_RECONCILE_CHECK:-false}
 # Event retention (account erasure ticket 09). Keycloak deletes no event with the person core's
 # erasure saga removes: CREATE and UPDATE admin events hold the whole user representation
 # (e-mail, names, school and personal e-mail), DELETE holds the username, LOGIN and LOGIN_ERROR
@@ -92,9 +95,24 @@ EVENT_RETENTION_SETTINGS="{\"eventsEnabled\":true,\"eventsExpiration\":$EVENT_RE
 ADMIN_EVENTS_EXPIRATION_ATTRIBUTE=adminEventsExpiration
 ACCOUNT_ROLE_ALLOWLIST=(manage-account view-profile manage-account-links)
 case $RECONCILE_ONLY in
-  '' | admin-panel-client | login-clients | core-roles | media-attach) ;;
+  '' | admin-panel-client | login-clients | core-roles | service-roles) ;;
+  # The step's name before core's service roles became a list (core-internal-auth ticket 03).
+  media-attach) RECONCILE_ONLY=service-roles ;;
   *)
-    printf 'KEYCLOAK_RECONCILE_ONLY must be empty, admin-panel-client, login-clients, core-roles or media-attach, not %s\n' "$RECONCILE_ONLY" >&2
+    printf 'KEYCLOAK_RECONCILE_ONLY must be empty, admin-panel-client, login-clients, core-roles or service-roles, not %s\n' "$RECONCILE_ONLY" >&2
+    exit 2
+    ;;
+esac
+case $RECONCILE_CHECK in
+  false) ;;
+  true)
+    if [[ $RECONCILE_ONLY != service-roles || -z $OPERATOR_KCADM_CONFIG ]]; then
+      printf 'KEYCLOAK_RECONCILE_CHECK=true is a dry run of the operator step KEYCLOAK_RECONCILE_ONLY=service-roles with KEYCLOAK_RECONCILE_KCADM_CONFIG only\n' >&2
+      exit 2
+    fi
+    ;;
+  *)
+    printf 'KEYCLOAK_RECONCILE_CHECK must be true or false, not %s\n' "$RECONCILE_CHECK" >&2
     exit 2
     ;;
 esac
@@ -1488,36 +1506,54 @@ reconcile_core_roles() {
   done
 }
 
-# core's service attach role (media redesign ticket 03, ADR-0052; anonymous-form-uploads ticket 03):
-# POST/DELETE /v1/media/{id}/attachments on core accept only a client-credentials token whose azp
-# and client_id are a client listed in core's MEDIA_SERVICE_CLIENTS and whose
-# resource_access.core.roles holds media:attach; aud must contain core. The role is a client role
-# of core that only the listed products' service accounts hold: never a person, a group or a
-# default role (core refuses a person's token anyway: it has no client_id).
+# core's service roles (runbook §20): the client roles of core that a product's service account
+# (client credentials) holds and core reads from resource_access.core.roles; aud must contain core.
+#   media:attach        POST/DELETE /v1/media/{id}/attachments and the anonymous form upload rule
+#                       (media redesign ticket 03, ADR-0052); core also requires azp and client_id
+#                       to be a client of its MEDIA_SERVICE_CLIENTS.
+#   ticket:guest-apply  Guest apply as a product, POST /v1/events/{id}/applications/guest
+#                       (core-internal-auth ticket 03; core's docs/guest-apply.md "From log to
+#                       enforce"); core trusts a service caller only for a MEDIA_SERVICE_CLIENTS
+#                       product and, once enforced, only with this role.
+#   url:forms           form-bound short links, /v1/urls/forms/{formId} and GET /v1/urls/availability.
+#   users:read          GET /v1/users/{id}.
+# url:forms and users:read were granted to the forms service account by hand before (forms-url-role
+# wizard, Java era); they are codified here with the other two.
 #
-# Every run creates the role when it is missing (manage-clients) and, for a listed client whose
-# fullScopeAllowed is false, maps the role in the client's role scope, or it never reaches the
-# token. Granting it to the service account needs user permissions the reconciler identity
-# deliberately lacks (as for core-roles), so an operator runs this step alone with their own kcadm
-# session (KEYCLOAK_RECONCILE_ONLY=media-attach, runbook §20). The operator step reads everything
-# first and writes only when every read succeeded; a failed read is never taken for "absent". It
-# then grants the role to each listed service account that lacks it, records on the role (attribute
-# MEDIA_ATTACH_GRANT_ATTRIBUTE) when and to which service accounts, and reports, never removes, any
-# other holder: a user, a group or the realm's default role. aud core is not added here: Keycloak's
-# audience resolve mapper (default scope roles) puts core in aud once resource_access.core is in the
-# token; the step verifies that scope instead of adding a second audience mapper.
-MEDIA_ATTACH_ROLE=media:attach
-MEDIA_ATTACH_DESCRIPTION="Service attach API (media redesign ticket 03, ADR-0052): a product's service account links Media to its own records. Service accounts only; never a person or a group."
-# The clients whose service account holds the role. Keep it in step with core's
-# MEDIA_SERVICE_CLIENTS (product:client pairs; unset it is forms:forms): a CMS client is added in
-# both places together, once its service account exists.
-MEDIA_ATTACH_CLIENTS=(forms)
-MEDIA_ATTACH_GRANT_ATTRIBUTE=skylab.granted-service-accounts
-MEDIA_ATTACH_OPERATOR_STEP='run this step alone with an operator session: KEYCLOAK_RECONCILE_ONLY=media-attach (runbook §20)'
+# Every run creates a missing role (manage-clients; the description is written only then) and, for
+# a listed client whose fullScopeAllowed is false, maps the role in the client's role scope, or it
+# never reaches the token. Granting a role to a service account needs user permissions the
+# reconciler identity deliberately lacks (as for core-roles), so an operator runs this step alone
+# with their own kcadm session (KEYCLOAK_RECONCILE_ONLY=service-roles; media-attach, its name before
+# ticket 03, still works). KEYCLOAK_RECONCILE_CHECK=true makes the operator step a dry run: it reads
+# everything, prints "would ..." for each change and writes nothing. The operator step reads
+# everything first and writes only when every read succeeded; a failed read is never taken for
+# "absent". It then grants each role to each listed service account that lacks it, records on the
+# role (attribute CORE_SERVICE_ROLE_GRANT_ATTRIBUTE) when and to which service accounts, and reports,
+# never removes: another holder (a user, a group or the realm's default role) of a role meant for
+# service accounts only, and a core role a listed service account holds beyond this list (a NOTE).
+# aud core is not added here: Keycloak's audience resolve mapper (default scope roles) puts core in
+# aud once resource_access.core is in the token; the step verifies that scope instead of adding a
+# second audience mapper.
+#
+# name|clients (space separated)|holders|description. holders: services (only the listed clients'
+# service accounts may hold it; any other holder is reported) or shared (people may hold it too:
+# users:read predates the service accounts). Keep the clients of media:attach and
+# ticket:guest-apply in step with core's MEDIA_SERVICE_CLIENTS (product:client pairs; unset it is
+# forms:forms): a CMS client is added in both places together, once its service account exists.
+CORE_SERVICE_ROLE_DEFINITIONS=(
+  "media:attach|forms|services|Service attach API (media redesign ticket 03, ADR-0052): a product's service account links Media to its own records. Service accounts only; never a person or a group."
+  "ticket:guest-apply|forms|services|Guest apply as a product (core-internal-auth ticket 03): a product's service account writes and corrects guest Tickets through POST /v1/events/{id}/applications/guest. Service accounts only; never a person or a group."
+  "url:forms|forms|services|Forms service account: form-bound short links (/v1/urls/forms/{formId}) and GET /v1/urls/availability only. Grants nothing on the generic /v1/urls endpoints."
+  "users:read|forms|shared|Reads a person's profile (GET /v1/users/{id}); held by the Forms service account."
+)
+CORE_SERVICE_ROLE_GRANT_ATTRIBUTE=skylab.granted-service-accounts
+CORE_SERVICE_ROLE_OPERATOR_STEP='run this step alone with an operator session: KEYCLOAK_RECONCILE_ONLY=service-roles (runbook §20)'
+SERVICE_ROLE_CHANGES=0
 
-# media_attach_read WHAT ARGS...: a kcadm read for the media-attach step; a failure names WHAT and
+# service_role_read WHAT ARGS...: a kcadm read for the service-roles step; a failure names WHAT and
 # stops the step before it writes anything.
-media_attach_read() {
+service_role_read() {
   local what=$1 result
   shift
   if ! result=$(kcadm get "$@" -r "$TARGET_REALM" --format csv --noquotes); then
@@ -1527,58 +1563,82 @@ media_attach_read() {
   tr -d '\r' <<<"$result" | sed '/^$/d'
 }
 
-reconcile_media_attach() {
-  local core_uuid role_id roles_file marker='' marker_accounts='' role_name value client client_uuid flags
-  local sa_line sa_id sa_name full_scope scopes mapped held state stderr_file
-  local users groups defaults others='' account accounts stamp label marks line
+# service_role_change TEXT: one change of the step. With KEYCLOAK_RECONCILE_CHECK=true it is logged
+# as "would TEXT" and the caller writes nothing (the function then returns 1).
+service_role_change() {
+  SERVICE_ROLE_CHANGES=$((SERVICE_ROLE_CHANGES + 1))
+  if [[ $RECONCILE_CHECK == true ]]; then
+    log "would $1"
+    return 1
+  fi
+  return 0
+}
+
+reconcile_core_service_roles() {
+  local core_uuid roles_file marks role_name value definition name clients holders description
+  local role_id client client_uuid flags full_scope scopes mapped sa_line sa_id sa_name held
+  local stderr_file line accounts stamp label others account users groups defaults extra
   local operator=false
-  local plan=()
+  local names=() all_clients=() plan=()
+  local -A role_ids=() role_clients=() role_holders=() markers=() granted=() client_lines=()
   [[ -z $OPERATOR_KCADM_CONFIG ]] || operator=true
+  SERVICE_ROLE_CHANGES=0
   if ! core_uuid=$(optional_lookup client_id_by_client_id "$CORE_CLIENT_ID"); then
     return 2
   fi
   if [[ -z $core_uuid ]]; then
-    warn "client $CORE_CLIENT_ID does not exist in realm $TARGET_REALM; skipped $MEDIA_ATTACH_ROLE"
+    warn "client $CORE_CLIENT_ID does not exist in realm $TARGET_REALM; skipped its service roles"
     return 0
   fi
-  label="client role $MEDIA_ATTACH_ROLE of $CORE_CLIENT_ID"
-  if ! role_id=$(optional_lookup client_role_id_by_name "$core_uuid" "$MEDIA_ATTACH_ROLE"); then
-    return 2
-  fi
-  if [[ -z $role_id ]]; then
-    kcadm_quiet create "clients/$core_uuid/roles" -r "$TARGET_REALM" \
-      -s "name=$MEDIA_ATTACH_ROLE" -s "description=$MEDIA_ATTACH_DESCRIPTION"
-    role_id=$(client_role_id_by_name "$core_uuid" "$MEDIA_ATTACH_ROLE")
-    log "$label: created"
-  else
-    log "$label: unchanged"
-  fi
-  roles_file=$(mktemp "$WORK_DIR/media-attach-roles.XXXXXX")
+
+  # The roles: created when missing (harmless, they grant nothing), before every read.
+  for definition in "${CORE_SERVICE_ROLE_DEFINITIONS[@]}"; do
+    IFS='|' read -r name clients holders description <<<"$definition"
+    names+=("$name")
+    role_clients[$name]=$clients
+    role_holders[$name]=$holders
+    for client in $clients; do
+      [[ " ${all_clients[*]} " == *" $client "* ]] || all_clients+=("$client")
+    done
+    label="client role $name of $CORE_CLIENT_ID"
+    if ! role_id=$(optional_lookup client_role_id_by_name "$core_uuid" "$name"); then
+      return 2
+    fi
+    if [[ -n $role_id ]]; then
+      log "$label: unchanged"
+    elif service_role_change "create $label"; then
+      kcadm_quiet create "clients/$core_uuid/roles" -r "$TARGET_REALM" \
+        -s "name=$name" -s "description=$description"
+      role_id=$(client_role_id_by_name "$core_uuid" "$name")
+      log "$label: created"
+    fi
+    role_ids[$name]=$role_id
+  done
+  roles_file=$(mktemp "$WORK_DIR/service-roles.XXXXXX")
   kcadm_json "clients/$core_uuid/roles" -r "$TARGET_REALM" -q briefRepresentation=false >"$roles_file"
   # Into a variable first: a failure inside a process substitution would pass as "no record".
-  marks=$(json_tool role-attribute "$MEDIA_ATTACH_GRANT_ATTRIBUTE" <"$roles_file")
-  while IFS=$'\t' read -r role_name value; do
-    [[ $role_name == "$MEDIA_ATTACH_ROLE" ]] && marker=$value
-  done <<<"$marks"
+  marks=$(json_tool role-attribute "$CORE_SERVICE_ROLE_GRANT_ATTRIBUTE" <"$roles_file")
   # "<timestamp> <service account>,<service account>"
-  [[ -z $marker ]] || marker_accounts=${marker#* }
+  while IFS=$'\t' read -r role_name value; do
+    if [[ -n $role_name ]]; then markers[$role_name]=$value; fi
+  done <<<"$marks"
 
   # Reads: one plan line per listed client that has a service account.
-  for client in "${MEDIA_ATTACH_CLIENTS[@]}"; do
+  for client in "${all_clients[@]}"; do
     if ! client_uuid=$(optional_lookup client_id_by_client_id "$client"); then
       return 2
     fi
     if [[ -z $client_uuid ]]; then
-      warn "client $client does not exist in realm $TARGET_REALM; $MEDIA_ATTACH_ROLE is not granted to its service account"
+      warn "client $client does not exist in realm $TARGET_REALM; its core service roles are not granted to its service account"
       continue
     fi
-    flags=$(media_attach_read "Client $client" "clients/$client_uuid" --fields serviceAccountsEnabled,fullScopeAllowed)
+    flags=$(service_role_read "Client $client" "clients/$client_uuid" --fields serviceAccountsEnabled,fullScopeAllowed)
     if [[ ${flags%%,*} != true ]]; then
-      warn "client $client has no service account (serviceAccountsEnabled=${flags%%,*}); $MEDIA_ATTACH_ROLE is not granted and nothing was changed on the client"
+      warn "client $client has no service account (serviceAccountsEnabled=${flags%%,*}); its core service roles are not granted and nothing was changed on the client"
       continue
     fi
     full_scope=${flags#*,}
-    scopes=$(media_attach_read "The default client scopes of $client" "clients/$client_uuid/default-client-scopes" --fields name)
+    scopes=$(service_role_read "The default client scopes of $client" "clients/$client_uuid/default-client-scopes" --fields name)
     if grep -Fxq roles <<<"$scopes"; then
       log "default client scope roles of $client: verified (it puts resource_access and, through audience resolve, aud $CORE_CLIENT_ID in the token)"
     else
@@ -1586,10 +1646,10 @@ reconcile_media_attach() {
     fi
     mapped=-
     if [[ $full_scope == false ]]; then
-      mapped=$(media_attach_read "The role scope of $client" "clients/$client_uuid/scope-mappings/clients/$core_uuid" --fields name)
-      if grep -Fxq -- "$MEDIA_ATTACH_ROLE" <<<"$mapped"; then mapped=yes; else mapped=no; fi
+      mapped=$(service_role_read "The role scope of $client" "clients/$client_uuid/scope-mappings/clients/$core_uuid" --fields name)
+      mapped=",$(paste -sd, - <<<"$mapped"),"
     fi
-    sa_line=$(media_attach_read "The service account of $client" "clients/$client_uuid/service-account-user" --fields id,username)
+    sa_line=$(service_role_read "The service account of $client" "clients/$client_uuid/service-account-user" --fields id,username)
     sa_id=${sa_line%%,*}
     sa_name=${sa_line#*,}
     if [[ -z $sa_id || -z $sa_name || $sa_line != *,* || $sa_line == *$'\n'* ]]; then
@@ -1599,80 +1659,112 @@ reconcile_media_attach() {
     stderr_file=$(mktemp "$WORK_DIR/stderr.XXXXXX")
     if held=$(kcadm get "users/$sa_id/role-mappings/clients/$core_uuid/composite" -r "$TARGET_REALM" \
       --fields name --format csv --noquotes 2>"$stderr_file"); then
-      if grep -Fxq -- "$MEDIA_ATTACH_ROLE" <<<"$(tr -d '\r' <<<"$held")"; then state=held; else state=missing; fi
+      held=",$(tr -d '\r' <<<"$held" | sed '/^$/d' | paste -sd, -),"
     elif [[ $operator == true ]]; then
       cat "$stderr_file" >&2
       printf 'The %s roles of %s could not be read in realm %s; nothing was granted\n' "$CORE_CLIENT_ID" "$sa_name" "$TARGET_REALM" >&2
       return 1
     else
       # The reconciler identity has no user permissions: expected, the operator step checks.
-      state=unreadable
+      held=-
     fi
-    plan+=("$client|$client_uuid|$full_scope|$mapped|$sa_id|$sa_name|$state")
+    client_lines[$client]="$client_uuid|$full_scope|$mapped|$sa_id|$sa_name|$held"
   done
 
   if [[ $operator == true ]]; then
-    users=$(media_attach_read "The users holding $MEDIA_ATTACH_ROLE" "clients/$core_uuid/roles/$MEDIA_ATTACH_ROLE/users" --fields username)
-    groups=$(media_attach_read "The groups holding $MEDIA_ATTACH_ROLE" "clients/$core_uuid/roles/$MEDIA_ATTACH_ROLE/groups" --fields path)
-    defaults=$(media_attach_read "The default role default-roles-${TARGET_REALM,,}" "roles/default-roles-${TARGET_REALM,,}/composites/clients/$core_uuid" --fields name)
+    defaults=$(service_role_read "The default role default-roles-${TARGET_REALM,,}" "roles/default-roles-${TARGET_REALM,,}/composites/clients/$core_uuid" --fields name)
+    for name in "${names[@]}"; do
+      [[ ${role_holders[$name]} == services && -n ${role_ids[$name]} ]] || continue
+      users=$(service_role_read "The users holding $name" "clients/$core_uuid/roles/$name/users" --fields username)
+      groups=$(service_role_read "The groups holding $name" "clients/$core_uuid/roles/$name/groups" --fields path)
+      plan+=("$name"$'\037'"$(paste -sd, - <<<"$users")"$'\037'"$(paste -sd, - <<<"$groups")")
+    done
   fi
 
-  # Writes.
-  accounts=''
-  for line in ${plan[@]+"${plan[@]}"}; do
-    IFS='|' read -r client client_uuid full_scope mapped sa_id sa_name state <<<"$line"
-    case $mapped in
-      -) log "role scope of $client: unchanged (full scope: the roles of its service account reach its token)" ;;
-      yes) log "role scope of $client: unchanged ($CORE_CLIENT_ID/$MEDIA_ATTACH_ROLE is mapped)" ;;
-      no)
+  # Writes, role by role.
+  for name in "${names[@]}"; do
+    role_id=${role_ids[$name]}
+    value=${markers[$name]:-}
+    accounts=''
+    for client in ${role_clients[$name]}; do
+      [[ -n ${client_lines[$client]:-} ]] || continue
+      IFS='|' read -r client_uuid full_scope mapped sa_id sa_name held <<<"${client_lines[$client]}"
+      if [[ $mapped == - ]]; then
+        log "role scope of $client: unchanged (full scope: the roles of its service account reach its token)"
+      elif [[ $mapped == *",$name,"* ]]; then
+        log "role scope of $client: unchanged ($CORE_CLIENT_ID/$name is mapped)"
+      elif service_role_change "map $CORE_CLIENT_ID/$name in the role scope of $client (fullScopeAllowed is false)"; then
         kcadm_quiet create "clients/$client_uuid/scope-mappings/clients/$core_uuid" -r "$TARGET_REALM" \
-          -b "[$(role_reference "$role_id" "$MEDIA_ATTACH_ROLE")]"
-        log "role scope of $client: updated (+$CORE_CLIENT_ID/$MEDIA_ATTACH_ROLE; fullScopeAllowed is false)"
-        ;;
-    esac
-    case $state in
-      held)
-        log "service account $sa_name: $MEDIA_ATTACH_ROLE unchanged (held)"
-        accounts+=",$sa_name"
-        ;;
-      missing)
-        if [[ $operator == true ]]; then
-          kcadm_quiet create "users/$sa_id/role-mappings/clients/$core_uuid" -r "$TARGET_REALM" \
-            -b "[$(role_reference "$role_id" "$MEDIA_ATTACH_ROLE")]"
-          log "service account $sa_name: $MEDIA_ATTACH_ROLE granted"
-          accounts+=",$sa_name"
+          -b "[$(role_reference "$role_id" "$name")]"
+        log "role scope of $client: updated (+$CORE_CLIENT_ID/$name; fullScopeAllowed is false)"
+      fi
+      if [[ $held == - ]]; then
+        if [[ -n $value && ,${value#* }, == *",$sa_name,"* ]]; then
+          log "service account $sa_name: $name unchanged (granted by the operator step at ${value%% *}; the reconciler identity cannot read service-account roles, the operator step re-checks them)"
         else
-          warn "service account $sa_name lacks $MEDIA_ATTACH_ROLE; $MEDIA_ATTACH_OPERATOR_STEP"
+          warn "$name is not yet granted to service account $sa_name by the operator step (the reconciler identity cannot read or grant service-account roles); $CORE_SERVICE_ROLE_OPERATOR_STEP"
         fi
-        ;;
-      unreadable)
-        if [[ ,$marker_accounts, == *",$sa_name,"* ]]; then
-          log "service account $sa_name: $MEDIA_ATTACH_ROLE unchanged (granted by the operator step at ${marker%% *}; the reconciler identity cannot read service-account roles, the operator step re-checks them)"
-        else
-          warn "$MEDIA_ATTACH_ROLE is not yet granted to service account $sa_name by the operator step (the reconciler identity cannot read or grant service-account roles); $MEDIA_ATTACH_OPERATOR_STEP"
-        fi
-        ;;
-    esac
+        continue
+      fi
+      if [[ $held == *",$name,"* ]]; then
+        log "service account $sa_name: $name unchanged (held)"
+      elif [[ $operator != true ]]; then
+        warn "service account $sa_name lacks $name; $CORE_SERVICE_ROLE_OPERATOR_STEP"
+        continue
+      elif service_role_change "grant $name to service account $sa_name"; then
+        kcadm_quiet create "users/$sa_id/role-mappings/clients/$core_uuid" -r "$TARGET_REALM" \
+          -b "[$(role_reference "$role_id" "$name")]"
+        log "service account $sa_name: $name granted"
+      fi
+      accounts+=",$sa_name"
+    done
+    [[ $operator == true ]] || continue
+
+    accounts=$(tr ',' '\n' <<<"${accounts#,}" | sed '/^$/d' | sort | paste -sd, -)
+    granted[$name]=$accounts
+    if [[ -n $accounts && $accounts != "${value#* }" ]]; then
+      stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      if service_role_change "record the grant of $name ($CORE_SERVICE_ROLE_GRANT_ATTRIBUTE=<now> $accounts)"; then
+        kcadm_quiet update "clients/$core_uuid/roles/$name" -r "$TARGET_REALM" \
+          -s "attributes.\"$CORE_SERVICE_ROLE_GRANT_ATTRIBUTE\"=[\"$stamp $accounts\"]"
+        log "client role $name of $CORE_CLIENT_ID: grant recorded ($CORE_SERVICE_ROLE_GRANT_ATTRIBUTE=$stamp $accounts)"
+      fi
+    fi
   done
   [[ $operator == true ]] || return 0
 
-  accounts=$(tr ',' '\n' <<<"${accounts#,}" | sed '/^$/d' | sort | paste -sd, -)
-  if [[ -n $accounts && $accounts != "$marker_accounts" ]]; then
-    stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    kcadm_quiet update "clients/$core_uuid/roles/$MEDIA_ATTACH_ROLE" -r "$TARGET_REALM" \
-      -s "attributes.\"$MEDIA_ATTACH_GRANT_ATTRIBUTE\"=[\"$stamp $accounts\"]"
-    log "$label: grant recorded ($MEDIA_ATTACH_GRANT_ATTRIBUTE=$stamp $accounts)"
+  # Reports: nothing is removed.
+  for line in ${plan[@]+"${plan[@]}"}; do
+    IFS=$'\037' read -r name users groups <<<"$line"
+    others=''
+    for account in ${users//,/ }; do
+      [[ ,${granted[$name]}, == *",$account,"* ]] || others+=", $account"
+    done
+    [[ -z $others ]] \
+      || warn "$name is also held by the users ${others#, } (nothing was removed; it is for the service accounts of ${role_clients[$name]} only, remove it in the Admin Console)"
+    [[ -z $groups ]] \
+      || warn "$name is held by the groups $groups (nothing was removed; every member holds it, remove it in the Admin Console)"
+    ! grep -Fxq -- "$name" <<<"$defaults" \
+      || warn "$name is in the default role default-roles-${TARGET_REALM,,} (nothing was removed; every user holds it, remove it in the Admin Console)"
+  done
+  for client in "${all_clients[@]}"; do
+    [[ -n ${client_lines[$client]:-} ]] || continue
+    IFS='|' read -r client_uuid full_scope mapped sa_id sa_name held <<<"${client_lines[$client]}"
+    extra=''
+    for role_name in ${held//,/ }; do
+      for name in "${names[@]}"; do
+        [[ $role_name != "$name" || " ${role_clients[$name]} " != *" $client "* ]] || continue 2
+      done
+      extra+=", $role_name"
+    done
+    [[ -z $extra ]] \
+      || log "NOTE: service account $sa_name also holds the $CORE_CLIENT_ID roles ${extra#, }, which this step does not manage (nothing was removed)"
+  done
+  if [[ $RECONCILE_CHECK == true ]]; then
+    log "check: $SERVICE_ROLE_CHANGES change(s) pending; nothing was written"
+  else
+    log "applied $SERVICE_ROLE_CHANGES change(s)"
   fi
-  while IFS= read -r account; do
-    [[ -n $account && ,$accounts, != *",$account,"* ]] || continue
-    others+=", $account"
-  done <<<"$users"
-  [[ -z $others ]] \
-    || warn "$MEDIA_ATTACH_ROLE is also held by the users ${others#, } (nothing was removed; it is for the service accounts of ${MEDIA_ATTACH_CLIENTS[*]} only, remove it in the Admin Console)"
-  [[ -z $groups ]] \
-    || warn "$MEDIA_ATTACH_ROLE is held by the groups $(paste -sd, - <<<"$groups") (nothing was removed; every member holds it, remove it in the Admin Console)"
-  ! grep -Fxq -- "$MEDIA_ATTACH_ROLE" <<<"$defaults" \
-    || warn "$MEDIA_ATTACH_ROLE is in the default role default-roles-${TARGET_REALM,,} (nothing was removed; every user holds it, remove it in the Admin Console)"
 }
 
 # The keycloak-mailer service-account client (K5) is provisioned by the operator with
@@ -1844,9 +1936,13 @@ if [[ $RECONCILE_ONLY == core-roles ]]; then
   printf 'Core resource roles are reconciled.\n'
   exit 0
 fi
-if [[ $RECONCILE_ONLY == media-attach ]]; then
-  reconcile_media_attach
-  printf 'Media attach role is reconciled.\n'
+if [[ $RECONCILE_ONLY == service-roles ]]; then
+  reconcile_core_service_roles
+  if [[ $RECONCILE_CHECK == true ]]; then
+    printf 'Core service roles are checked; nothing was written.\n'
+  else
+    printf 'Core service roles are reconciled.\n'
+  fi
   exit 0
 fi
 
@@ -1883,8 +1979,8 @@ verify_mailer_client
 verify_erasure_client
 # Before the admin panel's step, so that a core role created here enters its scope in this run.
 reconcile_core_roles
-# Also before the admin panel's step: a media:attach created here enters its scope in this run.
-reconcile_media_attach
+# Also before the admin panel's step: a core service role created here enters its scope in this run.
+reconcile_core_service_roles
 # Last: a public admin panel client stops the run, and every other step is done by then; core and
 # forms roles made by earlier steps are already in place to enter the panel's scope.
 reconcile_admin_panel_client

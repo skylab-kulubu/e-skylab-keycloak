@@ -228,9 +228,16 @@ jobs:
 
       - name: Build the source-controlled login theme and check its contract
         working-directory: theme
+        timeout-minutes: 20
         run: |
           npm ci --ignore-scripts
-          npx playwright install --with-deps chromium
+          # The runner's apt mirror can hang (run 37664358276: 80 minutes in apt-get update until the
+          # job timeout): each attempt gets 5 minutes, three attempts.
+          for attempt in 1 2 3; do
+            timeout 300 npx playwright install --with-deps chromium && break
+            if [ "$attempt" = 3 ]; then exit 1; fi
+            echo "playwright install attempt $attempt failed or timed out; retrying" >&2
+          done
           npm run build-keycloak-theme
           bash ../tests/check-theme-contract.sh
           npm run build-welcome-theme

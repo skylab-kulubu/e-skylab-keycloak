@@ -1548,6 +1548,13 @@ CORE_SERVICE_ROLE_DEFINITIONS=(
   "users:read|forms|shared|Reads a person's profile (GET /v1/users/{id}); held by the Forms service account."
 )
 CORE_SERVICE_ROLE_GRANT_ATTRIBUTE=skylab.granted-service-accounts
+# Listed clients that must be service account only: no browser login (standard or implicit flow) and
+# no password grant (direct access grants). core reads the product from client_id == azp, so a token
+# of forms must always be its service account's; Forms signs people in through skyforms. The
+# reconciler identity verifies and warns; the operator step sets the flags that are not false
+# (KEYCLOAK_RECONCILE_CHECK=true: "would set ..."). No other client is touched.
+CORE_SERVICE_ONLY_CLIENTS=(forms)
+CORE_SERVICE_ONLY_FLAGS=(standardFlowEnabled implicitFlowEnabled directAccessGrantsEnabled)
 CORE_SERVICE_ROLE_OPERATOR_STEP='run this step alone with an operator session: KEYCLOAK_RECONCILE_ONLY=service-roles (runbook §20)'
 SERVICE_ROLE_CHANGES=0
 
@@ -1578,9 +1585,10 @@ reconcile_core_service_roles() {
   local core_uuid roles_file marks role_name value definition name clients holders description
   local role_id client client_uuid flags full_scope scopes mapped sa_line sa_id sa_name held
   local stderr_file line accounts stamp label others account users groups defaults extra
+  local flag flag_value open
   local operator=false
-  local names=() all_clients=() plan=()
-  local -A role_ids=() role_clients=() role_holders=() markers=() granted=() client_lines=()
+  local names=() all_clients=() plan=() sets=()
+  local -A role_ids=() role_clients=() role_holders=() markers=() granted=() client_lines=() person_logins=()
   [[ -z $OPERATOR_KCADM_CONFIG ]] || operator=true
   SERVICE_ROLE_CHANGES=0
   if ! core_uuid=$(optional_lookup client_id_by_client_id "$CORE_CLIENT_ID"); then
@@ -1638,6 +1646,15 @@ reconcile_core_service_roles() {
       continue
     fi
     full_scope=${flags#*,}
+    if [[ " ${CORE_SERVICE_ONLY_CLIENTS[*]} " == *" $client "* ]]; then
+      # One field per read: nothing depends on the order of the csv columns.
+      open=''
+      for flag in "${CORE_SERVICE_ONLY_FLAGS[@]}"; do
+        flag_value=$(service_role_read "Client $client" "clients/$client_uuid" --fields "$flag")
+        [[ $flag_value == false ]] || open+=" $flag"
+      done
+      person_logins[$client]=${open# }
+    fi
     scopes=$(service_role_read "The default client scopes of $client" "clients/$client_uuid/default-client-scopes" --fields name)
     if grep -Fxq roles <<<"$scopes"; then
       log "default client scope roles of $client: verified (it puts resource_access and, through audience resolve, aud $CORE_CLIENT_ID in the token)"
@@ -1681,7 +1698,26 @@ reconcile_core_service_roles() {
     done
   fi
 
-  # Writes, role by role.
+  # Writes: the service-only clients' flags first, then role by role.
+  for client in "${all_clients[@]}"; do
+    [[ -n ${client_lines[$client]:-} && -n ${person_logins[$client]+set} ]] || continue
+    client_uuid=${client_lines[$client]%%|*}
+    open=${person_logins[$client]}
+    if [[ -z $open ]]; then
+      log "client $client: service account only, verified (${CORE_SERVICE_ONLY_FLAGS[*]} false)"
+      continue
+    fi
+    if [[ $operator != true ]]; then
+      warn "client $client lets a person sign in ($open not false): core reads the product from client_id == azp, so it must be service account only; nothing was changed on the client; $CORE_SERVICE_ROLE_OPERATOR_STEP"
+      continue
+    fi
+    if service_role_change "set ${open// /=false, }=false on client $client (service account only: no browser login, no password grant)"; then
+      sets=()
+      for flag in $open; do sets+=(-s "$flag=false"); done
+      kcadm_quiet update "clients/$client_uuid" -r "$TARGET_REALM" "${sets[@]}"
+      log "client $client: updated (${open// /=false, }=false; service account only)"
+    fi
+  done
   for name in "${names[@]}"; do
     role_id=${role_ids[$name]}
     value=${markers[$name]:-}

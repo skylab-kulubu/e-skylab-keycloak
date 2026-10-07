@@ -205,8 +205,36 @@ def assert_ci_branches(workflow)
   end
 end
 
+# The CI matrix runs exactly the harness's groups, each with a timeout, and one job named
+# integration passes only when all of them do. release.yml runs the whole harness (no group).
+def assert_integration_groups(workflow, harness)
+  document = YAML.load_file(workflow, aliases: true)
+  jobs = document.fetch("jobs")
+  job = jobs.fetch("integration-group")
+  harness_groups = File.read(harness, encoding: "UTF-8")[/^INTEGRATION_GROUPS=\(([^)]*)\)$/, 1].to_s.split
+  abort "#{harness} must list its INTEGRATION_GROUPS" if harness_groups.empty?
+  include = job.fetch("strategy").fetch("matrix").fetch("include")
+  matrix_groups = include.map { |entry| entry.fetch("group") }
+  unless matrix_groups.sort == harness_groups.sort
+    abort "#{workflow} integration-group must run exactly the groups #{harness_groups.join(" ")} (runs #{matrix_groups.join(" ")})"
+  end
+  unless include.all? { |entry| entry.fetch("timeout", 0).is_a?(Integer) && entry["timeout"].positive? }
+    abort "#{workflow} every integration group needs its own timeout"
+  end
+  unless job.fetch("env").fetch("INTEGRATION_GROUP") == "${{ matrix.group }}"
+    abort "#{workflow} integration-group must pass its matrix group to the harness"
+  end
+  aggregate = jobs.fetch("integration")
+  unless aggregate.fetch("needs") == "integration-group" && aggregate.fetch("if") == "always()"
+    abort "#{workflow} integration must wait for every group, also when one fails"
+  end
+  release = File.read(File.join(File.dirname(workflow), "release.yml"), encoding: "UTF-8")
+  abort "release.yml must run the whole harness, not one group" if release.include?("INTEGRATION_GROUP")
+end
+
 assert_ci_branches(File.join(root, ".github/workflows/ci.yml"))
-assert_order(File.join(root, ".github/workflows/ci.yml"), "integration")
+assert_order(File.join(root, ".github/workflows/ci.yml"), "integration-group")
+assert_integration_groups(File.join(root, ".github/workflows/ci.yml"), File.join(root, "tests/run-integration.sh"))
 assert_order(File.join(root, ".github/workflows/release.yml"), "keycloak-build")
 assert_release_boundary(File.join(root, ".github/workflows/release.yml"))
 RUBY

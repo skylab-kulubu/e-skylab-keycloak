@@ -7,9 +7,59 @@ COMPOSE_FILE="$SCRIPT_DIR/docker-compose.integration.yml"
 COMPOSE=(docker compose -f "$COMPOSE_FILE")
 KCADM=("${COMPOSE[@]}" exec -T keycloak /opt/keycloak/bin/kcadm.sh)
 ADMIN_CONFIG=/tmp/integration-kcadm.config
+
+# INTEGRATION_GROUP runs one of the groups CI runs as parallel jobs (.github/workflows/ci.yml,
+# integration-group); the default, all, runs every stage in one Keycloak, as release.yml does.
+# Every group starts its own Keycloak with the fixture realm and runs the shared realm prefix
+# (bootstrap, first reconciliation, drift, second reconciliation and their assertions); the stages
+# after it are split as below. A group that runs later stages without an earlier group's stages
+# first gets the state those stages leave (their writes, not their assertions), so it finds the
+# realm as the full run does. The order inside a group is the order of the full run.
+#   erasure  core-erasure client contract, legacy personal e-mail adoption, erasure event PII
+#   roles    (core-erasure fixture) admin panel tokens, core resource roles, core service roles,
+#            exchange claims, no-op reconciliation, identity guardrails, group overage mapper
+#   login    (core-erasure fixture, operator state) OIDC/PAR basics, K4 sign-in by e-mail with
+#            its reconciler runs
+#   spi      (core-erasure fixture, operator state) OIDC/PAR basics, web handoff, browser login
+#            and token contracts, Chromium, passkey cleanup, K5, K4b, sky-account SPI, passkey
+#            ceremonies
+# Every group ends with the RabbitMQ provider contract. tests/check-fresh-runner.sh keeps this
+# list and the CI matrix equal.
+INTEGRATION_GROUPS=(erasure roles login spi)
+INTEGRATION_GROUP=${INTEGRATION_GROUP:-all}
+if [[ $INTEGRATION_GROUP != all && " ${INTEGRATION_GROUPS[*]} " != *" $INTEGRATION_GROUP "* ]]; then
+  printf 'INTEGRATION_GROUP must be all or one of: %s (got %s)\n' "${INTEGRATION_GROUPS[*]}" "$INTEGRATION_GROUP" >&2
+  exit 2
+fi
+
+# group_runs GROUP...: true when the selected group is all or one of GROUP.
+group_runs() {
+  local group
+  [[ $INTEGRATION_GROUP == all ]] && return 0
+  for group in "$@"; do
+    [[ $INTEGRATION_GROUP == "$group" ]] && return 0
+  done
+  return 1
+}
+
 TEST_STATE_DIR=$(mktemp -d)
 CURRENT_STAGE=startup
 export TEST_STATE_DIR
+
+# Every stage change of this shell is logged with the time since start, so the CI log shows where
+# a group spends its time (the basis of the split and its timeouts). Subshells stay silent:
+# command substitutions capture their output (BASHPID tells them apart; bash 4 and later).
+HARNESS_PID=${BASHPID:-}
+HARNESS_STAGE_LOGGED=''
+harness_stage_clock() {
+  [[ $BASHPID == "$HARNESS_PID" && $CURRENT_STAGE != "$HARNESS_STAGE_LOGGED" ]] || return 0
+  HARNESS_STAGE_LOGGED=$CURRENT_STAGE
+  printf '[harness %s +%dm%02ds] %s\n' "$INTEGRATION_GROUP" $((SECONDS / 60)) $((SECONDS % 60)) "$CURRENT_STAGE" >&2
+}
+if [[ -n $HARNESS_PID ]]; then
+  set -o functrace
+  trap harness_stage_clock DEBUG
+fi
 
 cleanup() {
   "${COMPOSE[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
@@ -1178,6 +1228,79 @@ stage_v2_passkey_cleanup() {
   [[ $(v2_fixture_passkey_ids) == "$survivor_ids" ]] || fail 'a refused cleanup run changed the credentials'
 }
 
+# Provision the RabbitMQ topology expected by the provider, then use an admin
+# event to prove the rebuilt provider can publish on Keycloak 26.7.4. Every group ends with it.
+# keycloak-to-rabbit opens and closes one channel per message (3.1.1, #50), so after the group's
+# events the broker holds next to none; a provider that leaked one per event would hold hundreds,
+# which a group no longer reaches the 2047-channel limit with (the full run did).
+stage_rabbitmq_provider_contract() {
+  CURRENT_STAGE='RabbitMQ provider contract'
+  local attempt message_count channel_count provider_names
+  curl --fail --silent --show-error --user keycloak:integration-rabbit-password \
+    -X PUT -H 'content-type: application/json' \
+    -d '{"type":"topic","durable":true,"auto_delete":false,"internal":false,"arguments":{}}' \
+    http://localhost:15673/api/exchanges/%2F/keycloak.events >/dev/null
+  curl --fail --silent --show-error --user keycloak:integration-rabbit-password \
+    -X PUT -H 'content-type: application/json' \
+    -d '{"durable":false,"auto_delete":true,"arguments":{}}' \
+    http://localhost:15673/api/queues/%2F/keycloak-foundation-test >/dev/null
+  curl --fail --silent --show-error --user keycloak:integration-rabbit-password \
+    -X POST -H 'content-type: application/json' \
+    -d '{"routing_key":"KK.EVENT.#","arguments":{}}' \
+    http://localhost:15673/api/bindings/%2F/e/keycloak.events/q/keycloak-foundation-test >/dev/null
+
+  kcadm update realms/e-skylab-test -s displayName='SKY LAB integration event' >/dev/null
+  for attempt in $(seq 1 30); do
+    message_count=$(curl --fail --silent --show-error --user keycloak:integration-rabbit-password \
+      http://localhost:15673/api/queues/%2F/keycloak-foundation-test | jq -r '.messages // 0')
+    if [[ ${message_count:-0} -gt 0 ]]; then
+      break
+    fi
+    sleep 1
+  done
+  [[ ${message_count:-0} -gt 0 ]] || fail "RabbitMQ provider did not publish the Keycloak admin event"
+  channel_count=$(curl --fail --silent --show-error --user keycloak:integration-rabbit-password \
+    http://localhost:15673/api/channels | jq 'length')
+  [[ $channel_count -le 10 ]] \
+    || fail "the RabbitMQ provider holds $channel_count open channels after the run (leaked channels)"
+
+  provider_names=$("${COMPOSE[@]}" exec -T keycloak sh -c \
+    "find /opt/keycloak/providers -maxdepth 1 -type f -name '*.jar' -printf '%f\\n' | sort")
+  [[ $(grep -c '^e-skylab-spi-' <<<"$provider_names") == 1 ]] || fail "runtime does not contain exactly one SKY LAB SPI"
+  [[ $(grep -c '^e-skylab-theme-' <<<"$provider_names") == 1 ]] || fail "runtime does not contain exactly one SKY LAB theme"
+  [[ $(grep -c '^keycloak-to-rabbit-' <<<"$provider_names") == 1 ]] || fail "runtime does not contain exactly one RabbitMQ provider"
+}
+
+# The end of every run: of a group that stops before the last stage of the full run, of the spi
+# group and of the full run.
+finish_group() {
+  stage_rabbitmq_provider_contract
+  if [[ $INTEGRATION_GROUP == all ]]; then
+    printf 'Keycloak 26.7.4 Account Center integration contract passed.\n'
+  else
+    printf 'Keycloak 26.7.4 Account Center integration contract, group %s, passed.\n' "$INTEGRATION_GROUP"
+  fi
+  exit 0
+}
+
+# The writes of the roles group's operator stages (stage_admin_panel_tokens,
+# stage_core_roles_seeded_by_operator, stage_core_service_roles_granted_by_operator), without their
+# contracts, for the groups that run later stages without them: the admin panel's forms role in its
+# scope, core's resource roles seeded to the Privileged groups, core's service roles granted to the
+# forms service account (service account only).
+setup_operator_state() {
+  CURRENT_STAGE='operator state of the roles group (group setup, no contract)'
+  local forms_uuid output
+  forms_uuid=$(lca_client_uuid forms)
+  [[ -n $forms_uuid ]] || fail 'the core-erasure fixture did not leave the forms client'
+  kcadm create "clients/$forms_uuid/roles" -r "$V2_REALM" -s "name=$AP_FORMS_ROLE" >/dev/null
+  kcadm add-roles -r "$V2_REALM" --uusername "$AP_USER" --cclientid forms --rolename "$AP_FORMS_ROLE" >/dev/null
+  output=$(ap_operator_reconcile "$AP_CLIENT" -e KEYCLOAK_RECONCILE_ONLY=admin-panel-client) \
+    || { printf '%s\n' "$output" >&2; fail 'the admin panel step failed'; }
+  output=$(cr_operator_reconcile) || { printf '%s\n' "$output" >&2; fail 'the core roles operator step failed'; }
+  output=$(csr_operator) || { printf '%s\n' "$output" >&2; fail 'the service-roles operator step failed'; }
+}
+
 "${COMPOSE[@]}" up -d postgres rabbitmq keycloak
 CURRENT_STAGE='Keycloak readiness'
 wait_for_url http://localhost:19000/health/ready
@@ -1649,50 +1772,74 @@ stage_v2_assert_account_api_scope
 stage_v2_assert_mailer_client
 stage_v2_mailer_drift_is_reported
 
+# The shared realm prefix of every group ends here.
+
 # Account erasure (ADR-0051, ticket 03): the operator script builds the core-erasure client, its
 # erase scopes and roles; the reconciler verifies them. It runs before the no-op reconciliation so
-# that run proves the verification writes nothing.
-CURRENT_STAGE='core-erasure client operator script and reconciler verification'
-ERASURE_COMPOSE_FILE="$COMPOSE_FILE" \
-  ERASURE_ADMIN_CONFIG="$ADMIN_CONFIG" \
-  ERASURE_REALM="$V2_REALM" \
-  "$SCRIPT_DIR/core-erasure-client.sh"
+# that run proves the verification writes nothing. The other groups get only the state it leaves
+# (core's SkyMail roles, skycms and forms, core-erasure applied, one full reconciliation).
+if group_runs erasure; then
+  CURRENT_STAGE='core-erasure client operator script and reconciler verification'
+  ERASURE_COMPOSE_FILE="$COMPOSE_FILE" \
+    ERASURE_ADMIN_CONFIG="$ADMIN_CONFIG" \
+    ERASURE_REALM="$V2_REALM" \
+    "$SCRIPT_DIR/core-erasure-client.sh"
+else
+  CURRENT_STAGE='core-erasure client fixture (group setup, no contract)'
+  ERASURE_COMPOSE_FILE="$COMPOSE_FILE" \
+    ERASURE_ADMIN_CONFIG="$ADMIN_CONFIG" \
+    ERASURE_REALM="$V2_REALM" \
+    ERASURE_FIXTURE_ONLY=1 \
+    "$SCRIPT_DIR/core-erasure-client.sh"
+fi
 
-# After core-erasure-client.sh made forms and skycms: the admin panel's token and token exchange,
-# before the no-op reconciliation so that run proves the step writes nothing more.
-stage_admin_panel_tokens
-# The operator seeds core's resource roles; the no-op reconciliation after it must leave them.
-stage_core_roles_seeded_by_operator
-# The operator grants core's service roles to the forms service account (forms exists since
-# core-erasure-client.sh); the no-op reconciliation after it must only verify.
-stage_core_service_roles_granted_by_operator
-# admin-token-authz K1: what core, forms and inscribed read survives the panel's token exchange for
-# a Privileged person (core's roles as seeded above), a Leader and a plain member.
-stage_admin_panel_exchange_claims
+if group_runs roles; then
+  # After core-erasure-client.sh made forms and skycms: the admin panel's token and token exchange,
+  # before the no-op reconciliation so that run proves the step writes nothing more.
+  stage_admin_panel_tokens
+  # The operator seeds core's resource roles; the no-op reconciliation after it must leave them.
+  stage_core_roles_seeded_by_operator
+  # The operator grants core's service roles to the forms service account (forms exists since
+  # core-erasure-client.sh); the no-op reconciliation after it must only verify.
+  stage_core_service_roles_granted_by_operator
+  # admin-token-authz K1: what core, forms and inscribed read survives the panel's token exchange
+  # for a Privileged person (core's roles as seeded above), a Leader and a plain member.
+  stage_admin_panel_exchange_claims
 
-stage_v2_reconcile_noop
-stage_event_retention_after_noop_reconciliation
-stage_reset_choose_user_after_noop_reconciliation
-stage_v2_identity_guardrails
+  stage_v2_reconcile_noop
+  stage_event_retention_after_noop_reconciliation
+  stage_reset_choose_user_after_noop_reconciliation
+  stage_v2_identity_guardrails
+elif group_runs login spi; then
+  # The later reconciliations of these groups (K4's no-op runs among them) must find what the
+  # operator stages above leave; without it they would warn about unseeded roles.
+  setup_operator_state
+fi
 
-# A1c: the operator adoption of verified legacy primaries as the Personal e-mail, in a throwaway
-# realm that takes the reconciled User Profile: dry run, apply, then a run that writes nothing.
-CURRENT_STAGE='legacy personal e-mail adoption operator script'
-LEGACY_EMAIL_COMPOSE_FILE="$COMPOSE_FILE" \
-  LEGACY_EMAIL_ADMIN_CONFIG="$ADMIN_CONFIG" \
-  LEGACY_EMAIL_SOURCE_REALM="$V2_REALM" \
-  "$SCRIPT_DIR/legacy-personal-email-adoption.sh"
+if group_runs erasure; then
+  # A1c: the operator adoption of verified legacy primaries as the Personal e-mail, in a throwaway
+  # realm that takes the reconciled User Profile: dry run, apply, then a run that writes nothing.
+  CURRENT_STAGE='legacy personal e-mail adoption operator script'
+  LEGACY_EMAIL_COMPOSE_FILE="$COMPOSE_FILE" \
+    LEGACY_EMAIL_ADMIN_CONFIG="$ADMIN_CONFIG" \
+    LEGACY_EMAIL_SOURCE_REALM="$V2_REALM" \
+    "$SCRIPT_DIR/legacy-personal-email-adoption.sh"
 
-# Account erasure ticket 09: which personal data Keycloak's admin and user events keep once core's
-# saga has deleted a person, and what each remedy does, in a throwaway realm with production's
-# event settings that takes the reconciled User Profile.
-CURRENT_STAGE='erasure event PII evidence'
-EVENT_PII_COMPOSE_FILE="$COMPOSE_FILE" \
-  EVENT_PII_ADMIN_CONFIG="$ADMIN_CONFIG" \
-  EVENT_PII_SOURCE_REALM="$V2_REALM" \
-  "$SCRIPT_DIR/erasure-event-pii.sh"
+  # Account erasure ticket 09: which personal data Keycloak's admin and user events keep once
+  # core's saga has deleted a person, and what each remedy does, in a throwaway realm with
+  # production's event settings that takes the reconciled User Profile.
+  CURRENT_STAGE='erasure event PII evidence'
+  EVENT_PII_COMPOSE_FILE="$COMPOSE_FILE" \
+    EVENT_PII_ADMIN_CONFIG="$ADMIN_CONFIG" \
+    EVENT_PII_SOURCE_REALM="$V2_REALM" \
+    "$SCRIPT_DIR/erasure-event-pii.sh"
+fi
 
-stage_group_overage_mapper
+if group_runs roles; then
+  stage_group_overage_mapper
+fi
+
+group_runs login spi || finish_group
 
 CURRENT_STAGE='minimal openid PAR contract'
 discovery=$(curl --fail --silent --show-error \
@@ -1788,7 +1935,11 @@ json_assert "$aia_par_response" \
 fixture_user_uuid=$(kcadm get users -r e-skylab-test -q username=account-fixture -c \
   | jq -r '.[] | select(.username == "account-fixture") | .id')
 
-stage_login_by_either_email "$client_secret"
+if group_runs login; then
+  stage_login_by_either_email "$client_secret"
+fi
+
+group_runs spi || finish_group
 
 # The Web handoff (sky-handoff provider, ADR-0048), which replaced the retired native handoff:
 # SkyApp mints a code, the WebView opens it with its proof and account-center signs in
@@ -2102,37 +2253,4 @@ json_assert "$(curl --fail --silent --show-error http://localhost:18080/realms/e
   '.issuer == "http://localhost:18080/realms/e-skylab-test"' \
   'restoring the realm frontend URL did not bring Keycloak back to http://localhost:18080'
 
-# Provision the RabbitMQ topology expected by the provider, then use an admin
-# event to prove the rebuilt provider can publish on Keycloak 26.7.4.
-CURRENT_STAGE='RabbitMQ provider contract'
-curl --fail --silent --show-error --user keycloak:integration-rabbit-password \
-  -X PUT -H 'content-type: application/json' \
-  -d '{"type":"topic","durable":true,"auto_delete":false,"internal":false,"arguments":{}}' \
-  http://localhost:15673/api/exchanges/%2F/keycloak.events >/dev/null
-curl --fail --silent --show-error --user keycloak:integration-rabbit-password \
-  -X PUT -H 'content-type: application/json' \
-  -d '{"durable":false,"auto_delete":true,"arguments":{}}' \
-  http://localhost:15673/api/queues/%2F/keycloak-foundation-test >/dev/null
-curl --fail --silent --show-error --user keycloak:integration-rabbit-password \
-  -X POST -H 'content-type: application/json' \
-  -d '{"routing_key":"KK.EVENT.#","arguments":{}}' \
-  http://localhost:15673/api/bindings/%2F/e/keycloak.events/q/keycloak-foundation-test >/dev/null
-
-kcadm update realms/e-skylab-test -s displayName='SKY LAB integration event' >/dev/null
-for attempt in $(seq 1 30); do
-  message_count=$(curl --fail --silent --show-error --user keycloak:integration-rabbit-password \
-    http://localhost:15673/api/queues/%2F/keycloak-foundation-test | jq -r '.messages // 0')
-  if [[ ${message_count:-0} -gt 0 ]]; then
-    break
-  fi
-  sleep 1
-done
-[[ ${message_count:-0} -gt 0 ]] || fail "RabbitMQ provider did not publish the Keycloak admin event"
-
-provider_names=$("${COMPOSE[@]}" exec -T keycloak sh -c \
-  "find /opt/keycloak/providers -maxdepth 1 -type f -name '*.jar' -printf '%f\\n' | sort")
-[[ $(grep -c '^e-skylab-spi-' <<<"$provider_names") == 1 ]] || fail "runtime does not contain exactly one SKY LAB SPI"
-[[ $(grep -c '^e-skylab-theme-' <<<"$provider_names") == 1 ]] || fail "runtime does not contain exactly one SKY LAB theme"
-[[ $(grep -c '^keycloak-to-rabbit-' <<<"$provider_names") == 1 ]] || fail "runtime does not contain exactly one RabbitMQ provider"
-
-printf 'Keycloak 26.7.4 Account Center integration contract passed.\n'
+finish_group

@@ -17,7 +17,8 @@
 #   - the reconciler verifies the client, fails on security drift and names the command, and the
 #     script repairs that drift;
 #   - the client secret appears in no output.
-# Inputs: ERASURE_COMPOSE_FILE, ERASURE_ADMIN_CONFIG, TEST_STATE_DIR, ERASURE_REALM.
+# Inputs: ERASURE_COMPOSE_FILE, ERASURE_ADMIN_CONFIG, TEST_STATE_DIR, ERASURE_REALM; ERASURE_FIXTURE_ONLY=1
+# leaves only the state the contract ends in (see below).
 set -Eeuo pipefail
 
 COMPOSE_FILE=${ERASURE_COMPOSE_FILE:?set ERASURE_COMPOSE_FILE}
@@ -117,6 +118,19 @@ access_payload() {
   jwt_payload "$token"
 }
 
+# The resource clients as the services register them: CMS validates the skycms audience,
+# Forms is a confidential client with a service account of its own, in production's shape as
+# measured on 2026-10-07: the standard flow on, direct access grants off (Keycloak's REST default
+# turns them on). The service-roles operator step turns the standard flow off
+# (core-service-roles.sh).
+create_resource_clients() {
+  kcadm create clients -r "$REALM" -s clientId=skycms -s 'name=SkyCMS (fixture)' -s protocol=openid-connect \
+    -s publicClient=false -s bearerOnly=true -s standardFlowEnabled=false >/dev/null
+  kcadm create clients -r "$REALM" -s clientId=forms -s 'name=Forms backend (fixture)' -s protocol=openid-connect \
+    -s publicClient=false -s serviceAccountsEnabled=true -s standardFlowEnabled=true \
+    -s implicitFlowEnabled=false -s directAccessGrantsEnabled=false >/dev/null
+}
+
 # Everything core-erasure is: the client, its scopes and mappings, the scopes' mappers and
 # mappings, its service account's roles and the resource roles. Arrays are sorted: Keycloak does
 # not keep the order of scope lists across detach and attach.
@@ -170,6 +184,20 @@ core_default_before=$(core_claims '')
 jq -e '(.resource_access.skymail.roles | sort) == ["skymail:access", "skymail:mails:send"]' <<<"$core_send_before" >/dev/null \
   || fail "core's SkyMail send token does not carry the SkyMail send roles: $core_send_before"
 
+# ERASURE_FIXTURE_ONLY=1: the run-integration.sh groups that do not prove this contract get only the
+# state it ends in and stop: core's SkyMail roles above, skycms and forms, core-erasure applied, and
+# a full reconciliation that has seen skycms and forms (as the contract's verification run has).
+if [[ ${ERASURE_FIXTURE_ONLY:-} == 1 ]]; then
+  CURRENT_STAGE='core-erasure fixture only'
+  create_resource_clients
+  output=$(create_erasure_client --apply)
+  expect_line "$output" 'applied 16 change(s)' 'the fixture apply did not perform the planned steps'
+  reconcile "$STATE_DIR/reconcile-erasure.log" \
+    || { cat "$STATE_DIR/reconcile-erasure.log" >&2; fail 'the reconciler failed on the provisioned core-erasure client'; }
+  printf 'core-erasure client fixture applied and reconciled (the contract runs in the erasure group).\n'
+  exit 0
+fi
+
 CURRENT_STAGE='core-erasure script refuses an environment password outside the harness'
 if "${COMPOSE[@]}" run --rm --no-deps \
   -e KEYCLOAK_ADMIN_REALM=master \
@@ -204,16 +232,7 @@ done
 [[ $(kcadm get "clients/$skymail_uuid/roles" -r "$REALM" -c | jq '[.[] | select(.name == "skymail:account:erase")] | length') == 0 ]] \
   || fail 'the stopped script created the SkyMail erase role'
 
-# The resource clients as the services register them: CMS validates the skycms audience,
-# Forms is a confidential client with a service account of its own, in production's shape as
-# measured on 2026-10-07: the standard flow on, direct access grants off (Keycloak's REST default
-# turns them on). The service-roles operator step turns the standard flow off
-# (core-service-roles.sh).
-kcadm create clients -r "$REALM" -s clientId=skycms -s 'name=SkyCMS (fixture)' -s protocol=openid-connect \
-  -s publicClient=false -s bearerOnly=true -s standardFlowEnabled=false >/dev/null
-kcadm create clients -r "$REALM" -s clientId=forms -s 'name=Forms backend (fixture)' -s protocol=openid-connect \
-  -s publicClient=false -s serviceAccountsEnabled=true -s standardFlowEnabled=true \
-  -s implicitFlowEnabled=false -s directAccessGrantsEnabled=false >/dev/null
+create_resource_clients
 
 CURRENT_STAGE='core-erasure dry run'
 events_before=$(newest_admin_event)

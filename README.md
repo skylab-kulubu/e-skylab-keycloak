@@ -763,6 +763,19 @@ docker build --platform linux/amd64 -t account-keycloak:test .
 KEYCLOAK_TEST_IMAGE=account-keycloak:test bash tests/run-integration.sh
 ```
 
+Harness tek koşuda bütün aşamaları sırayla koşar (varsayılan `INTEGRATION_GROUP=all`;
+`release.yml` böyle koşar). CI aynı betiği dört paralel işte koşar
+(`integration (erasure|roles|login|spi)`, sonra hepsini bekleyen `integration`):
+her grup kendi Keycloak'ını açar, ortak realm önekini (bootstrap, ilk uzlaştırma,
+drift, ikinci uzlaştırma) koşar, sonra kendi aşamalarını. Önceki bir grubun
+aşamalarına dayanan grup önce o aşamaların yazdığı durumu kurar (sözleşmelerini
+değil). Grupların içeriği `tests/run-integration.sh`'ın başında; her aşama değişimi
+CI günlüğüne `[harness <grup> +12m34s] <aşama>` diye geçer. Tek grup yerelde:
+
+```bash
+INTEGRATION_GROUP=login KEYCLOAK_TEST_IMAGE=account-keycloak:test bash tests/run-integration.sh
+```
+
 Yalnız yerel imaj derlemesi için üretim sözleşmesini devralmayan bağımsız
 Compose tanımını kullanın:
 

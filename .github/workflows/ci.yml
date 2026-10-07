@@ -186,9 +186,12 @@ jobs:
   # tests/run-integration.sh in parallel groups (INTEGRATION_GROUP; the list and what each group
   # runs are at the top of the script). In one job the harness took 96-124 minutes (#79, #80 and
   # main 6321258 on 2026-10-07). Each group starts its own Keycloak and runs the shared realm
-  # prefix, so a group takes that prefix plus its share. Each job builds the candidate itself from
-  # the GitHub Actions cache (about 30 s warm), which is cheaper than a build job with an image
-  # artifact that every group would wait for and download.
+  # prefix (17-22 minutes, by runner), so a group takes that prefix plus its share. First split
+  # run (#81, run 37656800805): erasure 53, roles 55, login 44 (on a runner whose prefix took 17
+  # minutes; about 57 on one that takes 22), spi 53 minutes. Timeouts are about 1.5 times that;
+  # the "[harness <group> +MmSSs]" lines of the log show where a group grows. Each job builds the
+  # candidate itself from the GitHub Actions cache (about 30 s warm), which is cheaper than a build
+  # job with an image artifact that every group would wait for and download.
   integration-group:
     name: integration (${{ matrix.group }})
     runs-on: ubuntu-latest
@@ -198,13 +201,13 @@ jobs:
       matrix:
         include:
           - group: erasure
-            timeout: 90
+            timeout: 80
           - group: roles
-            timeout: 90
+            timeout: 85
           - group: login
-            timeout: 90
+            timeout: 85
           - group: spi
-            timeout: 90
+            timeout: 80
     timeout-minutes: ${{ matrix.timeout }}
     env:
       KEYCLOAK_TEST_IMAGE: account-keycloak:ci

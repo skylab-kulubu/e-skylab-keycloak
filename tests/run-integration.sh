@@ -1271,10 +1271,15 @@ stage_rabbitmq_provider_contract() {
   [[ $(grep -c '^keycloak-to-rabbit-' <<<"$provider_names") == 1 ]] || fail "runtime does not contain exactly one RabbitMQ provider"
 }
 
-# The end of a group that stops before the last stage of the full run.
+# The end of every run: of a group that stops before the last stage of the full run, of the spi
+# group and of the full run.
 finish_group() {
   stage_rabbitmq_provider_contract
-  printf 'Keycloak 26.7.4 Account Center integration contract, group %s, passed.\n' "$INTEGRATION_GROUP"
+  if [[ $INTEGRATION_GROUP == all ]]; then
+    printf 'Keycloak 26.7.4 Account Center integration contract passed.\n'
+  else
+    printf 'Keycloak 26.7.4 Account Center integration contract, group %s, passed.\n' "$INTEGRATION_GROUP"
+  fi
   exit 0
 }
 
@@ -2248,6 +2253,4 @@ json_assert "$(curl --fail --silent --show-error http://localhost:18080/realms/e
   '.issuer == "http://localhost:18080/realms/e-skylab-test"' \
   'restoring the realm frontend URL did not bring Keycloak back to http://localhost:18080'
 
-stage_rabbitmq_provider_contract
-
-printf 'Keycloak 26.7.4 Account Center integration contract passed.\n'
+finish_group

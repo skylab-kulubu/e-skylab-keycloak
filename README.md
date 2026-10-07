@@ -456,7 +456,10 @@ operatör yapar (`KEYCLOAK_RECONCILE_KCADM_CONFIG` + `KEYCLOAK_RECONCILE_ONLY=se
 `would …` diye yazar, hiçbir şey yazmaz. Adım önce her şeyi okur, okuma hatasında hiçbir şey vermez,
 verdikten sonra rolün `skylab.granted-service-accounts` özniteliğine kaydeder; `users:read` dışındaki
 rolleri taşıyan başka kullanıcı, grup ya da varsayılan rolü, servis hesabının listede olmayan core
-rollerini bildirir ve hiçbir şey silmez. `media:attach`'ın istemci listesi
+rollerini bildirir ve hiçbir şey silmez. `forms` yalnız servis hesabıdır (Forms kişileri `skyforms`
+ile giriş yaptırır; core ürünü `client_id == azp`'den okur): uzlaştırıcı `standardFlowEnabled`,
+`implicitFlowEnabled`, `directAccessGrantsEnabled`'in kapalı olduğunu doğrular, değilse uyarır;
+operatör adımı açık olanları kapatır (kuru koşuda `would set …`). `media:attach`'ın istemci listesi
 core'un `MEDIA_SERVICE_CLIENTS`'ıyla aynı tutulur (runbook §20).
 
 Etkinlik siteleri (ARTLAB, YıldızJam, SkyDays) da canlıdaki inscribed'ın tenant'larıdır (ADR-0056

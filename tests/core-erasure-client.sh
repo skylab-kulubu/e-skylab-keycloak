@@ -205,13 +205,15 @@ done
   || fail 'the stopped script created the SkyMail erase role'
 
 # The resource clients as the services register them: CMS validates the skycms audience,
-# Forms is a confidential client with a service account of its own and no person login (no browser
-# flow, no password grant: Keycloak's REST default turns direct access grants on).
+# Forms is a confidential client with a service account of its own, in production's shape as
+# measured on 2026-10-07: the standard flow on, direct access grants off (Keycloak's REST default
+# turns them on). The service-roles operator step turns the standard flow off
+# (core-service-roles.sh).
 kcadm create clients -r "$REALM" -s clientId=skycms -s 'name=SkyCMS (fixture)' -s protocol=openid-connect \
   -s publicClient=false -s bearerOnly=true -s standardFlowEnabled=false >/dev/null
 kcadm create clients -r "$REALM" -s clientId=forms -s 'name=Forms backend (fixture)' -s protocol=openid-connect \
-  -s publicClient=false -s serviceAccountsEnabled=true -s standardFlowEnabled=false \
-  -s directAccessGrantsEnabled=false >/dev/null
+  -s publicClient=false -s serviceAccountsEnabled=true -s standardFlowEnabled=true \
+  -s implicitFlowEnabled=false -s directAccessGrantsEnabled=false >/dev/null
 
 CURRENT_STAGE='core-erasure dry run'
 events_before=$(newest_admin_event)

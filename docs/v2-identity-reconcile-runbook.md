@@ -1823,8 +1823,12 @@ Java dönemi); şimdi öbür ikisiyle aynı adımda kodlu. Kişinin token'ında 
 servis rollerini kişiden kabul etmez. Uzlaştırıcının listesi (`CORE_SERVICE_ROLE_DEFINITIONS`; rol,
 istemciler, sahiplik, açıklama) `media:attach` için core'un `MEDIA_SERVICE_CLIENTS`'ıyla aynı
 tutulur; CMS'in servis istemcisi ikisine birlikte eklenir. `ticket:forms` ve `url:forms` yalnız
-`forms` içindir. core ürünü `client_id == azp`'den okur: `forms` istemcisinde standart akış ve
-direct access grants kapalıdır, yani `forms` token'ı her zaman servis hesabınındır.
+`forms` içindir. core ürünü `client_id == azp`'den okur: `forms` yalnız servis hesabıdır (standart
+akış, implicit akış ve direct access grants kapalı), yani `forms` token'ı her zaman servis
+hesabınındır. Forms kişileri `skyforms` istemcisiyle giriş yaptırır; forms-frontend `forms`'u yalnız
+core sorgusunda parametre olarak, forms-backend yalnız client-credentials kimliği olarak kullanır
+(forms-frontend `f94a441`, forms-backend `b7baa07`, `origin/production`, 2026-10-07). Production ve
+sandbox'ta `standardFlowEnabled=true` ölçüldü (2026-10-07, Evaluate); operatör adımı kapatır.
 
 **Ne yapılır** (`reconcile_core_service_roles`, core rollerinin adımından sonra, admin panelinin
 adımından önce):
@@ -1834,6 +1838,7 @@ adımından önce):
 | `core` istemcisinde dört rol | her koşu | yoksa açıklamasıyla oluşturulur (`manage-clients`; varsa açıklamaya dokunulmaz); yeni rol aynı koşuda admin panelinin rol kapsamına girer (§16), kişi taşımadığı için panel token'ına girmez |
 | `forms`'un varsayılan kapsamı `roles` | her koşu | yalnız doğrulanır: `resource_access`'i ve audience resolve mapper'ı ile `aud: core`'u o verir. Yoksa uyarı; istemciye dokunulmaz. İkinci bir audience mapper **eklenmez** |
 | `forms`'un rol kapsamı | her koşu | `fullScopeAllowed=false` ise eksik `core/<rol>` kapsam eşlemesine eklenir (yoksa rol token'a girmez); tam kapsamda bir şey yapılmaz |
+| `forms` yalnız servis hesabı (`CORE_SERVICE_ONLY_CLIENTS`) | uzlaştırıcı doğrular, operatör yazar | `standardFlowEnabled`, `implicitFlowEnabled`, `directAccessGrantsEnabled` `false` ise `client forms: service account only, verified`; değilse uzlaştırıcı kimliği uyarır ve dokunmaz, operatör adımı `false` olmayanları `false` yapar (`would set standardFlowEnabled=false on client forms …`, `client forms: updated (…)`). Başka istemciye dokunulmaz |
 | `service-account-forms`'a roller | yalnız operatör | eksik olan verilir; rolün `skylab.granted-service-accounts` özniteliğine zaman ve servis hesapları yazılır (ör. `2026-10-06T20:00:00Z service-account-forms`); elle verilmiş rol `unchanged (held)` olur ve yalnız kaydı yazılır |
 | Başka sahipler | yalnız operatör | yalnız servis hesaplarının rolünü taşıyan kullanıcı, grup ya da varsayılan rol uyarıyla bildirilir (`users:read` için değil); servis hesabının listede olmayan core rolleri `NOTE` ile bildirilir; **hiçbir şey silinmez** |
 
@@ -1850,7 +1855,8 @@ hesabının rollerini yeniden okur. Adımın eski adı `KEYCLOAK_RECONCILE_ONLY=
 koşar.
 
 **Kuru koşu.** `KEYCLOAK_RECONCILE_CHECK=true` (yalnız operatör oturumu ve `service-roles` ile; başka
-türlüsü 2 ile reddedilir) her şeyi okur, her değişikliği `would create …`, `would map …`, `would grant
+türlüsü 2 ile reddedilir) her şeyi okur, her değişikliği `would create …`, `would set … on client
+forms …`, `would map …`, `would grant
 <rol> to service account …`, `would record the grant of …` diye yazar ve hiçbir şey yazmaz. Son
 satırlar `check: N change(s) pending; nothing was written` ve `Core service roles are checked;
 nothing was written.` Uygulayan koşu `applied N change(s)` ve `Core service roles are reconciled.`
@@ -1882,7 +1888,9 @@ rm -f /tmp/kcadm-operator.config
 
 Production için aynı komutlar `KEYCLOAK_REALM=e-skylab` ile koşar. sky_lab_genel'deki
 `ops/wizards/keycloak-forms-service-roles-wizard.sh` bunu iki realm için yapar (kuru koşu, onay,
-uygulama, yeniden kuru koşu 0, Evaluate ve `forms`'un giriş bayrakları). Beklenen ilk koşu
+uygulama, yeniden kuru koşu 0, Evaluate ve `forms`'un giriş bayrakları: standart akış ve direct
+access grants kapalı beklenir). Rolleri verilmiş bir realm'de (2026-10-07 sonrası) beklenen tek
+değişiklik `would set standardFlowEnabled=false on client forms (…)`'tur. Beklenen ilk koşu
 (production, `users:read`, `url:forms`, `media:attach` elle ya da önceki adımla verilmişken): `client
 role ticket:forms of core: created`, `service account service-account-forms: ticket:forms granted`, öbür üçü için
 `unchanged (held)`, yazılmamış kayıtlar için `grant recorded (…)`. İkinci koşu: dördü `unchanged
@@ -1898,7 +1906,9 @@ denetiminin geçtiğini, `403 media_attach_forbidden` geçmediğini gösterir.
 Geri dönüş: Admin Console → Users → `service-account-forms` → Role mapping → `core` rolü
 kaldırılır ve rolün `skylab.granted-service-accounts` özniteliği silinir (yoksa uzlaştırıcı
 "granted" der); operatör adımı bir sonraki koşusunda rolü yeniden verir, yani kalıcı geri dönüş
-rolü ya da istemciyi listeden çıkaran sürümdür. Rollerin kendisi zararsızdır.
+rolü ya da istemciyi listeden çıkaran sürümdür. Rollerin kendisi zararsızdır. `forms`'un bayrakları
+için geri dönüş yoktur: bir kişinin `forms`'la girmesi core'un ürün varsayımını bozar; gerekirse
+Admin Console → Clients → `forms` → Capability config'den açılır, operatör adımı yeniden kapatır.
 
 Bilinen sınır: rolü bir bileşik rolün (composite) içinden taşıyan sahipler yalnız varsayılan rol
 için aranır; başka bir bileşik rolün içine konmuşsa bildirilmez.
@@ -1909,15 +1919,17 @@ açıklamasıyla oluşturur, `forms` yokluğunu bildirir, kimse rolleri taşıma
 `media-attach`) vermez, işaretlemez ve operatör adımını söyler; uzlaştırıcı kimliğinin kuru koşusu
 reddedilir; dört okumadan (varsayılan kapsamlar, servis hesabının rolleri, rolün kullanıcıları,
 varsayılan rol) biri enjekte edilmiş kcadm hatasıyla başarısız olunca operatör adımı hiçbir şey
-yazmadan durur. `users:read` servis hesabına elle verilmiş, `ticket:forms` bir kişiye ve
+yazmadan durur. `forms` fikstürü production gibi `standardFlowEnabled=true` ile başlar; uzlaştırıcı kimliği bunu
+uyarır ve dokunmaz. `users:read` servis hesabına elle verilmiş, `ticket:forms` bir kişiye ve
 `/ADMIN`'e, `users:read` bir kişiye, `url:create` servis hesabına elle verilmişken: kuru koşu yalnız
-eksik üç rolü ve dört kaydı planlar (7), `users:read`'i vermeye kalkmaz, kişinin `users:read`'ini
-bildirmez, admin olayı üretmez; uygulayan koşu aynı 7 değişikliği yapar, öbür sahipleri uyarıyla ve
+`standardFlowEnabled=false`'u, eksik üç rolü ve dört kaydı planlar (8), `users:read`'i vermeye
+kalkmaz, kişinin `users:read`'ini bildirmez, admin olayı üretmez; uygulayan koşu aynı 8 değişikliği
+yapar (sonra `forms`'un üç bayrağı `false`, `skyforms` değişmez), öbür sahipleri uyarıyla ve
 `url:create`'i `NOTE` ile bildirir, hiçbirini silmez. Gerçek client-credentials token'ında `azp` ve
 `client_id` `forms`, `aud` içinde `core`, `resource_access.core.roles` içinde dört rol;
 `ticket:forms`'u servis hesabından başka kullanıcı (`core-erasure`'ınki dahil) ve grup taşımaz,
-`core-erasure`'ın token'ında servis rolü yok; `forms` istemcisinde standart akış ve direct access
-grants kapalı. İkinci operatör koşusu `applied 0 change(s)`, admin olayı yok; ardından
+`core-erasure`'ın token'ında servis rolü yok; bayraklar kapandıktan sonra `forms`'un client-credentials
+token'ı aynı dört rolle çalışır. İkinci operatör koşusu `applied 0 change(s)`, admin olayı yok; ardından
 kuru koşu `0 change(s) pending`. `fullScopeAllowed=false` yapılınca roller token'dan düşer
 (kontrol), uzlaştırıcı kimliği dört kapsam eşlemesini ekler ve roller `aud: core` ile geri gelir.
 Değişiklik üretmeyen tam koşu `forms`'un bayraklarını, rol kapsamını, servis hesabının `core`

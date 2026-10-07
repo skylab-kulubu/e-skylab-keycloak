@@ -10,8 +10,10 @@
 # (KEYCLOAK_RECONCILE_ONLY=service-roles; media-attach is the old name of the step), first as a dry
 # run (KEYCLOAK_RECONCILE_CHECK=true). Proven with a real client-credentials token of forms: azp and
 # client_id forms, aud core, resource_access.core.roles holding all four. The fixture realm gets
-# forms (confidential, service account, full scope, the realm's default scopes) from
-# core-erasure-client.sh.
+# forms (confidential, service account, full scope, the realm's default scopes, the standard flow on
+# as in production on 2026-10-07) from core-erasure-client.sh. The operator step also makes forms
+# service account only (standard flow, implicit flow and direct access grants off; core reads the
+# product from client_id == azp); the reconciler identity only reports it.
 
 CSR_ROLES=(media:attach ticket:forms url:forms users:read)
 CSR_NEW_ROLE=ticket:forms
@@ -28,6 +30,8 @@ declare -A CSR_DESCRIPTION=(
   [users:read]="Reads a person's profile (GET /v1/users/{id}); held by the Forms service account."
 )
 CSR_PAYLOAD=''
+CSR_FLAGS_OFF='.standardFlowEnabled == false and .implicitFlowEnabled == false and .directAccessGrantsEnabled == false'
+CSR_FLAGS_PRODUCTION='.standardFlowEnabled == true and .implicitFlowEnabled == false and .directAccessGrantsEnabled == false'
 
 # The step alone with the harness administrator's kcadm session (the operator path). Arguments are
 # extra `exec` options (environment).
@@ -52,6 +56,16 @@ csr_newest_event() {
 
 csr_events_since() {
   kcadm get admin-events -r "$V2_REALM" -q max=200 -c | jq --argjson since "$1" '[.[] | select(.time > $since)] | length'
+}
+
+csr_forms_client() {
+  kcadm get "clients/$(lca_client_uuid "$CSR_CLIENT")" -r "$V2_REALM" -c
+}
+
+# The resource paths of the CLIENT admin events (client updates) after $1, sorted JSON array.
+csr_client_updates_since() {
+  kcadm get admin-events -r "$V2_REALM" -q max=200 -c \
+    | jq -c --argjson since "$1" '[.[] | select(.time > $since and .resourceType == "CLIENT") | .resourcePath] | unique'
 }
 
 csr_role_body() {
@@ -154,10 +168,10 @@ stage_core_service_roles_granted_by_operator() {
   [[ -n $forms_uuid ]] || fail 'core-erasure-client.sh did not leave the forms client'
   json_assert "$(kcadm get "clients/$forms_uuid" -r "$V2_REALM" -c)" '.serviceAccountsEnabled == true and .fullScopeAllowed == true' \
     'the forms fixture is not a full-scope service-account client (production shape)'
-  # core reads the product from client_id == azp: forms signs in no person (no browser login, no
-  # password grant), so a forms token is always its service account's.
-  json_assert "$(kcadm get "clients/$forms_uuid" -r "$V2_REALM" -c)" '.standardFlowEnabled == false and .directAccessGrantsEnabled == false' \
-    'the forms fixture allows a person to sign in (standard flow or direct access grants)'
+  # Production's shape on 2026-10-07: the standard flow on. core reads the product from
+  # client_id == azp, so the operator step below turns it off.
+  json_assert "$(csr_forms_client)" "$CSR_FLAGS_PRODUCTION" \
+    'the forms fixture is not in production shape (standard flow on, implicit flow and direct access grants off)'
   csr_service_token
   [[ $(csr_token_service_roles) == '[]' ]] || fail 'the forms service token carries a core service role before any grant'
 
@@ -166,6 +180,7 @@ stage_core_service_roles_granted_by_operator() {
   reconciler_lines=('Core service roles are reconciled.'
     "[reconcile] default client scope roles of $CSR_CLIENT: verified"
     "[reconcile] role scope of $CSR_CLIENT: unchanged (full scope"
+    "[reconcile] WARNING: client $CSR_CLIENT lets a person sign in (standardFlowEnabled not false): core reads the product from client_id == azp, so it must be service account only; nothing was changed on the client"
     'KEYCLOAK_RECONCILE_ONLY=service-roles')
   for role in "${CSR_ROLES[@]}"; do
     reconciler_lines+=("[reconcile] client role $role of core: unchanged"
@@ -173,6 +188,7 @@ stage_core_service_roles_granted_by_operator() {
   done
   csr_expect_lines "$output" 'the reconciler identity' "${reconciler_lines[@]}"
   [[ $(csr_account_roles) == '[]' ]] || fail 'the reconciler identity granted a core service role'
+  json_assert "$(csr_forms_client)" "$CSR_FLAGS_PRODUCTION" 'the reconciler identity changed the login flags of forms'
   ! csr_markers | grep -q '=.' || fail 'the reconciler identity recorded a grant'
   # The dry run is the operator's only.
   if output=$(csr_reconciler service-roles -e KEYCLOAK_RECONCILE_CHECK=true); then
@@ -213,7 +229,8 @@ stage_core_service_roles_granted_by_operator() {
   before=$(csr_newest_event)
   output=$(csr_operator -e KEYCLOAK_RECONCILE_CHECK=true) || { printf '%s\n' "$output" >&2; fail 'the dry run failed'; }
   operator_lines=('Core service roles are checked; nothing was written.'
-    '[reconcile] check: 7 change(s) pending; nothing was written'
+    '[reconcile] check: 8 change(s) pending; nothing was written'
+    "[reconcile] would set standardFlowEnabled=false on client $CSR_CLIENT (service account only: no browser login, no password grant)"
     "[reconcile] service account $CSR_ACCOUNT: $CSR_HAND_ROLE unchanged (held)"
     "[reconcile] WARNING: $CSR_NEW_ROLE is also held by the users $LCA_USER (nothing was removed"
     "[reconcile] WARNING: $CSR_NEW_ROLE is held by the groups /ADMIN (nothing was removed"
@@ -227,13 +244,17 @@ stage_core_service_roles_granted_by_operator() {
   ! grep -Fq "$CSR_HAND_ROLE is also held" <<<"$output" || { printf '%s\n' "$output" >&2; fail 'the dry run reported a person holding users:read (people may)'; }
   ! grep -Eq '\] (service account .* granted|client role .* grant recorded)' <<<"$output" \
     || { printf '%s\n' "$output" >&2; fail 'the dry run said it wrote something'; }
+  ! grep -Eq 'would set (implicitFlowEnabled|directAccessGrantsEnabled)' <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'the dry run planned to set a flag that is already off'; }
   [[ $(csr_events_since "$before") == 0 ]] || fail 'the dry run wrote something'
+  json_assert "$(csr_forms_client)" "$CSR_FLAGS_PRODUCTION" 'the dry run changed the login flags of forms'
   [[ $(csr_account_roles) == "[\"url:create\",\"$CSR_HAND_ROLE\"]" ]] || fail "the dry run changed the roles of $CSR_ACCOUNT: $(csr_account_roles)"
 
   CURRENT_STAGE='core service roles: granted by the operator step, other holders reported and kept'
   output=$(csr_operator) || { printf '%s\n' "$output" >&2; fail 'the service-roles operator step failed'; }
   operator_lines=('Core service roles are reconciled.'
-    '[reconcile] applied 7 change(s)'
+    '[reconcile] applied 8 change(s)'
+    "[reconcile] client $CSR_CLIENT: updated (standardFlowEnabled=false; service account only)"
     "[reconcile] service account $CSR_ACCOUNT: $CSR_HAND_ROLE unchanged (held)"
     "[reconcile] WARNING: $CSR_NEW_ROLE is also held by the users $LCA_USER (nothing was removed"
     "[reconcile] WARNING: $CSR_NEW_ROLE is held by the groups /ADMIN (nothing was removed"
@@ -243,6 +264,11 @@ stage_core_service_roles_granted_by_operator() {
     [[ $role == "$CSR_HAND_ROLE" ]] || operator_lines+=("[reconcile] service account $CSR_ACCOUNT: $role granted")
   done
   csr_expect_lines "$output" 'the operator step' "${operator_lines[@]}"
+  json_assert "$(csr_forms_client)" "$CSR_FLAGS_OFF and .serviceAccountsEnabled == true and .fullScopeAllowed == true and .publicClient == false" \
+    'the operator step did not make forms service account only (or changed another of its settings)'
+  # forms is the only client the step updated.
+  [[ $(csr_client_updates_since "$before") == "[\"clients/$forms_uuid\"]" ]] \
+    || fail "the operator step updated another client than forms: $(csr_client_updates_since "$before")"
   [[ $(csr_account_roles) == '["media:attach","ticket:forms","url:create","url:forms","users:read"]' ]] \
     || fail "$CSR_ACCOUNT does not hold exactly the four core service roles and the hand-made url:create: $(csr_account_roles)"
   markers=$(csr_markers)
@@ -261,6 +287,7 @@ stage_core_service_roles_granted_by_operator() {
   [[ $(csr_account_roles) == "$CSR_SORTED" ]] || fail "$CSR_ACCOUNT does not hold exactly the four core service roles"
 
   CURRENT_STAGE='core service roles: in the forms client-credentials token, and nowhere else'
+  # The client-credentials grant still works with the standard flow off, with the same roles.
   csr_service_token
   json_assert "$CSR_PAYLOAD" '.azp == "forms" and .client_id == "forms"' \
     'the forms service token does not name forms in azp and client_id'
@@ -279,7 +306,8 @@ stage_core_service_roles_granted_by_operator() {
   CURRENT_STAGE='core service roles: a second operator step writes nothing'
   before=$(csr_newest_event)
   output=$(csr_operator) || { printf '%s\n' "$output" >&2; fail 'the second service-roles operator step failed'; }
-  operator_lines=('[reconcile] applied 0 change(s)')
+  operator_lines=('[reconcile] applied 0 change(s)'
+    "[reconcile] client $CSR_CLIENT: service account only, verified (standardFlowEnabled implicitFlowEnabled directAccessGrantsEnabled false)")
   for role in "${CSR_ROLES[@]}"; do
     operator_lines+=("[reconcile] service account $CSR_ACCOUNT: $role unchanged (held)")
   done
@@ -311,11 +339,12 @@ stage_core_service_roles_granted_by_operator() {
   kcadm update "clients/$forms_uuid" -r "$V2_REALM" -s fullScopeAllowed=true >/dev/null
 }
 
-# Part of v2_state_snapshot: the forms client's flags, role scope and service-account roles of core.
+# Part of v2_state_snapshot: the forms client's flags (login flags included), role scope and service-account roles of core.
 csr_state_snapshot() {
   local forms_uuid
   forms_uuid=$(lca_client_uuid "$CSR_CLIENT")
-  kcadm get "clients/$forms_uuid" -r "$V2_REALM" -c | jq -c '{fullScopeAllowed, serviceAccountsEnabled}'
+  kcadm get "clients/$forms_uuid" -r "$V2_REALM" -c \
+    | jq -c '{fullScopeAllowed, serviceAccountsEnabled, standardFlowEnabled, implicitFlowEnabled, directAccessGrantsEnabled}'
   kcadm get "clients/$forms_uuid/scope-mappings/clients/$(lca_client_uuid core)" -r "$V2_REALM" -c | jq -c '[.[].name] | sort'
   csr_account_roles
   csr_markers | jq -R -c .

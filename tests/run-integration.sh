@@ -78,7 +78,7 @@ source "$SCRIPT_DIR/group-overage-mapper.sh"
 # core's per-resource client roles and their one-time seeding (ADR-0059); stages called below.
 # shellcheck source=core-roles.sh
 source "$SCRIPT_DIR/core-roles.sh"
-# core's service roles (media:attach, ticket:guest-apply, url:forms, users:read) on the forms service
+# core's service roles (media:attach, ticket:forms, url:forms, users:read) on the forms service
 # account; stages called below.
 # shellcheck source=core-service-roles.sh
 source "$SCRIPT_DIR/core-service-roles.sh"

@@ -1803,7 +1803,7 @@ bir eşleme silinmez; işareti kaldırılan rol (listeye yeni eklenmiş gibi) ü
 gruba verilir. Değişiklik üretmeyen tam koşu rolleri, işaretleri ve grupların eşlemelerini de
 karşılaştırır.
 
-## 20. core'un servis rolleri: `media:attach`, `ticket:guest-apply`, `url:forms`, `users:read` (Forms servis hesabı)
+## 20. core'un servis rolleri: `media:attach`, `ticket:forms`, `url:forms`, `users:read` (Forms servis hesabı)
 
 Bir ürünün servis hesabının (client credentials) taşıdığı ve core'un `resource_access.core.roles`'tan
 okuduğu `core` istemci rolleri. Hepsinde core `aud` içinde `core` ister.
@@ -1811,17 +1811,20 @@ okuduğu `core` istemci rolleri. Hepsinde core `aud` içinde `core` ister.
 | Rol | core'da ne açar | Sahibi |
 | --- | --- | --- |
 | `media:attach` | `POST /v1/media/{id}/attachments`, `DELETE …/attachments/{attachmentId}`, anonim form yüklemesinin kuralı (ADR-0052); `azp`/`client_id` core'un `MEDIA_SERVICE_CLIENTS` listesinde olmalı (ayarsızken `forms:forms`) | yalnız servis hesapları |
-| `ticket:guest-apply` | Guest apply'ı ürün olarak çağırmak, `POST /v1/events/{id}/applications/guest` (core-internal-auth 03; core `docs/guest-apply.md` "From log to enforce"). core servis çağıranı yalnız `MEDIA_SERVICE_CLIENTS`'taki bir ürünse güvenir; zorlama açılınca bu rol de şarttır | yalnız servis hesapları |
+| `ticket:forms` | Forms cevaplarını bildirir, `POST /v1/forms/{formId}/responses` (core `docs/form-response-tickets.md`); core, bir Etkinlik formuna kabul edilen cevabın kazandırdığı Ticket'ları yazar. core yalnız `forms` ürününün servis hesabından kabul eder | yalnız servis hesapları |
 | `url:forms` | forma bağlı kısa linkler (`/v1/urls/forms/{formId}`, `GET /v1/urls/availability`) | yalnız servis hesapları |
 | `users:read` | `GET /v1/users/{id}` | kişiler de taşıyabilir (Java döneminden) |
 
-Ad `ticket:guest-apply`: admin-token-authz sözleşmesindeki `ticket:manage` ve `ticket:validate` gibi
-tekil kaynak adı + eylem. O tablodaki bir rolle çakışmaz; Privileged rol değildir, hiçbir gruba
-verilmez. `url:forms` ve `users:read` production'da daha önce elle verilmişti (forms-url-role wizard'ı,
+`ticket:forms` adını core verir (`internal/authz/authorizer.go`, core-backend#201): admin-token-authz
+sözleşmesindeki `ticket:manage` ve `ticket:validate` ile aynı biçim, o tablodaki bir rolle çakışmaz;
+Privileged rol değildir, hiçbir gruba verilmez. Forms Guest apply'ı artık çağırmaz; Guest apply için
+servis rolü yoktur. `url:forms` ve `users:read` production'da daha önce elle verilmişti (forms-url-role wizard'ı,
 Java dönemi); şimdi öbür ikisiyle aynı adımda kodlu. Kişinin token'ında `client_id` yoktur; core
 servis rollerini kişiden kabul etmez. Uzlaştırıcının listesi (`CORE_SERVICE_ROLE_DEFINITIONS`; rol,
-istemciler, sahiplik, açıklama) `media:attach` ve `ticket:guest-apply` için core'un
-`MEDIA_SERVICE_CLIENTS`'ıyla aynı tutulur; CMS'in servis istemcisi ikisine birlikte eklenir.
+istemciler, sahiplik, açıklama) `media:attach` için core'un `MEDIA_SERVICE_CLIENTS`'ıyla aynı
+tutulur; CMS'in servis istemcisi ikisine birlikte eklenir. `ticket:forms` ve `url:forms` yalnız
+`forms` içindir. core ürünü `client_id == azp`'den okur: `forms` istemcisinde standart akış ve
+direct access grants kapalıdır, yani `forms` token'ı her zaman servis hesabınındır.
 
 **Ne yapılır** (`reconcile_core_service_roles`, core rollerinin adımından sonra, admin panelinin
 adımından önce):
@@ -1878,10 +1881,10 @@ rm -f /tmp/kcadm-operator.config
 ```
 
 Production için aynı komutlar `KEYCLOAK_REALM=e-skylab` ile koşar. sky_lab_genel'deki
-`ops/wizards/keycloak-forms-guest-apply-wizard.sh` bunu iki realm için yapar (kuru koşu, onay,
-uygulama, yeniden kuru koşu 0, Evaluate). Beklenen ilk koşu (production, `users:read`, `url:forms`,
-`media:attach` elle ya da önceki adımla verilmişken): `client role ticket:guest-apply of core:
-created`, `service account service-account-forms: ticket:guest-apply granted`, öbür üçü için
+`ops/wizards/keycloak-forms-service-roles-wizard.sh` bunu iki realm için yapar (kuru koşu, onay,
+uygulama, yeniden kuru koşu 0, Evaluate ve `forms`'un giriş bayrakları). Beklenen ilk koşu
+(production, `users:read`, `url:forms`, `media:attach` elle ya da önceki adımla verilmişken): `client
+role ticket:forms of core: created`, `service account service-account-forms: ticket:forms granted`, öbür üçü için
 `unchanged (held)`, yazılmamış kayıtlar için `grant recorded (…)`. İkinci koşu: dördü `unchanged
 (held)`, `applied 0 change(s)`.
 
@@ -1906,14 +1909,15 @@ açıklamasıyla oluşturur, `forms` yokluğunu bildirir, kimse rolleri taşıma
 `media-attach`) vermez, işaretlemez ve operatör adımını söyler; uzlaştırıcı kimliğinin kuru koşusu
 reddedilir; dört okumadan (varsayılan kapsamlar, servis hesabının rolleri, rolün kullanıcıları,
 varsayılan rol) biri enjekte edilmiş kcadm hatasıyla başarısız olunca operatör adımı hiçbir şey
-yazmadan durur. `users:read` servis hesabına elle verilmiş, `ticket:guest-apply` bir kişiye ve
+yazmadan durur. `users:read` servis hesabına elle verilmiş, `ticket:forms` bir kişiye ve
 `/ADMIN`'e, `users:read` bir kişiye, `url:create` servis hesabına elle verilmişken: kuru koşu yalnız
 eksik üç rolü ve dört kaydı planlar (7), `users:read`'i vermeye kalkmaz, kişinin `users:read`'ini
 bildirmez, admin olayı üretmez; uygulayan koşu aynı 7 değişikliği yapar, öbür sahipleri uyarıyla ve
 `url:create`'i `NOTE` ile bildirir, hiçbirini silmez. Gerçek client-credentials token'ında `azp` ve
 `client_id` `forms`, `aud` içinde `core`, `resource_access.core.roles` içinde dört rol;
-`ticket:guest-apply`'ı servis hesabından başka kullanıcı ve grup taşımaz, `core-erasure`'ın
-token'ında servis rolü yok. İkinci operatör koşusu `applied 0 change(s)`, admin olayı yok; ardından
+`ticket:forms`'u servis hesabından başka kullanıcı (`core-erasure`'ınki dahil) ve grup taşımaz,
+`core-erasure`'ın token'ında servis rolü yok; `forms` istemcisinde standart akış ve direct access
+grants kapalı. İkinci operatör koşusu `applied 0 change(s)`, admin olayı yok; ardından
 kuru koşu `0 change(s) pending`. `fullScopeAllowed=false` yapılınca roller token'dan düşer
 (kontrol), uzlaştırıcı kimliği dört kapsam eşlemesini ekler ve roller `aud: core` ile geri gelir.
 Değişiklik üretmeyen tam koşu `forms`'un bayraklarını, rol kapsamını, servis hesabının `core`

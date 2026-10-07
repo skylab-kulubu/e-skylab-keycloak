@@ -1511,10 +1511,10 @@ reconcile_core_roles() {
 #   media:attach        POST/DELETE /v1/media/{id}/attachments and the anonymous form upload rule
 #                       (media redesign ticket 03, ADR-0052); core also requires azp and client_id
 #                       to be a client of its MEDIA_SERVICE_CLIENTS.
-#   ticket:guest-apply  Guest apply as a product, POST /v1/events/{id}/applications/guest
-#                       (core-internal-auth ticket 03; core's docs/guest-apply.md "From log to
-#                       enforce"); core trusts a service caller only for a MEDIA_SERVICE_CLIENTS
-#                       product and, once enforced, only with this role.
+#   ticket:forms        POST /v1/forms/{formId}/responses: forms reports its answers and core writes
+#                       the Tickets an accepted answer to an Event's form earns (core's
+#                       docs/form-response-tickets.md); core accepts it only from the forms
+#                       product's service account.
 #   url:forms           form-bound short links, /v1/urls/forms/{formId} and GET /v1/urls/availability.
 #   users:read          GET /v1/users/{id}.
 # url:forms and users:read were granted to the forms service account by hand before (forms-url-role
@@ -1538,12 +1538,12 @@ reconcile_core_roles() {
 #
 # name|clients (space separated)|holders|description. holders: services (only the listed clients'
 # service accounts may hold it; any other holder is reported) or shared (people may hold it too:
-# users:read predates the service accounts). Keep the clients of media:attach and
-# ticket:guest-apply in step with core's MEDIA_SERVICE_CLIENTS (product:client pairs; unset it is
-# forms:forms): a CMS client is added in both places together, once its service account exists.
+# users:read predates the service accounts). Keep the clients of media:attach in step with core's
+# MEDIA_SERVICE_CLIENTS (product:client pairs; unset it is forms:forms): a CMS client is added in
+# both places together, once its service account exists. ticket:forms and url:forms are forms only.
 CORE_SERVICE_ROLE_DEFINITIONS=(
   "media:attach|forms|services|Service attach API (media redesign ticket 03, ADR-0052): a product's service account links Media to its own records. Service accounts only; never a person or a group."
-  "ticket:guest-apply|forms|services|Guest apply as a product (core-internal-auth ticket 03): a product's service account writes and corrects guest Tickets through POST /v1/events/{id}/applications/guest. Service accounts only; never a person or a group."
+  "ticket:forms|forms|services|Forms reports its answers (POST /v1/forms/{formId}/responses, core docs/form-response-tickets.md); core writes the Tickets an accepted answer to an Event's form earns. Service accounts only; never a person or a group."
   "url:forms|forms|services|Forms service account: form-bound short links (/v1/urls/forms/{formId}) and GET /v1/urls/availability only. Grants nothing on the generic /v1/urls endpoints."
   "users:read|forms|shared|Reads a person's profile (GET /v1/users/{id}); held by the Forms service account."
 )

@@ -4,7 +4,7 @@
 # login-client-audiences.sh and cr_group_id from core-roles.sh.
 #
 # core's service roles (runbook §20): media:attach (media redesign ticket 03, ADR-0052),
-# ticket:guest-apply (core-internal-auth ticket 03), url:forms and users:read. The reconciler
+# ticket:forms (core's form response Tickets, docs/form-response-tickets.md), url:forms and users:read. The reconciler
 # creates them on core; the forms service account holds them. The reconciler identity has no user
 # permissions, so it reports and an operator grants with the step alone
 # (KEYCLOAK_RECONCILE_ONLY=service-roles; media-attach is the old name of the step), first as a dry
@@ -13,17 +13,17 @@
 # forms (confidential, service account, full scope, the realm's default scopes) from
 # core-erasure-client.sh.
 
-CSR_ROLES=(media:attach ticket:guest-apply url:forms users:read)
-CSR_NEW_ROLE=ticket:guest-apply
+CSR_ROLES=(media:attach ticket:forms url:forms users:read)
+CSR_NEW_ROLE=ticket:forms
 # Held by hand before the operator step (as production's forms service account held it).
 CSR_HAND_ROLE=users:read
-CSR_SORTED='["media:attach","ticket:guest-apply","url:forms","users:read"]'
+CSR_SORTED='["media:attach","ticket:forms","url:forms","users:read"]'
 CSR_ATTRIBUTE=skylab.granted-service-accounts
 CSR_CLIENT=forms
 CSR_ACCOUNT=service-account-forms
 declare -A CSR_DESCRIPTION=(
   [media:attach]="Service attach API (media redesign ticket 03, ADR-0052): a product's service account links Media to its own records. Service accounts only; never a person or a group."
-  [ticket:guest-apply]="Guest apply as a product (core-internal-auth ticket 03): a product's service account writes and corrects guest Tickets through POST /v1/events/{id}/applications/guest. Service accounts only; never a person or a group."
+  [ticket:forms]="Forms reports its answers (POST /v1/forms/{formId}/responses, core docs/form-response-tickets.md); core writes the Tickets an accepted answer to an Event's form earns. Service accounts only; never a person or a group."
   [url:forms]="Forms service account: form-bound short links (/v1/urls/forms/{formId}) and GET /v1/urls/availability only. Grants nothing on the generic /v1/urls endpoints."
   [users:read]="Reads a person's profile (GET /v1/users/{id}); held by the Forms service account."
 )
@@ -154,6 +154,10 @@ stage_core_service_roles_granted_by_operator() {
   [[ -n $forms_uuid ]] || fail 'core-erasure-client.sh did not leave the forms client'
   json_assert "$(kcadm get "clients/$forms_uuid" -r "$V2_REALM" -c)" '.serviceAccountsEnabled == true and .fullScopeAllowed == true' \
     'the forms fixture is not a full-scope service-account client (production shape)'
+  # core reads the product from client_id == azp: forms signs in no person (no browser login, no
+  # password grant), so a forms token is always its service account's.
+  json_assert "$(kcadm get "clients/$forms_uuid" -r "$V2_REALM" -c)" '.standardFlowEnabled == false and .directAccessGrantsEnabled == false' \
+    'the forms fixture allows a person to sign in (standard flow or direct access grants)'
   csr_service_token
   [[ $(csr_token_service_roles) == '[]' ]] || fail 'the forms service token carries a core service role before any grant'
 
@@ -239,7 +243,7 @@ stage_core_service_roles_granted_by_operator() {
     [[ $role == "$CSR_HAND_ROLE" ]] || operator_lines+=("[reconcile] service account $CSR_ACCOUNT: $role granted")
   done
   csr_expect_lines "$output" 'the operator step' "${operator_lines[@]}"
-  [[ $(csr_account_roles) == '["media:attach","ticket:guest-apply","url:create","url:forms","users:read"]' ]] \
+  [[ $(csr_account_roles) == '["media:attach","ticket:forms","url:create","url:forms","users:read"]' ]] \
     || fail "$CSR_ACCOUNT does not hold exactly the four core service roles and the hand-made url:create: $(csr_account_roles)"
   markers=$(csr_markers)
   for role in "${CSR_ROLES[@]}"; do

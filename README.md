@@ -445,15 +445,19 @@ uzlaştırıcı kimliği değil operatör yapar: `KEYCLOAK_RECONCILE_KCADM_CONFI
 `KEYCLOAK_RECONCILE_ONLY=core-roles`; uzlaştırıcı işaretsiz rolleri uyarıyla bildirir. Rol listesi
 sky_lab_genel'deki admin-token-authz spec'inin sözleşme tablosudur (runbook §19).
 
-core'un servis bağlama rolünü `media:attach` (ADR-0052; Forms'un core'a Media bağlaması ve anonim
-form yüklemesi) uzlaştırıcı her koşuda `core` istemcisinde var eder; `forms`'un `fullScopeAllowed`'ı
-kapalıysa rolü onun kapsam eşlemesine ekler ve `aud: core`'u veren varsayılan `roles` kapsamını
-yalnız doğrular (ikinci audience mapper eklenmez). Rol yalnız `service-account-forms`'ta bulunur;
-servis hesabına rol vermek kullanıcı yetkisi istediği için bunu operatör yapar
-(`KEYCLOAK_RECONCILE_KCADM_CONFIG` + `KEYCLOAK_RECONCILE_ONLY=media-attach`): önce her şeyi okur,
-okuma hatasında hiçbir şey vermez, verdikten sonra rolün `skylab.granted-service-accounts`
-özniteliğine kaydeder, rolü taşıyan başka kullanıcı, grup ya da varsayılan rolü bildirir ve hiçbir
-şey silmez. İstemci listesi core'un `MEDIA_SERVICE_CLIENTS`'ıyla aynı tutulur (runbook §20).
+core'un servis rollerini (`media:attach`: ADR-0052, Forms'un core'a Media bağlaması ve anonim form
+yüklemesi; `ticket:forms`: Forms'un cevap bildirimi, core `docs/form-response-tickets.md`; `url:forms`:
+forma bağlı kısa linkler; `users:read`: kişi profili) uzlaştırıcı her koşuda `core` istemcisinde var
+eder; `forms`'un `fullScopeAllowed`'ı kapalıysa rolleri onun kapsam eşlemesine ekler ve `aud: core`'u
+veren varsayılan `roles` kapsamını yalnız doğrular (ikinci audience mapper eklenmez). Roller
+`service-account-forms`'ta bulunur; servis hesabına rol vermek kullanıcı yetkisi istediği için bunu
+operatör yapar (`KEYCLOAK_RECONCILE_KCADM_CONFIG` + `KEYCLOAK_RECONCILE_ONLY=service-roles`; eski adı
+`media-attach` de çalışır). `KEYCLOAK_RECONCILE_CHECK=true` aynı adımı kuru koşar: yalnız eksikleri
+`would …` diye yazar, hiçbir şey yazmaz. Adım önce her şeyi okur, okuma hatasında hiçbir şey vermez,
+verdikten sonra rolün `skylab.granted-service-accounts` özniteliğine kaydeder; `users:read` dışındaki
+rolleri taşıyan başka kullanıcı, grup ya da varsayılan rolü, servis hesabının listede olmayan core
+rollerini bildirir ve hiçbir şey silmez. `media:attach`'ın istemci listesi
+core'un `MEDIA_SERVICE_CLIENTS`'ıyla aynı tutulur (runbook §20).
 
 Etkinlik siteleri (ARTLAB, YıldızJam, SkyDays) da canlıdaki inscribed'ın tenant'larıdır (ADR-0056
 eki, 2026-10-03). Site istemcilerini (`frontend-artlab`, `frontend-yildizjam`, `frontend-skydays`)

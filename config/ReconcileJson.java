@@ -57,10 +57,23 @@ import java.util.TreeMap;
  *                               TO under the same parent with the same priority, then delete id),
  *                               or "finish<TAB>id" (an interrupted swap left both side by side:
  *                               delete id). Anything else is refused with exit status 4.
+ *   first-broker-login STEP     stdin is the flat execution list of a first broker login flow;
+ *                               prints what eskylab-login-ux 07 edits in it, one line each:
+ *                               "step<TAB>id|-<TAB>priority" (STEP at the top level, or "-" and the
+ *                               priority to add it with: one below the review profile step),
+ *                               "review<TAB>id<TAB>configId|-" (the review profile step) and
+ *                               "email-verification<TAB>id<TAB>priority<TAB>requirement" per
+ *                               idp-email-verification step. A flow without exactly one top-level
+ *                               review profile step, with STEP twice, below the top level or after
+ *                               the review profile step, or without a free priority for it is
+ *                               refused with exit status 4.
+ *   config-value NAME VALUE     stdin is one authenticator config ({id, alias, config}); prints it
+ *                               with config.NAME = VALUE and exits 3 when that changes it, prints
+ *                               nothing and exits 0 when config.NAME is already VALUE.
  *
- * Exit status 0 means "printed successfully", 3 means "changed" (user-profile only), 4 "refused"
- * (password-form only) and 1 an invalid input. Nothing here prints secrets: all inputs are
- * configuration documents.
+ * Exit status 0 means "printed successfully", 3 means "changed" (user-profile and config-value),
+ * 4 "refused" (password-form and first-broker-login) and 1 an invalid input. Nothing here prints
+ * secrets: all inputs are configuration documents.
  */
 public final class ReconcileJson {
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -88,6 +101,8 @@ public final class ReconcileJson {
             case "realm-attribute" -> realmAttribute(args, readStdin(), out);
             case "user-profile" -> System.exit(userProfile(requireFile(args), readStdin(), out));
             case "password-form" -> System.exit(passwordForm(args, readStdin(), out));
+            case "first-broker-login" -> System.exit(firstBrokerLogin(args, readStdin(), out));
+            case "config-value" -> System.exit(configValue(args, readStdin(), out));
             default -> usage();
         }
     }
@@ -97,7 +112,8 @@ public final class ReconcileJson {
                 + "  |  ReconcileJson merge BASE EXTRA  |  ReconcileJson names|scope-mappings"
                 + "  |  ReconcileJson field NAME  |  ReconcileJson role-attribute NAME"
                 + "  |  ReconcileJson realm-attribute NAME VALUE"
-                + "  |  ReconcileJson password-form FROM TO");
+                + "  |  ReconcileJson password-form FROM TO  |  ReconcileJson first-broker-login STEP"
+                + "  |  ReconcileJson config-value NAME VALUE");
         System.exit(1);
     }
 
@@ -459,6 +475,86 @@ public final class ReconcileJson {
         }
         return refuse("expected exactly one of " + from + " and " + to + ", found "
                 + fromList.size() + " " + from + " and " + toList.size() + " " + to);
+    }
+
+    // ------------------------------------------------------------------ first-broker-login
+
+    private static int firstBrokerLogin(String[] args, JsonNode executions, PrintStream out) {
+        if (args.length != 2 || !executions.isArray()) {
+            usage();
+        }
+        String step = args[1];
+        List<JsonNode> reviews = new ArrayList<>();
+        List<JsonNode> steps = new ArrayList<>();
+        List<JsonNode> verifications = new ArrayList<>();
+        List<Integer> topLevelPriorities = new ArrayList<>();
+        for (JsonNode node : executions) {
+            String provider = node.path("providerId").asText("");
+            boolean topLevel = node.path("level").asInt() == 0;
+            if (topLevel) {
+                topLevelPriorities.add(node.path("priority").asInt());
+            }
+            if ("idp-review-profile".equals(provider)) {
+                if (!topLevel) {
+                    return refuse("the review profile step is not at the top level of the flow");
+                }
+                reviews.add(node);
+            } else if (step.equals(provider)) {
+                if (!topLevel) {
+                    return refuse(step + " is not at the top level of the flow");
+                }
+                steps.add(node);
+            } else if ("idp-email-verification".equals(provider)) {
+                verifications.add(node);
+            }
+        }
+        if (reviews.size() != 1) {
+            return refuse("expected exactly one review profile step, found " + reviews.size());
+        }
+        if (steps.size() > 1) {
+            return refuse("expected at most one " + step + ", found " + steps.size());
+        }
+        JsonNode review = reviews.get(0);
+        int reviewPriority = review.path("priority").asInt();
+        if (steps.isEmpty()) {
+            int priority = reviewPriority - 1;
+            if (topLevelPriorities.contains(priority)) {
+                return refuse("priority " + priority + " just before the review profile step is taken");
+            }
+            out.println("step\t-\t" + priority);
+        } else {
+            JsonNode present = steps.get(0);
+            if (present.path("priority").asInt() >= reviewPriority) {
+                return refuse(step + " runs after the review profile step");
+            }
+            out.println("step\t" + present.path("id").asText() + "\t" + present.path("priority").asInt());
+        }
+        String config = review.path("authenticationConfig").asText("");
+        out.println("review\t" + review.path("id").asText() + "\t" + (config.isEmpty() ? "-" : config));
+        for (JsonNode verification : verifications) {
+            out.println("email-verification\t" + verification.path("id").asText() + "\t"
+                    + verification.path("priority").asInt() + "\t" + verification.path("requirement").asText());
+        }
+        return 0;
+    }
+
+    // ------------------------------------------------------------------ config-value
+
+    private static int configValue(String[] args, JsonNode live, PrintStream out) throws IOException {
+        if (args.length != 3 || !live.isObject()) {
+            usage();
+        }
+        JsonNode current = live.path("config").path(args[1]);
+        if (current.isTextual() && current.asText().equals(args[2])) {
+            return 0;
+        }
+        ObjectNode body = live.deepCopy();
+        JsonNode existing = body.get("config");
+        ObjectNode config = existing != null && existing.isObject()
+                ? (ObjectNode) existing : body.putObject("config");
+        config.put(args[1], args[2]);
+        out.println(MAPPER.writeValueAsString(body));
+        return EXIT_CHANGED;
     }
 
     private static int refuse(String message) {

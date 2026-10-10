@@ -1,0 +1,228 @@
+package com.skylab.authenticator;
+
+import com.skylab.account.PersonalEmailProof;
+import org.jboss.logging.Logger;
+import org.keycloak.Config;
+import org.keycloak.authentication.AuthenticationFlowContext;
+import org.keycloak.authentication.Authenticator;
+import org.keycloak.authentication.AuthenticatorFactory;
+import org.keycloak.authentication.authenticators.broker.AbstractIdpAuthenticator;
+import org.keycloak.authentication.authenticators.broker.util.SerializedBrokeredIdentityContext;
+import org.keycloak.models.AuthenticationExecutionModel;
+import org.keycloak.models.KeycloakSession;
+import org.keycloak.models.KeycloakSessionFactory;
+import org.keycloak.models.ModelDuplicateException;
+import org.keycloak.models.RealmModel;
+import org.keycloak.models.UserModel;
+import org.keycloak.models.UserProvider;
+import org.keycloak.provider.ProviderConfigProperty;
+import org.keycloak.sessions.AuthenticationSessionModel;
+import org.keycloak.utils.EmailValidationUtil;
+
+import java.util.List;
+import java.util.Map;
+
+/**
+ * {@code sky-ytu-first-login}: the first step of the realm's first broker login flow
+ * (eskylab-login-ux ticket 07, ADR-0063 decision 5). A new account opened by a first YTÜ login
+ * starts with the School e-mail as its Primary e-mail (CONTEXT, Primary e-mail).
+ *
+ * <p>{@code MicrosoftMapper} empties the brokered e-mail on every YTÜ login, so that no login ever
+ * changes the Primary e-mail of an account that already exists; it stays as it is. The School
+ * e-mail reaches this step as the {@code schoolEmail} user attribute of the brokered identity
+ * (Keycloak's attribute importers write it before the flow starts). This step only decides
+ * whether that address becomes the brokered e-mail of the account about to be opened:
+ *
+ * <ul>
+ *   <li>a person already known to the flow (an account being linked or re-verified), a brokered
+ *       identity that already carries an e-mail or has no valid School e-mail: nothing changes;</li>
+ *   <li>an address no account holds, or the Keycloak {@code email} or username of an account:
+ *       it becomes the brokered e-mail, trimmed and lowercased. With {@code trustEmail} the new
+ *       account takes it as a verified Primary e-mail and no verification mail is sent; an
+ *       address Keycloak already knows sends the person down Keycloak's own "existing account"
+ *       path (confirm, then re-authenticate) instead of opening a second account;</li>
+ *   <li>an address that is only the School or Personal e-mail of another account: nothing is
+ *       written and the review profile page is shown, as it was before this step (ticket 12 puts
+ *       "Zaten bir SKY LAB hesabın var mı?" there).</li>
+ * </ul>
+ *
+ * <p>The flow always continues; the step never shows a page or tells whose address it is.
+ * {@code config/reconcile-account-center.sh} puts it into the realm's first broker login flow
+ * ({@code KEYCLOAK_YTU_FIRST_LOGIN}).
+ */
+public final class SkyYtuFirstLogin implements Authenticator, AuthenticatorFactory {
+
+    public static final String PROVIDER_ID = "sky-ytu-first-login";
+    static final String SCHOOL_EMAIL_ATTRIBUTE = "schoolEmail";
+    static final String PERSONAL_EMAIL_ATTRIBUTE = PersonalEmailProof.ADDRESS_ATTRIBUTE;
+    static final int MAX_ADDRESS_LENGTH = 255;
+    private static final Logger LOG = Logger.getLogger(SkyYtuFirstLogin.class);
+    private static final AuthenticationExecutionModel.Requirement[] REQUIREMENTS = {
+            AuthenticationExecutionModel.Requirement.REQUIRED
+    };
+
+    /** Who holds the School e-mail already. */
+    enum Holder {
+        /** Nobody: the address is free. */
+        NOBODY,
+        /** Keycloak's own duplicate check finds it (an account's {@code email} or username). */
+        KEYCLOAK,
+        /** Only another account's School or Personal e-mail attribute (or an ambiguous lookup). */
+        ATTRIBUTE
+    }
+
+    @Override
+    public void authenticate(AuthenticationFlowContext context) {
+        AuthenticationSessionModel authSession = context.getAuthenticationSession();
+        SerializedBrokeredIdentityContext brokered = SerializedBrokeredIdentityContext
+                .readFromAuthenticationSession(authSession, AbstractIdpAuthenticator.BROKERED_CONTEXT_NOTE);
+        if (brokered == null
+                || context.getUser() != null
+                || authSession.getAuthNote(AbstractIdpAuthenticator.EXISTING_USER_INFO) != null
+                || !isBlank(brokered.getEmail())) {
+            context.success();
+            return;
+        }
+        String address = schoolAddress(brokered.getFirstAttribute(SCHOOL_EMAIL_ATTRIBUTE));
+        if (address == null) {
+            context.success();
+            return;
+        }
+        switch (holder(context.getSession(), context.getRealm(), address)) {
+            case NOBODY, KEYCLOAK -> {
+                brokered.setEmail(address);
+                brokered.saveToAuthenticationSession(authSession, AbstractIdpAuthenticator.BROKERED_CONTEXT_NOTE);
+            }
+            case ATTRIBUTE -> {
+                LOG.debug("The School e-mail of a first YTÜ login belongs to another account; the profile page decides");
+                authSession.setAuthNote(AbstractIdpAuthenticator.ENFORCE_UPDATE_PROFILE, Boolean.TRUE.toString());
+            }
+        }
+        context.success();
+    }
+
+    /** The School e-mail as the Primary e-mail is stored: trimmed, lowercased; null when not an address. */
+    static String schoolAddress(String raw) {
+        if (isBlank(raw)) {
+            return null;
+        }
+        String address = PersonalEmailProof.normalise(raw);
+        if (address.length() > MAX_ADDRESS_LENGTH || !EmailValidationUtil.isValidEmail(address)) {
+            return null;
+        }
+        return address;
+    }
+
+    /**
+     * Keycloak's duplicate check first (the routes {@code IdpCreateUserIfUniqueAuthenticator}
+     * uses: {@code email}, and the username while e-mail login is allowed), then the two
+     * address attributes, compared ignoring case as the login form compares them.
+     */
+    static Holder holder(KeycloakSession session, RealmModel realm, String address) {
+        UserProvider users = session.users();
+        try {
+            if (users.getUserByEmail(realm, address) != null
+                    || (realm.isLoginWithEmailAllowed() && users.getUserByUsername(realm, address) != null)) {
+                return Holder.KEYCLOAK;
+            }
+        } catch (ModelDuplicateException duplicate) {
+            return Holder.ATTRIBUTE;
+        }
+        for (String attribute : List.of(SCHOOL_EMAIL_ATTRIBUTE, PERSONAL_EMAIL_ATTRIBUTE)) {
+            boolean held = users.searchForUserStream(realm, Map.of(
+                            attribute, address,
+                            UserModel.EXACT, Boolean.TRUE.toString(),
+                            UserModel.INCLUDE_SERVICE_ACCOUNT, Boolean.FALSE.toString()),
+                    0, 1).findAny().isPresent();
+            if (held) {
+                return Holder.ATTRIBUTE;
+            }
+        }
+        return Holder.NOBODY;
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    @Override
+    public void action(AuthenticationFlowContext context) {
+        context.success();
+    }
+
+    @Override
+    public boolean requiresUser() {
+        return false;
+    }
+
+    @Override
+    public boolean configuredFor(KeycloakSession session, RealmModel realm, UserModel user) {
+        return true;
+    }
+
+    @Override
+    public void setRequiredActions(KeycloakSession session, RealmModel realm, UserModel user) {
+        // no-op
+    }
+
+    @Override
+    public Authenticator create(KeycloakSession session) {
+        return this;
+    }
+
+    @Override
+    public String getId() {
+        return PROVIDER_ID;
+    }
+
+    @Override
+    public String getDisplayType() {
+        return "SKY LAB YTÜ First Login";
+    }
+
+    @Override
+    public String getHelpText() {
+        return "In the first broker login flow, makes the School e-mail of a new YTÜ account its Primary e-mail "
+                + "unless another account already uses it.";
+    }
+
+    @Override
+    public String getReferenceCategory() {
+        return null;
+    }
+
+    @Override
+    public boolean isConfigurable() {
+        return false;
+    }
+
+    @Override
+    public AuthenticationExecutionModel.Requirement[] getRequirementChoices() {
+        return REQUIREMENTS.clone();
+    }
+
+    @Override
+    public boolean isUserSetupAllowed() {
+        return false;
+    }
+
+    @Override
+    public List<ProviderConfigProperty> getConfigProperties() {
+        return List.of();
+    }
+
+    @Override
+    public void init(Config.Scope config) {
+        // no-op
+    }
+
+    @Override
+    public void postInit(KeycloakSessionFactory factory) {
+        // no-op
+    }
+
+    @Override
+    public void close() {
+        // no-op
+    }
+}

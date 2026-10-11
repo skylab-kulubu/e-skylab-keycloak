@@ -289,20 +289,23 @@ Faz 2'den sonra (eskylab-login-ux bilet 07, ADR-0063 karar 5) ilk YTÜ girişiyl
 okul adresini doğrulanmış birincil e-posta olarak alır; boş birincil kalmaz. Bunu SPI'daki
 `sky-ytu-first-login` (`com.skylab.authenticator.SkyYtuFirstLogin`) yapar: first broker login
 akışının ilk adımıdır, `MicrosoftMapper`'ın boşalttığı aracı e-postasına `schoolEmail`'i
-(kırpılmış, küçük harf) yazar. Adres kimsede yoksa ya da bir hesabın `email`'i veya kullanıcı
-adıysa yazılır; ikincisinde Keycloak'ın hazır "var olan hesap" yolu (onay, sonra yeniden kimlik
-doğrulama) ikinci hesap açılmasını önler. Adres yalnız başka bir hesabın `schoolEmail` ya da
-`personalEmail`'iyse yazılmaz ve profil sayfası bugünkü gibi çıkar (bilet 12 oraya "Zaten bir SKY
-LAB hesabın var mı?"yı koyacak). Bağlama kipinde ve e-postası gelen kimlikte hiçbir şey yapmaz.
+(kırpılmış, küçük harf; yalnız `std.yildiz.edu.tr` ve `yildiz.edu.tr` alan adlarında) yazar. Adres
+kimsede yoksa ya da bir hesabın doğrulanmış `email`'i veya kullanıcı adıysa yazılır; ikincisinde
+Keycloak'ın hazır "var olan hesap" yolu (onay, sonra yeniden kimlik doğrulama) ikinci hesap
+açılmasını önler. Adres başka bir hesabın `schoolEmail`'i, `personalEmail`'i ya da doğrulanmamış
+`email`'iyse, ya da IdP `syncMode=FORCE` iken Keycloak'ın bildiği bir adresse yazılmaz ve profil
+sayfası bugünkü gibi çıkar (bilet 12 oraya "Zaten bir SKY LAB hesabın var mı?"yı koyacak). Bağlama
+kipinde ve e-postası gelen kimlikte hiçbir şey yapmaz.
 `MicrosoftMapper` değişmedi: bağlı hesapların birincil adresi hiçbir YTÜ girişinde değişmez.
 Uzlaştırıcı Keycloak'ın yerleşik `first broker login` akışını bir kez `sky first broker login`
 adıyla kopyalar, adımı "review profile"dan önce REQUIRED ekler, profil sayfasını yalnız eksik
 alan varsa gösterir (`update.profile.on.first.login=missing`), bağlantıyla doğrulamayı
 (`idp-email-verification`) kapatır (ADR-0044), sonra realm'in first broker login bağlamasını
-kopyaya çevirir; `KEYCLOAK_YTU_FIRST_LOGIN=off` realm'i yerleşik akışa geri bağlar. Kendi ilk
-giriş akışı seçili olan bir IdP realm bağlamasını görmez; uzlaştırıcı kimliği IdP okuyamadığı
-için OBS'yi bir kez operatör oturumu (`KEYCLOAK_RECONCILE_ONLY=first-broker-login`) realm
-bağlamasına bırakır. Ayrıntı, üretim sırası ve geri dönüş: runbook §22. Harness
+kopyaya çevirir. Bu yalnız açıkça istenince olur: `KEYCLOAK_YTU_FIRST_LOGIN=on` açar, `off` realm'i
+yerleşik akışa geri bağlar; varsayılan `keep` bağlamayı olduğu gibi bırakır (tam uzlaştırma
+özelliği açıp kapatmaz, bağlı kopyayı yalnız onarır). Kendi ilk giriş akışı seçili olan bir IdP
+realm bağlamasını görmez; uzlaştırıcı kimliği IdP okuyamadığı için OBS'yi bir kez operatör oturumu
+(`KEYCLOAK_RECONCILE_ONLY=first-broker-login`) realm bağlamasına bırakır. Ayrıntı, üretim sırası ve geri dönüş: runbook §22. Harness
 `tests/ytu-first-login.sh` tek başına çalışır (stok imaj, SPI jar'ı, taklit YTÜ kiracısı).
 
 Hesap silmede (ADR-0051) core, SkyMail, CMS ve Forms'a ayrı bir gizli service

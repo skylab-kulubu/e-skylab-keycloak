@@ -98,6 +98,7 @@ export default function PersonalEmailOffer(props: PersonalEmailOfferProps) {
             id="sky-offer-error"
             className="sl-legacy-field-error sl-legacy-field-error--after-field"
             role="alert"
+            data-sky-offer-error={error}
           >
             {msgStr(errorKey[error], kcContext.skyOfferAttemptsLeft ?? "")}
           </p>

@@ -124,7 +124,9 @@ jobs:
   # reconciler's first broker login step (KEYCLOAK_RECONCILE_ONLY=first-broker-login,
   # KEYCLOAK_YTU_FIRST_LOGIN) against the stock Keycloak image in dev mode, with the SPI jar built
   # from spi/ in the Dockerfile's Maven image, a mock YTÜ tenant behind OBS and real logins; needs
-  # no build of this repository's image.
+  # no build of this repository's image. Then the one-time Personal e-mail offer at its end
+  # (ticket 21, required action sky-personal-email-offer, KEYCLOAK_PERSONAL_EMAIL_OFFER), with
+  # codes read from the integration harness's pinned Mailpit image.
   ytu-first-login:
     runs-on: ubuntu-latest
     timeout-minutes: 30

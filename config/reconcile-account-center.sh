@@ -38,6 +38,24 @@ RESET_FLOW_COPY_ALIAS='sky reset credentials'
 STOCK_RESET_CHOOSE_USER=reset-credentials-choose-user
 SKY_RESET_CHOOSE_USER=sky-reset-credentials-choose-user
 RESET_CHOOSE_USER=${KEYCLOAK_RESET_CHOOSE_USER:-$SKY_RESET_CHOOSE_USER}
+# eskylab-login-ux 07 (ADR-0063 decision 5): a new account opened by a first YTÜ login starts with
+# the School e-mail as its verified Primary e-mail. The realm's first broker login flow moves to an
+# editable copy of Keycloak's built-in one (FIRST_BROKER_FLOW_COPY_ALIAS) that runs the SKY LAB step
+# sky-ytu-first-login before the review profile step, shows the review profile page only when a
+# required field is missing, and never verifies an existing account by a mailed link (ADR-0044).
+# Turning it on is an explicit KEYCLOAK_YTU_FIRST_LOGIN=on run (realm by realm: sandbox first);
+# KEYCLOAK_YTU_FIRST_LOGIN=off binds the realm back to the built-in flow (the rollback; run it
+# before going back to an image without the SKY LAB step, or every first YTÜ login fails). The
+# copy stays. The default, keep, leaves the binding as it is and only keeps an already bound copy
+# in shape, so a full reconciliation never turns the feature on or off. An identity provider with its own first login flow override ignores the realm
+# binding; the reconciler identity cannot read identity providers, so an operator session
+# (KEYCLOAK_RECONCILE_ONLY=first-broker-login) makes OBS follow the realm binding once.
+FIRST_BROKER_FLOW_BUILT_IN='first broker login'
+FIRST_BROKER_FLOW_COPY_ALIAS='sky first broker login'
+YTU_FIRST_LOGIN_STEP=sky-ytu-first-login
+YTU_IDP_ALIAS=OBS
+REVIEW_PROFILE_SETTING=update.profile.on.first.login
+YTU_FIRST_LOGIN=${KEYCLOAK_YTU_FIRST_LOGIN:-keep}
 SCOPE_NAME=account-center-account-api
 CORE_SCOPE_NAME=account-center-core-claims
 SKYAPP_CLIENT_ID=skyapp
@@ -95,11 +113,11 @@ EVENT_RETENTION_SETTINGS="{\"eventsEnabled\":true,\"eventsExpiration\":$EVENT_RE
 ADMIN_EVENTS_EXPIRATION_ATTRIBUTE=adminEventsExpiration
 ACCOUNT_ROLE_ALLOWLIST=(manage-account view-profile manage-account-links)
 case $RECONCILE_ONLY in
-  '' | admin-panel-client | login-clients | core-roles | service-roles) ;;
+  '' | admin-panel-client | login-clients | core-roles | service-roles | first-broker-login) ;;
   # The step's name before core's service roles became a list (core-internal-auth ticket 03).
   media-attach) RECONCILE_ONLY=service-roles ;;
   *)
-    printf 'KEYCLOAK_RECONCILE_ONLY must be empty, admin-panel-client, login-clients, core-roles or service-roles, not %s\n' "$RECONCILE_ONLY" >&2
+    printf 'KEYCLOAK_RECONCILE_ONLY must be empty, admin-panel-client, login-clients, core-roles, service-roles or first-broker-login, not %s\n' "$RECONCILE_ONLY" >&2
     exit 2
     ;;
 esac
@@ -184,6 +202,13 @@ case $RESET_CHOOSE_USER in
   *)
     printf 'KEYCLOAK_RESET_CHOOSE_USER must be %s (default) or %s (rollback), not %s\n' \
       "$SKY_RESET_CHOOSE_USER" "$STOCK_RESET_CHOOSE_USER" "$RESET_CHOOSE_USER" >&2
+    exit 1
+    ;;
+esac
+case $YTU_FIRST_LOGIN in
+  keep | on | off) ;;
+  *)
+    printf 'KEYCLOAK_YTU_FIRST_LOGIN must be keep (default), on or off (rollback), not %s\n' "$YTU_FIRST_LOGIN" >&2
     exit 1
     ;;
 esac
@@ -561,6 +586,218 @@ reconcile_reset_choose_user() {
     return 1
   fi
   log "realm reset credentials flow binding: updated ($bound -> $target)"
+}
+
+# eskylab-login-ux 07: the realm's first broker login flow. With KEYCLOAK_YTU_FIRST_LOGIN=on the
+# realm runs FIRST_BROKER_FLOW_COPY_ALIAS, an editable copy of Keycloak's built-in flow (made once,
+# reused afterwards, even by a run cut short) in which
+#   - YTU_FIRST_LOGIN_STEP runs at the top level just before the review profile step (REQUIRED,
+#     the only requirement its factory offers);
+#   - the review profile step shows its page only when a required field is missing
+#     (REVIEW_PROFILE_SETTING=missing in its own config; the built-in flow's config is not touched);
+#   - every "Verify Existing Account By Email" step (idp-email-verification) is DISABLED, so an
+#     existing account is only ever confirmed by re-authentication (ADR-0044: no mailed links).
+# The copy is edited first and only then is the realm bound to it, so no login meets a half-made
+# flow. A realm bound to any other flow than these two is refused: the rollback has to be able to
+# give back exactly Keycloak's built-in flow. KEYCLOAK_YTU_FIRST_LOGIN=off binds the realm back to
+# the built-in flow and leaves the copy as it is. Binding is a realm PUT of that one field. With
+# keep (the default) the binding is left as it is; a realm already bound to the copy gets the copy's
+# three edits checked and repaired.
+reconcile_first_broker_login() {
+  local bound flow_id built_in
+  bound=$(kcadm_json "realms/$TARGET_REALM" --fields firstBrokerLoginFlow | json_tool field firstBrokerLoginFlow)
+  if [[ $YTU_FIRST_LOGIN == keep ]]; then
+    if [[ $bound == "$FIRST_BROKER_FLOW_COPY_ALIAS" ]]; then
+      edit_first_broker_login_flow "$FIRST_BROKER_FLOW_COPY_ALIAS"
+    fi
+    log "realm first broker login flow binding: unchanged (${bound:-none}; KEYCLOAK_YTU_FIRST_LOGIN=on or off changes it)"
+    return 0
+  fi
+  if [[ $YTU_FIRST_LOGIN == off ]]; then
+    if [[ $bound == "$FIRST_BROKER_FLOW_COPY_ALIAS" ]]; then
+      bind_first_broker_login_flow "$bound" "$FIRST_BROKER_FLOW_BUILT_IN"
+    else
+      log "realm first broker login flow binding: unchanged (${bound:-none}; KEYCLOAK_YTU_FIRST_LOGIN=off)"
+    fi
+    reconcile_ytu_idp_first_login_flow
+    return 0
+  fi
+  if [[ -z $bound ]]; then
+    printf 'The realm has no first broker login flow binding; nothing was changed\n' >&2
+    return 1
+  fi
+  if [[ $bound != "$FIRST_BROKER_FLOW_COPY_ALIAS" ]]; then
+    if flow_id=$(optional_lookup flow_id_by_alias "$bound"); then
+      :
+    else
+      return $?
+    fi
+    built_in=''
+    if [[ -n $flow_id ]]; then
+      built_in=$(kcadm_json "authentication/flows/$flow_id" -r "$TARGET_REALM" | json_tool field builtIn)
+    fi
+    if [[ $bound != "$FIRST_BROKER_FLOW_BUILT_IN" || $built_in != true ]]; then
+      printf "The realm's first broker login flow is '%s', neither Keycloak's built-in '%s' nor '%s'; nothing was changed\n" \
+        "$bound" "$FIRST_BROKER_FLOW_BUILT_IN" "$FIRST_BROKER_FLOW_COPY_ALIAS" >&2
+      return 1
+    fi
+    if flow_id=$(optional_lookup flow_id_by_alias "$FIRST_BROKER_FLOW_COPY_ALIAS"); then
+      :
+    else
+      return $?
+    fi
+    if [[ -z $flow_id ]]; then
+      kcadm create "authentication/flows/$(flow_alias_path "$bound")/copy" -r "$TARGET_REALM" \
+        -s "newName=$FIRST_BROKER_FLOW_COPY_ALIAS" >/dev/null
+      log "authentication flow '$FIRST_BROKER_FLOW_COPY_ALIAS': created (an editable copy of the built-in '$bound')"
+    fi
+  fi
+  edit_first_broker_login_flow "$FIRST_BROKER_FLOW_COPY_ALIAS"
+  if [[ $bound == "$FIRST_BROKER_FLOW_COPY_ALIAS" ]]; then
+    log "realm first broker login flow binding: unchanged ($bound)"
+  else
+    bind_first_broker_login_flow "$bound" "$FIRST_BROKER_FLOW_COPY_ALIAS"
+  fi
+  reconcile_ytu_idp_first_login_flow
+}
+
+# The three edits of reconcile_first_broker_login in FLOW_ALIAS, each logged as unchanged or
+# updated; ReconcileJson's first-broker-login planner refuses a flow it cannot place them in.
+edit_first_broker_login_flow() {
+  local flow_alias=$1
+  local flow_path live_file plan_file config_file body_file status kind id priority requirement
+  local review_id='' review_config=''
+  flow_path=$(flow_alias_path "$flow_alias")
+  live_file=$(mktemp "$WORK_DIR/first-broker.XXXXXX")
+  plan_file=$(mktemp "$WORK_DIR/first-broker-plan.XXXXXX")
+  config_file=$(mktemp "$WORK_DIR/review-config.XXXXXX")
+  body_file=$(mktemp "$WORK_DIR/review-config-body.XXXXXX")
+  kcadm_json "authentication/flows/$flow_path/executions" -r "$TARGET_REALM" >"$live_file"
+  if json_tool first-broker-login "$YTU_FIRST_LOGIN_STEP" <"$live_file" >"$plan_file"; then
+    status=0
+  else
+    status=$?
+  fi
+  if [[ $status != 0 ]]; then
+    printf "Flow '%s' was not changed (status %s): the step above explains why\n" "$flow_alias" "$status" >&2
+    return 1
+  fi
+  while IFS=$'\t' read -r kind id priority requirement; do
+    case $kind in
+      step)
+        if [[ $id == - ]]; then
+          kcadm create "authentication/flows/$flow_path/executions/execution" -r "$TARGET_REALM" \
+            -b "{\"provider\":\"$YTU_FIRST_LOGIN_STEP\",\"priority\":$priority}" >/dev/null
+          log "first login step of flow '$flow_alias': updated (added $YTU_FIRST_LOGIN_STEP before the review profile step, priority $priority, REQUIRED)"
+        elif [[ $requirement != REQUIRED ]]; then
+          kcadm update "authentication/flows/$flow_path/executions" -r "$TARGET_REALM" -n \
+            -b "{\"id\":\"$id\",\"requirement\":\"REQUIRED\",\"priority\":$priority}" >/dev/null
+          log "first login step of flow '$flow_alias': updated ($YTU_FIRST_LOGIN_STEP $requirement -> REQUIRED)"
+        else
+          log "first login step of flow '$flow_alias': unchanged ($YTU_FIRST_LOGIN_STEP, priority $priority)"
+        fi
+        ;;
+      review)
+        review_id=$id
+        review_config=$priority
+        ;;
+      email-verification)
+        if [[ $requirement == DISABLED ]]; then
+          log "link verification of flow '$flow_alias': unchanged (idp-email-verification DISABLED)"
+        else
+          kcadm update "authentication/flows/$flow_path/executions" -r "$TARGET_REALM" -n \
+            -b "{\"id\":\"$id\",\"requirement\":\"DISABLED\",\"priority\":$priority}" >/dev/null
+          log "link verification of flow '$flow_alias': updated (idp-email-verification $requirement -> DISABLED)"
+        fi
+        ;;
+    esac
+  done <"$plan_file"
+  if [[ -z $review_id ]]; then
+    printf "Flow '%s' has no review profile step to configure\n" "$flow_alias" >&2
+    return 1
+  fi
+  if [[ $review_config == - ]]; then
+    kcadm create "authentication/executions/$review_id/config" -r "$TARGET_REALM" \
+      -b "{\"alias\":\"$flow_alias review profile config\",\"config\":{\"$REVIEW_PROFILE_SETTING\":\"missing\"}}" >/dev/null
+    log "review profile of flow '$flow_alias': updated (created its config, $REVIEW_PROFILE_SETTING=missing)"
+  else
+    kcadm_json "authentication/config/$review_config" -r "$TARGET_REALM" >"$config_file"
+    if json_tool config-value "$REVIEW_PROFILE_SETTING" missing <"$config_file" >"$body_file"; then
+      log "review profile of flow '$flow_alias': unchanged ($REVIEW_PROFILE_SETTING=missing)"
+    else
+      status=$?
+      if [[ $status != 3 ]]; then
+        printf "Could not plan the review profile config of flow '%s' (status %s)\n" "$flow_alias" "$status" >&2
+        return 1
+      fi
+      kcadm update "authentication/config/$review_config" -r "$TARGET_REALM" -n -f "$body_file" >/dev/null
+      log "review profile of flow '$flow_alias': updated ($REVIEW_PROFILE_SETTING=missing)"
+    fi
+  fi
+  # Read back: the step is in place and REQUIRED, and no link verification is left.
+  kcadm_json "authentication/flows/$flow_path/executions" -r "$TARGET_REALM" >"$live_file"
+  if ! json_tool first-broker-login "$YTU_FIRST_LOGIN_STEP" <"$live_file" >"$plan_file" \
+    || ! grep -Eq "^step"$'\t'"[^-]"".*"$'\t'"REQUIRED\$" "$plan_file" \
+    || grep -Eq "^email-verification"$'\t'".*"$'\t'"(REQUIRED|ALTERNATIVE|CONDITIONAL)\$" "$plan_file"; then
+    printf "Flow '%s' is not in place after the edits; inspect it in the Admin Console\n" "$flow_alias" >&2
+    return 1
+  fi
+}
+
+bind_first_broker_login_flow() {
+  local from=$1 to=$2 rebound
+  kcadm update "realms/$TARGET_REALM" -n -b "{\"firstBrokerLoginFlow\":\"$to\"}" >/dev/null
+  rebound=$(kcadm_json "realms/$TARGET_REALM" --fields firstBrokerLoginFlow | json_tool field firstBrokerLoginFlow)
+  if [[ $rebound != "$to" ]]; then
+    printf "The realm's first broker login flow is '%s', not '%s', after binding it; inspect it in the Admin Console\n" \
+      "$rebound" "$to" >&2
+    return 1
+  fi
+  log "realm first broker login flow binding: updated ($from -> $to)"
+}
+
+# OBS follows the realm's first broker login flow binding when it has no override of its own. Its
+# override is cleared when it names one of the two flows above (with KEYCLOAK_YTU_FIRST_LOGIN=on),
+# and with off when it names the copy, so the rollback reaches OBS too; any other override is
+# reported and kept. Sync mode FORCE is reported loudly: the SKY LAB step then leaves an address
+# another account already has unwritten (Keycloak would copy it onto the account being linked). The reconciler identity cannot read identity providers
+# (no identity provider permissions, by design), so a reconcile run only says so; an operator
+# session (KEYCLOAK_RECONCILE_ONLY=first-broker-login) does the check.
+reconcile_ytu_idp_first_login_flow() {
+  local idp_file stderr_file override
+  idp_file=$(mktemp "$WORK_DIR/idp.XXXXXX")
+  stderr_file=$(mktemp "$WORK_DIR/idp-stderr.XXXXXX")
+  if ! kcadm get "identity-provider/instances/$YTU_IDP_ALIAS" -r "$TARGET_REALM" >"$idp_file" 2>"$stderr_file"; then
+    if grep -Eqi '403|forbidden' "$stderr_file"; then
+      log "identity provider $YTU_IDP_ALIAS first login flow: unchanged (not readable with this identity; an operator checks it with KEYCLOAK_RECONCILE_ONLY=first-broker-login)"
+      return 0
+    fi
+    if grep -Eqi '404|not found' "$stderr_file"; then
+      log "identity provider $YTU_IDP_ALIAS first login flow: unchanged (absent)"
+      return 0
+    fi
+    cat "$stderr_file" >&2
+    return 1
+  fi
+  if [[ $(json_tool field config <"$idp_file") =~ \"syncMode\"[[:space:]]*:[[:space:]]*\"FORCE\" ]]; then
+    warn "identity provider $YTU_IDP_ALIAS syncs with FORCE: a first YTÜ login whose School e-mail or username another account already has opens the review profile page instead of linking that account; turn the step off (KEYCLOAK_YTU_FIRST_LOGIN=off) before keeping OBS on FORCE"
+  fi
+  override=$(json_tool field firstBrokerLoginFlowAlias <"$idp_file")
+  if [[ -z $override ]]; then
+    log "identity provider $YTU_IDP_ALIAS first login flow: unchanged (follows the realm binding)"
+  elif [[ ( $YTU_FIRST_LOGIN == on && ( $override == "$FIRST_BROKER_FLOW_BUILT_IN" || $override == "$FIRST_BROKER_FLOW_COPY_ALIAS" ) ) \
+    || ( $YTU_FIRST_LOGIN == off && $override == "$FIRST_BROKER_FLOW_COPY_ALIAS" ) ]]; then
+    kcadm update "identity-provider/instances/$YTU_IDP_ALIAS" -r "$TARGET_REALM" -s 'firstBrokerLoginFlowAlias=' >/dev/null
+    override=$(kcadm_json "identity-provider/instances/$YTU_IDP_ALIAS" -r "$TARGET_REALM" | json_tool field firstBrokerLoginFlowAlias)
+    if [[ -n $override ]]; then
+      printf 'Identity provider %s still overrides the first login flow (%s); inspect it in the Admin Console\n' \
+        "$YTU_IDP_ALIAS" "$override" >&2
+      return 1
+    fi
+    log "identity provider $YTU_IDP_ALIAS first login flow: updated (its override is removed; it follows the realm binding)"
+  else
+    warn "identity provider $YTU_IDP_ALIAS keeps its own first login flow '$override' and ignores the realm binding"
+  fi
 }
 
 # Reads ENDPOINT, compares the desired fields against it and writes only when at least one
@@ -1972,6 +2209,11 @@ if [[ $RECONCILE_ONLY == core-roles ]]; then
   printf 'Core resource roles are reconciled.\n'
   exit 0
 fi
+if [[ $RECONCILE_ONLY == first-broker-login ]]; then
+  reconcile_first_broker_login
+  printf 'First broker login flow is reconciled.\n'
+  exit 0
+fi
 if [[ $RECONCILE_ONLY == service-roles ]]; then
   reconcile_core_service_roles
   if [[ $RECONCILE_CHECK == true ]]; then
@@ -1995,6 +2237,7 @@ retire_account_center_browser_flow
 # deleted just above; the realm browser flow is the only one left to swap.
 reconcile_password_form "$BROWSER_FLOW_ALIAS"
 reconcile_reset_choose_user
+reconcile_first_broker_login
 reconcile_account_center_client
 
 ensure_client_scope "$SCOPE_NAME" \

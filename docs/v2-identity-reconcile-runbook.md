@@ -2071,3 +2071,150 @@ yeniden giriş gerekmez. Kaymalar onarılır. Sandbox realm'inde `site-clients.s
 üç betiğin `--check`'i sonra sıfır değişiklik planlar. Tam uzlaştırma yolu `run-integration.sh`'te
 (`tests/login-client-audiences.sh`): `skymail` ilk koşuda, siteler ikinci koşuda daralır, değişiklik
 üretmeyen koşu bu istemcilerin durumunu da karşılaştırır.
+
+## 22. İlk YTÜ girişinde okul adresi birincil (eskylab-login-ux 07, ADR-0063)
+
+`MicrosoftMapper` her YTÜ girişinde aracı e-postasını boşaltır (bağlı hesabın birincil adresi
+hiçbir girişte değişmesin diye). Bu yüzden ilk YTÜ girişiyle açılan hesap birincil e-postasız
+kalıyordu; Forms kopyaları, takım ve SkyMail postaları bu kişilere 400 ile düşüyordu (bilet 06
+eldekileri bir kez düzeltti). SPI 1.17.0'daki `sky-ytu-first-login`
+(`com.skylab.authenticator.SkyYtuFirstLogin`) first broker login akışının ilk adımıdır ve yeni
+hesabın birincil adresini okul adresi yapar. `MicrosoftMapper` değişmedi.
+
+### Adımın kararı
+
+Aracı kimliğin `schoolEmail` özniteliği (OBS'nin öznitelik eşleyicisi onu akıştan önce Graph
+`userPrincipalName`'den yazar) kırpılır, küçük harfe çevrilir. Geçerli bir adres değilse ya da
+YTÜ alan adlarından birinde (`std.yildiz.edu.tr`, `yildiz.edu.tr`; ADR-0063) değilse hiçbir şey
+yapılmaz: doğrulanmış birincil adres olacak değer kiracı kilidine ve eşleyicinin alanına güvenmez.
+
+- Adres kimsede yok: aracı e-postası olur. `trustEmail=true` ile hesap onu doğrulanmış birincil
+  olarak alır; doğrulama postası gitmez, profil sayfası çıkmaz.
+- Adres bir hesabın doğrulanmış `email`'i ya da (e-postayla giriş açıkken) kullanıcı adı: yine yazılır.
+  Keycloak'ın "Create User If Unique" adımı o hesabı bulur ve hazır "Handle Existing Account"
+  yoluna geçer: "Confirm Link Existing Account", sonra yeniden kimlik doğrulama (parola, OTP ya da
+  passkey). Bağlantıyla doğrulama kapalı (aşağıda). İkinci hesap açılmaz.
+- Adres yalnız başka bir hesabın `schoolEmail` ya da `personalEmail`'i, ya da başka bir hesabın
+  **doğrulanmamış** `email`'i: yazılmaz, profil sayfası zorla gösterilir (`ENFORCE_UPDATE_PROFILE`);
+  bugünkü yol budur (kişi gerekirse sayfada kullanıcı adını değiştirip kendi hesabını açar;
+  doğrulanmamış bir adres gerçek sahibini kilitleyemez). Bilet 12 buraya "Zaten bir SKY LAB hesabın
+  var mı?" sayfasını koyacak.
+- IdP `syncMode=FORCE` iken Keycloak'ın bildiği bir adres de, Keycloak'ın bir hesabı bulacağı aracı
+  kullanıcı adı da yazılmaz: FORCE'ta Keycloak aracı e-postasını bağlanan hesaba kopyalar, YTÜ
+  girişi ise var olan hesabın birincilini değiştiremez. Profil sayfasında elle yazılan bir kullanıcı
+  adı bu korumanın dışındadır: **OBS FORCE'a alınmadan önce adım kapatılır** (`KEYCLOAK_YTU_FIRST_LOGIN=off`).
+  Üretim `LEGACY`; operatör koşusu FORCE görürse uyarı basar.
+- Akışta zaten bir kişi var (bağlama ya da yeniden doğrulama), aracı kimlik bir e-posta taşıyor
+  ya da "existing account" yolu başlamış: hiçbir şey yapılmaz. A6'nın `kc_action=idp_link`'i first
+  broker login'e hiç girmez.
+
+Adım hiçbir sayfa göstermez, adresin kime ait olduğunu söylemez, her durumda akışa devam eder.
+
+### Uzlaştırıcı
+
+`reconcile_first_broker_login`, `reconcile_reset_choose_user`'dan hemen sonra koşar
+(`KEYCLOAK_RECONCILE_ONLY=first-broker-login` ile tek başına da). Bayrak `KEYCLOAK_YTU_FIRST_LOGIN`:
+`keep` (varsayılan) bağlamayı olduğu gibi bırakır, realm kopyaya bağlıysa kopyanın üç düzenlemesini
+denetler ve onarır; böylece hiçbir tam uzlaştırma (wizard'lar dahil) özelliği kendiliğinden açıp
+kapatmaz. `on` açar, `off` geri alır; başka değer koşuyu durdurur. `on` ile realm'in `firstBrokerLoginFlow`
+bağlaması Keycloak'ın yerleşik `first broker login`'iyse akış bir kez `sky first broker login`
+adıyla kopyalanır (K4b'deki gibi; kesilmiş bir koşunun bıraktığı kopya yeniden kullanılır).
+Kopyada:
+
+1. `sky-ytu-first-login` en üst düzeyde, "review profile"ın hemen önünde (onun önceliği eksi 1),
+   REQUIRED (biri DISABLED yaptıysa sonraki koşu `updated (sky-ytu-first-login DISABLED -> REQUIRED)`
+   ile geri koyar; okuma denetimi REQUIRED ister);
+2. "review profile"ın kendi config'inde `update.profile.on.first.login=missing` (yerleşik akışın
+   config'ine dokunulmaz);
+3. her `idp-email-verification` ("Verify Existing Account By Email") DISABLED (ADR-0044).
+
+Realm ancak bundan sonra kopyaya bağlanır. Realm başka bir akışa bağlıysa (yerleşik değil, kopya
+değil) koşu hiçbir şey yazmadan durur: geri dönüş tam olarak yerleşik akışı geri verebilmeli.
+`ReconcileJson first-broker-login` planlayıcısı "review profile" bir tane ve en üst düzeyde
+değilse, adım iki kez ya da yanlış yerdeyse durdurur.
+
+İlk koşunun satırları (yerleşik akıştan):
+
+- `[reconcile] authentication flow 'sky first broker login': created (an editable copy of the built-in 'first broker login')`
+- `[reconcile] first login step of flow 'sky first broker login': updated (added sky-ytu-first-login before the review profile step, priority 9, REQUIRED)`
+- `[reconcile] link verification of flow 'sky first broker login': updated (idp-email-verification ALTERNATIVE -> DISABLED)`
+- `[reconcile] review profile of flow 'sky first broker login': updated (update.profile.on.first.login=missing)`
+- `[reconcile] realm first broker login flow binding: updated (first broker login -> sky first broker login)`
+- `[reconcile] identity provider OBS first login flow: ...` (aşağıda)
+
+İkinci koşuda hepsi `unchanged`; bayraksız (`keep`) koşuda bağlama satırı
+`unchanged (sky first broker login; KEYCLOAK_YTU_FIRST_LOGIN=on or off changes it)`. Öncelik
+Keycloak 26'nın yerleşik akışında 10'dur (adım 9). Kopya yerleşik akışı dondurur: Keycloak
+yükseltmesinde yerleşik `first broker login` değişirse kopyaya geçmez (K4b'nin `sky reset
+credentials`'ı gibi yükseltme listesine).
+
+**OBS'nin kendi ilk giriş akışı.** Bir IdP'de "First login flow override" seçiliyse realm
+bağlaması o IdP için geçmez. Keycloak 24'ten önce kurulan IdP'lerde bu alan çoğu zaman
+`first broker login`'dir; üretimdeki değer bilinmiyor. Uzlaştırıcı kimliği IdP okuyamaz (tasarım
+gereği), satır şöyle olur:
+`identity provider OBS first login flow: unchanged (not readable with this identity; an operator checks it with KEYCLOAK_RECONCILE_ONLY=first-broker-login)`.
+Bir yönetici oturumuyla koşulan adım OBS'yi okur: geçersiz kılma `first broker login` ya da
+`sky first broker login` ise kaldırılır (`updated (its override is removed; it follows the realm binding)`),
+yoksa `unchanged (follows the realm binding)`; başka bir akışı gösteriyorsa dokunulmaz, uyarı
+basılır. `off` ile kopyayı gösteren geçersiz kılma da kaldırılır (geri dönüş OBS'ye de ulaşır).
+OBS'yi elle kopyaya bağlamayın; realm bağlaması yeter. OBS'nin geri kalanı (secret dahil) aynı kalır. Böylece açma ve geri alma yalnız realm
+bağlamasıdır ve uzlaştırıcı kimliğiyle de yapılır.
+
+### Üretim sırası
+
+1. SPI 1.17.0'ı taşıyan imaj yayımlanır (`main` → `production`, Touch ID kapısı). Tema
+   değişmedi (kişisel e-posta teklifi metinleri bilet 21'e taşındı).
+2. Sandbox önce (`e-skylab-sandbox`'ta uzlaştırıcı kimliği yok; operatör oturumu). Sandbox'ta OBS
+   yoksa adım akışı kurar ve bağlar, satır `identity provider OBS first login flow: unchanged
+   (absent)` olur; yürüyüş için önce sandbox'a OBS eklenir (bilet 02, yol a).
+
+   ```bash
+   kc=$(docker ps -q -f name=sky-lab-production-keycloak | head -n 1)
+   docker exec -it "$kc" /opt/keycloak/bin/kcadm.sh config credentials --config /tmp/fbl-kcadm.config \
+     --server http://127.0.0.1:8080 --realm master --user <geçici-yönetici>
+   docker exec -e KEYCLOAK_ADMIN_URL=http://127.0.0.1:8080 -e KEYCLOAK_REALM=e-skylab-sandbox \
+     -e KEYCLOAK_RECONCILE_ONLY=first-broker-login -e KEYCLOAK_RECONCILE_KCADM_CONFIG=/tmp/fbl-kcadm.config \
+     -e KEYCLOAK_YTU_FIRST_LOGIN=on "$kc" /opt/keycloak/config/reconcile-account-center.sh
+   ```
+3. Sandbox yürüyüşü (bilet 02'nin adımları): yeni bir YTÜ kimliğiyle Microsoft'tan sonra sayfa
+   çıkmamalı; Admin Console'da `email` = okul adresi, Email verified açık, Required user actions boş.
+4. Canlı: aynı komut `KEYCLOAK_REALM=e-skylab` ile (`KEYCLOAK_YTU_FIRST_LOGIN=on` açıkça). Satırlar yukarıdaki gibi; OBS satırı
+   `updated (its override is removed ...)` ya da `unchanged (follows the realm binding)` olmalı.
+   Sonra oturum dosyası silinir: `docker exec "$kc" rm -f /tmp/fbl-kcadm.config`.
+5. Sonraki tam uzlaştırmalar (wizard'lar, uzlaştırıcı kimliği, bayraksız) bağlamayı korur
+   (`unchanged`); 2-4'ten önce koşan bir tam uzlaştırma özelliği açmaz.
+6. 7 gün sonra bilet 03'ün sayımı: `email_bos` 0 kalmalı, ilk YTÜ girişini tamamlama oranı.
+
+### Geri dönüş
+
+`KEYCLOAK_YTU_FIRST_LOGIN=off` realm'i yerleşik `first broker login`'e geri bağlar:
+`realm first broker login flow binding: updated (sky first broker login -> first broker login)`.
+Yerleşik akış hiç değişmediği için bugünkü davranış (profil sayfası, boş birincil) aynen döner.
+Kopya kalır; bayraksız (`keep`) sonraki koşular geri dönüşü korur, yalnız `on` yeniden bağlar.
+1.17.0'dan eski bir
+imaja dönülecekse ÖNCE geri dönüş koşulur; yoksa realm'in her ilk YTÜ girişi bilinmeyen adım
+yüzünden düşer. Geri dönüş uzlaştırıcı kimliğiyle de (wizard) operatör oturumuyla da koşar; OBS
+kopyayı gösteren bir geçersiz kılma taşıyorsa onu yalnız operatör oturumu kaldırabilir (uzlaştırıcı
+kimliği IdP okuyamaz). OBS'nin `first broker login` geçersiz kılması geri konmaz (realm bağlamasını
+izlemesi zararsızdır). Acil yol (her imajda): Admin Console → Authentication → yerleşik
+`first broker login` → Bind flow → First broker login flow; OBS'nin "First login flow override"ı
+kopyayı gösteriyorsa onu da boşaltın.
+
+### Harness
+
+`tests/ytu-first-login.sh` (CI'da `ytu-first-login` işi): stok Keycloak imajı dev kipinde, SPI
+jar'ı `/opt/keycloak/providers`'ta, `config/` salt okunur. YTÜ kiracısını ikinci bir realm
+(`ytu-mock`) OIDC IdP `OBS` arkasında oynar: Keycloak'ın Microsoft sağlayıcısı gibi kullanıcı adı
+olarak adresi verir, e-posta vermez (MicrosoftMapper'ın bıraktığı durum), `upn` → `schoolEmail`,
+`department` FORCE, `university` sabit; her aşama taze kcadm oturumuyla başlar; OBS'nin geçersiz kılması
+`first broker login`. `e-skylab` üretim ayarlarında (`verifyEmail=true`, üretim User Profile'ı,
+yerleşik "review profile" `on`). Önce bugünkü hata görülür (profil sayfası, birincilsiz hesap),
+sonra bayraksız (`keep`) koşunun hiçbir şey açmadığı, `on` ile uzlaştırıcının realm-management
+rolleriyle (OBS okunamaz) ve yönetici oturumuyla (geçersiz kılma kalkar) kurulduğu, ikinci
+koşuların (`on`, `keep`) bir şey değiştirmediği ve DISABLED yapılan adımın REQUIRED'a döndüğü
+görülür; yeni kimlik, bağlı hesap, başka hesabın `personalEmail`'i, doğrulanmış `email`'i (onay,
+parolayla yeniden doğrulama, posta yok) ve doğrulanmamış `email`'i (sahip kilitlenmez), OBS FORCE
+(uyarı, bağlanan hesabın birincili değişmez), A6, kopyayı gösteren OBS geçersiz kılmasıyla geri
+dönüş, `keep`'in kapalı bırakması, yeniden açma ve başka akışa bağlı realm'in reddi gerçek
+girişlerle (curl, Keycloak'ın kendi sayfaları) denenir. Birim testi: `SkyYtuFirstLoginTest`
+(kırpma, büyük/küçük harf, alan adı ve tırnaklı yerel kısım, sahip türleri, FORCE yolları).

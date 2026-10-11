@@ -646,7 +646,7 @@ stage_v2_identity_guardrails() {
   kcadm create identity-provider/instances/OBS/mappers -r "$V2_REALM" \
     -b '{"name":"department mapper","identityProviderAlias":"OBS","identityProviderMapper":"microsoft-department-mapper","config":{"syncMode":"INHERIT"}}' >/dev/null
   kcadm create identity-provider/instances/OBS/mappers -r "$V2_REALM" \
-    -b '{"name":"school-email-importer","identityProviderAlias":"OBS","identityProviderMapper":"microsoft-user-attribute-mapper","config":{"syncMode":"FORCE","jsonField":"mail","userAttribute":"schoolEmail"}}' >/dev/null
+    -b '{"name":"school-email-importer","identityProviderAlias":"OBS","identityProviderMapper":"microsoft-user-attribute-mapper","config":{"syncMode":"FORCE","jsonField":"userPrincipalName","userAttribute":"schoolEmail"}}' >/dev/null
   kcadm create identity-provider/instances/OBS/mappers -r "$V2_REALM" \
     -b '{"name":"university","identityProviderAlias":"OBS","identityProviderMapper":"hardcoded-attribute-idp-mapper","config":{"syncMode":"FORCE","attribute":"university","attribute.value":"YTU"}}' >/dev/null
   department_id=$(kcadm get identity-provider/instances/OBS/mappers -r "$V2_REALM" -c \

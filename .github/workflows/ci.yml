@@ -120,6 +120,20 @@ jobs:
       - name: Primary e-mail fill script against a throwaway Keycloak
         run: bash tests/fill-missing-primary-from-school.sh
 
+  # The first YTÜ login (eskylab-login-ux 07): the SPI's sky-ytu-first-login step and the
+  # reconciler's first broker login step (KEYCLOAK_RECONCILE_ONLY=first-broker-login,
+  # KEYCLOAK_YTU_FIRST_LOGIN) against the stock Keycloak image in dev mode, with the SPI jar built
+  # from spi/ in the Dockerfile's Maven image, a mock YTÜ tenant behind OBS and real logins; needs
+  # no build of this repository's image.
+  ytu-first-login:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: First YTÜ login against a throwaway Keycloak
+        run: bash tests/ytu-first-login.sh
+
   # config/site-clients.sh and config/site-editor-grants.sh (the event sites' Site clients, with
   # inscribed-cms-roles.sh between them) against the stock Keycloak image in dev mode, with a real
   # authorization code flow (PKCE); needs no build of this repository's image.

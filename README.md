@@ -326,11 +326,12 @@ yalnız tuzlu özet). Kod deposundaki kayıt kullanıcıya değil, yalnız bu gi
 kimlik doğrulama notunda duran rastgele bir tutamağa bağlıdır; kod başka oturumda ya da Hesap Merkezi'nde
 çalışmaz. Gönderim sınırı: giriş oturumu başına 3, adres başına saatte 3, IP sınıfı (IPv4 /24,
 IPv6 /64) başına saatte 100, realm genelinde saatte 200 (saat dilimleri); anahtarlar realm'e özel,
-realm'in HMAC anahtarıyla HMAC'tir: IP ve adres saklanmaz, sınıf yalnız HMAC olarak saat bitene dek
-bellekte durur. Başka hesabın kullanıcı adı, `email`, `schoolEmail` ya da `personalEmail`'i olan
+realm'in HS512 anahtarından türetilmiş bir alt anahtarla HMAC'tir: IP ve adres saklanmaz, sınıf yalnız
+HMAC olarak saat bitene dek bellekte durur. Başka hesabın kullanıcı adı, `email`, `schoolEmail` ya da `personalEmail`'i olan
 adres Hesap Merkezi'ndeki gibi `email_taken` ile reddedilir ve bütçeler bu denemeden önce düşülür;
-kişinin kendi okul adresi ve üniversite alan adı (`yildiz.edu.tr` ve her alt alan adı) bütçe
-harcamadan reddedilir (`email_school_domain`). Doğru kodda `personalEmail` + `personalEmailVerifiedAt` yazılır,
+kişinin kendi okul adresi ve üniversite alan adı (`yildiz.edu.tr` ve her alt alan adı, Unicode
+benzerleri dahil: alan adı IDNA `toASCII` biçiminde karşılaştırılır) bütçe harcamadan reddedilir
+(`email_school_domain`). Doğru kodda `personalEmail` + `personalEmailVerifiedAt` yazılır,
 birincil okul adresi kalır, giriş uygulamaya döner. "Şimdilik geç" `personalEmailOfferSkippedAt`
 yazar (User Profile'da, yalnız yönetici düzenler). Olaylar `CUSTOM_REQUIRED_ACTION`,
 `sky_personal_email_offer` ayrıntısı: `shown`, `code_sent`, `added`, `skip` (ve hatalar). Tema

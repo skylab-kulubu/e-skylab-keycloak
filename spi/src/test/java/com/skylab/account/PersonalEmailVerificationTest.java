@@ -36,6 +36,46 @@ class PersonalEmailVerificationTest {
         }
     }
 
+    // Delta review L1: Keycloak's validator accepts these, and the SMTP sender's IDN.toASCII turns each
+    // back into yildiz.edu.tr, so the code would reach the university mailbox.
+    @Test
+    void unicodeLookAlikesOfTheUniversityDomainAreSchoolDomainsToo() {
+        for (String address : new String[] {
+                "x@\uFF59ildiz.edu.tr",            // fullwidth y
+                "x@yildiz\uFF0Eedu\uFF0Etr",        // fullwidth full stops
+                "x@yildiz\u3002edu\u3002tr",        // ideographic full stops
+                "x@yildiz\uFF61edu\uFF61tr",        // halfwidth ideographic full stops
+                "x@yildiz.edu.tr\u200B",            // zero-width space
+                "x@yil\u00ADdiz.edu.tr",            // soft hyphen
+                "x@STD\uFF0E\uFF39ILDIZ.EDU.TR",     // subdomain, fullwidth capital Y
+                "x+tag@yildiz.edu.tr"}) {
+            assertTrue(PersonalEmailVerification.isSchoolDomain(address), address);
+        }
+        // Not the university's domain: other punycode domains and a quoted local part.
+        for (String address : new String[] {
+                "x@y\u0131ldiz.edu.tr", "x@y\u0130ldiz.edu.tr", "\"x@yildiz.edu.tr\"@gmail.com", "x@\u00F6rnek.com.tr"}) {
+            assertFalse(PersonalEmailVerification.isSchoolDomain(address), address);
+        }
+        assertEquals("xn--rnek-4qa.com.tr", PersonalEmailVerification.asciiDomain("x@\u00F6rnek.com.tr"));
+        assertEquals("yildiz.edu.tr", PersonalEmailVerification.asciiDomain("x@Yildiz\u3002EDU\u3002tr\u3002"));
+    }
+
+    @Test
+    void aDomainWithoutAnAsciiFormIsNotAValidAddress() {
+        String tooLongLabel = "x@" + "a".repeat(64) + ".com";
+        assertEquals(null, PersonalEmailVerification.asciiDomain(tooLongLabel));
+        assertEquals(null, PersonalEmailVerification.asciiDomain("x@"));
+        assertEquals(null, PersonalEmailVerification.asciiDomain("no-at-sign"));
+        assertFalse(PersonalEmailVerification.isSchoolDomain(tooLongLabel));
+        KeycloakSession session = mock(KeycloakSession.class);
+        org.keycloak.models.KeycloakContext context = mock(org.keycloak.models.KeycloakContext.class);
+        RealmModel realm = mock(RealmModel.class);
+        when(session.getContext()).thenReturn(context);
+        when(context.getRealm()).thenReturn(realm);
+        assertFalse(PersonalEmailVerification.isValidAddress(session, tooLongLabel));
+        assertTrue(PersonalEmailVerification.isValidAddress(session, "ada@example.org"));
+    }
+
     @Test
     void anAddressThatIsAnotherPersonsUsernameIsTaken() {
         KeycloakSession session = mock(KeycloakSession.class);

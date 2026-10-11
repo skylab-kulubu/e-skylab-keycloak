@@ -10,6 +10,7 @@ import org.keycloak.models.UserProvider;
 import org.keycloak.validate.ValidationContext;
 import org.keycloak.validate.validators.EmailValidator;
 
+import java.net.IDN;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -48,22 +49,50 @@ public final class PersonalEmailVerification {
     }
 
     /**
-     * Whether the address is on the university's domain or one of its subdomains, ignoring case and
-     * trailing dots: such an address may close after graduation, so it is never a Personal e-mail.
+     * Whether the address is on the university's domain or one of its subdomains: such an address may
+     * close after graduation, so it is never a Personal e-mail. The domain is compared in its ASCII
+     * form ({@link #asciiDomain}), because Keycloak's validator accepts Unicode look-alikes (a
+     * fullwidth letter, an ideographic full stop, a zero-width space, a soft hyphen) that the SMTP
+     * sender turns back into {@code yildiz.edu.tr} on the way out. A domain without an ASCII form
+     * is not one; {@link #isValidAddress} refuses it anyway.
      */
     static boolean isSchoolDomain(String address) {
+        String domain = asciiDomain(address);
+        return domain != null && (domain.equals(UNIVERSITY_DOMAIN) || domain.endsWith("." + UNIVERSITY_DOMAIN));
+    }
+
+    /**
+     * The domain after the last {@code @} as a mail server sees it: trimmed, IDNA {@code toASCII}
+     * (Unicode compatibility forms and label separators folded, ignorable characters dropped),
+     * lowercased with {@link Locale#ROOT}, trailing dots removed; null when there is no domain or
+     * it has no ASCII form.
+     */
+    static String asciiDomain(String address) {
         if (address == null) {
-            return false;
+            return null;
         }
         int at = address.lastIndexOf('@');
         if (at < 0) {
-            return false;
+            return null;
         }
-        String domain = address.substring(at + 1).strip().toLowerCase(Locale.ROOT);
-        while (domain.endsWith(".")) {
-            domain = domain.substring(0, domain.length() - 1);
+        String domain = stripTrailingDots(address.substring(at + 1).strip());
+        if (domain.isEmpty()) {
+            return null;
         }
-        return domain.equals(UNIVERSITY_DOMAIN) || domain.endsWith("." + UNIVERSITY_DOMAIN);
+        try {
+            domain = stripTrailingDots(IDN.toASCII(domain, IDN.ALLOW_UNASSIGNED).toLowerCase(Locale.ROOT));
+        } catch (IllegalArgumentException noAsciiForm) {
+            return null;
+        }
+        return domain.isEmpty() ? null : domain;
+    }
+
+    private static String stripTrailingDots(String domain) {
+        String stripped = domain;
+        while (stripped.endsWith(".")) {
+            stripped = stripped.substring(0, stripped.length() - 1);
+        }
+        return stripped;
     }
 
     /**
@@ -118,11 +147,15 @@ public final class PersonalEmailVerification {
                 || address.equalsIgnoreCase(trimmed(user.getFirstAttribute(IdentityResource.PERSONAL_EMAIL_ATTRIBUTE)));
     }
 
-    /** Keycloak's own e-mail validator, with the realm this request runs in. */
+    /**
+     * Keycloak's own e-mail validator, with the realm this request runs in, and a domain that has an
+     * ASCII form ({@link #asciiDomain}), so the domain rule can always be applied.
+     */
     static boolean isValidAddress(KeycloakSession session, String address) {
         return EmailValidator.INSTANCE
                 .validate(address, "address", new ValidationContext(session))
-                .isValid();
+                .isValid()
+                && asciiDomain(address) != null;
     }
 
     /**

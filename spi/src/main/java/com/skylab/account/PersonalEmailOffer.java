@@ -61,7 +61,7 @@ import javax.crypto.spec.SecretKeySpec;
  * ({@link PersonalEmailVerification}); an address on the university's domain is never a Personal
  * e-mail (it may close after graduation). Sending is limited per sign-in session, per address, per IP
  * class and overall; the IP itself is never stored, its /24 or /64 class enters a budget key only as
- * an HMAC keyed by the realm's HMAC key, held in memory until the clock hour ends. Like Account
+ * an HMAC under a sub-key of the realm's HMAC key, held in memory until the clock hour ends. Like Account
  * center, the page says when another account already uses the address, and only after the sending
  * budgets were charged.
  *
@@ -408,21 +408,24 @@ public final class PersonalEmailOffer implements RequiredActionProvider, Require
         return "unknown";
     }
 
+    /** What the budget sub-key is derived for, so the realm's signing key is never used as is. */
+    static final String BUDGET_KEY_LABEL = "sky-personal-email-limits";
+
     /**
-     * A budget key for {@code value} in this realm: HMAC-SHA256 with the realm's active HMAC signing
-     * key (a server secret Keycloak keeps in its database, the same on every node), so a stored key
-     * cannot be turned back into a /24 or an address by trying them all. A realm without such a key
-     * falls back to SHA-256 of the realm id and the value. Rotating the key only starts the budgets
-     * afresh.
+     * A budget key for {@code value} in this realm: HMAC-SHA256 under a sub-key derived from the
+     * realm's active HS512 key (HMAC-SHA256 of {@value #BUDGET_KEY_LABEL} under it), a server secret
+     * Keycloak keeps in its database, the same on every node, so a stored key cannot be turned back
+     * into a /24 or an address by trying them all. Keycloak creates an HS512 key for a realm that has
+     * none ({@code fallback-HS512}); only without a key manager (unit tests) is the key a SHA-256 of
+     * the realm id and the value. Rotating the realm key only starts the budgets afresh.
      */
     static String keyed(KeycloakSession session, RealmModel realm, String value) {
         byte[] input = (realm.getId() + "/" + value).getBytes(StandardCharsets.UTF_8);
-        SecretKey secret = hmacSecret(session, realm);
+        SecretKey realmKey = realmHmacKey(session, realm);
         try {
-            if (secret != null) {
-                Mac mac = Mac.getInstance("HmacSHA256");
-                mac.init(new SecretKeySpec(secret.getEncoded(), "HmacSHA256"));
-                return "h" + HexFormat.of().formatHex(mac.doFinal(input));
+            if (realmKey != null) {
+                byte[] subKey = hmac(realmKey.getEncoded(), BUDGET_KEY_LABEL.getBytes(StandardCharsets.UTF_8));
+                return "h" + HexFormat.of().formatHex(hmac(subKey, input));
             }
             return "s" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(input));
         } catch (NoSuchAlgorithmException | InvalidKeyException exception) {
@@ -430,18 +433,19 @@ public final class PersonalEmailOffer implements RequiredActionProvider, Require
         }
     }
 
-    private static SecretKey hmacSecret(KeycloakSession session, RealmModel realm) {
-        for (String algorithm : List.of(Algorithm.HS512, Algorithm.HS256)) {
-            try {
-                KeyWrapper key = session.keys() == null ? null : session.keys().getActiveKey(realm, KeyUse.SIG, algorithm);
-                if (key != null && key.getSecretKey() != null && key.getSecretKey().getEncoded() != null) {
-                    return key.getSecretKey();
-                }
-            } catch (RuntimeException none) {
-                // No active key of this algorithm in the realm: try the next one.
-            }
+    private static byte[] hmac(byte[] key, byte[] input) throws NoSuchAlgorithmException, InvalidKeyException {
+        Mac mac = Mac.getInstance("HmacSHA256");
+        mac.init(new SecretKeySpec(key, "HmacSHA256"));
+        return mac.doFinal(input);
+    }
+
+    private static SecretKey realmHmacKey(KeycloakSession session, RealmModel realm) {
+        if (session.keys() == null) {
+            return null;
         }
-        return null;
+        KeyWrapper key = session.keys().getActiveKey(realm, KeyUse.SIG, Algorithm.HS512);
+        return key == null || key.getSecretKey() == null || key.getSecretKey().getEncoded() == null
+                ? null : key.getSecretKey();
     }
 
     /** This session's code, if one is waiting. */

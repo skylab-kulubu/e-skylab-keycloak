@@ -335,7 +335,8 @@ class PersonalEmailOfferTest {
 
     @Test
     void aUniversityAddressIsNeverAPersonalEmailAndCostsNoBudget() {
-        for (String address : List.of("someone@std.yildiz.edu.tr", "Someone@CE.Yildiz.EDU.tr", "someone@yildiz.edu.tr")) {
+        for (String address : List.of("someone@std.yildiz.edu.tr", "Someone@CE.Yildiz.EDU.tr", "someone@yildiz.edu.tr",
+                "someone@yildiz\u3002edu\u3002tr", "someone@yil\u00ADdiz.edu.tr")) {
             browser.send(address);
             assertEquals("email_school_domain", browser.shown(PersonalEmailOffer.ERROR_ATTRIBUTE), address);
             assertEquals("address", browser.shown(PersonalEmailOffer.STAGE_ATTRIBUTE));

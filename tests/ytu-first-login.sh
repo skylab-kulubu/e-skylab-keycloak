@@ -825,6 +825,9 @@ offer_post send address=Offer.Taken@STD.yildiz.edu.tr
 expect_offer_error own_address 'the own school address'
 offer_post send address=Someone.Else@CE.Yildiz.EDU.tr
 expect_offer_error email_school_domain 'an address on a university subdomain'
+# Keycloak's validator accepts ideographic full stops; the SMTP sender would deliver to yildiz.edu.tr.
+offer_post send "address=someone.else@yildiz$(printf '\343\200\202')edu$(printf '\343\200\202')tr"
+expect_offer_error email_school_domain 'a Unicode look-alike of the university domain'
 [[ $(mail_count someone.else@ce.yildiz.edu.tr) == 0 ]] || fail 'a code was mailed to a university address'
 offer_post send 'address=not an address'
 expect_offer_error invalid_address 'not an address'

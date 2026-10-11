@@ -2258,7 +2258,10 @@ Merkezi'nde çalışmaz, oturum bitince ölür. Başka hesabın `email`, `school
 `personalEmail`'i ya da kullanıcı adı (büyük/küçük harf gözetmeden) `email_taken`; kişinin kendi
 okul adresi `own_address`; üniversite alan adı ve her alt alan adı (`yildiz.edu.tr`,
 `std.yildiz.edu.tr`, bölüm alan adları; Yusuf 2026-10-11) `email_school_domain` (okul adresi mezun
-olunca kapanabilir); geçersiz adres `invalid_address`. Aynı alan adı kuralı Hesap Merkezi'nin
+olunca kapanabilir). Alan adı ASCII biçiminde (IDNA `toASCII`) karşılaştırılır: Keycloak'ın
+doğrulayıcısının kabul ettiği tam genişlikli harf, ideografik nokta, sıfır genişlikli boşluk ya da
+yumuşak tire içeren benzerleri de (SMTP göndericisi onları yine `yildiz.edu.tr`'ye çevirir)
+reddedilir; ASCII biçimi olmayan alan adı ve geçersiz adres `invalid_address`. Aynı alan adı kuralı Hesap Merkezi'nin
 `email/change-request` ve `email/confirm`'ünde de geçerlidir (`400 email_school_domain`,
 `field: "address"`): elde YTÜ alan adlı `personalEmail`'ler kalır (göç yok), A1c yolunda YTÜ alan
 adlı eski bir birincil artık kişisel e-posta olarak kanıtlanamaz. Adresin başkasında olduğunu Hesap
@@ -2267,23 +2270,34 @@ kendi adres yanıtları bütçe harcamaz, başka hesap hakkında bir şey söyle
 (`RateLimiter`, single-use deposu): giriş oturumu başına 3, adres başına saatte 3, IP sınıfı başına
 (IPv4 /24, IPv6 /64) saatte 100, realm genelinde saatte 200. Pencereler saat dilimleridir (saat
 başını aşan bir oturum 3 kod daha alabilir). IP sınıfı, adres ve oturum anahtarları realm'e özeldir
-(sandbox aynı sunucudadır) ve realm'in etkin HMAC imzalama anahtarıyla HMAC-SHA256'dır (anahtarı
-olmayan realm'de SHA-256): IP'nin kendisi hiçbir yere yazılmaz; /24 ya da /64 sınıfı yalnız bu
-HMAC olarak, saat dilimi bitene dek bellekte durur. Günlükte yalnız kullanıcı kimliği geçer. IP
+(sandbox aynı sunucudadır) ve HMAC-SHA256'dır; HMAC anahtarı realm'in etkin HS512 anahtarından
+türetilir (`HMAC(anahtar, "sky-personal-email-limits")`; imzalama anahtarı doğrudan kullanılmaz).
+HS512 anahtarı olmayan realm'e Keycloak kendisi bir `fallback-HS512` anahtarı yaratır; SHA-256 yalnız
+anahtar yöneticisi olmayan birim testlerinde kullanılır. IP'nin kendisi hiçbir yere yazılmaz; /24 ya
+da /64 sınıfı yalnız bu HMAC olarak, saat dilimi bitene dek bellekte durur. Anahtarın dönmesi
+bütçeleri yalnız bir kez sıfırlar (realm geneli sınırı realm kimliğine bağlıdır, sıfırlanmaz). Günlükte yalnız kullanıcı kimliği geçer. IP
 sınıfı bütçesi bir kampüs ağında aynı saatte çok sayıda ilk girişe (kulüp tanıtım günü) yer
 bırakır; sayfaya ulaşmak zaten hiç girmemiş bir YTÜ Microsoft kimliği ister.
 
 **Büyük/küçük harf ve veritabanı.** `schoolEmail`/`personalEmail` karşılaştırması Keycloak'ın
 JPA aramasında `lower(value)` ile yapılır; Postgres'te `lower()` veritabanının `LC_CTYPE`'ına
 uyar. Türkçe bir ctype'ta `lower('I')` `ı` verir ve Graph'ın büyük `I`'lı yazdığı adresler eşleşmez
-(§22'nin `holder()`'ı ve parolalı giriş de aynı aramayı kullanır). Bir kez denetlenir (production
-sunucusu, Keycloak veritabanı; beklenen `en_US.utf8` ya da `C`):
+(§22'nin `holder()`'ı ve parolalı giriş de aynı aramayı kullanır). PostgreSQL 15+ ICU yerel ayar
+sağlayıcısıyla kurulduysa `lower()` ICU yerel ayarına uyar ve `SHOW lc_ctype` bunu göstermez; bu
+yüzden veritabanı satırına da bakılır. Bir kez denetlenir (production sunucusu, Keycloak
+veritabanı; beklenen: `datlocprovider` = `c` ve `datctype` `en_US.utf8` ya da `C`; ICU (`i`) ise
+`datlocale` (PostgreSQL 17+) ya da `daticulocale` (15-16) `tr` olmamalı):
 
 ```bash
 docker exec -it "$(docker ps -q -f name=keycloak-db | head -n 1)" psql -U postgres -d keycloak -c 'SHOW lc_ctype'
 ```
 
-(konteyner ve rol adı ortama göre değişir; sonuç değişiklik kaydına yazılır).
+```bash
+docker exec -it "$(docker ps -q -f name=keycloak-db | head -n 1)" psql -U postgres -d keycloak -x -c 'SELECT * FROM pg_database WHERE datname = current_database()'
+```
+
+(konteyner adı ortama göre değişir, Dokploy'daki adı `docker ps` ile bulunur; production'da süper
+kullanıcı dışındaki roller NOLOGIN olduğu için `-U postgres`; sonuç değişiklik kaydına yazılır).
 
 "Şimdilik geç" kişiye `personalEmailOfferSkippedAt` (ISO-8601 UTC; User Profile'da, yalnız yönetici
 düzenler) yazar. Ölçüm (spec §11) olaylardan: `CUSTOM_REQUIRED_ACTION`, ayrıntı
@@ -2327,10 +2341,22 @@ Uzlaştırıcı kimliğinin `manage-realm` rolü yeter.
 1a. **`on`'dan önce IP denetimi:** IP sınıfı bütçesi Keycloak'ın gördüğü istemci IP'si kadar
    doğrudur. Keycloak Traefik'in adresini görüyorsa herkes tek bir /24 kovasını paylaşır (öneri realm
    genelinde saatte 100 gönderimle sınırlanır); güvenilen vekil listesi yoksa ve `X-Forwarded-For`
-   istemciden geçiyorsa bütçe atlatılabilir (oturum ve genel sınır yine bağlar). Mac'te
-   `ops/wizards/real-client-ip-diagnostics-v2.sh` koşulur; Keycloak satırı `KC_PROXY_HEADERS=xforwarded`
-   ve `KC_PROXY_TRUSTED_ADDRESSES` göstermeli ve Keycloak gerçek istemci IP sınıfını görmeli. Değilse
-   önce Dokploy'daki Keycloak ortamı düzeltilir.
+   istemciden geçiyorsa bütçe atlatılabilir (oturum ve genel sınır yine bağlar). Wizard
+   `ops/wizards/real-client-ip-diagnostics-v2.sh` Mac'ten sunucuya kopyalanır ve **production
+   sunucusunda root olarak** koşulur (kendi başlığındaki gibi). Mac'te:
+
+   ```bash
+   cd ~/Projects/sky_lab_genel/ops/wizards && scp -P 1911 real-client-ip-diagnostics-v2.sh yusssss@api.yildizskylab.com:~/
+   ```
+
+   Production sunucusunda:
+
+   ```bash
+   sudo bash ~/real-client-ip-diagnostics-v2.sh
+   ```
+
+   Keycloak satırı `KC_PROXY_HEADERS=xforwarded` ve `KC_PROXY_TRUSTED_ADDRESSES` göstermeli ve
+   Keycloak gerçek istemci IP sınıfını görmeli. Değilse önce Dokploy'daki Keycloak ortamı düzeltilir.
 2. Sandbox önce, §22'deki operatör oturumuyla:
 
    ```bash

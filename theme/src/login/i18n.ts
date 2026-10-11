@@ -50,13 +50,6 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     passkeyOfferNow: "Şimdi ekle",
     passkeyOfferLater: "30 gün boyunca tekrar sorma",
 
-    // Personal e-mail offer after a first YTÜ login (eskylab-login-ux 21; no page uses it yet)
-    personalEmailOfferTitle: "Kişisel e-posta ekle",
-    personalEmailOfferDescription:
-      "Mezun olunca okul adresin kapanabilir; kişisel e-posta eklemek ister misin?",
-    personalEmailOfferAdd: "Ekle",
-    personalEmailOfferSkip: "Şimdilik geç",
-
     // Web handoff failure page (SkyApp WebView, sky-handoff v1/failed): one sentence per reason
     "skyHandoffFailed.expired": "Bağlantının süresi doldu.",
     "skyHandoffFailed.used": "Bu bağlantı zaten kullanıldı.",
@@ -336,13 +329,6 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
       "Your passkey stays protected on this device; SKY LAB never receives your biometric data.",
     passkeyOfferNow: "Add now",
     passkeyOfferLater: "Do not ask again for 30 days",
-
-    // Personal e-mail offer after a first YTÜ login (eskylab-login-ux 21; no page uses it yet)
-    personalEmailOfferTitle: "Add a personal e-mail",
-    personalEmailOfferDescription:
-      "Your school address may close after you graduate; would you like to add a personal e-mail?",
-    personalEmailOfferAdd: "Add",
-    personalEmailOfferSkip: "Skip for now",
 
     // Web handoff failure page (SkyApp WebView, sky-handoff v1/failed): one sentence per reason
     "skyHandoffFailed.expired": "This link has expired.",

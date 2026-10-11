@@ -6,6 +6,9 @@ import org.keycloak.authentication.AuthenticationFlowContext;
 import org.keycloak.authentication.authenticators.broker.AbstractIdpAuthenticator;
 import org.keycloak.authentication.authenticators.broker.util.SerializedBrokeredIdentityContext;
 import org.keycloak.models.AuthenticationExecutionModel;
+import org.keycloak.models.IdentityProviderModel;
+import org.keycloak.models.IdentityProviderStorageProvider;
+import org.keycloak.models.IdentityProviderSyncMode;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.ModelDuplicateException;
 import org.keycloak.models.RealmModel;
@@ -48,6 +51,8 @@ class SkyYtuFirstLoginTest {
     private final KeycloakSession session = mock(KeycloakSession.class);
     private final UserProvider users = mock(UserProvider.class);
     private final RealmModel realm = mock(RealmModel.class);
+    private final IdentityProviderStorageProvider providers = mock(IdentityProviderStorageProvider.class);
+    private final IdentityProviderModel obs = new IdentityProviderModel();
     private final Map<String, String> notes = new HashMap<>();
     /** Lowercased address to the attribute that holds it, as Keycloak's exact search sees it. */
     private final Map<String, String> attributeHolders = new HashMap<>();
@@ -59,6 +64,10 @@ class SkyYtuFirstLoginTest {
         when(context.getSession()).thenReturn(session);
         when(context.getRealm()).thenReturn(realm);
         when(session.users()).thenReturn(users);
+        when(session.identityProviders()).thenReturn(providers);
+        obs.setAlias("OBS");
+        obs.setSyncMode(IdentityProviderSyncMode.LEGACY);
+        when(providers.getByAlias("OBS")).thenReturn(obs);
         when(authSession.getRealm()).thenReturn(realm);
         when(realm.isLoginWithEmailAllowed()).thenReturn(true);
         when(authSession.getAuthNote(anyString())).thenAnswer(call -> notes.get(call.<String>getArgument(0)));
@@ -76,6 +85,7 @@ class SkyYtuFirstLoginTest {
         SerializedBrokeredIdentityContext identity = new SerializedBrokeredIdentityContext();
         identity.setId("microsoft-object-id");
         identity.setBrokerUserId("OBS.microsoft-object-id");
+        identity.setIdentityProviderId("OBS");
         identity.setUsername("new.student");
         identity.setFirstName("Yeni");
         identity.setLastName("Öğrenci");
@@ -108,15 +118,78 @@ class SkyYtuFirstLoginTest {
         assertNull(notes.get(ENFORCE));
     }
 
+    private UserModel holderWithEmail(boolean verified) {
+        UserModel holder = mock(UserModel.class);
+        when(holder.isEmailVerified()).thenReturn(verified);
+        return holder;
+    }
+
     @Test
-    void anAddressThatIsAnAccountsEmailIsWrittenSoKeycloakFindsThatAccount() {
+    void anAddressThatIsAnAccountsVerifiedEmailIsWrittenSoKeycloakFindsThatAccount() {
         brokered("", "taken@std.yildiz.edu.tr");
-        when(users.getUserByEmail(realm, "taken@std.yildiz.edu.tr")).thenReturn(mock(UserModel.class));
+        UserModel holder = holderWithEmail(true);
+        when(users.getUserByEmail(realm, "taken@std.yildiz.edu.tr")).thenReturn(holder);
 
         run();
 
         assertEquals("taken@std.yildiz.edu.tr", stored().getEmail());
         assertNull(notes.get(ENFORCE));
+    }
+
+    @Test
+    void anAccountsUnverifiedEmailDoesNotSendTheOwnerToLinkThatAccount() {
+        brokered(null, "squatted@std.yildiz.edu.tr");
+        UserModel squatter = holderWithEmail(false);
+        when(users.getUserByEmail(realm, "squatted@std.yildiz.edu.tr")).thenReturn(squatter);
+
+        run();
+
+        assertNull(stored().getEmail());
+        assertEquals("true", notes.get(ENFORCE));
+    }
+
+    @Test
+    void withSyncModeForceAnAddressKeycloakKnowsIsNotWrittenSoNoLinkChangesAPrimary() {
+        obs.setSyncMode(IdentityProviderSyncMode.FORCE);
+        brokered(null, "taken@std.yildiz.edu.tr");
+        UserModel holder = holderWithEmail(true);
+        when(users.getUserByEmail(realm, "taken@std.yildiz.edu.tr")).thenReturn(holder);
+
+        run();
+
+        assertNull(stored().getEmail());
+        assertEquals("true", notes.get(ENFORCE));
+    }
+
+    @Test
+    void withSyncModeForceAFreeAddressIsStillWritten() {
+        obs.setSyncMode(IdentityProviderSyncMode.FORCE);
+        brokered(null, "free.force@std.yildiz.edu.tr");
+
+        run();
+
+        assertEquals("free.force@std.yildiz.edu.tr", stored().getEmail());
+    }
+
+    @Test
+    void anUnknownIdentityProviderCountsAsForce() {
+        when(providers.getByAlias("OBS")).thenReturn(null);
+        brokered(null, "named@std.yildiz.edu.tr");
+        when(users.getUserByUsername(realm, "named@std.yildiz.edu.tr")).thenReturn(mock(UserModel.class));
+
+        run();
+
+        assertNull(stored().getEmail());
+        assertEquals("true", notes.get(ENFORCE));
+    }
+
+    @Test
+    void staffAddressesOnTheSchoolDomainCountToo() {
+        brokered(null, "Hoca@Yildiz.edu.tr");
+
+        run();
+
+        assertEquals("hoca@yildiz.edu.tr", stored().getEmail());
     }
 
     @Test
@@ -195,7 +268,8 @@ class SkyYtuFirstLoginTest {
 
     @Test
     void noOrAnInvalidSchoolEmailChangesNothing() {
-        for (String school : new String[] {null, "   ", "not an address", "a".repeat(250) + "@std.yildiz.edu.tr"}) {
+        for (String school : new String[] {null, "   ", "not an address", "a".repeat(250) + "@std.yildiz.edu.tr",
+                "guest@gmail.com", "someone@notyildiz.edu.tr", "a@std.yildiz.edu.tr.evil.org", "x@sub.std.yildiz.edu.tr"}) {
             notes.clear();
             brokered(null, school);
             step.authenticate(context);

@@ -9,6 +9,8 @@ import org.keycloak.authentication.AuthenticatorFactory;
 import org.keycloak.authentication.authenticators.broker.AbstractIdpAuthenticator;
 import org.keycloak.authentication.authenticators.broker.util.SerializedBrokeredIdentityContext;
 import org.keycloak.models.AuthenticationExecutionModel;
+import org.keycloak.models.IdentityProviderModel;
+import org.keycloak.models.IdentityProviderSyncMode;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.KeycloakSessionFactory;
 import org.keycloak.models.ModelDuplicateException;
@@ -35,15 +37,20 @@ import java.util.Map;
  *
  * <ul>
  *   <li>a person already known to the flow (an account being linked or re-verified), a brokered
- *       identity that already carries an e-mail or has no valid School e-mail: nothing changes;</li>
- *   <li>an address no account holds, or the Keycloak {@code email} or username of an account:
- *       it becomes the brokered e-mail, trimmed and lowercased. With {@code trustEmail} the new
- *       account takes it as a verified Primary e-mail and no verification mail is sent; an
- *       address Keycloak already knows sends the person down Keycloak's own "existing account"
+ *       identity that already carries an e-mail or has no valid School e-mail (an address on a
+ *       YTÜ school domain, ADR-0063): nothing changes;</li>
+ *   <li>an address no account holds, or the verified Keycloak {@code email} or the username of an
+ *       account: it becomes the brokered e-mail, trimmed and lowercased. With {@code trustEmail}
+ *       the new account takes it as a verified Primary e-mail and no verification mail is sent;
+ *       an address Keycloak already knows sends the person down Keycloak's own "existing account"
  *       path (confirm, then re-authenticate) instead of opening a second account;</li>
- *   <li>an address that is only the School or Personal e-mail of another account: nothing is
+ *   <li>an address that is only the School or Personal e-mail of another account, or another
+ *       account's unverified {@code email} (which must not lock the real owner out): nothing is
  *       written and the review profile page is shown, as it was before this step (ticket 12 puts
- *       "Zaten bir SKY LAB hesabın var mı?" there).</li>
+ *       "Zaten bir SKY LAB hesabın var mı?" there);</li>
+ *   <li>an address Keycloak already knows while the identity provider syncs with {@code FORCE}:
+ *       the same, because Keycloak would copy the brokered e-mail onto the account being linked,
+ *       and no YTÜ login may change the Primary e-mail of an existing account.</li>
  * </ul>
  *
  * <p>The flow always continues; the step never shows a page or tells whose address it is.
@@ -56,6 +63,8 @@ public final class SkyYtuFirstLogin implements Authenticator, AuthenticatorFacto
     static final String SCHOOL_EMAIL_ATTRIBUTE = "schoolEmail";
     static final String PERSONAL_EMAIL_ATTRIBUTE = PersonalEmailProof.ADDRESS_ATTRIBUTE;
     static final int MAX_ADDRESS_LENGTH = 255;
+    /** The YTÜ school domains (ADR-0063); only an address on one of them becomes a verified Primary e-mail. */
+    static final List<String> SCHOOL_DOMAINS = List.of("std.yildiz.edu.tr", "yildiz.edu.tr");
     private static final Logger LOG = Logger.getLogger(SkyYtuFirstLogin.class);
     private static final AuthenticationExecutionModel.Requirement[] REQUIREMENTS = {
             AuthenticationExecutionModel.Requirement.REQUIRED
@@ -65,9 +74,12 @@ public final class SkyYtuFirstLogin implements Authenticator, AuthenticatorFacto
     enum Holder {
         /** Nobody: the address is free. */
         NOBODY,
-        /** Keycloak's own duplicate check finds it (an account's {@code email} or username). */
+        /** Keycloak's own duplicate check finds it (an account's verified {@code email}, or its username). */
         KEYCLOAK,
-        /** Only another account's School or Personal e-mail attribute (or an ambiguous lookup). */
+        /**
+         * Another account's School or Personal e-mail attribute or unverified {@code email} (or an
+         * ambiguous lookup).
+         */
         ATTRIBUTE
     }
 
@@ -88,26 +100,28 @@ public final class SkyYtuFirstLogin implements Authenticator, AuthenticatorFacto
             context.success();
             return;
         }
-        switch (holder(context.getSession(), context.getRealm(), address)) {
-            case NOBODY, KEYCLOAK -> {
-                brokered.setEmail(address);
-                brokered.saveToAuthenticationSession(authSession, AbstractIdpAuthenticator.BROKERED_CONTEXT_NOTE);
-            }
-            case ATTRIBUTE -> {
-                LOG.debug("The School e-mail of a first YTÜ login belongs to another account; the profile page decides");
-                authSession.setAuthNote(AbstractIdpAuthenticator.ENFORCE_UPDATE_PROFILE, Boolean.TRUE.toString());
-            }
+        Holder holder = holder(context.getSession(), context.getRealm(), address);
+        if (holder == Holder.NOBODY || (holder == Holder.KEYCLOAK && !syncsWithForce(context.getSession(), brokered))) {
+            brokered.setEmail(address);
+            brokered.saveToAuthenticationSession(authSession, AbstractIdpAuthenticator.BROKERED_CONTEXT_NOTE);
+        } else {
+            LOG.debug("The School e-mail of a first YTÜ login belongs to another account; the profile page decides");
+            authSession.setAuthNote(AbstractIdpAuthenticator.ENFORCE_UPDATE_PROFILE, Boolean.TRUE.toString());
         }
         context.success();
     }
 
-    /** The School e-mail as the Primary e-mail is stored: trimmed, lowercased; null when not an address. */
+    /**
+     * The School e-mail as the Primary e-mail is stored: trimmed, lowercased; null when it is not an
+     * address on a YTÜ school domain.
+     */
     static String schoolAddress(String raw) {
         if (isBlank(raw)) {
             return null;
         }
         String address = PersonalEmailProof.normalise(raw);
-        if (address.length() > MAX_ADDRESS_LENGTH || !EmailValidationUtil.isValidEmail(address)) {
+        if (address.length() > MAX_ADDRESS_LENGTH || !EmailValidationUtil.isValidEmail(address)
+                || SCHOOL_DOMAINS.stream().noneMatch(domain -> address.endsWith("@" + domain))) {
             return null;
         }
         return address;
@@ -116,13 +130,18 @@ public final class SkyYtuFirstLogin implements Authenticator, AuthenticatorFacto
     /**
      * Keycloak's duplicate check first (the routes {@code IdpCreateUserIfUniqueAuthenticator}
      * uses: {@code email}, and the username while e-mail login is allowed), then the two
-     * address attributes, compared ignoring case as the login form compares them.
+     * address attributes, compared ignoring case as the login form compares them. Only a verified
+     * {@code email} sends the person to "link existing account": an unproven one is treated like
+     * an attribute, so it cannot lock the address's real owner out.
      */
     static Holder holder(KeycloakSession session, RealmModel realm, String address) {
         UserProvider users = session.users();
         try {
-            if (users.getUserByEmail(realm, address) != null
-                    || (realm.isLoginWithEmailAllowed() && users.getUserByUsername(realm, address) != null)) {
+            UserModel byEmail = users.getUserByEmail(realm, address);
+            if (byEmail != null) {
+                return byEmail.isEmailVerified() ? Holder.KEYCLOAK : Holder.ATTRIBUTE;
+            }
+            if (realm.isLoginWithEmailAllowed() && users.getUserByUsername(realm, address) != null) {
                 return Holder.KEYCLOAK;
             }
         } catch (ModelDuplicateException duplicate) {
@@ -139,6 +158,16 @@ public final class SkyYtuFirstLogin implements Authenticator, AuthenticatorFacto
             }
         }
         return Holder.NOBODY;
+    }
+
+    /**
+     * Whether the brokered identity's provider syncs with {@code FORCE}: Keycloak then copies the
+     * brokered e-mail onto an existing account that the person links ({@code updateEmail}).
+     */
+    static boolean syncsWithForce(KeycloakSession session, SerializedBrokeredIdentityContext brokered) {
+        IdentityProviderModel provider = brokered.getIdentityProviderId() == null
+                ? null : session.identityProviders().getByAlias(brokered.getIdentityProviderId());
+        return provider == null || provider.getSyncMode() == IdentityProviderSyncMode.FORCE;
     }
 
     private static boolean isBlank(String value) {

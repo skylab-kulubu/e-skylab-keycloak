@@ -59,8 +59,9 @@ import java.util.TreeMap;
  *                               delete id). Anything else is refused with exit status 4.
  *   first-broker-login STEP     stdin is the flat execution list of a first broker login flow;
  *                               prints what eskylab-login-ux 07 edits in it, one line each:
- *                               "step<TAB>id|-<TAB>priority" (STEP at the top level, or "-" and the
- *                               priority to add it with: one below the review profile step),
+ *                               "step<TAB>id|-<TAB>priority<TAB>requirement|-" (STEP at the top
+ *                               level, or "-" and the priority to add it with: one below the
+ *                               review profile step),
  *                               "review<TAB>id<TAB>configId|-" (the review profile step) and
  *                               "email-verification<TAB>id<TAB>priority<TAB>requirement" per
  *                               idp-email-verification step. A flow without exactly one top-level
@@ -521,13 +522,14 @@ public final class ReconcileJson {
             if (topLevelPriorities.contains(priority)) {
                 return refuse("priority " + priority + " just before the review profile step is taken");
             }
-            out.println("step\t-\t" + priority);
+            out.println("step\t-\t" + priority + "\t-");
         } else {
             JsonNode present = steps.get(0);
             if (present.path("priority").asInt() >= reviewPriority) {
                 return refuse(step + " runs after the review profile step");
             }
-            out.println("step\t" + present.path("id").asText() + "\t" + present.path("priority").asInt());
+            out.println("step\t" + present.path("id").asText() + "\t" + present.path("priority").asInt()
+                    + "\t" + present.path("requirement").asText());
         }
         String config = review.path("authenticationConfig").asText("");
         out.println("review\t" + review.path("id").asText() + "\t" + (config.isEmpty() ? "-" : config));

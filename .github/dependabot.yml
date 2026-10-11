@@ -1,0 +1,14 @@
+# ADR 0055 / ADR 0064: only @skylab-kulubu/* packages (skylcn-ui), weekly,
+# in one grouped PR. Other dependencies get no version-update PRs.
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/theme"
+    schedule:
+      interval: "weekly"
+    allow:
+      - dependency-name: "@skylab-kulubu/*"
+    groups:
+      skylab-kulubu:
+        patterns:
+          - "@skylab-kulubu/*"

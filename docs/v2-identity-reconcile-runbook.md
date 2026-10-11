@@ -2099,8 +2099,10 @@ yapılmaz: doğrulanmış birincil adres olacak değer kiracı kilidine ve eşle
   bugünkü yol budur (kişi gerekirse sayfada kullanıcı adını değiştirip kendi hesabını açar;
   doğrulanmamış bir adres gerçek sahibini kilitleyemez). Bilet 12 buraya "Zaten bir SKY LAB hesabın
   var mı?" sayfasını koyacak.
-- IdP `syncMode=FORCE` iken Keycloak'ın bildiği bir adres de yazılmaz: FORCE'ta Keycloak aracı
-  e-postasını bağlanan hesaba kopyalar, YTÜ girişi ise var olan hesabın birincilini değiştiremez.
+- IdP `syncMode=FORCE` iken Keycloak'ın bildiği bir adres de, Keycloak'ın bir hesabı bulacağı aracı
+  kullanıcı adı da yazılmaz: FORCE'ta Keycloak aracı e-postasını bağlanan hesaba kopyalar, YTÜ
+  girişi ise var olan hesabın birincilini değiştiremez. Profil sayfasında elle yazılan bir kullanıcı
+  adı bu korumanın dışındadır: **OBS FORCE'a alınmadan önce adım kapatılır** (`KEYCLOAK_YTU_FIRST_LOGIN=off`).
   Üretim `LEGACY`; operatör koşusu FORCE görürse uyarı basar.
 - Akışta zaten bir kişi var (bağlama ya da yeniden doğrulama), aracı kimlik bir e-posta taşıyor
   ya da "existing account" yolu başlamış: hiçbir şey yapılmaz. A6'nın `kc_action=idp_link`'i first
@@ -2160,8 +2162,8 @@ bağlamasıdır ve uzlaştırıcı kimliğiyle de yapılır.
 
 ### Üretim sırası
 
-1. SPI 1.17.0'ı taşıyan imaj yayımlanır (`main` → `production`, Touch ID kapısı). Tema metni de
-   değiştiği için kanıt yeni bir fiziksel passkey girişi ister.
+1. SPI 1.17.0'ı taşıyan imaj yayımlanır (`main` → `production`, Touch ID kapısı). Tema
+   değişmedi (kişisel e-posta teklifi metinleri bilet 21'e taşındı).
 2. Sandbox önce (`e-skylab-sandbox`'ta uzlaştırıcı kimliği yok; operatör oturumu). Sandbox'ta OBS
    yoksa adım akışı kurar ve bağlar, satır `identity provider OBS first login flow: unchanged
    (absent)` olur; yürüyüş için önce sandbox'a OBS eklenir (bilet 02, yol a).
@@ -2202,12 +2204,17 @@ kopyayı gösteriyorsa onu da boşaltın.
 
 `tests/ytu-first-login.sh` (CI'da `ytu-first-login` işi): stok Keycloak imajı dev kipinde, SPI
 jar'ı `/opt/keycloak/providers`'ta, `config/` salt okunur. YTÜ kiracısını ikinci bir realm
-(`ytu-mock`) OIDC IdP `OBS` arkasında oynar: e-posta vermez (MicrosoftMapper'ın bıraktığı durum),
-`upn` → `schoolEmail`, `department` FORCE, `university` sabit; OBS'nin geçersiz kılması
+(`ytu-mock`) OIDC IdP `OBS` arkasında oynar: Keycloak'ın Microsoft sağlayıcısı gibi kullanıcı adı
+olarak adresi verir, e-posta vermez (MicrosoftMapper'ın bıraktığı durum), `upn` → `schoolEmail`,
+`department` FORCE, `university` sabit; her aşama taze kcadm oturumuyla başlar; OBS'nin geçersiz kılması
 `first broker login`. `e-skylab` üretim ayarlarında (`verifyEmail=true`, üretim User Profile'ı,
 yerleşik "review profile" `on`). Önce bugünkü hata görülür (profil sayfası, birincilsiz hesap),
-sonra adım uzlaştırıcının realm-management rolleriyle (OBS okunamaz) ve yönetici oturumuyla
-(geçersiz kılma kalkar) koşulur, ikinci koşu bir şey değiştirmez; yeni kimlik, bağlı hesap, başka
-hesabın `personalEmail`'i, başka hesabın `email`'i (onay, parolayla yeniden doğrulama, posta yok),
-A6 ve geri dönüş/yeniden açma gerçek girişlerle (curl, Keycloak'ın kendi sayfaları) denenir.
-Birim testi: `SkyYtuFirstLoginTest` (kırpma, büyük/küçük harf, sahip türleri).
+sonra bayraksız (`keep`) koşunun hiçbir şey açmadığı, `on` ile uzlaştırıcının realm-management
+rolleriyle (OBS okunamaz) ve yönetici oturumuyla (geçersiz kılma kalkar) kurulduğu, ikinci
+koşuların (`on`, `keep`) bir şey değiştirmediği ve DISABLED yapılan adımın REQUIRED'a döndüğü
+görülür; yeni kimlik, bağlı hesap, başka hesabın `personalEmail`'i, doğrulanmış `email`'i (onay,
+parolayla yeniden doğrulama, posta yok) ve doğrulanmamış `email`'i (sahip kilitlenmez), OBS FORCE
+(uyarı, bağlanan hesabın birincili değişmez), A6, kopyayı gösteren OBS geçersiz kılmasıyla geri
+dönüş, `keep`'in kapalı bırakması, yeniden açma ve başka akışa bağlı realm'in reddi gerçek
+girişlerle (curl, Keycloak'ın kendi sayfaları) denenir. Birim testi: `SkyYtuFirstLoginTest`
+(kırpma, büyük/küçük harf, alan adı ve tırnaklı yerel kısım, sahip türleri, FORCE yolları).

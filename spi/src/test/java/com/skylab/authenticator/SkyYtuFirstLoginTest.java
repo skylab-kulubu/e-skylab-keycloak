@@ -87,6 +87,7 @@ class SkyYtuFirstLoginTest {
         identity.setBrokerUserId("OBS.microsoft-object-id");
         identity.setIdentityProviderId("OBS");
         identity.setUsername("new.student");
+        identity.setModelUsername("new.student");
         identity.setFirstName("Yeni");
         identity.setLastName("Öğrenci");
         identity.setEmail(email);
@@ -169,6 +170,44 @@ class SkyYtuFirstLoginTest {
         run();
 
         assertEquals("free.force@std.yildiz.edu.tr", stored().getEmail());
+    }
+
+    @Test
+    void withSyncModeForceAKnownBrokeredUsernameIsNotWrittenEither() {
+        obs.setSyncMode(IdentityProviderSyncMode.FORCE);
+        brokered(null, "upn.only@std.yildiz.edu.tr");
+        when(users.getUserByUsername(realm, "new.student")).thenReturn(mock(UserModel.class));
+
+        run();
+
+        assertNull(stored().getEmail());
+        assertEquals("true", notes.get(ENFORCE));
+    }
+
+    @Test
+    void withSyncModeForceABrokeredAddressUsernameThatIsAnAccountsEmailIsNotWritten() {
+        obs.setSyncMode(IdentityProviderSyncMode.FORCE);
+        brokered(null, "upn.only@std.yildiz.edu.tr");
+        SerializedBrokeredIdentityContext identity = stored();
+        identity.setModelUsername("graph.mail@std.yildiz.edu.tr");
+        identity.saveToAuthenticationSession(authSession, NOTE);
+        UserModel holder = holderWithEmail(true);
+        when(users.getUserByEmail(realm, "graph.mail@std.yildiz.edu.tr")).thenReturn(holder);
+
+        run();
+
+        assertNull(stored().getEmail());
+        assertEquals("true", notes.get(ENFORCE));
+    }
+
+    @Test
+    void withoutForceAKnownBrokeredUsernameDoesNotStopTheWrite() {
+        brokered(null, "upn.only@std.yildiz.edu.tr");
+        when(users.getUserByUsername(realm, "new.student")).thenReturn(mock(UserModel.class));
+
+        run();
+
+        assertEquals("upn.only@std.yildiz.edu.tr", stored().getEmail());
     }
 
     @Test
@@ -269,7 +308,8 @@ class SkyYtuFirstLoginTest {
     @Test
     void noOrAnInvalidSchoolEmailChangesNothing() {
         for (String school : new String[] {null, "   ", "not an address", "a".repeat(250) + "@std.yildiz.edu.tr",
-                "guest@gmail.com", "someone@notyildiz.edu.tr", "a@std.yildiz.edu.tr.evil.org", "x@sub.std.yildiz.edu.tr"}) {
+                "guest@gmail.com", "someone@notyildiz.edu.tr", "a@std.yildiz.edu.tr.evil.org", "x@sub.std.yildiz.edu.tr",
+                "\"x@evil.com\"@std.yildiz.edu.tr", "\"quoted\"@std.yildiz.edu.tr"}) {
             notes.clear();
             brokered(null, school);
             step.authenticate(context);

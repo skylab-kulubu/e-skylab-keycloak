@@ -39,8 +39,8 @@ import java.util.Map;
  *   <li>a person already known to the flow (an account being linked or re-verified), a brokered
  *       identity that already carries an e-mail or has no valid School e-mail (an address on a
  *       YTÜ school domain, ADR-0063): nothing changes;</li>
- *   <li>an address no account holds, or the verified Keycloak {@code email} or the username of an
- *       account: it becomes the brokered e-mail, trimmed and lowercased. With {@code trustEmail}
+ *   <li>an address no account holds, or the verified Keycloak {@code email} of an account, or (while
+ *       e-mail login is allowed) its username: it becomes the brokered e-mail, trimmed and lowercased. With {@code trustEmail}
  *       the new account takes it as a verified Primary e-mail and no verification mail is sent;
  *       an address Keycloak already knows sends the person down Keycloak's own "existing account"
  *       path (confirm, then re-authenticate) instead of opening a second account;</li>
@@ -48,9 +48,11 @@ import java.util.Map;
  *       account's unverified {@code email} (which must not lock the real owner out): nothing is
  *       written and the review profile page is shown, as it was before this step (ticket 12 puts
  *       "Zaten bir SKY LAB hesabın var mı?" there);</li>
- *   <li>an address Keycloak already knows while the identity provider syncs with {@code FORCE}:
- *       the same, because Keycloak would copy the brokered e-mail onto the account being linked,
- *       and no YTÜ login may change the Primary e-mail of an existing account.</li>
+ *   <li>an address Keycloak already knows, or a brokered username it would find an account by,
+ *       while the identity provider syncs with {@code FORCE}: the same, because Keycloak would copy
+ *       the brokered e-mail onto the account being linked, and no YTÜ login may change the Primary
+ *       e-mail of an existing account. A username typed on the review profile page is not
+ *       covered: turn the step off before switching the identity provider to {@code FORCE}.</li>
  * </ul>
  *
  * <p>The flow always continues; the step never shows a page or tells whose address it is.
@@ -101,7 +103,12 @@ public final class SkyYtuFirstLogin implements Authenticator, AuthenticatorFacto
             return;
         }
         Holder holder = holder(context.getSession(), context.getRealm(), address);
-        if (holder == Holder.NOBODY || (holder == Holder.KEYCLOAK && !syncsWithForce(context.getSession(), brokered))) {
+        boolean force = syncsWithForce(context.getSession(), brokered);
+        if (force && holder == Holder.NOBODY && usernameKnown(context.getSession(), context.getRealm(), brokered, address)) {
+            // Keycloak would still find an account by the brokered username and link it.
+            holder = Holder.KEYCLOAK;
+        }
+        if (holder == Holder.NOBODY || (holder == Holder.KEYCLOAK && !force)) {
             brokered.setEmail(address);
             brokered.saveToAuthenticationSession(authSession, AbstractIdpAuthenticator.BROKERED_CONTEXT_NOTE);
         } else {
@@ -112,8 +119,8 @@ public final class SkyYtuFirstLogin implements Authenticator, AuthenticatorFacto
     }
 
     /**
-     * The School e-mail as the Primary e-mail is stored: trimmed, lowercased; null when it is not an
-     * address on a YTÜ school domain.
+     * The School e-mail as the Primary e-mail is stored: trimmed, lowercased; null when it is not a
+     * plain address (one {@code @}, no quoted local part) on a YTÜ school domain.
      */
     static String schoolAddress(String raw) {
         if (isBlank(raw)) {
@@ -121,6 +128,7 @@ public final class SkyYtuFirstLogin implements Authenticator, AuthenticatorFacto
         }
         String address = PersonalEmailProof.normalise(raw);
         if (address.length() > MAX_ADDRESS_LENGTH || !EmailValidationUtil.isValidEmail(address)
+                || address.indexOf('@') != address.lastIndexOf('@') || address.indexOf('"') >= 0
                 || SCHOOL_DOMAINS.stream().noneMatch(domain -> address.endsWith("@" + domain))) {
             return null;
         }
@@ -168,6 +176,21 @@ public final class SkyYtuFirstLogin implements Authenticator, AuthenticatorFacto
         IdentityProviderModel provider = brokered.getIdentityProviderId() == null
                 ? null : session.identityProviders().getByAlias(brokered.getIdentityProviderId());
         return provider == null || provider.getSyncMode() == IdentityProviderSyncMode.FORCE;
+    }
+
+    /**
+     * Keycloak's own username routes ({@code IdpCreateUserIfUniqueAuthenticator.checkExistingUser}):
+     * the address as a username, the brokered username, and a brokered {@code @}-username as an
+     * {@code email} while e-mail login is allowed.
+     */
+    static boolean usernameKnown(KeycloakSession session, RealmModel realm, SerializedBrokeredIdentityContext brokered,
+            String address) {
+        UserProvider users = session.users();
+        String username = brokered.getModelUsername();
+        return users.getUserByUsername(realm, address) != null
+                || (username != null && (users.getUserByUsername(realm, username) != null
+                        || (realm.isLoginWithEmailAllowed() && username.indexOf('@') > 0
+                                && users.getUserByEmail(realm, username) != null)));
     }
 
     private static boolean isBlank(String value) {

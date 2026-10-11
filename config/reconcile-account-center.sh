@@ -780,7 +780,7 @@ reconcile_ytu_idp_first_login_flow() {
     return 1
   fi
   if [[ $(json_tool field config <"$idp_file") =~ \"syncMode\"[[:space:]]*:[[:space:]]*\"FORCE\" ]]; then
-    warn "identity provider $YTU_IDP_ALIAS syncs with FORCE: a first YTÜ login whose School e-mail another account already has opens the review profile page instead of linking that account"
+    warn "identity provider $YTU_IDP_ALIAS syncs with FORCE: a first YTÜ login whose School e-mail or username another account already has opens the review profile page instead of linking that account; turn the step off (KEYCLOAK_YTU_FIRST_LOGIN=off) before keeping OBS on FORCE"
   fi
   override=$(json_tool field firstBrokerLoginFlowAlias <"$idp_file")
   if [[ -z $override ]]; then

@@ -290,10 +290,12 @@ okul adresini doğrulanmış birincil e-posta olarak alır; boş birincil kalmaz
 `sky-ytu-first-login` (`com.skylab.authenticator.SkyYtuFirstLogin`) yapar: first broker login
 akışının ilk adımıdır, `MicrosoftMapper`'ın boşalttığı aracı e-postasına `schoolEmail`'i
 (kırpılmış, küçük harf; yalnız `std.yildiz.edu.tr` ve `yildiz.edu.tr` alan adlarında) yazar. Adres
-kimsede yoksa ya da bir hesabın doğrulanmış `email`'i veya kullanıcı adıysa yazılır; ikincisinde
+kimsede yoksa ya da bir hesabın doğrulanmış `email`'i veya (e-postayla giriş açıkken) kullanıcı
+adıysa yazılır; ikincisinde
 Keycloak'ın hazır "var olan hesap" yolu (onay, sonra yeniden kimlik doğrulama) ikinci hesap
 açılmasını önler. Adres başka bir hesabın `schoolEmail`'i, `personalEmail`'i ya da doğrulanmamış
-`email`'iyse, ya da IdP `syncMode=FORCE` iken Keycloak'ın bildiği bir adresse yazılmaz ve profil
+`email`'iyse, ya da IdP `syncMode=FORCE` iken Keycloak'ın bildiği bir adres ya da aracı kullanıcı
+adıysa yazılmaz (OBS FORCE'a alınmadan önce adım `off` ile kapatılır) ve profil
 sayfası bugünkü gibi çıkar (bilet 12 oraya "Zaten bir SKY LAB hesabın var mı?"yı koyacak). Bağlama
 kipinde ve e-postası gelen kimlikte hiçbir şey yapmaz.
 `MicrosoftMapper` değişmedi: bağlı hesapların birincil adresi hiçbir YTÜ girişinde değişmez.

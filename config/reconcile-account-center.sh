@@ -56,6 +56,17 @@ YTU_FIRST_LOGIN_STEP=sky-ytu-first-login
 YTU_IDP_ALIAS=OBS
 REVIEW_PROFILE_SETTING=update.profile.on.first.login
 YTU_FIRST_LOGIN=${KEYCLOAK_YTU_FIRST_LOGIN:-keep}
+# eskylab-login-ux 21: once, at the end of a first YTÜ login that opened an account with the School
+# e-mail as its Primary e-mail, sky-ytu-first-login puts the SPI's required action
+# sky-personal-email-offer on the sign-in session ("Kişisel e-postanı ekle": address, code, or
+# "Şimdilik geç"). The realm runs it only while the action is registered and enabled.
+# KEYCLOAK_PERSONAL_EMAIL_OFFER=on registers and enables it (realm by realm: sandbox first), off
+# disables it (the rollback; run it before going back to an image without the action). The default,
+# keep, changes nothing, so a full reconciliation never turns the offer on or off. It is never a
+# default action (that would put it on every new account).
+PERSONAL_EMAIL_OFFER_ACTION=sky-personal-email-offer
+PERSONAL_EMAIL_OFFER_NAME='SKY LAB personal e-mail offer (first YTÜ login)'
+PERSONAL_EMAIL_OFFER=${KEYCLOAK_PERSONAL_EMAIL_OFFER:-keep}
 SCOPE_NAME=account-center-account-api
 CORE_SCOPE_NAME=account-center-core-claims
 SKYAPP_CLIENT_ID=skyapp
@@ -209,6 +220,13 @@ case $YTU_FIRST_LOGIN in
   keep | on | off) ;;
   *)
     printf 'KEYCLOAK_YTU_FIRST_LOGIN must be keep (default), on or off (rollback), not %s\n' "$YTU_FIRST_LOGIN" >&2
+    exit 1
+    ;;
+esac
+case $PERSONAL_EMAIL_OFFER in
+  keep | on | off) ;;
+  *)
+    printf 'KEYCLOAK_PERSONAL_EMAIL_OFFER must be keep (default), on or off (rollback), not %s\n' "$PERSONAL_EMAIL_OFFER" >&2
     exit 1
     ;;
 esac
@@ -797,6 +815,73 @@ reconcile_ytu_idp_first_login_flow() {
     log "identity provider $YTU_IDP_ALIAS first login flow: updated (its override is removed; it follows the realm binding)"
   else
     warn "identity provider $YTU_IDP_ALIAS keeps its own first login flow '$override' and ignores the realm binding"
+  fi
+}
+
+# eskylab-login-ux 21: the realm's required action sky-personal-email-offer (see
+# PERSONAL_EMAIL_OFFER above). on registers it when the image offers it and Keycloak lists it as
+# unregistered (Keycloak registers it enabled), then enables it and keeps defaultAction false; off
+# disables a registered action and leaves an unregistered one alone; keep only reports. The state is
+# read back after every write.
+reconcile_personal_email_offer() {
+  local actions_csv current enabled default_action unregistered
+  actions_csv=$(kcadm get authentication/required-actions -r "$TARGET_REALM" \
+    --fields alias,enabled,defaultAction --format csv --noquotes)
+  current=$(grep -E "^$PERSONAL_EMAIL_OFFER_ACTION," <<<"$actions_csv" || true)
+  IFS=, read -r _ enabled default_action <<<"${current:-,,}"
+  if [[ $PERSONAL_EMAIL_OFFER == keep ]]; then
+    if [[ -z $current ]]; then
+      log "personal e-mail offer required action: unchanged (not registered; KEYCLOAK_PERSONAL_EMAIL_OFFER=on registers and enables it)"
+    else
+      log "personal e-mail offer required action: unchanged (enabled=$enabled; KEYCLOAK_PERSONAL_EMAIL_OFFER=on or off changes it)"
+    fi
+    return 0
+  fi
+  if [[ $PERSONAL_EMAIL_OFFER == off ]]; then
+    if [[ -z $current ]]; then
+      log "personal e-mail offer required action: unchanged (not registered; KEYCLOAK_PERSONAL_EMAIL_OFFER=off)"
+    elif [[ $enabled == false && $default_action == false ]]; then
+      log "personal e-mail offer required action: unchanged (disabled)"
+    else
+      kcadm update "authentication/required-actions/$PERSONAL_EMAIL_OFFER_ACTION" -r "$TARGET_REALM" \
+        -s enabled=false -s defaultAction=false >/dev/null
+      verify_personal_email_offer false
+      log "personal e-mail offer required action: updated (enabled=$enabled -> disabled)"
+    fi
+    return 0
+  fi
+  if [[ -z $current ]]; then
+    unregistered=$(kcadm get authentication/unregistered-required-actions -r "$TARGET_REALM" --fields providerId \
+      --format csv --noquotes)
+    if ! grep -Fxq "$PERSONAL_EMAIL_OFFER_ACTION" <<<"$unregistered"; then
+      printf 'The image offers no %s required action (SPI 1.18.0 or later); nothing was changed\n' \
+        "$PERSONAL_EMAIL_OFFER_ACTION" >&2
+      return 1
+    fi
+    kcadm create authentication/register-required-action -r "$TARGET_REALM" \
+      -b "{\"providerId\":\"$PERSONAL_EMAIL_OFFER_ACTION\",\"name\":\"$PERSONAL_EMAIL_OFFER_NAME\"}" >/dev/null
+    kcadm update "authentication/required-actions/$PERSONAL_EMAIL_OFFER_ACTION" -r "$TARGET_REALM" \
+      -s enabled=true -s defaultAction=false >/dev/null
+    verify_personal_email_offer true
+    log "personal e-mail offer required action: updated (registered and enabled)"
+  elif [[ $enabled == true && $default_action == false ]]; then
+    log "personal e-mail offer required action: unchanged (enabled)"
+  else
+    kcadm update "authentication/required-actions/$PERSONAL_EMAIL_OFFER_ACTION" -r "$TARGET_REALM" \
+      -s enabled=true -s defaultAction=false >/dev/null
+    verify_personal_email_offer true
+    log "personal e-mail offer required action: updated (enabled=$enabled defaultAction=$default_action -> enabled)"
+  fi
+}
+
+verify_personal_email_offer() {
+  local wanted=$1 actual
+  actual=$(kcadm get authentication/required-actions -r "$TARGET_REALM" --fields alias,enabled,defaultAction \
+    --format csv --noquotes | grep -E "^$PERSONAL_EMAIL_OFFER_ACTION," || true)
+  if [[ $actual != "$PERSONAL_EMAIL_OFFER_ACTION,$wanted,false" ]]; then
+    printf 'Required action %s is "%s" after the change, not enabled=%s defaultAction=false; inspect it in the Admin Console\n' \
+      "$PERSONAL_EMAIL_OFFER_ACTION" "$actual" "$wanted" >&2
+    return 1
   fi
 }
 
@@ -2211,6 +2296,7 @@ if [[ $RECONCILE_ONLY == core-roles ]]; then
 fi
 if [[ $RECONCILE_ONLY == first-broker-login ]]; then
   reconcile_first_broker_login
+  reconcile_personal_email_offer
   printf 'First broker login flow is reconciled.\n'
   exit 0
 fi
@@ -2238,6 +2324,7 @@ retire_account_center_browser_flow
 reconcile_password_form "$BROWSER_FLOW_ALIAS"
 reconcile_reset_choose_user
 reconcile_first_broker_login
+reconcile_personal_email_offer
 reconcile_account_center_client
 
 ensure_client_scope "$SCOPE_NAME" \

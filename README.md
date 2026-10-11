@@ -325,10 +325,12 @@ eşlemesi, kanıt kaydı; `PendingEmailChanges`: 6 hane, 10 dakika, 5 yanlışta
 yalnız tuzlu özet). Kod deposundaki kayıt kullanıcıya değil, yalnız bu giriş oturumunun bir
 kimlik doğrulama notunda duran rastgele bir tutamağa bağlıdır; kod başka oturumda ya da Hesap Merkezi'nde
 çalışmaz. Gönderim sınırı: giriş oturumu başına 3, adres başına saatte 3, IP sınıfı (IPv4 /24,
-IPv6 /64) başına saatte 30, realm genelinde saatte 200; anahtarlar özet ya da kimliktir, IP ve
-adres saklanmaz. Başka hesabın `email`, `schoolEmail` ya da `personalEmail`'i olan adres Hesap
-Merkezi'ndeki gibi `email_taken` ile reddedilir ve bütçeler bu denemeden önce düşülür; kişinin
-kendi okul adresi reddedilir. Doğru kodda `personalEmail` + `personalEmailVerifiedAt` yazılır,
+IPv6 /64) başına saatte 100, realm genelinde saatte 200 (saat dilimleri); anahtarlar realm'e özel,
+realm'in HMAC anahtarıyla HMAC'tir: IP ve adres saklanmaz, sınıf yalnız HMAC olarak saat bitene dek
+bellekte durur. Başka hesabın kullanıcı adı, `email`, `schoolEmail` ya da `personalEmail`'i olan
+adres Hesap Merkezi'ndeki gibi `email_taken` ile reddedilir ve bütçeler bu denemeden önce düşülür;
+kişinin kendi okul adresi ve üniversite alan adı (`yildiz.edu.tr` ve her alt alan adı) bütçe
+harcamadan reddedilir (`email_school_domain`). Doğru kodda `personalEmail` + `personalEmailVerifiedAt` yazılır,
 birincil okul adresi kalır, giriş uygulamaya döner. "Şimdilik geç" `personalEmailOfferSkippedAt`
 yazar (User Profile'da, yalnız yönetici düzenler). Olaylar `CUSTOM_REQUIRED_ACTION`,
 `sky_personal_email_offer` ayrıntısı: `shown`, `code_sent`, `added`, `skip` (ve hatalar). Tema
@@ -621,9 +623,10 @@ belgesindedir.
   `POST email/change-request|confirm|primary`, `GET email/pending`, `DELETE email/personal`
   (kişisel e-posta ve birincil adres).
 - Kişisel e-posta (ADR-0044): `POST email/change-request` adresi Keycloak'ın kendi
-  e-posta doğrulayıcısıyla sınar, küçük harfe çevirir, kişinin kendi adreslerini ve
-  başkasında olan adresleri (`email`, `schoolEmail`, `personalEmail`; büyük/küçük harf
-  gözetmeden) reddeder (`409 email_taken`), kişiye hiçbir şey yazmadan
+  e-posta doğrulayıcısıyla sınar, küçük harfe çevirir, kişinin kendi adreslerini,
+  üniversite alan adını ve her alt alan adını (`400 email_school_domain`, `field: "address"`;
+  `confirm` de yeniden bakar) ve başkasında olan adresleri (kullanıcı adı, `email`, `schoolEmail`,
+  `personalEmail`; büyük/küçük harf gözetmeden) reddeder (`409 email_taken`), kişiye hiçbir şey yazmadan
   **6 haneli bir kod** üretir ve kişi başına tek bir bekleyen değişiklik olarak
   Keycloak'ın single-use deposuna 10 dakikalığına koyar (yalnız tuzlu SHA-256 özeti;
   yeni istek eskisinin yerini alır). Kodu Keycloak'ın kendi `EmailTemplateProvider`'ıyla,

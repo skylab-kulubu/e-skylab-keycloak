@@ -51,8 +51,9 @@
 #     and "Şimdilik geç" reaches the application and is remembered; a code mailed to the typed
 #     address (Keycloak's SMTP into Mailpit; SkyMail is off) adds a verified personalEmail, keeps
 #     the School e-mail primary and reaches the application; five wrong codes kill the code; an
-#     address another account uses (email or personalEmail) is refused and nothing is mailed; the
-#     own school address is refused; the sign-in session's send budget runs out; no page for a
+#     address another account uses (username, email, or personalEmail stored in capitals) is
+#     refused and nothing is mailed; the own school address and any address on the university's
+#     domain (email_school_domain) are refused; the sign-in session's send budget runs out; no page for a
 #     linked account, A6, a School e-mail another account holds or a password login; off disables
 #     it and a new identity goes straight to the application (the expired code is a unit test);
 #   - a realm bound to another flow is refused.
@@ -785,8 +786,12 @@ printf '    a code mailed to the typed address adds a proven personalEmail; the 
 
 # ---------------------------------------------------------------------------------------------------
 stage 'personal e-mail offer: five wrong codes'
+local_person offer.old.address@example.org offer.username.holder@example.org >/dev/null
 mock_person Offer.Wrong@std.yildiz.edu.tr 'Kimya'
 ytu_login offer-wrong "$MOCK_USERNAME"
+# Another account's username (a legacy account whose old address is its username) is taken too.
+offer_post send address=Offer.Old.Address@example.org
+expect_offer_error email_taken "another account's username"
 offer_post send address=offer.wrong@example.org
 code=$(mail_code offer.wrong@example.org)
 wrong=$(printf '%06d' $(((10#$code + 1) % 1000000)))
@@ -803,11 +808,12 @@ offer_post skip
 [[ $LANDED == app ]] || fail 'skip after a dead code did not reach the application'
 jq -e '(.attributes.personalEmail // []) == []' <<<"$(user_by_username offer.wrong@std.yildiz.edu.tr)" >/dev/null \
   || fail 'a dead code still added the address'
-printf '    five wrong codes kill the code; the right one no longer works\n'
+printf '    another account'"'"'s username is taken; five wrong codes kill the code; the right one no longer works\n'
 
 # ---------------------------------------------------------------------------------------------------
 stage 'personal e-mail offer: taken and own addresses, the send budget'
-local_person offer-holder offer.holder@example.org personalEmail=offer.held@example.org \
+# The held Personal e-mail is stored in capitals: the taken check ignores case in the real store.
+local_person offer-holder offer.holder@example.org personalEmail=Offer.Held@Example.org \
   personalEmailVerifiedAt=2026-09-01T12:00:00Z >/dev/null
 mock_person Offer.Taken@std.yildiz.edu.tr 'Fizik'
 ytu_login offer-taken "$MOCK_USERNAME"
@@ -817,6 +823,9 @@ offer_post send address=offer.held@example.org
 expect_offer_error email_taken "another account's personalEmail"
 offer_post send address=Offer.Taken@STD.yildiz.edu.tr
 expect_offer_error own_address 'the own school address'
+offer_post send address=Someone.Else@CE.Yildiz.EDU.tr
+expect_offer_error email_school_domain 'an address on a university subdomain'
+[[ $(mail_count someone.else@ce.yildiz.edu.tr) == 0 ]] || fail 'a code was mailed to a university address'
 offer_post send 'address=not an address'
 expect_offer_error invalid_address 'not an address'
 [[ $(mail_count offer.holder@example.org) == 0 && $(mail_count offer.held@example.org) == 0 ]] \
@@ -831,7 +840,7 @@ expect_offer_error rate_limited 'the fourth send of one sign-in session'
 [[ $(mail_count offer.budget2@example.org) == 0 ]] || fail 'the fourth send was mailed'
 offer_post skip
 [[ $LANDED == app ]] || fail 'skip did not reach the application'
-printf '    taken (email, personalEmail) and own addresses refused, nothing mailed; three sends per sign-in session\n'
+printf '    taken (email, personalEmail in capitals), own and university addresses refused, nothing mailed; three sends per sign-in session\n'
 
 # ---------------------------------------------------------------------------------------------------
 stage 'personal e-mail offer: not for linked accounts, A6, a held address or a password login'

@@ -2255,20 +2255,49 @@ kullanım, depoda yalnız tuzlu SHA-256 özeti, aynı `sky-personal-email-confir
 `keycloak.personal-email-confirm`, SkyMail yoksa Keycloak SMTP). Depodaki kayıt kullanıcıya değil,
 bu giriş oturumunun notundaki rastgele bir tutamağa bağlıdır: kod başka bir oturumda ya da Hesap
 Merkezi'nde çalışmaz, oturum bitince ölür. Başka hesabın `email`, `schoolEmail` ya da
-`personalEmail`'i (büyük/küçük harf gözetmeden) `email_taken`; kişinin kendi okul adresi
-`own_address`; geçersiz adres `invalid_address`. Adresin başkasında olduğunu Hesap Merkezi kadar
-söyler, daha fazla değil: bütçeler bu denemeden önce düşülür. Gönderim bütçeleri (`RateLimiter`,
-single-use deposu): giriş oturumu başına 3, adres başına saatte 3, IP sınıfı başına (IPv4 /24,
-IPv6 /64) saatte 30, realm genelinde saatte 200. Anahtarlar SHA-256 özeti ya da realm kimliğidir;
-IP ve adres hiçbir yere yazılmaz, günlükte yalnız kullanıcı kimliği geçer. IP sınıfı bütçesi bir
-kampüs ağında aynı saatte çok sayıda ilk girişe (kulüp tanıtım günü) yer bırakır; sayfaya ulaşmak
-zaten hiç girmemiş bir YTÜ Microsoft kimliği ister.
+`personalEmail`'i ya da kullanıcı adı (büyük/küçük harf gözetmeden) `email_taken`; kişinin kendi
+okul adresi `own_address`; üniversite alan adı ve her alt alan adı (`yildiz.edu.tr`,
+`std.yildiz.edu.tr`, bölüm alan adları; Yusuf 2026-10-11) `email_school_domain` (okul adresi mezun
+olunca kapanabilir); geçersiz adres `invalid_address`. Aynı alan adı kuralı Hesap Merkezi'nin
+`email/change-request` ve `email/confirm`'ünde de geçerlidir (`400 email_school_domain`,
+`field: "address"`): elde YTÜ alan adlı `personalEmail`'ler kalır (göç yok), A1c yolunda YTÜ alan
+adlı eski bir birincil artık kişisel e-posta olarak kanıtlanamaz. Adresin başkasında olduğunu Hesap
+Merkezi kadar söyler, daha fazla değil: bütçeler bu denemeden önce düşülür (alan adı, geçersiz ve
+kendi adres yanıtları bütçe harcamaz, başka hesap hakkında bir şey söylemez). Gönderim bütçeleri
+(`RateLimiter`, single-use deposu): giriş oturumu başına 3, adres başına saatte 3, IP sınıfı başına
+(IPv4 /24, IPv6 /64) saatte 100, realm genelinde saatte 200. Pencereler saat dilimleridir (saat
+başını aşan bir oturum 3 kod daha alabilir). IP sınıfı, adres ve oturum anahtarları realm'e özeldir
+(sandbox aynı sunucudadır) ve realm'in etkin HMAC imzalama anahtarıyla HMAC-SHA256'dır (anahtarı
+olmayan realm'de SHA-256): IP'nin kendisi hiçbir yere yazılmaz; /24 ya da /64 sınıfı yalnız bu
+HMAC olarak, saat dilimi bitene dek bellekte durur. Günlükte yalnız kullanıcı kimliği geçer. IP
+sınıfı bütçesi bir kampüs ağında aynı saatte çok sayıda ilk girişe (kulüp tanıtım günü) yer
+bırakır; sayfaya ulaşmak zaten hiç girmemiş bir YTÜ Microsoft kimliği ister.
+
+**Büyük/küçük harf ve veritabanı.** `schoolEmail`/`personalEmail` karşılaştırması Keycloak'ın
+JPA aramasında `lower(value)` ile yapılır; Postgres'te `lower()` veritabanının `LC_CTYPE`'ına
+uyar. Türkçe bir ctype'ta `lower('I')` `ı` verir ve Graph'ın büyük `I`'lı yazdığı adresler eşleşmez
+(§22'nin `holder()`'ı ve parolalı giriş de aynı aramayı kullanır). Bir kez denetlenir (production
+sunucusu, Keycloak veritabanı; beklenen `en_US.utf8` ya da `C`):
+
+```bash
+docker exec -it "$(docker ps -q -f name=keycloak-db | head -n 1)" psql -U postgres -d keycloak -c 'SHOW lc_ctype'
+```
+
+(konteyner ve rol adı ortama göre değişir; sonuç değişiklik kaydına yazılır).
 
 "Şimdilik geç" kişiye `personalEmailOfferSkippedAt` (ISO-8601 UTC; User Profile'da, yalnız yönetici
 düzenler) yazar. Ölçüm (spec §11) olaylardan: `CUSTOM_REQUIRED_ACTION`, ayrıntı
 `sky_personal_email_offer` = `shown` (oturum başına bir), `code_sent`, `added`, `skip`;
 `wrong_code`, `address_taken`, `send_failed` hata olarak. 30 gün içinde ekleyenler
-`personalEmailVerifiedAt`'ten sayılır.
+`personalEmailVerifiedAt`'ten sayılır. **Sorgular olay türünü süzmeli** (`type=CUSTOM_REQUIRED_ACTION`
+ve `details.custom_required_action=sky-personal-email-offer`): `skip` ve `added` girişin ortak olay
+kaydına yazıldığı için ardından gelen `LOGIN` olayında da görünür; sayfa gerekmediğinde (koşul
+tutmadı) Keycloak ayrıntısız bir `CUSTOM_REQUIRED_ACTION` başarısı da yazar. Örnek (Admin REST):
+
+```bash
+kcadm.sh get events -r e-skylab -q type=CUSTOM_REQUIRED_ACTION -q max=10000 \
+  | jq '[.[] | select(.details.custom_required_action == "sky-personal-email-offer") | .details.sky_personal_email_offer // "none"] | group_by(.) | map({(.[0]): length}) | add'
+```
 
 ### Uzlaştırıcı
 
@@ -2292,7 +2321,16 @@ Uzlaştırıcı kimliğinin `manage-realm` rolü yeter.
 1. SPI 1.18.0'ı ve yeni tema sayfasını taşıyan imaj yayımlanır (`main` → `production`). **Tema
    değişti: Touch ID kapısı yeni bir fiziksel testle** (`keycloak-production` ortamındaki
    değişkenler tam birleştirme SHA'sı ve issue #1 kanıtı). §22'nin adımı (`KEYCLOAK_YTU_FIRST_LOGIN=on`)
-   açık değilse öneri hiç çıkmaz; önce o.
+   açık değilse öneri hiç çıkmaz; önce o. Bu imajla Hesap Merkezi YTÜ alan adlı kişisel adresi
+   `400 email_school_domain` ile reddeder; account-center'ın bu kodu tanıyan sürümü (account-center
+   #79) aynı sırada yayımlanmalı.
+1a. **`on`'dan önce IP denetimi:** IP sınıfı bütçesi Keycloak'ın gördüğü istemci IP'si kadar
+   doğrudur. Keycloak Traefik'in adresini görüyorsa herkes tek bir /24 kovasını paylaşır (öneri realm
+   genelinde saatte 100 gönderimle sınırlanır); güvenilen vekil listesi yoksa ve `X-Forwarded-For`
+   istemciden geçiyorsa bütçe atlatılabilir (oturum ve genel sınır yine bağlar). Mac'te
+   `ops/wizards/real-client-ip-diagnostics-v2.sh` koşulur; Keycloak satırı `KC_PROXY_HEADERS=xforwarded`
+   ve `KC_PROXY_TRUSTED_ADDRESSES` göstermeli ve Keycloak gerçek istemci IP sınıfını görmeli. Değilse
+   önce Dokploy'daki Keycloak ortamı düzeltilir.
 2. Sandbox önce, §22'deki operatör oturumuyla:
 
    ```bash
@@ -2328,10 +2366,15 @@ aşamalarını koşar. Tema burada yok, sayfa SPI'nın yedek şablonudur (aynı 
 imajı) teslim eder; kod oradan okunur, postada bağlantı olmadığı denetlenir. Sınananlar: `keep`
 kaydetmez, `on` uzlaştırıcı kimliğiyle kaydeder ve açar, ikinci koşular değiştirmez; yeni kimlik
 sayfayı bir kez görür, "Şimdilik geç" uygulamaya döner, işaret yazılır, ikinci girişte sayfa yok;
-kodla `personalEmail` eklenir, birincil okul adresi kalır; beş yanlış kod kodu öldürür; başka
-hesabın `email`/`personalEmail`'i ve kendi okul adresi reddedilir, postalanmaz; oturumun dördüncü
+kodla `personalEmail` eklenir, birincil okul adresi kalır; başka hesabın kullanıcı adı alınmış
+sayılır; beş yanlış kod kodu öldürür; başka hesabın `email`'i ve büyük harfle saklanmış
+`personalEmail`'i (gerçek JPA aramasında büyük/küçük harf), kendi okul adresi ve üniversite alt
+alan adı (`email_school_domain`) reddedilir, postalanmaz; oturumun dördüncü
 gönderimi sınıra takılır; bağlı hesap, A6, başkasında olan okul adresi ve parolalı giriş sayfa
 görmez; `off` kapatır, yeni kimlik doğrudan uygulamaya gider. Süresi dolan kod, IP sınıfı ve adres
-bütçeleri, başka oturumdan kod ve gönderim hatası birim testindedir (`PersonalEmailOfferTest`).
+bütçeleri, realm'e özel HMAC'li anahtarlar, başka oturumdan kod ve gönderim hatası birim
+testindedir (`PersonalEmailOfferTest`; alan adı kuralı ve kullanıcı adı `PersonalEmailVerificationTest`).
+Hesap Merkezi tarafı `tests/sky-account-contract.sh`'ta: YTÜ alt alan adı `400 email_school_domain`
+(`field: "address"`), büyük harfle saklanmış başka `personalEmail` `409 email_taken`.
 Tema sayfası: `PersonalEmailOffer.test.tsx`, `Template.test.tsx` ve görsel temeller
 (`sky-personal-email-offer-{desktop,mobile}`, kod aşaması `sky-personal-email-offer-code-*`).

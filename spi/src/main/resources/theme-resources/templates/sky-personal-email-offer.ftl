@@ -8,7 +8,7 @@
     <#elseif section = "form">
         <p id="sky-offer-description">${msg("personalEmailOfferDescription")}</p>
         <#if skyOfferError?? && skyOfferError?has_content>
-            <div id="sky-offer-error" class="${properties.kcAlertClass!} pf-m-danger" role="alert">
+            <div id="sky-offer-error" data-sky-offer-error="${skyOfferError}" class="${properties.kcAlertClass!} pf-m-danger" role="alert">
                 <span class="${properties.kcAlertTitleClass!}">${msg("personalEmailOfferError." + skyOfferError, (skyOfferAttemptsLeft!""))}</span>
             </div>
         </#if>

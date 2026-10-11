@@ -90,6 +90,13 @@ test.describe("visual baselines", () => {
         await expect(page).toHaveScreenshot(`login-password-view-${viewportName}.png`, screenshotOptions);
       });
 
+      // The first-login personal e-mail offer's code stage after a wrong code (devKcContext offer=code).
+      test("sky-personal-email-offer-code", async ({ page }) => {
+        await page.goto("/?page=sky-personal-email-offer.ftl&offer=code");
+        await stabilise(page, "sky-personal-email-offer.ftl");
+        await expect(page).toHaveScreenshot(`sky-personal-email-offer-code-${viewportName}.png`, screenshotOptions);
+      });
+
       // Server-side states of the login page (devKcContext previewStates).
       for (const state of ["reset-email-sent", "invalid-credentials", "idp-error"] as const) {
         test(`login-${state}`, async ({ page }) => {

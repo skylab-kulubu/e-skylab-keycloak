@@ -7,6 +7,7 @@ import { themedPageIds, type ThemedPageId } from "./pageIds";
 const mainIdByPage: Partial<Record<ThemedPageId, string>> = {
   "login.ftl": "sl-legacy-main",
   "passkey-offer.ftl": "sl-passkey-offer-main",
+  "sky-personal-email-offer.ftl": "sl-personal-email-offer-main",
   "sky-handoff-failed.ftl": "sl-handoff-failed-main"
 };
 
@@ -96,7 +97,16 @@ describe("every Keycloak page renders inside the login page chrome", () => {
       ["idp-review-user-profile.ftl", ["#kc-idp-review-profile-form", "#firstName"]],
       ["login-idp-link-confirm.ftl", ["#kc-register-form", "#updateProfile", "#linkAccount"]],
       ["login-idp-link-email.ftl", ["#instruction1", "#instruction2", "#instruction3"]],
-      ["passkey-offer.ftl", ["#kc-passkey-offer-form", 'button[name="passkey-choice"][value="yes"]', 'button[name="passkey-choice"][value="no"]']]
+      ["passkey-offer.ftl", ["#kc-passkey-offer-form", 'button[name="passkey-choice"][value="yes"]', 'button[name="passkey-choice"][value="no"]']],
+      [
+        "sky-personal-email-offer.ftl",
+        [
+          "#kc-personal-email-offer-form",
+          'input#sky-offer-address[name="address"]',
+          'button[name="sky-offer-action"][value="send"]',
+          'button[name="sky-offer-action"][value="skip"]'
+        ]
+      ]
     ];
 
     for (const [pageId, selectors] of expectations) {
@@ -205,7 +215,7 @@ describe("every Keycloak page renders inside the login page chrome", () => {
     expect(login.container.querySelectorAll(".sl-legacy-teams")).toHaveLength(2);
     login.unmount();
 
-    for (const pageId of ["login-otp.ftl", "error.ftl", "logout-confirm.ftl", "passkey-offer.ftl", "sky-handoff-failed.ftl"] as const) {
+    for (const pageId of ["login-otp.ftl", "error.ftl", "logout-confirm.ftl", "passkey-offer.ftl", "sky-personal-email-offer.ftl", "sky-handoff-failed.ftl"] as const) {
       const view = await renderPage(pageId);
       expect(view.container.querySelector(".sl-legacy-teams"), pageId).toBeNull();
       view.unmount();

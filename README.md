@@ -40,7 +40,7 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.17.0`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.18.0`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.1.1`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
@@ -309,6 +309,35 @@ yerleşik akışa geri bağlar; varsayılan `keep` bağlamayı olduğu gibi bır
 realm bağlamasını görmez; uzlaştırıcı kimliği IdP okuyamadığı için OBS'yi bir kez operatör oturumu
 (`KEYCLOAK_RECONCILE_ONLY=first-broker-login`) realm bağlamasına bırakır. Ayrıntı, üretim sırası ve geri dönüş: runbook §22. Harness
 `tests/ytu-first-login.sh` tek başına çalışır (stok imaj, SPI jar'ı, taklit YTÜ kiracısı).
+
+Bilet 21'den sonra (SPI 1.18.0) aynı ilk girişin sonunda bir kez kişisel e-posta önerisi çıkar:
+"Mezun olunca okul adresin kapanabilir. Kişisel e-postanı ekle." Adres kutusu, [Kod gönder],
+[Şimdilik geç]. `sky-ytu-first-login` okul adresini yeni hesabın birincili olarak yazdığında
+(adres kimsede yokken) giriş oturumuna SPI'daki `sky-personal-email-offer` gerekli eylemini
+(`com.skylab.account.PersonalEmailOffer`) ekler; realm'de eylem kayıtlı ve açık değilse eklemez.
+Sayfa gelmeden önce eylem yeniden bakar: hesabı bu oturum açmış olmalı
+(`BROKER_REGISTERED_NEW_USER`), birincil hâlâ o doğrulanmış okul adresi olmalı, kişinin
+`personalEmail`'i ve `personalEmailOfferSkippedAt` işareti olmamalı; değilse giriş sayfasız
+sürer. Bu yüzden bağlanan hesapta, A6'da, YTÜ'süz girişte ve ikinci kez çıkmaz. Kod, Hesap
+Merkezi'nin `email/change-request`'iyle aynı ortak parçadan geçer
+(`PersonalEmailVerification`: adres kuralı, aynı `sky-personal-email-confirm` postası ve SkyMail
+eşlemesi, kanıt kaydı; `PendingEmailChanges`: 6 hane, 10 dakika, 5 yanlışta ölür, tek kullanım,
+yalnız tuzlu özet). Kod deposundaki kayıt kullanıcıya değil, yalnız bu giriş oturumunun bir
+kimlik doğrulama notunda duran rastgele bir tutamağa bağlıdır; kod başka oturumda ya da Hesap Merkezi'nde
+çalışmaz. Gönderim sınırı: giriş oturumu başına 3, adres başına saatte 3, IP sınıfı (IPv4 /24,
+IPv6 /64) başına saatte 100, realm genelinde saatte 200 (saat dilimleri); anahtarlar realm'e özel,
+realm'in HS512 anahtarından türetilmiş bir alt anahtarla HMAC'tir: IP ve adres saklanmaz, sınıf yalnız
+HMAC olarak saat bitene dek bellekte durur. Başka hesabın kullanıcı adı, `email`, `schoolEmail` ya da `personalEmail`'i olan
+adres Hesap Merkezi'ndeki gibi `email_taken` ile reddedilir ve bütçeler bu denemeden önce düşülür;
+kişinin kendi okul adresi ve üniversite alan adı (`yildiz.edu.tr` ve her alt alan adı, Unicode
+benzerleri dahil: alan adı IDNA `toASCII` biçiminde karşılaştırılır) bütçe harcamadan reddedilir
+(`email_school_domain`). Doğru kodda `personalEmail` + `personalEmailVerifiedAt` yazılır,
+birincil okul adresi kalır, giriş uygulamaya döner. "Şimdilik geç" `personalEmailOfferSkippedAt`
+yazar (User Profile'da, yalnız yönetici düzenler). Olaylar `CUSTOM_REQUIRED_ACTION`,
+`sky_personal_email_offer` ayrıntısı: `shown`, `code_sent`, `added`, `skip` (ve hatalar). Tema
+sayfası `sky-personal-email-offer.ftl` (`theme/src/login/PersonalEmailOffer.tsx`); temasız realm
+için SPI'nın kendi yedek şablonu vardır. Uzlaştırıcı: `KEYCLOAK_PERSONAL_EMAIL_OFFER=on` eylemi
+kaydeder ve açar, `off` kapatır (geri dönüş), varsayılan `keep` dokunmaz. Ayrıntı: runbook §23.
 
 Hesap silmede (ADR-0051) core, SkyMail, CMS ve Forms'a ayrı bir gizli service
 account istemcisinden, `core-erasure`'dan aldığı token'larla gider. Operatör
@@ -595,8 +624,10 @@ belgesindedir.
   `POST email/change-request|confirm|primary`, `GET email/pending`, `DELETE email/personal`
   (kişisel e-posta ve birincil adres).
 - Kişisel e-posta (ADR-0044): `POST email/change-request` adresi Keycloak'ın kendi
-  e-posta doğrulayıcısıyla sınar, küçük harfe çevirir, kişinin kendi adreslerini ve
-  başkasında olan adresleri reddeder (`409 email_taken`), kişiye hiçbir şey yazmadan
+  e-posta doğrulayıcısıyla sınar, küçük harfe çevirir, kişinin kendi adreslerini,
+  üniversite alan adını ve her alt alan adını (`400 email_school_domain`, `field: "address"`;
+  `confirm` de yeniden bakar) ve başkasında olan adresleri (kullanıcı adı, `email`, `schoolEmail`,
+  `personalEmail`; büyük/küçük harf gözetmeden) reddeder (`409 email_taken`), kişiye hiçbir şey yazmadan
   **6 haneli bir kod** üretir ve kişi başına tek bir bekleyen değişiklik olarak
   Keycloak'ın single-use deposuna 10 dakikalığına koyar (yalnız tuzlu SHA-256 özeti;
   yeni istek eskisinin yerini alır). Kodu Keycloak'ın kendi `EmailTemplateProvider`'ıyla,

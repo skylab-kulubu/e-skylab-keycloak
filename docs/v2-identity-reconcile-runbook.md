@@ -2218,3 +2218,189 @@ parolayla yeniden doğrulama, posta yok) ve doğrulanmamış `email`'i (sahip ki
 dönüş, `keep`'in kapalı bırakması, yeniden açma ve başka akışa bağlı realm'in reddi gerçek
 girişlerle (curl, Keycloak'ın kendi sayfaları) denenir. Birim testi: `SkyYtuFirstLoginTest`
 (kırpma, büyük/küçük harf, alan adı ve tırnaklı yerel kısım, sahip türleri, FORCE yolları).
+
+## 23. İlk YTÜ girişinin sonunda kişisel e-posta önerisi (eskylab-login-ux 21)
+
+Yusuf'un kararı (2026-10-11, Microsoft "security info" ve Google kurtarma e-postası deseni):
+§22'nin açtığı yeni hesabın birincil adresi okul adresidir; mezun olunca okul posta kutusu
+kapanabilir, "Şifremi unuttum" ve kulüp postası yalnız birincil adrese gider. İlk YTÜ girişinin
+sonunda bir kez, atlanabilir bir sayfa çıkar: "Mezun olunca okul adresin kapanabilir. Kişisel
+e-postanı ekle." Adres kutusu, [Kod gönder], [Şimdilik geç]. Kod aynı sayfada yazılır; doğruysa
+`personalEmail` doğrulanmış olarak yazılır, birincil okul adresi kalır (Hesap Merkezi'nden
+değişir), giriş uygulamaya döner. my.'ya yönlendirme yoktur. Hatırlatma hoş geldin postasındadır
+(bilet 21 (c), skymail-frontend) ve Hesap Merkezi'nin uyarısındadır; sayfa yeniden sorulmaz.
+
+### Ne zaman çıkar
+
+SPI 1.18.0'daki `sky-personal-email-offer` gerekli eylemi (`com.skylab.account.PersonalEmailOffer`).
+Onu yalnız `sky-ytu-first-login` ekler, kullanıcıya değil giriş oturumuna
+(`authSession.addRequiredAction`), ve yalnız okul adresini yeni hesabın birincili olarak yazdığında
+(adres kimsede yokken; §22'nin ilk maddesi) ve realm'de eylem kayıtlı ve açıkken. Sayfa gelmeden
+önce eylem yeniden bakar:
+
+- hesabı bu giriş oturumu açtı (Keycloak'ın `BROKER_REGISTERED_NEW_USER` notu; bağlanan hesapta yok),
+- `email` hâlâ o okul adresi ve doğrulanmış,
+- `personalEmail` yok, `personalEmailOfferSkippedAt` yok.
+
+Biri tutmazsa giriş sayfasız sürer. Bu yüzden sayfa bağlanan hesapta, adresi başka hesapta olan
+(profil sayfası yolu) ya da Keycloak'ın "existing account" yoluna giden ilk girişte, A6'da
+(`kc_action=idp_link` first broker login'e girmez), YTÜ'süz girişte ve ikinci girişte çıkmaz.
+`kc_action` ile istenemez.
+
+### Kod ve sınırlar
+
+Hesap Merkezi'nin `email/change-request` / `email/confirm`'üyle aynı ortak parça
+(`PersonalEmailVerification`, `PendingEmailChanges`): 6 hane, 10 dakika, 5 yanlışta ölür, tek
+kullanım, depoda yalnız tuzlu SHA-256 özeti, aynı `sky-personal-email-confirm` postası (SkyMail'de
+`keycloak.personal-email-confirm`, SkyMail yoksa Keycloak SMTP). Depodaki kayıt kullanıcıya değil,
+bu giriş oturumunun notundaki rastgele bir tutamağa bağlıdır: kod başka bir oturumda ya da Hesap
+Merkezi'nde çalışmaz, oturum bitince ölür. Başka hesabın `email`, `schoolEmail` ya da
+`personalEmail`'i ya da kullanıcı adı (büyük/küçük harf gözetmeden) `email_taken`; kişinin kendi
+okul adresi `own_address`; üniversite alan adı ve her alt alan adı (`yildiz.edu.tr`,
+`std.yildiz.edu.tr`, bölüm alan adları; Yusuf 2026-10-11) `email_school_domain` (okul adresi mezun
+olunca kapanabilir). Alan adı ASCII biçiminde (IDNA `toASCII`) karşılaştırılır: Keycloak'ın
+doğrulayıcısının kabul ettiği tam genişlikli harf, ideografik nokta, sıfır genişlikli boşluk ya da
+yumuşak tire içeren benzerleri de (SMTP göndericisi onları yine `yildiz.edu.tr`'ye çevirir)
+reddedilir; ASCII biçimi olmayan alan adı ve geçersiz adres `invalid_address`. Aynı alan adı kuralı Hesap Merkezi'nin
+`email/change-request` ve `email/confirm`'ünde de geçerlidir (`400 email_school_domain`,
+`field: "address"`): elde YTÜ alan adlı `personalEmail`'ler kalır (göç yok), A1c yolunda YTÜ alan
+adlı eski bir birincil artık kişisel e-posta olarak kanıtlanamaz. Adresin başkasında olduğunu Hesap
+Merkezi kadar söyler, daha fazla değil: bütçeler bu denemeden önce düşülür (alan adı, geçersiz ve
+kendi adres yanıtları bütçe harcamaz, başka hesap hakkında bir şey söylemez). Gönderim bütçeleri
+(`RateLimiter`, single-use deposu): giriş oturumu başına 3, adres başına saatte 3, IP sınıfı başına
+(IPv4 /24, IPv6 /64) saatte 100, realm genelinde saatte 200. Pencereler saat dilimleridir (saat
+başını aşan bir oturum 3 kod daha alabilir). IP sınıfı, adres ve oturum anahtarları realm'e özeldir
+(sandbox aynı sunucudadır) ve HMAC-SHA256'dır; HMAC anahtarı realm'in etkin HS512 anahtarından
+türetilir (`HMAC(anahtar, "sky-personal-email-limits")`; imzalama anahtarı doğrudan kullanılmaz).
+HS512 anahtarı olmayan realm'e Keycloak kendisi bir `fallback-HS512` anahtarı yaratır; SHA-256 yalnız
+anahtar yöneticisi olmayan birim testlerinde kullanılır. IP'nin kendisi hiçbir yere yazılmaz; /24 ya
+da /64 sınıfı yalnız bu HMAC olarak, saat dilimi bitene dek bellekte durur. Anahtarın dönmesi
+bütçeleri yalnız bir kez sıfırlar (realm geneli sınırı realm kimliğine bağlıdır, sıfırlanmaz). Günlükte yalnız kullanıcı kimliği geçer. IP
+sınıfı bütçesi bir kampüs ağında aynı saatte çok sayıda ilk girişe (kulüp tanıtım günü) yer
+bırakır; sayfaya ulaşmak zaten hiç girmemiş bir YTÜ Microsoft kimliği ister.
+
+**Büyük/küçük harf ve veritabanı.** `schoolEmail`/`personalEmail` karşılaştırması Keycloak'ın
+JPA aramasında `lower(value)` ile yapılır; Postgres'te `lower()` veritabanının `LC_CTYPE`'ına
+uyar. Türkçe bir ctype'ta `lower('I')` `ı` verir ve Graph'ın büyük `I`'lı yazdığı adresler eşleşmez
+(§22'nin `holder()`'ı ve parolalı giriş de aynı aramayı kullanır). PostgreSQL 15+ ICU yerel ayar
+sağlayıcısıyla kurulduysa `lower()` ICU yerel ayarına uyar ve `SHOW lc_ctype` bunu göstermez; bu
+yüzden veritabanı satırına da bakılır. Bir kez denetlenir (production sunucusu, Keycloak
+veritabanı; beklenen: `datlocprovider` = `c` ve `datctype` `en_US.utf8` ya da `C`; ICU (`i`) ise
+`datlocale` (PostgreSQL 17+) ya da `daticulocale` (15-16) `tr` olmamalı):
+
+```bash
+docker exec -it "$(docker ps -q -f name=keycloak-db | head -n 1)" psql -U postgres -d keycloak -c 'SHOW lc_ctype'
+```
+
+```bash
+docker exec -it "$(docker ps -q -f name=keycloak-db | head -n 1)" psql -U postgres -d keycloak -x -c 'SELECT * FROM pg_database WHERE datname = current_database()'
+```
+
+(konteyner adı ortama göre değişir, Dokploy'daki adı `docker ps` ile bulunur; production'da süper
+kullanıcı dışındaki roller NOLOGIN olduğu için `-U postgres`; sonuç değişiklik kaydına yazılır).
+
+"Şimdilik geç" kişiye `personalEmailOfferSkippedAt` (ISO-8601 UTC; User Profile'da, yalnız yönetici
+düzenler) yazar. Ölçüm (spec §11) olaylardan: `CUSTOM_REQUIRED_ACTION`, ayrıntı
+`sky_personal_email_offer` = `shown` (oturum başına bir), `code_sent`, `added`, `skip`;
+`wrong_code`, `address_taken`, `send_failed` hata olarak. 30 gün içinde ekleyenler
+`personalEmailVerifiedAt`'ten sayılır. **Sorgular olay türünü süzmeli** (`type=CUSTOM_REQUIRED_ACTION`
+ve `details.custom_required_action=sky-personal-email-offer`): `skip` ve `added` girişin ortak olay
+kaydına yazıldığı için ardından gelen `LOGIN` olayında da görünür; sayfa gerekmediğinde (koşul
+tutmadı) Keycloak ayrıntısız bir `CUSTOM_REQUIRED_ACTION` başarısı da yazar. Örnek (Admin REST):
+
+```bash
+kcadm.sh get events -r e-skylab -q type=CUSTOM_REQUIRED_ACTION -q max=10000 \
+  | jq '[.[] | select(.details.custom_required_action == "sky-personal-email-offer") | .details.sky_personal_email_offer // "none"] | group_by(.) | map({(.[0]): length}) | add'
+```
+
+### Uzlaştırıcı
+
+`reconcile_personal_email_offer`, `reconcile_first_broker_login`'den hemen sonra koşar
+(`KEYCLOAK_RECONCILE_ONLY=first-broker-login` ile de). Bayrak `KEYCLOAK_PERSONAL_EMAIL_OFFER`:
+`keep` (varsayılan) dokunmaz ve yalnız bildirir; `on` eylemi kaydeder (imaj sunmuyorsa koşu hiçbir
+şey yazmadan durur) ve açar, `defaultAction` hep `false` (yoksa her yeni hesaba eklenirdi); `off`
+kapatır. Eylem `account-center-required-actions.tsv`'de değildir: o dosya eylemlerin açık/kapalı
+hâlini her koşuda dayatır, bu eylem ise yalnız bayrakla değişir. Her yazmadan sonra okunur. Satırlar:
+
+- `[reconcile] personal e-mail offer required action: unchanged (not registered; KEYCLOAK_PERSONAL_EMAIL_OFFER=on registers and enables it)`
+- `[reconcile] personal e-mail offer required action: updated (registered and enabled)` (ilk `on`)
+- `[reconcile] personal e-mail offer required action: unchanged (enabled)` (ikinci `on`)
+- `[reconcile] personal e-mail offer required action: updated (enabled=true -> disabled)` (`off`)
+- `[reconcile] personal e-mail offer required action: unchanged (enabled=true|false; KEYCLOAK_PERSONAL_EMAIL_OFFER=on or off changes it)` (`keep`)
+
+Uzlaştırıcı kimliğinin `manage-realm` rolü yeter.
+
+### Üretim sırası
+
+1. SPI 1.18.0'ı ve yeni tema sayfasını taşıyan imaj yayımlanır (`main` → `production`). **Tema
+   değişti: Touch ID kapısı yeni bir fiziksel testle** (`keycloak-production` ortamındaki
+   değişkenler tam birleştirme SHA'sı ve issue #1 kanıtı). §22'nin adımı (`KEYCLOAK_YTU_FIRST_LOGIN=on`)
+   açık değilse öneri hiç çıkmaz; önce o. Bu imajla Hesap Merkezi YTÜ alan adlı kişisel adresi
+   `400 email_school_domain` ile reddeder; account-center'ın bu kodu tanıyan sürümü (account-center
+   #79) aynı sırada yayımlanmalı.
+1a. **`on`'dan önce IP denetimi:** IP sınıfı bütçesi Keycloak'ın gördüğü istemci IP'si kadar
+   doğrudur. Keycloak Traefik'in adresini görüyorsa herkes tek bir /24 kovasını paylaşır (öneri realm
+   genelinde saatte 100 gönderimle sınırlanır); güvenilen vekil listesi yoksa ve `X-Forwarded-For`
+   istemciden geçiyorsa bütçe atlatılabilir (oturum ve genel sınır yine bağlar). Wizard
+   `ops/wizards/real-client-ip-diagnostics-v2.sh` Mac'ten sunucuya kopyalanır ve **production
+   sunucusunda root olarak** koşulur (kendi başlığındaki gibi). Mac'te:
+
+   ```bash
+   cd ~/Projects/sky_lab_genel/ops/wizards && scp -P 1911 real-client-ip-diagnostics-v2.sh yusssss@api.yildizskylab.com:~/
+   ```
+
+   Production sunucusunda:
+
+   ```bash
+   sudo bash ~/real-client-ip-diagnostics-v2.sh
+   ```
+
+   Keycloak satırı `KC_PROXY_HEADERS=xforwarded` ve `KC_PROXY_TRUSTED_ADDRESSES` göstermeli ve
+   Keycloak gerçek istemci IP sınıfını görmeli. Değilse önce Dokploy'daki Keycloak ortamı düzeltilir.
+2. Sandbox önce, §22'deki operatör oturumuyla:
+
+   ```bash
+   docker exec -e KEYCLOAK_ADMIN_URL=http://127.0.0.1:8080 -e KEYCLOAK_REALM=e-skylab-sandbox \
+     -e KEYCLOAK_RECONCILE_ONLY=first-broker-login -e KEYCLOAK_RECONCILE_KCADM_CONFIG=/tmp/fbl-kcadm.config \
+     -e KEYCLOAK_PERSONAL_EMAIL_OFFER=on "$kc" /opt/keycloak/config/reconcile-account-center.sh
+   ```
+
+   (`KEYCLOAK_YTU_FIRST_LOGIN` verilmezse `keep`: §22'nin bağlaması olduğu gibi kalır.)
+3. Sandbox yürüyüşü: yeni bir YTÜ kimliği Microsoft'tan sonra öneriyi görür; kişisel bir adrese kod
+   gider (SkyMail gönderim kaydı), kod yazılınca uygulamaya dönülür; Admin Console'da
+   `personalEmail` ve `personalEmailVerifiedAt` dolu, `email` okul adresi. İkinci bir kimlikle
+   "Şimdilik geç": uygulamaya dönülür, ikinci girişte sayfa yok. SkyMail'in
+   `keycloak.personal-email-confirm` metni "Hesap Merkezi'nde açık olan sayfaya" der; giriş
+   sayfası için de doğru olsun diye skymail-frontend'de metin genelleştirilmeli (açık iş).
+4. Canlı: aynı komut `KEYCLOAK_REALM=e-skylab` ile; sonra `docker exec "$kc" rm -f /tmp/fbl-kcadm.config`.
+5. Sonraki tam uzlaştırmalar (`keep`) eylemi olduğu gibi bırakır.
+
+### Geri dönüş
+
+`KEYCLOAK_PERSONAL_EMAIL_OFFER=off` eylemi kapatır; Keycloak kapalı eylemi giriş oturumundaki
+listeden de atlar, ilk YTÜ girişi sayfasız biter (§22 değişmez). 1.18.0'dan eski bir imaja
+dönülecekse ÖNCE `off` koşulur. Acil yol (her imajda): Admin Console → Authentication → Required
+actions → "SKY LAB personal e-mail offer (first YTÜ login)" → Enabled kapalı. Yazılmış
+`personalEmail`'ler kalır (Hesap Merkezi'ndekiyle aynı kayıt); `personalEmailOfferSkippedAt`
+zararsızdır.
+
+### Harness
+
+`tests/ytu-first-login.sh` (CI'da `ytu-first-login` işi) §22'nin aşamalarından sonra önerinin
+aşamalarını koşar. Tema burada yok, sayfa SPI'nın yedek şablonudur (aynı alanlar, düğmeler ve
+`data-sky-offer-error` kodları). Keycloak'ın SMTP'si Mailpit'e (entegrasyon harness'ının sabitli
+imajı) teslim eder; kod oradan okunur, postada bağlantı olmadığı denetlenir. Sınananlar: `keep`
+kaydetmez, `on` uzlaştırıcı kimliğiyle kaydeder ve açar, ikinci koşular değiştirmez; yeni kimlik
+sayfayı bir kez görür, "Şimdilik geç" uygulamaya döner, işaret yazılır, ikinci girişte sayfa yok;
+kodla `personalEmail` eklenir, birincil okul adresi kalır; başka hesabın kullanıcı adı alınmış
+sayılır; beş yanlış kod kodu öldürür; başka hesabın `email`'i ve büyük harfle saklanmış
+`personalEmail`'i (gerçek JPA aramasında büyük/küçük harf), kendi okul adresi ve üniversite alt
+alan adı (`email_school_domain`) reddedilir, postalanmaz; oturumun dördüncü
+gönderimi sınıra takılır; bağlı hesap, A6, başkasında olan okul adresi ve parolalı giriş sayfa
+görmez; `off` kapatır, yeni kimlik doğrudan uygulamaya gider. Süresi dolan kod, IP sınıfı ve adres
+bütçeleri, realm'e özel HMAC'li anahtarlar, başka oturumdan kod ve gönderim hatası birim
+testindedir (`PersonalEmailOfferTest`; alan adı kuralı ve kullanıcı adı `PersonalEmailVerificationTest`).
+Hesap Merkezi tarafı `tests/sky-account-contract.sh`'ta: YTÜ alt alan adı `400 email_school_domain`
+(`field: "address"`), büyük harfle saklanmış başka `personalEmail` `409 email_taken`.
+Tema sayfası: `PersonalEmailOffer.test.tsx`, `Template.test.tsx` ve görsel temeller
+(`sky-personal-email-offer-{desktop,mobile}`, kod aşaması `sky-personal-email-offer-code-*`).

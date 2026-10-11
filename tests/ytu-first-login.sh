@@ -45,8 +45,20 @@
 #   - linking YTÜ to a signed-in account (A6, kc_action=idp_link:OBS): no page, e-mail unchanged;
 #   - KEYCLOAK_YTU_FIRST_LOGIN=off binds the built-in flow back and removes an OBS override that
 #     names the copy (today's page and empty e-mail again); keep leaves it off; on reuses the copy;
+#   - the Personal e-mail offer (ticket 21, required action sky-personal-email-offer, the SPI's own
+#     page as no SKY LAB theme runs here; KEYCLOAK_PERSONAL_EMAIL_OFFER): keep registers nothing,
+#     on registers and enables it, second runs change nothing; a new YTÜ identity sees the page once
+#     and "Şimdilik geç" reaches the application and is remembered; a code mailed to the typed
+#     address (Keycloak's SMTP into Mailpit; SkyMail is off) adds a verified personalEmail, keeps
+#     the School e-mail primary and reaches the application; five wrong codes kill the code; an
+#     address another account uses (username, email, or personalEmail stored in capitals) is
+#     refused and nothing is mailed; the own school address and any address on the university's
+#     domain (email_school_domain) are refused; the sign-in session's send budget runs out; no page for a
+#     linked account, A6, a School e-mail another account holds or a password login; off disables
+#     it and a new identity goes straight to the application (the expired code is a unit test);
 #   - a realm bound to another flow is refused.
 # Requirements on the host: docker, jq, curl. YTU_FIRST_LOGIN_TEST_PORT (default 18097),
+# YTU_FIRST_LOGIN_TEST_MAIL_PORT (default 18098, Mailpit's API),
 # YTU_FIRST_LOGIN_TEST_CONTAINER (default ytu-first-login-test-<pid>), YTU_FIRST_LOGIN_TEST_MEMORY
 # (default 2g).
 # shellcheck disable=SC2016  # jq programs name jq variables
@@ -56,9 +68,15 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 IMAGE=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' "$REPOSITORY_ROOT/Dockerfile")
 MAVEN_IMAGE=$(sed -n 's/^FROM \(maven:[^ ]*\) AS providers$/\1/p' "$REPOSITORY_ROOT/Dockerfile")
+# The same digest-pinned mail sink as the integration harness.
+MAILPIT_IMAGE=$(sed -n 's/^ *image: \(axllent\/mailpit:[^ ]*\)$/\1/p' "$SCRIPT_DIR/docker-compose.integration.yml")
 PORT=${YTU_FIRST_LOGIN_TEST_PORT:-18097}
+MAIL_PORT=${YTU_FIRST_LOGIN_TEST_MAIL_PORT:-18098}
 BASE_URL="http://127.0.0.1:$PORT"
+MAIL_URL="http://127.0.0.1:$MAIL_PORT"
 CONTAINER=${YTU_FIRST_LOGIN_TEST_CONTAINER:-ytu-first-login-test-$$}
+MAIL_CONTAINER="$CONTAINER-mail"
+NETWORK="$CONTAINER-net"
 MEMORY=${YTU_FIRST_LOGIN_TEST_MEMORY:-2g}
 STATE_DIR=$(mktemp -d)
 ADMIN_PASSWORD=harness-admin-password
@@ -76,6 +94,7 @@ APP_REDIRECT=http://127.0.0.1:9/ytu-first-login-callback
 BUILT_IN='first broker login'
 COPY='sky first broker login'
 STEP=sky-ytu-first-login
+OFFER=sky-personal-email-offer
 CURRENT_STAGE=startup
 STATUS=''
 LOCATION=''
@@ -88,7 +107,8 @@ fail() {
   exit 1
 }
 cleanup() {
-  docker rm -fv "$CONTAINER" >/dev/null 2>&1 || true
+  docker rm -fv "$CONTAINER" "$MAIL_CONTAINER" >/dev/null 2>&1 || true
+  docker network rm "$NETWORK" >/dev/null 2>&1 || true
   rm -rf "$STATE_DIR"
 }
 trap 'status=$?; trap - EXIT; cleanup; exit "$status"' EXIT
@@ -300,10 +320,16 @@ SPI_JAR=$(cd -- "$(dirname -- "$SPI_JAR")" && pwd)/$(basename -- "$SPI_JAR")
 spi_listing=$(unzip -l "$SPI_JAR")
 grep -q 'com/skylab/authenticator/SkyYtuFirstLogin.class' <<<"$spi_listing" \
   || fail "the SPI jar does not hold the $STEP step"
+grep -q 'com/skylab/account/PersonalEmailOffer.class' <<<"$spi_listing" \
+  || fail "the SPI jar does not hold the $OFFER required action"
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='Keycloak start'
-docker run --rm -d --name "$CONTAINER" --memory "$MEMORY" -p "127.0.0.1:$PORT:8080" \
+[[ -n $MAILPIT_IMAGE ]] || fail 'tests/docker-compose.integration.yml has no Mailpit image'
+docker network create "$NETWORK" >/dev/null
+docker run --rm -d --name "$MAIL_CONTAINER" --network "$NETWORK" --memory 256m -p "127.0.0.1:$MAIL_PORT:8025" \
+  "$MAILPIT_IMAGE" >/dev/null
+docker run --rm -d --name "$CONTAINER" --network "$NETWORK" --memory "$MEMORY" -p "127.0.0.1:$PORT:8080" \
   -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
   -v "$SPI_JAR:/opt/keycloak/providers/e-skylab-spi.jar:ro" \
   -v "$REPOSITORY_ROOT/config:/opt/keycloak/sky-config:ro" \
@@ -632,6 +658,240 @@ grep -Fq 'created' <<<"$output" && fail 'forward made another copy'
   || fail 'there is not exactly one copy'
 reconcile "$SCOPED_CONFIG" 1 KEYCLOAK_YTU_FIRST_LOGIN=maybe >/dev/null
 printf '    off: built-in flow, OBS override on the copy removed, today'"'"'s page again; keep stays off; on: the same copy\n'
+
+# ---------------------------------------------------------------------------------------------------
+# The Personal e-mail offer (ticket 21). No SKY LAB theme runs here, so the page is the SPI's own
+# fallback template: the same form fields, buttons and error codes (data-sky-offer-error) as the
+# theme's page.
+
+# offer_state: "enabled,defaultAction" of the realm's offer, or "" while it is not registered.
+offer_state() {
+  kcadm get authentication/required-actions -r "$REALM" \
+    | jq -r --arg alias "$OFFER" '.[] | select(.alias == $alias) | "\(.enabled),\(.defaultAction)"'
+}
+
+on_offer() {
+  [[ $LANDED == page ]] && grep -q 'id="kc-personal-email-offer-form"' <<<"$BODY"
+}
+
+# offer_post ACTION [NAME=VALUE]: one button of the offer page, with its one field.
+offer_post() {
+  local action
+  action=$(form_action kc-personal-email-offer-form)
+  if [[ $# -gt 1 ]]; then
+    follow "$JAR" "$action" --data-urlencode "sky-offer-action=$1" --data-urlencode "$2"
+  else
+    follow "$JAR" "$action" --data-urlencode "sky-offer-action=$1"
+  fi
+}
+
+# The error code the offer page shows, or "".
+offer_error() {
+  grep -Eo 'data-sky-offer-error="[a-z_]*"' <<<"$BODY" | head -n 1 | sed -e 's/^data-sky-offer-error="//' -e 's/"$//' || true
+}
+
+expect_offer_error() { # expect_offer_error CODE LABEL
+  on_offer || fail "$2: not the offer page ($(page_summary))"
+  [[ $(offer_error) == "$1" ]] || fail "$2: the page shows error '$(offer_error)', not '$1'"
+}
+
+# mail_count ADDRESS: how many mails Mailpit holds for the address.
+mail_count() {
+  curl -fsS "$MAIL_URL/api/v1/messages?limit=200" \
+    | jq --arg to "$1" '[.messages[]? | select(any(.To[]?; .Address == $to))] | length'
+}
+
+# mail_code ADDRESS: the six-digit code of the newest mail to the address. The mail must carry no
+# link (ADR-0044: a code works only in the session that asked for it). Neither is printed.
+mail_code() {
+  local id message code
+  for _ in $(seq 1 30); do
+    id=$(curl -fsS "$MAIL_URL/api/v1/messages?limit=200" \
+      | jq -r --arg to "$1" 'first(.messages[]? | select(any(.To[]?; .Address == $to)) | .ID) // empty')
+    [[ -n $id ]] && break
+    sleep 1
+  done
+  [[ -n $id ]] || fail 'no code reached the typed address'
+  message=$(curl -fsS "$MAIL_URL/api/v1/message/$id")
+  jq -e '((.Text // "") + (.HTML // "")) | test("https?://[^ ]*(login-actions|email)") | not' <<<"$message" >/dev/null \
+    || fail 'the code mail carries a link'
+  code=$(jq -r '.Text // "" | split("\n")[] | select(test("^\\s*[0-9]{6}\\s*$")) | gsub("\\s"; "")' <<<"$message" | head -n 1)
+  [[ $code =~ ^[0-9]{6}$ ]] || fail 'the code mail carries no six-digit code'
+  printf '%s\n' "$code"
+}
+
+offer_events() { # offer_events USER_ID WHAT: CUSTOM_REQUIRED_ACTION events of the offer with that detail
+  kcadm get events -r "$REALM" -q type=CUSTOM_REQUIRED_ACTION -q "user=$1" \
+    | jq --arg what "$2" '[.[] | select(.details.sky_personal_email_offer == $what)] | length'
+}
+
+stage 'personal e-mail offer: reconciler'
+# Keycloak's own SMTP sender delivers to Mailpit (SkyMail is off in this harness).
+kcadm update "realms/$REALM" -s "smtpServer.host=$MAIL_CONTAINER" -s smtpServer.port=1025 \
+  -s smtpServer.from=keycloak@example.invalid >/dev/null
+output=$(reconcile "$SCOPED_CONFIG" 0)
+expect_line "$output" '[reconcile] personal e-mail offer required action: unchanged (not registered; KEYCLOAK_PERSONAL_EMAIL_OFFER=on registers and enables it)' \
+  'keep did not report the unregistered offer'
+[[ -z $(offer_state) ]] || fail 'keep registered the offer'
+output=$(reconcile "$SCOPED_CONFIG" 0 KEYCLOAK_PERSONAL_EMAIL_OFFER=on)
+expect_line "$output" '[reconcile] personal e-mail offer required action: updated (registered and enabled)' 'on did not register the offer'
+[[ $(offer_state) == true,false ]] || fail "the offer is '$(offer_state)' after on"
+output=$(reconcile "$SCOPED_CONFIG" 0 KEYCLOAK_PERSONAL_EMAIL_OFFER=on)
+expect_quiet "$output" 'a second on changed something'
+expect_line "$output" '[reconcile] personal e-mail offer required action: unchanged (enabled)' 'a second on did not report the offer'
+output=$(reconcile "$SCOPED_CONFIG" 0)
+expect_line "$output" '[reconcile] personal e-mail offer required action: unchanged (enabled=true; KEYCLOAK_PERSONAL_EMAIL_OFFER=on or off changes it)' \
+  'keep did not keep the offer'
+reconcile "$SCOPED_CONFIG" 1 KEYCLOAK_PERSONAL_EMAIL_OFFER=maybe >/dev/null
+printf '    keep registers nothing; on registers and enables (reconciler identity); second runs change nothing\n'
+
+# ---------------------------------------------------------------------------------------------------
+stage 'personal e-mail offer: shown once, skip'
+mock_person Offer.Skip@STD.Yildiz.edu.tr 'Fizik'
+ytu_login offer-skip "$MOCK_USERNAME"
+on_offer || fail "a new YTÜ identity did not see the offer ($(page_summary))"
+grep -q 'name="address"' <<<"$BODY" || fail 'the offer page has no address field'
+[[ -z $(offer_error) ]] || fail 'the offer page opens with an error'
+offer_post skip
+[[ $LANDED == app ]] || fail "Şimdilik geç did not reach the application ($(page_summary))"
+skip_user=$(user_by_username offer.skip@std.yildiz.edu.tr)
+jq -e '.email == "offer.skip@std.yildiz.edu.tr" and .emailVerified == true and (.attributes.personalEmail // []) == []
+  and (.attributes.personalEmailOfferSkippedAt // [] | length) == 1 and (.requiredActions | length) == 0' <<<"$skip_user" >/dev/null \
+  || { printf '%s\n' "$skip_user" >&2; fail 'the skipped account is not as expected'; }
+skip_id=$(jq -r .id <<<"$skip_user")
+[[ $(offer_events "$skip_id" shown) == 1 && $(offer_events "$skip_id" skip) == 1 ]] || fail 'the shown and skip events were not written once'
+ytu_login offer-skip-again "$MOCK_USERNAME"
+[[ $LANDED == app ]] || fail "the offer came back on the next login ($(page_summary))"
+printf '    a new identity sees the offer once; Şimdilik geç reaches the application and is remembered\n'
+
+# ---------------------------------------------------------------------------------------------------
+stage 'personal e-mail offer: a code adds the personal e-mail'
+mock_person Offer.Add@std.yildiz.edu.tr 'Kimya'
+ytu_login offer-add "$MOCK_USERNAME"
+on_offer || fail "no offer ($(page_summary))"
+offer_post send 'address=  Offer.Personal@Example.org '
+if ! on_offer || ! grep -q 'name="code"' <<<"$BODY"; then fail "no code page after sending ($(page_summary))"; fi
+[[ -z $(offer_error) ]] || fail "sending showed error '$(offer_error)'"
+code=$(mail_code offer.personal@example.org)
+offer_post verify "code=${code:0:3} ${code:3}"
+[[ $LANDED == app ]] || fail "the right code did not reach the application ($(page_summary))"
+add_user=$(user_by_username offer.add@std.yildiz.edu.tr)
+jq -e '.email == "offer.add@std.yildiz.edu.tr" and .emailVerified == true
+  and .attributes.personalEmail == ["offer.personal@example.org"]
+  and (.attributes.personalEmailVerifiedAt[0] | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+  and (.attributes.personalEmailOfferSkippedAt // []) == []' <<<"$add_user" >/dev/null \
+  || { printf '%s\n' "$add_user" >&2; fail 'the personal e-mail was not added as proven, or the primary changed'; }
+[[ $(offer_events "$(jq -r .id <<<"$add_user")" added) == 1 ]] || fail 'no added event'
+printf '    a code mailed to the typed address adds a proven personalEmail; the School e-mail stays primary\n'
+
+# ---------------------------------------------------------------------------------------------------
+stage 'personal e-mail offer: five wrong codes'
+local_person offer.old.address@example.org offer.username.holder@example.org >/dev/null
+mock_person Offer.Wrong@std.yildiz.edu.tr 'Kimya'
+ytu_login offer-wrong "$MOCK_USERNAME"
+# Another account's username (a legacy account whose old address is its username) is taken too.
+offer_post send address=Offer.Old.Address@example.org
+expect_offer_error email_taken "another account's username"
+offer_post send address=offer.wrong@example.org
+code=$(mail_code offer.wrong@example.org)
+wrong=$(printf '%06d' $(((10#$code + 1) % 1000000)))
+for left in 4 3 2 1; do
+  offer_post verify "code=$wrong"
+  expect_offer_error wrong_code "wrong code ($left left)"
+  grep -q 'name="code"' <<<"$BODY" || fail 'a wrong code left the code page'
+done
+offer_post verify "code=$wrong"
+expect_offer_error too_many_tries 'the fifth wrong code'
+offer_post verify "code=$code"
+expect_offer_error code_expired 'the right code after five wrong ones'
+offer_post skip
+[[ $LANDED == app ]] || fail 'skip after a dead code did not reach the application'
+jq -e '(.attributes.personalEmail // []) == []' <<<"$(user_by_username offer.wrong@std.yildiz.edu.tr)" >/dev/null \
+  || fail 'a dead code still added the address'
+printf '    another account'"'"'s username is taken; five wrong codes kill the code; the right one no longer works\n'
+
+# ---------------------------------------------------------------------------------------------------
+stage 'personal e-mail offer: taken and own addresses, the send budget'
+# The held Personal e-mail is stored in capitals: the taken check ignores case in the real store.
+local_person offer-holder offer.holder@example.org personalEmail=Offer.Held@Example.org \
+  personalEmailVerifiedAt=2026-09-01T12:00:00Z >/dev/null
+mock_person Offer.Taken@std.yildiz.edu.tr 'Fizik'
+ytu_login offer-taken "$MOCK_USERNAME"
+offer_post send address=Offer.Holder@example.org
+expect_offer_error email_taken "another account's email"
+offer_post send address=offer.held@example.org
+expect_offer_error email_taken "another account's personalEmail"
+offer_post send address=Offer.Taken@STD.yildiz.edu.tr
+expect_offer_error own_address 'the own school address'
+offer_post send address=Someone.Else@CE.Yildiz.EDU.tr
+expect_offer_error email_school_domain 'an address on a university subdomain'
+# Keycloak's validator accepts ideographic full stops; the SMTP sender would deliver to yildiz.edu.tr.
+offer_post send "address=someone.else@yildiz$(printf '\343\200\202')edu$(printf '\343\200\202')tr"
+expect_offer_error email_school_domain 'a Unicode look-alike of the university domain'
+[[ $(mail_count someone.else@ce.yildiz.edu.tr) == 0 ]] || fail 'a code was mailed to a university address'
+offer_post send 'address=not an address'
+expect_offer_error invalid_address 'not an address'
+[[ $(mail_count offer.holder@example.org) == 0 && $(mail_count offer.held@example.org) == 0 ]] \
+  || fail 'a code was mailed to a taken address'
+# Two of the session's three sends went to the taken probes.
+offer_post send address=offer.budget1@example.org
+grep -q 'name="code"' <<<"$BODY" || fail "the third send did not send ($(page_summary))"
+offer_post change
+grep -q 'name="address"' <<<"$BODY" || fail 'change did not go back to the address'
+offer_post send address=offer.budget2@example.org
+expect_offer_error rate_limited 'the fourth send of one sign-in session'
+[[ $(mail_count offer.budget2@example.org) == 0 ]] || fail 'the fourth send was mailed'
+offer_post skip
+[[ $LANDED == app ]] || fail 'skip did not reach the application'
+printf '    taken (email, personalEmail in capitals), own and university addresses refused, nothing mailed; three sends per sign-in session\n'
+
+# ---------------------------------------------------------------------------------------------------
+stage 'personal e-mail offer: not for linked accounts, A6, a held address or a password login'
+ytu_login offer-linked "$(jq -r '.attributes.schoolEmail[0]' <<<"$(kcadm get "users/$linked_id" -r "$REALM")" | tr '[:upper:]' '[:lower:]')"
+[[ $LANDED == app ]] || fail "a linked account saw a page ($(page_summary))"
+offer_a6=$(local_person offer-a6 offer.a6@example.org)
+mock_person Offer.A6@std.yildiz.edu.tr 'Biyoloji'
+JAR="$STATE_DIR/offer-a6.cookies"
+rm -f "$JAR"
+follow "$JAR" "$(auth_url '&kc_action=idp_link:OBS')"
+follow "$JAR" "$(form_action kc-form-login)" --data-urlencode username=offer-a6 --data-urlencode "password=$LOCAL_PASSWORD" \
+  --data-urlencode credentialId=
+follow "$JAR" "$(form_action '')" --data-urlencode continue=
+follow "$JAR" "$(form_action kc-form-login)" --data-urlencode "username=$MOCK_USERNAME" --data-urlencode "password=$MOCK_PASSWORD" \
+  --data-urlencode credentialId=
+[[ $LANDED == app ]] || { on_offer && fail 'A6 showed the offer'; fail "A6 did not lead back to the application ($(page_summary))"; }
+[[ $(kcadm get "users/$offer_a6/federated-identity" -r "$REALM" | jq -r '.[].identityProvider') == OBS ]] || fail 'A6 did not link'
+local_person offer-held-school offer.held.school@example.org personalEmail=offer.shared@std.yildiz.edu.tr \
+  personalEmailVerifiedAt=2026-09-01T12:00:00Z >/dev/null
+mock_person Offer.Shared@std.yildiz.edu.tr 'Kimya'
+ytu_login offer-shared "$MOCK_USERNAME"
+on_review_profile || fail "a held School e-mail did not give the review profile page ($(page_summary))"
+submit_review_profile
+[[ $LANDED == app ]] || { on_offer && fail 'the offer came without a School primary'; fail "no application ($(page_summary))"; }
+JAR="$STATE_DIR/offer-password.cookies"
+rm -f "$JAR"
+follow "$JAR" "$(auth_url)"
+follow "$JAR" "$(form_action kc-form-login)" --data-urlencode username=offer-a6 --data-urlencode "password=$LOCAL_PASSWORD" \
+  --data-urlencode credentialId=
+[[ $LANDED == app ]] || fail "a password login saw a page ($(page_summary))"
+printf '    no offer for a linked account, A6, a School e-mail another account holds or a password login\n'
+
+# ---------------------------------------------------------------------------------------------------
+stage 'personal e-mail offer: off'
+output=$(reconcile "$SCOPED_CONFIG" 0 KEYCLOAK_PERSONAL_EMAIL_OFFER=off)
+expect_line "$output" '[reconcile] personal e-mail offer required action: updated (enabled=true -> disabled)' 'off did not disable the offer'
+[[ $(offer_state) == false,false ]] || fail "the offer is '$(offer_state)' after off"
+mock_person Offer.Off@std.yildiz.edu.tr 'Fizik'
+ytu_login offer-off "$MOCK_USERNAME"
+[[ $LANDED == app ]] || fail "the offer still showed after off ($(page_summary))"
+jq -e '.email == "offer.off@std.yildiz.edu.tr"' <<<"$(user_by_username offer.off@std.yildiz.edu.tr)" >/dev/null \
+  || fail 'off changed the first YTÜ login itself'
+output=$(reconcile "$SCOPED_CONFIG" 0 KEYCLOAK_PERSONAL_EMAIL_OFFER=off)
+expect_line "$output" '[reconcile] personal e-mail offer required action: unchanged (disabled)' 'a second off changed something'
+output=$(reconcile "$SCOPED_CONFIG" 0)
+expect_line "$output" '[reconcile] personal e-mail offer required action: unchanged (enabled=false; KEYCLOAK_PERSONAL_EMAIL_OFFER=on or off changes it)' \
+  'keep turned the offer back on'
+printf '    off disables the offer; a new identity goes straight to the application; keep stays off\n'
 
 # ---------------------------------------------------------------------------------------------------
 stage 'a realm bound to another flow'

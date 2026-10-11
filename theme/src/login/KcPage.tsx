@@ -6,6 +6,7 @@ import HandoffFailed from "./HandoffFailed";
 import Login from "./Login";
 import LoginPageExpired from "./LoginPageExpired";
 import PasskeyOffer from "./PasskeyOffer";
+import PersonalEmailOffer from "./PersonalEmailOffer";
 import Template from "./Template";
 import { useI18n } from "./i18n";
 import { usePasskeyRememberMeBridge } from "./rememberMeBridge";
@@ -54,6 +55,14 @@ export default function KcPage(props: { kcContext: KcContext }) {
     return (
       <Suspense fallback={<main className="sl-loading" aria-live="polite">{i18n.msgStr("skylabLoading")}</main>}>
         <PasskeyOffer kcContext={kcContext} i18n={i18n} />
+      </Suspense>
+    );
+  }
+
+  if (kcContext.pageId === "sky-personal-email-offer.ftl") {
+    return (
+      <Suspense fallback={<main className="sl-loading" aria-live="polite">{i18n.msgStr("skylabLoading")}</main>}>
+        <PersonalEmailOffer kcContext={kcContext} i18n={i18n} />
       </Suspense>
     );
   }

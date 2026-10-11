@@ -13,23 +13,16 @@ import jakarta.ws.rs.core.Response;
 import org.jboss.logging.Logger;
 import org.keycloak.common.util.Time;
 import org.keycloak.connections.jpa.JpaConnectionProvider;
-import org.keycloak.email.EmailTemplateProvider;
 import org.keycloak.events.Details;
 import org.keycloak.events.Errors;
 import org.keycloak.events.EventBuilder;
 import org.keycloak.events.EventType;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.ModelDuplicateException;
-import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.util.JsonSerialization;
-import org.keycloak.validate.ValidationContext;
-import org.keycloak.validate.validators.EmailValidator;
 
-import java.util.HashMap;
-import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Set;
 
 /**
@@ -43,19 +36,19 @@ import java.util.Set;
  */
 public final class EmailResource {
 
-    static final int MAX_ADDRESS_LENGTH = 255;
+    static final int MAX_ADDRESS_LENGTH = PersonalEmailVerification.MAX_ADDRESS_LENGTH;
     /** Six digits, with room for the spaces people keep when they copy "123 456". */
-    static final int MAX_CODE_INPUT_LENGTH = 12;
+    static final int MAX_CODE_INPUT_LENGTH = PersonalEmailVerification.MAX_CODE_INPUT_LENGTH;
     static final String SCHOOL = "school";
     static final String PERSONAL = "personal";
 
     /** The message bundle key of the subject, resolved in the realm locale of the person. */
-    static final String SUBJECT_KEY = "skyPersonalEmailConfirmSubject";
+    static final String SUBJECT_KEY = PersonalEmailVerification.SUBJECT_KEY;
     /**
      * {@code theme-resources/templates/{text,html}/} of this extension; no theme change needed.
      * Public because the SkyMail mail provider routes this mail by exactly this name.
      */
-    public static final String TEMPLATE = "sky-personal-email-confirm.ftl";
+    public static final String TEMPLATE = PersonalEmailVerification.TEMPLATE;
 
     private static final Logger LOG = Logger.getLogger(EmailResource.class);
     private static final String PROFILE_CONTEXT = "ACCOUNT";
@@ -93,12 +86,15 @@ public final class EmailResource {
             if (!isValidAddress(request.session(), address) || isOwnAddress(user, address)) {
                 throw Problems.invalidRequest("address").exception();
             }
+            if (PersonalEmailVerification.isSchoolDomain(address)) {
+                throw Problems.emailSchoolDomain().exception();
+            }
             requireFreeAddress(user, address);
 
             PendingEmailChanges pending = new PendingEmailChanges(request.session().singleUseObjects());
             String code = pending.issue(user.getId(), address, makePrimary);
             try {
-                send(caller, address, code);
+                PersonalEmailVerification.send(request.session(), request.realm(), user, address, code);
             } catch (Exception exception) {
                 pending.discard(user.getId());
                 // Neither the address nor the code may reach the log; the SMTP diagnostics
@@ -153,14 +149,18 @@ public final class EmailResource {
             String address = outcome.change().address();
             // Ten minutes passed: somebody else may have taken the address meanwhile. The change
             // is already out of the store by now, so a person who loses this race asks for a new
-            // code; that is the price of never letting two confirmations both see it.
+            // code; that is the price of never letting two confirmations both see it. A code asked for
+            // before university addresses were refused may still be waiting (ten minutes at most).
+            if (PersonalEmailVerification.isSchoolDomain(address)) {
+                throw Problems.emailSchoolDomain().exception();
+            }
             requireFreeAddress(user, address);
 
             EventBuilder event = request.event(caller)
                     .event(EventType.UPDATE_PROFILE)
                     .detail(Details.CONTEXT, PROFILE_CONTEXT);
             String previousPersonal = normaliseAttribute(user, IdentityResource.PERSONAL_EMAIL_ATTRIBUTE);
-            PersonalEmailProof.attributes(address, Time.currentTime()).forEach(user::setSingleAttribute);
+            PersonalEmailVerification.prove(user, address, Time.currentTime());
             if (confirmedBecomesPrimary(outcome.change().makePrimary(), previousPersonal, user.getEmail(), address)) {
                 applyPrimary(caller, user, address);
             }
@@ -282,22 +282,6 @@ public final class EmailResource {
         });
     }
 
-    /**
-     * Mails the verification code through Keycloak's own e-mail template and sender providers.
-     * The attribute map has to be mutable: Keycloak's FreeMarker template provider puts the
-     * resolved locale into the very map it is handed.
-     */
-    private void send(Caller caller, String address, String code) throws Exception {
-        Map<String, Object> attributes = new HashMap<>();
-        attributes.put("code", code);
-        attributes.put("codeExpiration", PendingEmailChanges.TTL_SECONDS / 60);
-        attributes.put("newEmail", address);
-        request.session().getProvider(EmailTemplateProvider.class)
-                .setRealm(request.realm())
-                .setUser(caller.user())
-                .send(SUBJECT_KEY, List.of(), TEMPLATE, attributes, address);
-    }
-
     /** What pointing Keycloak {@code email} at one of the two addresses would do. */
     enum PrimaryChoice {
         /** It already is the primary and Keycloak marks it verified: nothing to write. */
@@ -360,27 +344,13 @@ public final class EmailResource {
     }
 
     /**
-     * Fails closed when any other person already uses the address: as their Keycloak
-     * {@code email} (Keycloak's own case-insensitive lookup, authoritative while the realm
-     * keeps {@code duplicateEmailsAllowed=false}) or as their School or Personal e-mail
-     * attribute. Both attributes are stored lowercased by this extension, so the exact
-     * attribute search finds them.
+     * Fails closed when any other person already uses the address
+     * ({@link PersonalEmailVerification#isTakenByAnother}: their Keycloak {@code email}, School or
+     * Personal e-mail, ignoring case).
      */
     private void requireFreeAddress(UserModel user, String address) {
-        KeycloakSession session = request.session();
-        RealmModel realm = request.realm();
-        UserModel byEmail = session.users().getUserByEmail(realm, address);
-        if (byEmail != null && !byEmail.getId().equals(user.getId())) {
+        if (PersonalEmailVerification.isTakenByAnother(request.session(), request.realm(), user, address)) {
             throw Problems.emailTaken().exception();
-        }
-        for (String attribute : List.of(
-                IdentityResource.SCHOOL_EMAIL_ATTRIBUTE, IdentityResource.PERSONAL_EMAIL_ATTRIBUTE)) {
-            boolean taken = session.users()
-                    .searchForUserByUserAttributeStream(realm, attribute, address)
-                    .anyMatch(other -> !other.getId().equals(user.getId()));
-            if (taken) {
-                throw Problems.emailTaken().exception();
-            }
         }
     }
 
@@ -391,15 +361,12 @@ public final class EmailResource {
      * it their Personal e-mail (A1c). It stays the primary ({@link #confirmedBecomesPrimary}).
      */
     static boolean isOwnAddress(UserModel user, String address) {
-        return address.equalsIgnoreCase(user.getFirstAttribute(IdentityResource.SCHOOL_EMAIL_ATTRIBUTE))
-                || address.equalsIgnoreCase(user.getFirstAttribute(IdentityResource.PERSONAL_EMAIL_ATTRIBUTE));
+        return PersonalEmailVerification.isOwnAddress(user, address);
     }
 
     /** Keycloak's own e-mail validator, with the realm this request runs in. */
     static boolean isValidAddress(KeycloakSession session, String address) {
-        return EmailValidator.INSTANCE
-                .validate(address, "address", new ValidationContext(session))
-                .isValid();
+        return PersonalEmailVerification.isValidAddress(session, address);
     }
 
     /** Trims and lowercases with {@link Locale#ROOT}, so a Turkish locale cannot fold {@code I} to {@code ı}. */

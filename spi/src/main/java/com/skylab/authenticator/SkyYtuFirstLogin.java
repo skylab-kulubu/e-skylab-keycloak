@@ -1,5 +1,6 @@
 package com.skylab.authenticator;
 
+import com.skylab.account.PersonalEmailOffer;
 import com.skylab.account.PersonalEmailProof;
 import org.jboss.logging.Logger;
 import org.keycloak.Config;
@@ -55,7 +56,9 @@ import java.util.Map;
  *       covered: turn the step off before switching the identity provider to {@code FORCE}.</li>
  * </ul>
  *
- * <p>The flow always continues; the step never shows a page or tells whose address it is.
+ * <p>The flow always continues; the step never shows a page or tells whose address it is. When it
+ * writes an address no account holds, it also schedules the one-time Personal e-mail offer on the
+ * sign-in session ({@link PersonalEmailOffer}, ticket 21), which the realm turns on separately.
  * {@code config/reconcile-account-center.sh} puts it into the realm's first broker login flow
  * ({@code KEYCLOAK_YTU_FIRST_LOGIN}).
  */
@@ -111,6 +114,11 @@ public final class SkyYtuFirstLogin implements Authenticator, AuthenticatorFacto
         if (holder == Holder.NOBODY || (holder == Holder.KEYCLOAK && !force)) {
             brokered.setEmail(address);
             brokered.saveToAuthenticationSession(authSession, AbstractIdpAuthenticator.BROKERED_CONTEXT_NOTE);
+            if (holder == Holder.NOBODY) {
+                // A new account with the School e-mail as its Primary e-mail: offer a Personal
+                // e-mail once at the end of this login (ticket 21), when the realm has it enabled.
+                PersonalEmailOffer.schedule(context.getRealm(), authSession, address);
+            }
         } else {
             LOG.debug("The School e-mail of a first YTÜ login belongs to another account; the profile page decides");
             authSession.setAuthNote(AbstractIdpAuthenticator.ENFORCE_UPDATE_PROFILE, Boolean.TRUE.toString());

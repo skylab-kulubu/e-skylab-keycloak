@@ -205,6 +205,13 @@ final class Problems {
                         + "kalmaz. Önce YTÜ hesabını bağla ya da başka bir kişisel adres ekle.");
     }
 
+    /** A university address (or subdomain) as the Personal e-mail: it may close after graduation. */
+    static Problem emailSchoolDomain() {
+        return new Problem(400, "email_school_domain", "School address cannot be a personal e-mail",
+                "Okul adresi mezun olunca kapanabilir; okul dışı bir adres gir.")
+                .withExtension("field", "address");
+    }
+
     static Problem emailNotSent() {
         return new Problem(503, "email_not_sent", "Verification mail could not be sent",
                 "Doğrulama e-postası gönderilemedi. Lütfen daha sonra tekrar dene.");

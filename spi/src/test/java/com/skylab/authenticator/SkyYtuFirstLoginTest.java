@@ -1,5 +1,6 @@
 package com.skylab.authenticator;
 
+import com.skylab.account.PersonalEmailOffer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.keycloak.authentication.AuthenticationFlowContext;
@@ -12,6 +13,7 @@ import org.keycloak.models.IdentityProviderSyncMode;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.ModelDuplicateException;
 import org.keycloak.models.RealmModel;
+import org.keycloak.models.RequiredActionProviderModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.UserProvider;
 import org.keycloak.sessions.AuthenticationSessionModel;
@@ -346,5 +348,52 @@ class SkyYtuFirstLoginTest {
         assertFalse(step.isConfigurable());
         assertFalse(step.requiresUser());
         assertEquals(List.of(), step.getConfigProperties());
+    }
+
+    // ------------------------------------------------------------------ ticket 21
+
+    private void offerEnabled(boolean enabled) {
+        RequiredActionProviderModel model = new RequiredActionProviderModel();
+        model.setAlias(PersonalEmailOffer.PROVIDER_ID);
+        model.setProviderId(PersonalEmailOffer.PROVIDER_ID);
+        model.setEnabled(enabled);
+        when(realm.getRequiredActionProviderByAlias(PersonalEmailOffer.PROVIDER_ID)).thenReturn(model);
+    }
+
+    @Test
+    void aNewAccountWithTheSchoolPrimaryGetsThePersonalEmailOfferWhenTheRealmEnablesIt() {
+        offerEnabled(true);
+        brokered(null, "Yeni.Ogrenci@STD.Yildiz.edu.tr");
+
+        run();
+
+        verify(authSession).addRequiredAction(PersonalEmailOffer.PROVIDER_ID);
+        assertEquals("yeni.ogrenci@std.yildiz.edu.tr", notes.get("sky-personal-email-offer.primary"));
+    }
+
+    @Test
+    void theOfferIsNotScheduledWhileTheRealmHasItOffOrUnregistered() {
+        offerEnabled(false);
+        brokered(null, "yeni.ogrenci@std.yildiz.edu.tr");
+        run();
+        when(realm.getRequiredActionProviderByAlias(PersonalEmailOffer.PROVIDER_ID)).thenReturn(null);
+        step.authenticate(context);
+
+        verify(authSession, never()).addRequiredAction(anyString());
+    }
+
+    @Test
+    void theOfferIsNotScheduledWhenKeycloakWillLinkAnExistingAccountOrTheAddressIsNotWritten() {
+        offerEnabled(true);
+        brokered("", "taken@std.yildiz.edu.tr");
+        UserModel holder = holderWithEmail(true);
+        when(users.getUserByEmail(realm, "taken@std.yildiz.edu.tr")).thenReturn(holder);
+        run();
+        verify(authSession, never()).addRequiredAction(anyString());
+
+        brokered(null, "shared@std.yildiz.edu.tr");
+        attributeHolders.put("shared@std.yildiz.edu.tr", "personalEmail");
+        step.authenticate(context);
+        verify(authSession, never()).addRequiredAction(anyString());
     }
 }

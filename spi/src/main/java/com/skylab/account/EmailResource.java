@@ -86,6 +86,9 @@ public final class EmailResource {
             if (!isValidAddress(request.session(), address) || isOwnAddress(user, address)) {
                 throw Problems.invalidRequest("address").exception();
             }
+            if (PersonalEmailVerification.isSchoolDomain(address)) {
+                throw Problems.emailSchoolDomain().exception();
+            }
             requireFreeAddress(user, address);
 
             PendingEmailChanges pending = new PendingEmailChanges(request.session().singleUseObjects());
@@ -146,7 +149,11 @@ public final class EmailResource {
             String address = outcome.change().address();
             // Ten minutes passed: somebody else may have taken the address meanwhile. The change
             // is already out of the store by now, so a person who loses this race asks for a new
-            // code; that is the price of never letting two confirmations both see it.
+            // code; that is the price of never letting two confirmations both see it. A code asked for
+            // before university addresses were refused may still be waiting (ten minutes at most).
+            if (PersonalEmailVerification.isSchoolDomain(address)) {
+                throw Problems.emailSchoolDomain().exception();
+            }
             requireFreeAddress(user, address);
 
             EventBuilder event = request.event(caller)

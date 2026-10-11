@@ -12,6 +12,7 @@ import org.keycloak.validate.validators.EmailValidator;
 
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -36,14 +37,41 @@ public final class PersonalEmailVerification {
      * Public because the SkyMail mail provider routes this mail by exactly this name.
      */
     public static final String TEMPLATE = "sky-personal-email-confirm.ftl";
+    /**
+     * The university's mail domain. A Personal e-mail has to outlive graduation, so no address on it
+     * or on any of its subdomains ({@code std.yildiz.edu.tr}, department domains) may become one
+     * (eskylab-login-ux 21, Yusuf 2026-10-11).
+     */
+    static final String UNIVERSITY_DOMAIN = "yildiz.edu.tr";
 
     private PersonalEmailVerification() {
     }
 
     /**
+     * Whether the address is on the university's domain or one of its subdomains, ignoring case and
+     * trailing dots: such an address may close after graduation, so it is never a Personal e-mail.
+     */
+    static boolean isSchoolDomain(String address) {
+        if (address == null) {
+            return false;
+        }
+        int at = address.lastIndexOf('@');
+        if (at < 0) {
+            return false;
+        }
+        String domain = address.substring(at + 1).strip().toLowerCase(Locale.ROOT);
+        while (domain.endsWith(".")) {
+            domain = domain.substring(0, domain.length() - 1);
+        }
+        return domain.equals(UNIVERSITY_DOMAIN) || domain.endsWith("." + UNIVERSITY_DOMAIN);
+    }
+
+    /**
      * Whether any other person already uses the address: as their Keycloak {@code email} (Keycloak's
      * own case-insensitive lookup, authoritative while the realm keeps {@code duplicateEmailsAllowed=false};
-     * two holders count as taken) or as their School or Personal e-mail attribute. The attributes are
+     * two holders count as taken), as their username (the login form would then find two people by
+     * it, {@link LoginIdentifiers}, and the username route of the other person would stop working)
+     * or as their School or Personal e-mail attribute. The attributes are
      * compared ignoring case, as the login form compares them ({@link LoginIdentifiers}): Microsoft
      * writes {@code schoolEmail} as Graph returns it, this extension stores {@code personalEmail}
      * lowercased.
@@ -51,12 +79,17 @@ public final class PersonalEmailVerification {
     static boolean isTakenByAnother(KeycloakSession session, RealmModel realm, UserModel user, String address) {
         UserProvider users = session.users();
         UserModel byEmail;
+        UserModel byUsername;
         try {
             byEmail = users.getUserByEmail(realm, address);
+            byUsername = users.getUserByUsername(realm, address);
         } catch (ModelDuplicateException duplicate) {
             return true;
         }
         if (byEmail != null && !byEmail.getId().equals(user.getId())) {
+            return true;
+        }
+        if (byUsername != null && !byUsername.getId().equals(user.getId())) {
             return true;
         }
         for (String attribute : List.of(

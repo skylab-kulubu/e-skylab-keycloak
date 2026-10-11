@@ -12,6 +12,7 @@ type PersonalEmailOfferProps = {
 const errorKey = {
   invalid_address: "personalEmailOfferError.invalid_address",
   own_address: "personalEmailOfferError.own_address",
+  email_school_domain: "personalEmailOfferError.email_school_domain",
   email_taken: "personalEmailOfferError.email_taken",
   rate_limited: "personalEmailOfferError.rate_limited",
   email_not_sent: "personalEmailOfferError.email_not_sent",

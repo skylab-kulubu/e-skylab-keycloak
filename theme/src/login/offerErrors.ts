@@ -3,6 +3,7 @@
 export const personalEmailOfferErrors = [
   "invalid_address",
   "own_address",
+  "email_school_domain",
   "email_taken",
   "rate_limited",
   "email_not_sent",

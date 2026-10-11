@@ -70,6 +70,7 @@ class PersonalEmailOfferTest {
     /** Lowercased address to the attribute another person holds it in. */
     private final Map<String, String> otherHolders = new HashMap<>();
     private final Map<String, UserModel> emailHolders = new HashMap<>();
+    private final Map<String, UserModel> usernameHolders = new HashMap<>();
 
     private Browser browser;
 
@@ -181,6 +182,8 @@ class PersonalEmailOfferTest {
         }).when(mail).send(anyString(), anyList(), anyString(), anyMap(), anyString());
         when(users.getUserByEmail(eq(realm), anyString()))
                 .thenAnswer(call -> emailHolders.get(call.<String>getArgument(1).toLowerCase()));
+        when(users.getUserByUsername(eq(realm), anyString()))
+                .thenAnswer(call -> usernameHolders.get(call.<String>getArgument(1).toLowerCase()));
         when(users.searchForUserStream(eq(realm), anyMap(), anyInt(), anyInt())).thenAnswer(call -> {
             Map<String, String> query = call.getArgument(1);
             return otherHolders.entrySet().stream()
@@ -314,13 +317,13 @@ class PersonalEmailOfferTest {
 
     @Test
     void anAddressAnotherAccountUsesIsRefusedAfterTheBudgetsAreCharged() {
-        otherHolders.put("taken.personal@example.org", IdentityResource.PERSONAL_EMAIL_ATTRIBUTE);
-        otherHolders.put("Taken.School@STD.Yildiz.edu.tr", IdentityResource.SCHOOL_EMAIL_ATTRIBUTE);
+        otherHolders.put("Taken.Personal@Example.org", IdentityResource.PERSONAL_EMAIL_ATTRIBUTE);
         UserModel holder = mock(UserModel.class);
         when(holder.getId()).thenReturn("holder");
         emailHolders.put("taken.primary@example.org", holder);
+        usernameHolders.put("taken.username@example.org", holder);
 
-        for (String address : List.of("Taken.Personal@example.org", "taken.school@std.yildiz.edu.tr", "taken.primary@example.org")) {
+        for (String address : List.of("taken.personal@example.org", "taken.primary@example.org", "Taken.Username@example.org")) {
             browser.send(address);
             assertEquals("email_taken", browser.shown(PersonalEmailOffer.ERROR_ATTRIBUTE), address);
             assertEquals("address", browser.shown(PersonalEmailOffer.STAGE_ATTRIBUTE));
@@ -328,6 +331,39 @@ class PersonalEmailOfferTest {
         assertTrue(mailed.isEmpty(), "nothing is mailed to a taken address");
         assertEquals(12, store.claimedSlots(), "each probe costs one slot of every budget");
         assertNull(browser.notes.get(PersonalEmailOffer.HANDLE_NOTE));
+    }
+
+    @Test
+    void aUniversityAddressIsNeverAPersonalEmailAndCostsNoBudget() {
+        for (String address : List.of("someone@std.yildiz.edu.tr", "Someone@CE.Yildiz.EDU.tr", "someone@yildiz.edu.tr")) {
+            browser.send(address);
+            assertEquals("email_school_domain", browser.shown(PersonalEmailOffer.ERROR_ATTRIBUTE), address);
+            assertEquals("address", browser.shown(PersonalEmailOffer.STAGE_ATTRIBUTE));
+        }
+        assertTrue(mailed.isEmpty());
+        assertEquals(0, store.claimedSlots(), "the domain rule says nothing about other accounts");
+
+        browser.send("someone@notyildiz.edu.tr");
+        assertEquals("code", browser.shown(PersonalEmailOffer.STAGE_ATTRIBUTE));
+    }
+
+    @Test
+    void budgetKeysArePerRealmAndKeyedWithTheRealmsHmacKeyWhenThereIsOne() {
+        RealmModel sandbox = mock(RealmModel.class);
+        when(sandbox.getId()).thenReturn("sandbox-id");
+        String production = PersonalEmailOffer.keyed(session, realm, "ip-class:v4:203.0.113");
+        assertTrue(production.startsWith("s"), "without an HMAC key the key is a SHA-256");
+        assertNotEquals(production, PersonalEmailOffer.keyed(session, sandbox, "ip-class:v4:203.0.113"));
+
+        org.keycloak.models.KeyManager keys = mock(org.keycloak.models.KeyManager.class);
+        org.keycloak.crypto.KeyWrapper hmac = new org.keycloak.crypto.KeyWrapper();
+        hmac.setSecretKey(new javax.crypto.spec.SecretKeySpec(new byte[64], "HmacSHA512"));
+        when(session.keys()).thenReturn(keys);
+        when(keys.getActiveKey(realm, org.keycloak.crypto.KeyUse.SIG, org.keycloak.crypto.Algorithm.HS512)).thenReturn(hmac);
+        String keyed = PersonalEmailOffer.keyed(session, realm, "ip-class:v4:203.0.113");
+        assertTrue(keyed.startsWith("h"), "with the realm's HMAC key the key is an HMAC");
+        assertNotEquals(production, keyed);
+        assertEquals(keyed, PersonalEmailOffer.keyed(session, realm, "ip-class:v4:203.0.113"));
     }
 
     @Test

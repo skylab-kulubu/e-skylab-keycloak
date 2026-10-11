@@ -13,6 +13,9 @@ import org.keycloak.broker.provider.AbstractIdentityProvider;
 import org.keycloak.common.util.Base64Url;
 import org.keycloak.common.util.SecretGenerator;
 import org.keycloak.common.util.Time;
+import org.keycloak.crypto.Algorithm;
+import org.keycloak.crypto.KeyUse;
+import org.keycloak.crypto.KeyWrapper;
 import org.keycloak.events.Details;
 import org.keycloak.events.Errors;
 import org.keycloak.events.EventBuilder;
@@ -30,11 +33,15 @@ import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
+import java.security.InvalidKeyException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.regex.Pattern;
+import javax.crypto.Mac;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.SecretKeySpec;
 
 /**
  * {@code sky-personal-email-offer}: once, at the end of a first YTÜ login that opened an account with
@@ -51,10 +58,12 @@ import java.util.regex.Pattern;
  * five wrong tries, single use, valid only in this sign-in session (the store entry is keyed by a
  * random handle kept in an authentication note of this session), only a salted hash stored
  * ({@link PendingEmailChanges}). Who may receive a code, the mail and the proof are Account center's
- * ({@link PersonalEmailVerification}); sending is limited per sign-in session, per address, per IP
- * class (the IP is never stored, only a hash of its class in a budget key that expires within the
- * hour) and overall. Like Account center, the page says when another account already uses the
- * address, and only after the sending budgets were charged.
+ * ({@link PersonalEmailVerification}); an address on the university's domain is never a Personal
+ * e-mail (it may close after graduation). Sending is limited per sign-in session, per address, per IP
+ * class and overall; the IP itself is never stored, its /24 or /64 class enters a budget key only as
+ * an HMAC keyed by the realm's HMAC key, held in memory until the clock hour ends. Like Account
+ * center, the page says when another account already uses the address, and only after the sending
+ * budgets were charged.
  *
  * <p>Only {@code sky-ytu-first-login} schedules it ({@link #schedule}), on this sign-in session and
  * only when it wrote the School e-mail as the Primary e-mail of the account about to be opened and
@@ -112,6 +121,7 @@ public final class PersonalEmailOffer implements RequiredActionProvider, Require
     enum Problem {
         INVALID_ADDRESS("invalid_address"),
         OWN_ADDRESS("own_address"),
+        SCHOOL_DOMAIN("email_school_domain"),
         TAKEN("email_taken"),
         RATE_LIMITED("rate_limited"),
         NOT_SENT("email_not_sent"),
@@ -233,6 +243,11 @@ public final class PersonalEmailOffer implements RequiredActionProvider, Require
             context.challenge(page(context, Stage.ADDRESS, address, Problem.OWN_ADDRESS, null));
             return;
         }
+        // Before the budgets: it says nothing about other accounts.
+        if (PersonalEmailVerification.isSchoolDomain(address)) {
+            context.challenge(page(context, Stage.ADDRESS, address, Problem.SCHOOL_DOMAIN, null));
+            return;
+        }
         // Charged before the address is looked up, as Account center charges its budget before
         // saying that another account uses it: every probe costs a mail's worth.
         if (!claimBudgets(context, address)) {
@@ -304,6 +319,11 @@ public final class PersonalEmailOffer implements RequiredActionProvider, Require
 
     private void confirmed(RequiredActionContext context, String address) {
         UserModel user = context.getUser();
+        if (PersonalEmailVerification.isSchoolDomain(address)) {
+            discardCode(context);
+            context.challenge(page(context, Stage.ADDRESS, address, Problem.SCHOOL_DOMAIN, null));
+            return;
+        }
         // Ten minutes passed: somebody else may have taken the address meanwhile (Account center
         // checks again at this point too).
         if (PersonalEmailVerification.isTakenByAnother(context.getSession(), context.getRealm(), user, address)) {
@@ -320,8 +340,9 @@ public final class PersonalEmailOffer implements RequiredActionProvider, Require
 
     /**
      * One slot of each budget, in order, stopping at the first that is spent: this sign-in session,
-     * the IP class, everybody, then the address. Every key is a hash or an id, never the address or
-     * the IP itself.
+     * the IP class, everybody, then the address. The IP class and address budgets are per realm (the
+     * sandbox realm shares the server with production). Every key is a keyed hash ({@link #keyed}) or
+     * an id, never the address or the IP itself; a key lives in memory until its hour ends.
      */
     private static boolean claimBudgets(RequiredActionContext context, String address) {
         RateLimiter limiter = new RateLimiter(context.getSession().singleUseObjects());
@@ -340,12 +361,14 @@ public final class PersonalEmailOffer implements RequiredActionProvider, Require
     static List<Budget> budgets(RequiredActionContext context, String address) {
         AuthenticationSessionModel authSession = context.getAuthenticationSession();
         String remote = context.getConnection() == null ? null : context.getConnection().getRemoteAddr();
+        KeycloakSession session = context.getSession();
+        RealmModel realm = context.getRealm();
         return List.of(
                 new Budget(RateLimiter.OFFER_SESSION,
-                        digest("session:" + authSession.getParentSession().getId() + "/" + authSession.getTabId())),
-                new Budget(RateLimiter.OFFER_IP_CLASS, digest("ip-class:" + ipClass(remote))),
-                new Budget(RateLimiter.OFFER_ALL, context.getRealm().getId()),
-                new Budget(RateLimiter.OFFER_ADDRESS, digest("address:" + address)));
+                        keyed(session, realm, "session:" + authSession.getParentSession().getId() + "/" + authSession.getTabId())),
+                new Budget(RateLimiter.OFFER_IP_CLASS, keyed(session, realm, "ip-class:" + ipClass(remote))),
+                new Budget(RateLimiter.OFFER_ALL, realm.getId()),
+                new Budget(RateLimiter.OFFER_ADDRESS, keyed(session, realm, "address:" + address)));
     }
 
     /**
@@ -385,13 +408,40 @@ public final class PersonalEmailOffer implements RequiredActionProvider, Require
         return "unknown";
     }
 
-    private static String digest(String value) {
+    /**
+     * A budget key for {@code value} in this realm: HMAC-SHA256 with the realm's active HMAC signing
+     * key (a server secret Keycloak keeps in its database, the same on every node), so a stored key
+     * cannot be turned back into a /24 or an address by trying them all. A realm without such a key
+     * falls back to SHA-256 of the realm id and the value. Rotating the key only starts the budgets
+     * afresh.
+     */
+    static String keyed(KeycloakSession session, RealmModel realm, String value) {
+        byte[] input = (realm.getId() + "/" + value).getBytes(StandardCharsets.UTF_8);
+        SecretKey secret = hmacSecret(session, realm);
         try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-                    .digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 is unavailable", exception);
+            if (secret != null) {
+                Mac mac = Mac.getInstance("HmacSHA256");
+                mac.init(new SecretKeySpec(secret.getEncoded(), "HmacSHA256"));
+                return "h" + HexFormat.of().formatHex(mac.doFinal(input));
+            }
+            return "s" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(input));
+        } catch (NoSuchAlgorithmException | InvalidKeyException exception) {
+            throw new IllegalStateException("HMAC-SHA256 or SHA-256 is unavailable", exception);
         }
+    }
+
+    private static SecretKey hmacSecret(KeycloakSession session, RealmModel realm) {
+        for (String algorithm : List.of(Algorithm.HS512, Algorithm.HS256)) {
+            try {
+                KeyWrapper key = session.keys() == null ? null : session.keys().getActiveKey(realm, KeyUse.SIG, algorithm);
+                if (key != null && key.getSecretKey() != null && key.getSecretKey().getEncoded() != null) {
+                    return key.getSecretKey();
+                }
+            } catch (RuntimeException none) {
+                // No active key of this algorithm in the realm: try the next one.
+            }
+        }
+        return null;
     }
 
     /** This session's code, if one is waiting. */

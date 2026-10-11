@@ -86,6 +86,19 @@ describe("the first-login personal e-mail offer (sky-personal-email-offer.ftl)",
     }
   });
 
+  it("refuses a university address with the decided sentence, in both languages", async () => {
+    const turkish = await renderOffer({ skyOfferStage: "address", skyOfferAddress: "ada@ce.yildiz.edu.tr", skyOfferError: "email_school_domain" });
+    expect(turkish.container.querySelector("#sky-offer-error")).toHaveTextContent(
+      "Okul adresi mezun olunca kapanabilir; okul dışı bir adres gir."
+    );
+    expect(turkish.container.querySelector("#sky-offer-error")).toHaveAttribute("data-sky-offer-error", "email_school_domain");
+    turkish.unmount();
+    const english = await renderOffer({ skyOfferStage: "address", skyOfferError: "email_school_domain" }, "en");
+    expect(english.container.querySelector("#sky-offer-error")).toHaveTextContent(
+      "A school address may close after you graduate; enter a non-school address."
+    );
+  });
+
   it("shows no error for a code it does not know", async () => {
     expect(toPersonalEmailOfferError("something_else")).toBeUndefined();
     expect(toPersonalEmailOfferError(undefined)).toBeUndefined();

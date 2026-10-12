@@ -890,7 +890,8 @@ ister, §6). Realm yeniden kurulursa betik yeniden koşulur.
 | `admin` | `content:read`, `content:write` | `/ADMIN`, `/UYELER/YK`, `/UYELER/DK` |
 
 - Hiçbir CMS rolü `/UYELER`'e, bir kişiye, varsayılan rollere ya da varsayılan gruplara
-  verilmez. `client:admin` liderlere verilmez.
+  verilmez. `client:admin` yalnız `ADMIN` ve `YK`'dadır (Yusuf, 2026-10-12): liderlere ve `DK`'ya
+  verilmez (`DK` okur, yazmaz). Etkinlik sitelerinde de böyledir (`site-editor-grants.sh`).
 - Bilinen sınır: inscribed'da `content:write` tenant geneli. `frontend-main`'de
   `cms:access` alan lider ana sitenin bütün sayfa bloklarını da düzenleyebilir. Fatih
   yalnız koleksiyona yazma yeteneğini getirene kadar kabul edildi. Hangi takımı
@@ -1652,7 +1653,8 @@ yazar, ikinci koşu hiçbir şey yazmaz; kcadm prompt'u ya da `--kcadm-config`):
 3. `config/site-editor-grants.sh [--site …]... [--team SITE=/YOL]...`: `cms:access` Privileged gruplara
    (`ADMIN`, `YK`, `DK`; `/<AD>` ve `/UYELER/<AD>` hangisi varsa) ve sitenin iki takımının doğrudan
    `LIDERLER`/`KOORDINATORLER` alt gruplarına: sahip lab takımı ve etkinliğin organizasyon takımı
-   (karar 2026-10-03, CONTEXT.md "Site editor"); `client:admin` yalnız `ADMIN` gruplarına. Takımlar:
+   (karar 2026-10-03, CONTEXT.md "Site editor"); `client:admin` `ADMIN` ve `YK` gruplarına (Yusuf, 2026-10-12;
+   `DK`'ya verilmez, `DK`'da varsa `WARNING`). Takımlar:
    ARTLAB → `/UYELER/ARGE/AIRLAB` + `/UYELER/ORGANIZASYON/ARTLAB`, YıldızJam → `/UYELER/ARGE/GAMELAB`
    + `/UYELER/ORGANIZASYON/YILDIZJAM`, SkyDays → `/UYELER/ARGE/SKYSEC` + `/UYELER/ORGANIZASYON/SKYDAYS`.
    Realm'de olmayan bir takım ya da `LIDERLER`/`KOORDINATORLER`'i olmayan bir takım `WARNING`'dir; öbür
@@ -1687,7 +1689,7 @@ köken `https://sandbox.yildizskylab.com` (sitenin kodu `sandbox.` ve `sandbox-`
 `NEXTAUTH_URL`'yi sandbox sayar ve arama motorlarına kapatır), redirect birebir
 `https://sandbox.yildizskylab.com/api/auth/callback/keycloak`. Rolleri `inscribed-cms-roles.sh --client
 frontend-main` kurar (servis hesabı yalnız `content:read` + `schema:sync`); editörleri yalnız
-Privileged gruplardır (takım yok; `--team main=/YOL` eklenebilir), `client:admin` yalnız `ADMIN`'e.
+Privileged gruplardır (takım yok; `--team main=/YOL` eklenebilir), `client:admin` `ADMIN` ve `YK`'ya.
 Harness bunu da dener: production reddi, istemcinin biçimi, ADMIN üyesinin token'ında `cms:access` +
 `client:admin`, düz üyede CMS rolü olmadığı, servis hesabının salt okuma kaldığı, ikinci koşunun
 yazmadığı. Operatör: `ops/wizards/site-cms-setup-wizard.sh --site main --sandbox`.

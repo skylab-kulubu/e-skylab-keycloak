@@ -25,7 +25,7 @@
 #     site and gives the service account content:read + schema:sync only;
 #   - site-editor-grants.sh grants cms:access to /ADMIN, /UYELER/YK, /UYELER/DK and, by default, the
 #     Leader groups of the owning lab team and of the event's organization team, client:admin to
-#     /ADMIN only, nothing to a person; a --team adds a team; a missing organization team is a
+#     /ADMIN and /UYELER/YK (never DK: a DK holder is a WARNING), nothing to a person; a --team adds a team; a missing organization team is a
 #     WARNING; a --team that is no top team (/UYELER/<area>/<team>) is refused (exit 2) before a
 #     login; a holder outside the set is a WARNING and is not taken away; a second run writes
 #     nothing; a site without roles is reported (exit 1);
@@ -243,7 +243,7 @@ group() { # group PARENT_ID|'' NAME -> id
 admin_group=$(group '' ADMIN)
 uyeler=$(group '' UYELER)
 yk=$(group "$uyeler" YK)
-group "$uyeler" DK >/dev/null
+dk=$(group "$uyeler" DK)
 arge=$(group "$uyeler" ARGE)
 airlab=$(group "$arge" AIRLAB)
 airlab_leaders=$(group "$airlab" LIDERLER)
@@ -377,18 +377,29 @@ expect_line "$check" 'Privileged groups: /ADMIN /UYELER/YK /UYELER/DK' 'Privileg
 expect_line "$check" 'would grant frontend-artlab/cms:access to the group /UYELER/ARGE/AIRLAB/KOORDINATORLER' 'owner team coordinators not planned'
 expect_line "$check" 'would grant frontend-artlab/cms:access to the group /UYELER/ORGANIZASYON/ARTLAB/LIDERLER' 'organization team leaders not planned by default'
 expect_line "$check" 'would grant frontend-artlab/client:admin to the group /ADMIN' 'client:admin not planned'
+expect_line "$check" 'would grant frontend-artlab/client:admin to the group /UYELER/YK' 'client:admin not planned for YK'
+reject_line "$check" 'client:admin to the group /UYELER/DK' 'client:admin planned for DK'
 reject_line "$check" 'GAMELAB' 'another team planned'
-expect_line "$check" 'check: 7 change(s) pending, 0 warning(s), 0 problem(s)' 'unexpected grant plan'
+expect_line "$check" 'check: 8 change(s) pending, 0 warning(s), 0 problem(s)' 'unexpected grant plan'
 out=$(grants --apply --site artlab) || { printf '%s\n' "$out" >&2; fail 'grants --apply failed'; }
-expect_line "$out" 'applied 7 change(s)' 'grants not applied'
+expect_line "$out" 'applied 8 change(s)' 'grants not applied'
 holders=$(kcadm get "clients/$artlab/roles/cms:access/groups" -r "$REALM" | jq -c '[.[].path] | sort')
 [[ $holders == '["/ADMIN","/UYELER/ARGE/AIRLAB/KOORDINATORLER","/UYELER/ARGE/AIRLAB/LIDERLER","/UYELER/DK","/UYELER/ORGANIZASYON/ARTLAB/LIDERLER","/UYELER/YK"]' ]] \
   || fail "unexpected cms:access holders $holders"
-[[ $(kcadm get "clients/$artlab/roles/client:admin/groups" -r "$REALM" | jq -c '[.[].path]') == '["/ADMIN"]' ]] || fail 'client:admin not only on /ADMIN'
+[[ $(kcadm get "clients/$artlab/roles/client:admin/groups" -r "$REALM" | jq -c '[.[].path] | sort') == '["/ADMIN","/UYELER/YK"]' ]] \
+  || fail 'client:admin not exactly on /ADMIN and /UYELER/YK'
 [[ $(kcadm get "clients/$artlab/roles/cms:access/users" -r "$REALM" | jq 'length') == 0 ]] || fail 'a person got cms:access'
 printf '    cms:access <- %s\n' "$holders"
 again=$(grants --apply --site artlab) || { printf '%s\n' "$again" >&2; fail 'second grants failed'; }
 expect_line "$again" 'applied 0 change(s), 0 warning(s), 0 problem(s)' 'second grants run wrote'
+# DK reads and does not write (2026-10-12): client:admin on DK is a WARNING and is not taken away.
+admin_role=$(kcadm get "clients/$artlab/roles/client:admin" -r "$REALM" | jq -c '[{id, name}]')
+kcadm create "groups/$dk/role-mappings/clients/$artlab" -r "$REALM" -b "$admin_role" >/dev/null
+again=$(grants --check --site artlab) || { printf '%s\n' "$again" >&2; fail 'grants with client:admin on DK failed'; }
+expect_line "$again" 'WARNING: frontend-artlab/client:admin is also held by the group /UYELER/DK (not taken away' 'client:admin on DK not reported'
+expect_line "$again" 'check: 0 change(s) pending, 1 warning(s), 0 problem(s)' 'client:admin on DK changed the plan'
+kcadm delete "groups/$dk/role-mappings/clients/$artlab" -r "$REALM" -b "$admin_role" >/dev/null
+printf '    client:admin <- /ADMIN, /UYELER/YK; on DK a WARNING, not taken away\n'
 again=$(grants --check --site artlab --team artlab=/UYELER/ARGE/GAMELAB --team artlab=/UYELER/ORGANIZASYON/ARTLAB) \
   || { printf '%s\n' "$again" >&2; fail 'grants with --team failed'; }
 expect_line "$again" 'would grant frontend-artlab/cms:access to the group /UYELER/ARGE/GAMELAB/LIDERLER' '--team not planned'

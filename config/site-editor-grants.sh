@@ -4,7 +4,8 @@
 #   - cms:access to the Privileged groups (ADMIN, YK, DK: each at /<NAME> and/or /UYELER/<NAME>,
 #     whichever exist) and to the Leader groups (the direct subgroups LIDERLER and KOORDINATORLER)
 #     of the site's teams: the owning lab team and the event's organization team;
-#   - client:admin to the ADMIN group(s) only.
+#   - client:admin to the ADMIN and YK groups (Yusuf, 2026-10-12; never DK, which reads and does not
+#     write: a DK holder is a WARNING, like any holder outside the set).
 # Teams of each site (decision of 2026-10-03, CONTEXT.md "Site editor"):
 #   artlab     /UYELER/ARGE/AIRLAB   and  /UYELER/ORGANIZASYON/ARTLAB
 #   yildizjam  /UYELER/ARGE/GAMELAB  and  /UYELER/ORGANIZASYON/YILDIZJAM
@@ -260,7 +261,7 @@ for name in "${PRIVILEGED_NAMES[@]}"; do
     [[ -n $id ]] || continue
     gid_of[$path]=$id
     privileged+=("$path")
-    [[ $name != ADMIN ]] || admin_groups+=("$path")
+    [[ $name != ADMIN && $name != YK ]] || admin_groups+=("$path")
     found=true
   done
   [[ $found == true ]] || warning "no Privileged group $name (neither /$name nor /UYELER/$name)"

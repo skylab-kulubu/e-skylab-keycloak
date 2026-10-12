@@ -873,8 +873,8 @@ docker build --platform linux/amd64 -t account-keycloak:test .
 KEYCLOAK_TEST_IMAGE=account-keycloak:test bash tests/run-integration.sh
 ```
 
-Harness tek koşuda bütün aşamaları sırayla koşar (varsayılan `INTEGRATION_GROUP=all`;
-`release.yml` böyle koşar). CI aynı betiği dört paralel işte koşar
+Harness tek koşuda bütün aşamaları sırayla koşar (varsayılan `INTEGRATION_GROUP=all`).
+CI aynı betiği dört paralel işte koşar
 (`integration (erasure|roles|login|spi)`, sonra hepsini bekleyen `integration`):
 her grup kendi Keycloak'ını açar, ortak realm önekini (bootstrap, ilk uzlaştırma,
 drift, ikinci uzlaştırma) koşar, sonra kendi aşamalarını. Önceki bir grubun
@@ -885,6 +885,21 @@ CI günlüğüne `[harness <grup> +12m34s] <aşama>` diye geçer. Tek grup yerel
 ```bash
 INTEGRATION_GROUP=login KEYCLOAK_TEST_IMAGE=account-keycloak:test bash tests/run-integration.sh
 ```
+
+`release.yml` de aynı grupları paralel koşar, ama imajı bir kez derler:
+`keycloak-build` aday imajı derleyip `docker save` ile kaydeder ve
+`keycloak-test-candidate-<commit>` artifact'i olarak yükler (SHA-256'sı ve imaj kimliği
+işin çıktısıdır); grup listesini `tests/run-integration.sh`'ın `INTEGRATION_GROUPS` satırından
+okur. `integration (<grup>)` işleri bu tarball'ı indirir, SHA-256'sını ve yüklenen imajın
+kimliğini doğrular, kendi grubunu koşar ve test ettiği imajın kimliğini bir makbuz artifact'ine
+yazar. `keycloak-package` yalnız bütün gruplar başarılıysa koşar: listedeki her grubun makbuzunun
+aynı commit'i ve aynı imaj kimliğini söylediğini doğrular, sonra fiziksel WebAuthn kapısını
+(`keycloak-production` ortamının değişkenleri) koşar ve grupların yüklediği tarball'ın kendisini
+paketler; `keycloak-publish` önceki gibi onu doğrulayıp yayımlar. Düşen grup tek başına yeniden
+koşturulabilir (`gh run rerun <run> --failed`): `keycloak-build` yeniden koşmaz, yeniden koşan
+grup aynı tarball'ı yükler. Artifact'lerin ömrü 1 gün; sonrasında grup yeniden denemesi
+indirme adımında düşer ve bütün koşu yeniden başlatılmalıdır. Bir makbuz ancak bu koşunun
+derlediği imaj kimliğini ve tarball SHA-256'sını birebir söylüyorsa kabul edilir.
 
 Yalnız yerel imaj derlemesi için üretim sözleşmesini devralmayan bağımsız
 Compose tanımını kullanın:

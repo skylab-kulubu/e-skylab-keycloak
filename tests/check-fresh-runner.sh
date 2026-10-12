@@ -106,31 +106,59 @@ def assert_release_boundary(workflow)
     abort "#{workflow} must publish only from production and semantic version tags"
   end
 
-  build_job = document.fetch("jobs").fetch("keycloak-build")
-  publish_job = document.fetch("jobs").fetch("keycloak-publish")
+  jobs = document.fetch("jobs")
+  build_job = jobs.fetch("keycloak-build")
+  package_job = jobs.fetch("keycloak-package")
+  publish_job = jobs.fetch("keycloak-publish")
   build_steps = build_job.fetch("steps")
+  package_steps = package_job.fetch("steps")
   publish_steps = publish_job.fetch("steps")
 
-  if build_job.fetch("permissions", {}).fetch("packages", nil) == "write"
-    abort "#{workflow} keycloak-build must not receive package-write permission"
+  jobs.each do |name, job|
+    next if name == "keycloak-publish"
+    if job.fetch("permissions", {}).fetch("packages", nil) == "write"
+      abort "#{workflow} #{name} must not receive package-write permission"
+    end
   end
   unless publish_job.fetch("permissions", {}).fetch("packages", nil) == "write"
     abort "#{workflow} keycloak-publish must own the package-write permission"
   end
-  unless publish_job.fetch("needs", nil) == "keycloak-build"
-    abort "#{workflow} keycloak-publish must depend on the tested and physically approved build job"
+  unless publish_job.fetch("needs", nil) == "keycloak-package"
+    abort "#{workflow} keycloak-publish must depend on the tested and physically approved package job"
+  end
+  unless Array(package_job.fetch("needs", nil)).sort == ["keycloak-build", "keycloak-integration"] &&
+      !package_job.key?("if")
+    abort "#{workflow} keycloak-package must run only when the build and every integration group passed"
+  end
+  unless package_job.fetch("environment", nil) == "keycloak-production"
+    abort "#{workflow} keycloak-package must read the physical WebAuthn evidence of the keycloak-production environment"
   end
 
-  integration_index = build_steps.index { |step| step.fetch("run", "").include?("tests/run-integration.sh") }
-  gate_index = build_steps.index { |step| step.fetch("run", "").include?("tests/check-physical-webauthn-release.sh") }
-  package_index = build_steps.index { |step| step.fetch("name", "") == "Package the tested image bytes" }
-  upload_index = build_steps.index { |step| step.fetch("uses", "") == "actions/upload-artifact@v4" }
-  unless integration_index && gate_index && package_index && upload_index &&
-      integration_index < gate_index && gate_index < package_index && package_index < upload_index
-    abort "#{workflow} must test, physically approve, package and upload the candidate in that order"
+  receipts_index = package_steps.index { |step| step.fetch("name", "") == "Require every integration group to have tested these bytes" }
+  gate_index = package_steps.index { |step| step.fetch("run", "").include?("tests/check-physical-webauthn-release.sh") }
+  package_index = package_steps.index { |step| step.fetch("name", "") == "Package the tested image bytes" }
+  upload_index = package_steps.index { |step| step.fetch("uses", "") == "actions/upload-artifact@v4" }
+  unless receipts_index && gate_index && package_index && upload_index &&
+      receipts_index < gate_index && gate_index < package_index && package_index < upload_index
+    abort "#{workflow} must check every group's receipt, physically approve, package and upload the candidate in that order"
+  end
+  receipts = package_steps.fetch(receipts_index).fetch("run", "")
+  for required_check in ["INTEGRATION_GROUPS=", "$IMAGE_ID", "$IMAGE_SHA256", "$GITHUB_SHA"]
+    unless receipts.include?(required_check)
+      abort "#{workflow} receipt check is missing #{required_check}"
+    end
+  end
+  packaging = package_steps.fetch(package_index).fetch("run", "")
+  for required_check in ["sha256sum --check", "$IMAGE_SHA256", "$IMAGE_ID", 'cp "$tested"']
+    unless packaging.include?(required_check)
+      abort "#{workflow} packaging must package the verified tested tarball (missing #{required_check})"
+    end
+  end
+  if package_steps.any? { |step| step["uses"] == "docker/build-push-action@v7" }
+    abort "#{workflow} keycloak-package must load the tested artifact, not rebuild it"
   end
 
-  upload = build_steps.fetch(upload_index).fetch("with")
+  upload = package_steps.fetch(upload_index).fetch("with")
   unless upload["name"] == "keycloak-candidate-${{ github.sha }}" && upload["retention-days"] == 1
     abort "#{workflow} must bind the short-lived candidate artifact to the release commit"
   end
@@ -206,7 +234,8 @@ def assert_ci_branches(workflow)
 end
 
 # The CI matrix runs exactly the harness's groups, each with a timeout, and one job named
-# integration passes only when all of them do. release.yml runs the whole harness (no group).
+# integration passes only when all of them do. release.yml reads the same list from the harness
+# (assert_release_candidate_flow).
 def assert_integration_groups(workflow, harness)
   document = YAML.load_file(workflow, aliases: true)
   jobs = document.fetch("jobs")
@@ -228,14 +257,93 @@ def assert_integration_groups(workflow, harness)
   unless aggregate.fetch("needs") == "integration-group" && aggregate.fetch("if") == "always()"
     abort "#{workflow} integration must wait for every group, also when one fails"
   end
-  release = File.read(File.join(File.dirname(workflow), "release.yml"), encoding: "UTF-8")
-  abort "release.yml must run the whole harness, not one group" if release.include?("INTEGRATION_GROUP")
+end
+
+# release.yml builds the candidate once (keycloak-build), runs the harness's groups on the saved
+# bytes in parallel (keycloak-integration, the matrix read from the harness's INTEGRATION_GROUPS
+# list by keycloak-build) and packages those bytes only after every group passed (keycloak-package,
+# checked in assert_release_boundary). Nothing after keycloak-build builds an image.
+def assert_release_candidate_flow(workflow)
+  document = YAML.load_file(workflow, aliases: true)
+  jobs = document.fetch("jobs")
+  sha_artifact = "keycloak-test-candidate-${{ github.sha }}"
+
+  build_job = jobs.fetch("keycloak-build")
+  build_steps = build_job.fetch("steps")
+  test_image = build_job.fetch("env").fetch("KEYCLOAK_TEST_IMAGE")
+  abort "#{workflow} keycloak-build must name the candidate image explicitly" if test_image.to_s.empty?
+  static_index = build_steps.index { |step| step.fetch("run", "").include?("tests/check-fresh-runner.sh") }
+  groups_index = build_steps.index { |step| step.fetch("run", "").include?("INTEGRATION_GROUPS=") }
+  build_indexes = build_steps.each_index.select { |i| build_steps[i]["uses"] == "docker/build-push-action@v7" }
+  save_index = build_steps.index { |step| step.fetch("run", "").include?("docker save") }
+  upload_index = build_steps.index { |step| step["uses"] == "actions/upload-artifact@v4" }
+  unless static_index && groups_index && build_indexes.length == 1 && save_index && upload_index &&
+      static_index < build_indexes.first && build_indexes.first < save_index && save_index < upload_index
+    abort "#{workflow} keycloak-build must run fresh-runner static checks, build once, then save and upload the candidate"
+  end
+  build = build_steps.fetch(build_indexes.first).fetch("with")
+  unless build["load"] == true && build["tags"] == "${{ env.KEYCLOAK_TEST_IMAGE }}"
+    abort "#{workflow} keycloak-build must load the exact KEYCLOAK_TEST_IMAGE it saves"
+  end
+  if build_steps.any? { |step| step.fetch("run", "").include?("bash tests/run-integration.sh") }
+    abort "#{workflow} keycloak-build must leave the harness to keycloak-integration"
+  end
+  upload = build_steps.fetch(upload_index).fetch("with")
+  unless upload["name"] == sha_artifact && upload["retention-days"] == 1
+    abort "#{workflow} must bind the short-lived test candidate artifact to the release commit"
+  end
+  outputs = build_job.fetch("outputs", {})
+  for output in ["version", "integration-groups", "image-id", "image-sha256"]
+    abort "#{workflow} keycloak-build must output #{output}" if outputs.fetch(output, "").to_s.empty?
+  end
+
+  job = jobs.fetch("keycloak-integration")
+  steps = job.fetch("steps")
+  strategy = job.fetch("strategy")
+  unless job.fetch("needs") == "keycloak-build" &&
+      strategy.fetch("matrix") == { "group" => "${{ fromJSON(needs.keycloak-build.outputs.integration-groups) }}" } &&
+      strategy.fetch("fail-fast") == false
+    abort "#{workflow} keycloak-integration must run every harness group from keycloak-build, also when one fails"
+  end
+  unless job.fetch("timeout-minutes", 0).is_a?(Integer) && job["timeout-minutes"].positive?
+    abort "#{workflow} keycloak-integration needs a timeout"
+  end
+  env = job.fetch("env")
+  unless env.fetch("INTEGRATION_GROUP") == "${{ matrix.group }}" && env.fetch("KEYCLOAK_TEST_IMAGE") == test_image &&
+      env.fetch("IMAGE_ID") == "${{ needs.keycloak-build.outputs.image-id }}" &&
+      env.fetch("IMAGE_SHA256") == "${{ needs.keycloak-build.outputs.image-sha256 }}"
+    abort "#{workflow} keycloak-integration must test keycloak-build's candidate in its matrix group"
+  end
+  static_index = steps.index { |step| step.fetch("run", "").include?("tests/check-fresh-runner.sh") }
+  download_index = steps.index { |step| step["uses"] == "actions/download-artifact@v5" && step.fetch("with", {})["name"] == sha_artifact }
+  verify_index = steps.index { |step| step.fetch("name", "") == "Verify and load the built candidate" }
+  integration_index = steps.index { |step| step.fetch("run", "").include?("bash tests/run-integration.sh") }
+  receipt_index = steps.index { |step| step["uses"] == "actions/upload-artifact@v4" }
+  unless static_index && download_index && verify_index && integration_index && receipt_index &&
+      static_index < download_index && download_index < verify_index && verify_index < integration_index &&
+      integration_index < receipt_index
+    abort "#{workflow} keycloak-integration must run static checks, verify and load the candidate, test it, then record it"
+  end
+  verification = steps.fetch(verify_index).fetch("run", "")
+  for required_check in ["sha256sum --check", "$IMAGE_SHA256", "docker load", "$IMAGE_ID"]
+    abort "#{workflow} keycloak-integration verification is missing #{required_check}" unless verification.include?(required_check)
+  end
+  if steps.any? { |step| step["uses"] == "docker/build-push-action@v7" }
+    abort "#{workflow} keycloak-integration must load the built candidate, not rebuild it"
+  end
+  if steps.fetch(integration_index).fetch("env", {}).key?("KEYCLOAK_TEST_IMAGE")
+    abort "#{workflow} keycloak-integration must not override the job's tested candidate in the integration step"
+  end
+  receipt = steps.fetch(receipt_index).fetch("with")
+  unless receipt["name"] == "keycloak-tested-${{ github.sha }}-${{ matrix.group }}" && receipt["retention-days"] == 1
+    abort "#{workflow} every group's receipt must be bound to the release commit and its group"
+  end
 end
 
 assert_ci_branches(File.join(root, ".github/workflows/ci.yml"))
 assert_order(File.join(root, ".github/workflows/ci.yml"), "integration-group")
 assert_integration_groups(File.join(root, ".github/workflows/ci.yml"), File.join(root, "tests/run-integration.sh"))
-assert_order(File.join(root, ".github/workflows/release.yml"), "keycloak-build")
+assert_release_candidate_flow(File.join(root, ".github/workflows/release.yml"))
 assert_release_boundary(File.join(root, ".github/workflows/release.yml"))
 RUBY
 

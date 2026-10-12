@@ -84,6 +84,7 @@ const { getKcContextMock } = createGetKcContextMock({
   kcContextExtensionPerPage: {
     "passkey-offer.ftl": {},
     "sky-personal-email-offer.ftl": { skyOfferStage: "address", skyOfferCodeMinutes: "10" },
+    "sky-stay-signed-in.ftl": { skyStaySignedInIdleDays: "7", skyStaySignedInMaxDays: "30" },
     "sky-handoff-failed.ftl": { skyHandoffReason: "expired" }
   } satisfies KcContextExtensionPerPage,
   overrides: {

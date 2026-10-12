@@ -369,11 +369,13 @@ stage_admin_panel_tokens() {
     "the panel token lost inscribed's flat roles claim or the group paths"
   # The panel's refresh token: an ordinary login lives for the SSO idle time (2 hours); a remember-me
   # login would live 7 days idle in any other client, the panel's client session cuts it at 8 hours.
-  [[ $LCA_REFRESH_EXPIRES_IN =~ ^[0-9]+$ ]] && ((LCA_REFRESH_EXPIRES_IN >= 7190 && LCA_REFRESH_EXPIRES_IN <= 7200)) \
-    || fail "the panel's ordinary refresh token does not live for the SSO idle time (refresh_expires_in $LCA_REFRESH_EXPIRES_IN)"
+  if [[ ! $LCA_REFRESH_EXPIRES_IN =~ ^[0-9]+$ ]] || ((LCA_REFRESH_EXPIRES_IN < 7190 || LCA_REFRESH_EXPIRES_IN > 7200)); then
+    fail "the panel's ordinary refresh token does not live for the SSO idle time (refresh_expires_in $LCA_REFRESH_EXPIRES_IN)"
+  fi
   lca_login "$AP_CLIENT" "$AP_REDIRECT" "$AP_SECRET" "$AP_USER" "$AP_PASSWORD" "$AP_PANEL_SCOPE" on
-  [[ $LCA_REFRESH_EXPIRES_IN =~ ^[0-9]+$ ]] && ((LCA_REFRESH_EXPIRES_IN >= 28790 && LCA_REFRESH_EXPIRES_IN <= 28800)) \
-    || fail "the panel's remember-me refresh token is not cut at 8 hours by its client session (refresh_expires_in $LCA_REFRESH_EXPIRES_IN)"
+  if [[ ! $LCA_REFRESH_EXPIRES_IN =~ ^[0-9]+$ ]] || ((LCA_REFRESH_EXPIRES_IN < 28790 || LCA_REFRESH_EXPIRES_IN > 28800)); then
+    fail "the panel's remember-me refresh token is not cut at 8 hours by its client session (refresh_expires_in $LCA_REFRESH_EXPIRES_IN)"
+  fi
   # A person without a role of any API still gets all three audiences: they come from the hardcoded
   # mappers, not from audience-resolve (the reason members got 401 on SkyForms).
   lca_login "$AP_CLIENT" "$AP_REDIRECT" "$AP_SECRET" "$LCA_USER" "$LCA_PASSWORD" "$AP_PANEL_SCOPE"

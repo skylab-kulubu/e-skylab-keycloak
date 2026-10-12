@@ -1762,6 +1762,7 @@ CORE_ROLE_DEFINITIONS=(
   'ticket:manage|Her etkinliğin biletlerini görür ve atar (ADR-0059)'
   'ticket:validate|Her etkinlikte kapı girişi yapar (bilet doğrulama; ADR-0059)'
   'competitor:manage|Her yarışmacıyı görür ve yönetir (ADR-0059)'
+  'competition:manage|Her ekibin yarışmalarını ve yarışmacılarını yönetir; competitor:manage rolünün yeni adı, geçişte core ikisini eşdeğer okur (ADR-0068)'
   'media:manage|Medyayı listeler ve siler (ADR-0059)'
   'media:private:read|core uygulamasının özel medyasını açar (sertifika varlıkları; ADR-0059)'
   'certificate:manage|Her takımın sertifikalarını ve sertifika şablonlarını yönetir (ADR-0059)'
@@ -1770,6 +1771,15 @@ CORE_ROLE_DEFINITIONS=(
   'github:activity:read|Kulübün GitHub etkinliğini (özel depolar dahil) görür (ADR-0059)'
   'url:moderator|Her kısa linki ve form bağlantısını görür ve yönetir'
   'url:access|Kısa link oluşturur, kendi linklerini görür ve yönetir'
+)
+# new|old: a role that renames another one is seeded once where the old one is held, not to the
+# Privileged groups, so that the rename moves nobody's rights (core reads both names as one while
+# both exist; core-backend docs/authz-roles.md, ADR-0068). Where = every holder the old role has
+# at seeding time: groups and users (service accounts too) it is mapped to directly, composite
+# roles (realm and client) that contain it, the role scope of clients and client scopes that map
+# it. The old role stays; it is dropped in a later change, once core no longer reads it.
+CORE_ROLE_RENAMES=(
+  'competition:manage|competitor:manage'
 )
 
 # The Privileged groups that exist, one "path<TAB>id" per line. Only Keycloak's answer that the
@@ -1801,8 +1811,7 @@ core_privileged_groups() {
 
 reconcile_core_roles() {
   local core_uuid roles_csv definition name description created='' roles_file seeds
-  local unseeded=() role_name role_seed_value seed groups default path gid stamp granted held role_id paths
-  local role_ids body defaults
+  local unseeded=() role_name role_seed_value seed
   if ! core_uuid=$(optional_lookup client_id_by_client_id "$CORE_CLIENT_ID"); then
     return 2
   fi
@@ -1843,11 +1852,55 @@ reconcile_core_roles() {
     return 0
   fi
   if [[ -z $OPERATOR_KCADM_CONFIG ]]; then
-    warn "core roles not yet granted to the Privileged groups: ${unseeded[*]} (granting a role to a group needs user permissions the reconciler identity does not have); run this step alone with an operator session: KEYCLOAK_RECONCILE_ONLY=core-roles (runbook §19)"
+    local waiting=() carried=()
+    for name in "${unseeded[@]}"; do
+      if [[ -n $(core_role_rename_source "$name") ]]; then
+        carried+=("$name (from $(core_role_rename_source "$name"))")
+      else
+        waiting+=("$name")
+      fi
+    done
+    [[ ${#carried[@]} == 0 ]] \
+      || warn "core roles not yet carried over from their old names: ${carried[*]} (they go wherever the old role is held; granting needs user permissions the reconciler identity does not have); run this step alone with an operator session: KEYCLOAK_RECONCILE_ONLY=core-roles (runbook §19.1)"
+    [[ ${#waiting[@]} == 0 ]] && return 0
+    warn "core roles not yet granted to the Privileged groups: ${waiting[*]} (granting a role to a group needs user permissions the reconciler identity does not have); run this step alone with an operator session: KEYCLOAK_RECONCILE_ONLY=core-roles (runbook §19)"
     return 0
   fi
 
-  # Operator session: seed. Nothing is written unless every check passes.
+  # Operator session: seed. The Privileged roles first, so that a rename whose old role is seeded in
+  # the same run (a new realm) finds the old role's group mappings.
+  local privileged=() renamed=()
+  for name in "${unseeded[@]}"; do
+    if [[ -n $(core_role_rename_source "$name") ]]; then
+      renamed+=("$name")
+    else
+      privileged+=("$name")
+    fi
+  done
+  if [[ ${#privileged[@]} -gt 0 ]]; then
+    core_roles_seed_privileged "$core_uuid" "${privileged[@]}"
+  fi
+  for name in ${renamed[@]+"${renamed[@]}"}; do
+    core_role_seed_rename "$core_uuid" "$name" "$(core_role_rename_source "$name")"
+  done
+}
+
+# The old name of a renamed core role (CORE_ROLE_RENAMES), empty for any other role.
+core_role_rename_source() {
+  local rename
+  for rename in "${CORE_ROLE_RENAMES[@]}"; do
+    [[ ${rename%%|*} == "$1" ]] && printf '%s\n' "${rename#*|}"
+  done
+  return 0
+}
+
+# core_roles_seed_privileged CORE_UUID NAME...: grants each role to the Privileged groups once and
+# marks it (operator session). Nothing is written unless every check passes.
+core_roles_seed_privileged() {
+  local core_uuid=$1
+  shift
+  local names=("$@")
+  local name groups default path gid stamp granted held role_id paths role_ids body defaults
   if ! groups=$(core_privileged_groups); then
     return 1
   fi
@@ -1887,23 +1940,176 @@ reconcile_core_roles() {
     held=$(kcadm get "groups/$gid/role-mappings/clients/$core_uuid" -r "$TARGET_REALM" --fields name --format csv \
       --noquotes | tr -d '\r')
     body=''
-    for name in "${unseeded[@]}"; do
+    for name in "${names[@]}"; do
       grep -Fxq -- "$name" <<<"$held" && continue
       role_id=$(sed -n "s/^\([^,]*\),$name\$/\1/p" <<<"$role_ids")
       [[ -n $role_id ]] || { printf 'core role %s could not be read back\n' "$name" >&2; return 1; }
       body="$body,$(role_reference "$role_id" "$name")"
       granted_to[$name]="${granted_to[$name]:-}, $path"
     done
-    [[ -z $body ]] || kcadm_quiet create "groups/$gid/role-mappings/clients/$core_uuid" -r "$TARGET_REALM" \
-      -b "[${body#,}]"
+    if [[ -n $body ]]; then
+      kcadm_quiet create "groups/$gid/role-mappings/clients/$core_uuid" -r "$TARGET_REALM" \
+        -b "[${body#,}]" || return 1
+    fi
   done <<<"$groups"
   # The mark comes last: a run cut before it grants the same (idempotently) next time.
-  for name in "${unseeded[@]}"; do
+  for name in "${names[@]}"; do
     kcadm_quiet update "clients/$core_uuid/roles/$name" -r "$TARGET_REALM" \
-      -s "attributes.\"$CORE_ROLE_SEED_ATTRIBUTE\"=[\"$stamp $paths\"]"
+      -s "attributes.\"$CORE_ROLE_SEED_ATTRIBUTE\"=[\"$stamp $paths\"]" || return 1
     granted=${granted_to[$name]:-, none (every group already held it)}
     log "core role $name: seeded once to $paths (granted to: ${granted#, })"
   done
+}
+
+# core_rename_read WHAT ARGS...: a kcadm read of the rename seeding as CSV lines; a failure names
+# WHAT and stops the step before it writes anything (never taken for "no holder").
+core_rename_read() {
+  local what=$1 result
+  shift
+  if ! result=$(kcadm get "$@" -r "$TARGET_REALM" --format csv --noquotes); then
+    printf '%s could not be read in realm %s; nothing was granted\n' "$what" "$TARGET_REALM" >&2
+    return 1
+  fi
+  tr -d '\r' <<<"$result" | sed '/^$/d'
+}
+
+# The core roles a composite role contains, one name per line ($1: role id).
+core_rename_composites() {
+  core_rename_read "The composites of role $2" "roles-by-id/$1/composites/clients/$3" --fields name
+}
+
+# core_role_seed_rename CORE_UUID NEW OLD: grants NEW once to every holder of OLD that lacks it
+# (CORE_ROLE_RENAMES) and marks NEW (operator session). Every holder is read before anything is
+# written.
+core_role_seed_rename() {
+  local core_uuid=$1 name=$2 old=$3
+  local role_ids new_id old_id new_ref old_groups new_groups old_users new_users line id rest
+  local composite role_name realm_roles clients client_uuid client_id full_scope client_roles held scopes
+  local scope_id scope_name stamp mark kind target label count=0 granted=0
+  local groups_text composites_text role_scopes_text client_scopes_text roles_file old_seed
+  local plan=() group_paths=() composite_labels=() role_scope_labels=() client_scope_labels=()
+  role_ids=$(core_rename_read "The roles of client $CORE_CLIENT_ID" "clients/$core_uuid/roles" --fields id,name) || return 1
+  new_id=$(sed -n "s/^\([^,]*\),$name\$/\1/p" <<<"$role_ids")
+  old_id=$(sed -n "s/^\([^,]*\),$old\$/\1/p" <<<"$role_ids")
+  [[ -n $new_id ]] || { printf 'core role %s could not be read back\n' "$name" >&2; return 1; }
+  if [[ -z $old_id ]]; then
+    warn "core role $old (the old name of $name) does not exist in realm $TARGET_REALM; nothing to carry over, $name stays unseeded"
+    return 0
+  fi
+  # The old role must be seeded first (in this run or before): marking the new one while the old one
+  # is still to be granted (a realm without Privileged groups yet) would leave the new one out of the
+  # places the old one gets later.
+  roles_file=$(mktemp "$WORK_DIR/core-roles.XXXXXX")
+  kcadm_json "clients/$core_uuid/roles" -r "$TARGET_REALM" -q briefRepresentation=false >"$roles_file" || {
+    printf 'The roles of client %s could not be read in realm %s; nothing was granted\n' "$CORE_CLIENT_ID" "$TARGET_REALM" >&2
+    return 1
+  }
+  old_seed=$(json_tool role-attribute "$CORE_ROLE_SEED_ATTRIBUTE" <"$roles_file" | sed -n "s/^$old"$'\t'"//p") || return 1
+  if [[ -z $old_seed ]]; then
+    warn "core role $name not carried over: its old name $old is not seeded yet (no Privileged group?); $name stays unseeded until $old is"
+    return 0
+  fi
+  new_ref="[$(role_reference "$new_id" "$name")]"
+
+  # Groups and users (service accounts too) the old role is mapped to directly.
+  old_groups=$(core_rename_read "The groups of core role $old" "clients/$core_uuid/roles/$old/groups" \
+    -q first=0 -q max=100000 --fields id,path) || return 1
+  new_groups=$(core_rename_read "The groups of core role $name" "clients/$core_uuid/roles/$name/groups" \
+    -q first=0 -q max=100000 --fields id,path) || return 1
+  while IFS=, read -r id rest; do
+    [[ -n $id ]] || continue
+    group_paths+=("$rest")
+    grep -Eq "^$id," <<<"$new_groups" || plan+=("group"$'\t'"$id"$'\t'"$rest")
+  done <<<"$old_groups"
+  old_users=$(core_rename_read "The users of core role $old" "clients/$core_uuid/roles/$old/users" \
+    -q first=0 -q max=100000 --fields id) || return 1
+  new_users=$(core_rename_read "The users of core role $name" "clients/$core_uuid/roles/$name/users" \
+    -q first=0 -q max=100000 --fields id) || return 1
+  while IFS= read -r id; do
+    [[ -n $id ]] || continue
+    count=$((count + 1))
+    grep -Fxq -- "$id" <<<"$new_users" || plan+=("user"$'\t'"$id"$'\t'"user")
+  done <<<"$old_users"
+
+  # Composite roles of the realm and of every client that contain the old role.
+  realm_roles=$(core_rename_read 'The realm roles' roles -q first=0 -q max=100000 --fields id,name,composite) || return 1
+  while IFS=, read -r id rest; do
+    composite=${rest##*,}
+    role_name=${rest%,*}
+    [[ -n $id && $composite == true ]] || continue
+    held=$(core_rename_composites "$id" "$role_name" "$core_uuid") || return 1
+    grep -Fxq -- "$old" <<<"$held" || continue
+    composite_labels+=("$role_name")
+    grep -Fxq -- "$name" <<<"$held" || plan+=("composite"$'\t'"$id"$'\t'"$role_name")
+  done <<<"$realm_roles"
+  clients=$(core_rename_read 'The clients' clients --fields id,clientId,fullScopeAllowed) || return 1
+  while IFS=, read -r client_uuid rest; do
+    full_scope=${rest##*,}
+    client_id=${rest%,*}
+    [[ -n $client_uuid ]] || continue
+    client_roles=$(core_rename_read "The roles of client $client_id" "clients/$client_uuid/roles" \
+      -q first=0 -q max=100000 --fields id,name,composite) || return 1
+    while IFS=, read -r id rest; do
+      composite=${rest##*,}
+      role_name=${rest%,*}
+      [[ -n $id && $composite == true && $id != "$new_id" && $id != "$old_id" ]] || continue
+      held=$(core_rename_composites "$id" "$client_id/$role_name" "$core_uuid") || return 1
+      grep -Fxq -- "$old" <<<"$held" || continue
+      composite_labels+=("$client_id/$role_name")
+      grep -Fxq -- "$name" <<<"$held" || plan+=("composite"$'\t'"$id"$'\t'"$client_id/$role_name")
+    done <<<"$client_roles"
+    # A client with full scope gets every role anyway; only a narrowed one maps roles one by one.
+    [[ $full_scope == false ]] || continue
+    held=$(core_rename_read "The role scope of client $client_id" \
+      "clients/$client_uuid/scope-mappings/clients/$core_uuid" --fields name) || return 1
+    grep -Fxq -- "$old" <<<"$held" || continue
+    role_scope_labels+=("$client_id")
+    grep -Fxq -- "$name" <<<"$held" || plan+=("role-scope"$'\t'"$client_uuid"$'\t'"$client_id")
+  done <<<"$clients"
+  scopes=$(core_rename_read 'The client scopes' client-scopes --fields id,name) || return 1
+  while IFS=, read -r scope_id scope_name; do
+    [[ -n $scope_id ]] || continue
+    held=$(core_rename_read "The role scope of client scope $scope_name" \
+      "client-scopes/$scope_id/scope-mappings/clients/$core_uuid" --fields name) || return 1
+    grep -Fxq -- "$old" <<<"$held" || continue
+    client_scope_labels+=("$scope_name")
+    grep -Fxq -- "$name" <<<"$held" || plan+=("client-scope"$'\t'"$scope_id"$'\t'"$scope_name")
+  done <<<"$scopes"
+
+  # Every read passed: write.
+  for line in ${plan[@]+"${plan[@]}"}; do
+    IFS=$'\t' read -r kind target label <<<"$line"
+    case $kind in
+      group) kcadm_quiet create "groups/$target/role-mappings/clients/$core_uuid" -r "$TARGET_REALM" -b "$new_ref" || return 1 ;;
+      user) kcadm_quiet create "users/$target/role-mappings/clients/$core_uuid" -r "$TARGET_REALM" -b "$new_ref" || return 1 ;;
+      composite) kcadm_quiet create "roles-by-id/$target/composites" -r "$TARGET_REALM" -b "$new_ref" || return 1 ;;
+      role-scope) kcadm_quiet create "clients/$target/scope-mappings/clients/$core_uuid" -r "$TARGET_REALM" -b "$new_ref" || return 1 ;;
+      client-scope) kcadm_quiet create "client-scopes/$target/scope-mappings/clients/$core_uuid" -r "$TARGET_REALM" -b "$new_ref" || return 1 ;;
+    esac
+    granted=$((granted + 1))
+  done
+  # The mark comes last, as for the Privileged roles. It holds counts only: a role attribute value is
+  # at most 255 characters in Keycloak (VARCHAR(255)), and the names of many groups would not fit;
+  # the names go to the log. User names stay out of both.
+  mark="where $old is held: groups ${#group_paths[@]}; users $count; composite roles ${#composite_labels[@]}; role scopes ${#role_scope_labels[@]}; client scopes ${#client_scope_labels[@]}"
+  groups_text=$(core_rename_list ${group_paths[@]+"${group_paths[@]}"})
+  composites_text=$(core_rename_list ${composite_labels[@]+"${composite_labels[@]}"})
+  role_scopes_text=$(core_rename_list ${role_scope_labels[@]+"${role_scope_labels[@]}"})
+  client_scopes_text=$(core_rename_list ${client_scope_labels[@]+"${client_scope_labels[@]}"})
+  stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  kcadm_quiet update "clients/$core_uuid/roles/$name" -r "$TARGET_REALM" \
+    -s "attributes.\"$CORE_ROLE_SEED_ATTRIBUTE\"=[\"$stamp $mark\"]" || return 1
+  log "core role $name: seeded once where $old is held: groups $groups_text; users $count; composite roles $composites_text; role scopes $role_scopes_text; client scopes $client_scopes_text (granted to $granted of them; the rest already held it)"
+}
+
+# Comma separated arguments, or "none".
+core_rename_list() {
+  if [[ $# == 0 ]]; then
+    printf 'none'
+  else
+    local IFS=,
+    printf '%s' "$*"
+  fi
 }
 
 # core's service roles (runbook §20): the client roles of core that a product's service account

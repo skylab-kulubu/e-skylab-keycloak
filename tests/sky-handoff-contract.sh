@@ -285,7 +285,7 @@ start_login() {
   LOGIN_URL="$BASE_URL/realms/$REALM/protocol/openid-connect/auth?client_id=account-center&request_uri=$(jq -r '.request_uri | @uri' <<<"$par")"
 }
 
-# finish_login <label> <callback location> -> ID_PAYLOAD, ACCESS_PAYLOAD
+# finish_login <label> <callback location> -> ID_PAYLOAD, ACCESS_PAYLOAD, REFRESH_EXPIRES_IN
 finish_login() {
   local label=$1 location=$2 code tokens
   [[ $location == "$CALLBACK"\?* ]] || fail "login $label never reached the callback"
@@ -302,6 +302,7 @@ finish_login() {
     "$TOKEN_URL")
   ID_PAYLOAD=$(jwt_payload "$(jq -r .id_token <<<"$tokens")")
   ACCESS_PAYLOAD=$(jwt_payload "$(jq -r .access_token <<<"$tokens")")
+  REFRESH_EXPIRES_IN=$(jq -r .refresh_expires_in <<<"$tokens")
 }
 
 # password_login <label> <remember me: on|off> -> ID_PAYLOAD, ACCESS_PAYLOAD: an ordinary
@@ -358,6 +359,28 @@ realm_max_lifespan() {
   jq -r --arg remember "$1" '
     (if .ssoSessionMaxLifespan > 0 then .ssoSessionMaxLifespan else 36000 end) as $max
     | if $remember == "on" then ([$max, (.ssoSessionMaxLifespanRememberMe // 0)] | max) else $max end' <<<"$realm"
+}
+
+# realm_idle_timeout <remember me: on|off>: the SSO session idle time Keycloak applies (its own
+# default 30 minutes; a remember-me session takes the longer remember-me idle time)
+realm_idle_timeout() {
+  local realm
+  realm=$(kcadm get "realms/$REALM" -c)
+  jq -r --arg remember "$1" '
+    (if .ssoSessionIdleTimeout > 0 then .ssoSessionIdleTimeout else 1800 end) as $idle
+    | if $remember == "on" then ([$idle, (.ssoSessionIdleTimeoutRememberMe // 0)] | max) else $idle end' <<<"$realm"
+}
+
+# expect_refresh_lifetime <remember me: on|off> <message>: the refresh token of a fresh login lives
+# for the SSO session's idle time (at most its max): no client session setting cuts it shorter.
+expect_refresh_lifetime() {
+  local idle max expected
+  idle=$(realm_idle_timeout "$1")
+  max=$(realm_max_lifespan "$1")
+  expected=$((idle < max ? idle : max))
+  if [[ ! $REFRESH_EXPIRES_IN =~ ^[0-9]+$ ]] || ((REFRESH_EXPIRES_IN > expected || REFRESH_EXPIRES_IN < expected - 10)); then
+    fail "$2 (refresh_expires_in $REFRESH_EXPIRES_IN, SSO session idle $expected)"
+  fi
 }
 
 # expect_session_lifetime <payload> <remember me: on|off> <message>: sky_session_started is the
@@ -909,12 +932,14 @@ done <"$SECRETS_FILE"
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='web handoff claims on ordinary logins'
-# The realm keeps remember-me on in production (a 30-day SSO max next to the 8-hour one); the
-# fixture realm switches it on for this stage only.
+# The realm keeps remember-me on (config/account-center-realm.json: a 30-day SSO max next to the
+# 8-hour one); this stage switches it on for a realm the reconciler has not made so, and puts it back.
 realm_session_before=$(kcadm get "realms/$REALM" -c | jq -c '{rememberMe, ssoSessionMaxLifespanRememberMe}')
 kcadm update "realms/$REALM" -s rememberMe=true -s ssoSessionMaxLifespanRememberMe=2592000 >/dev/null
 for remember in off on; do
   password_login "ordinary-remember-$remember" "$remember"
+  expect_refresh_lifetime "$remember" \
+    "an ordinary login (remember me $remember) must keep its refresh token for the SSO session idle time"
   for payload in "$ID_PAYLOAD" "$ACCESS_PAYLOAD"; do
     json_assert "$payload" 'has("sky_embed") | not' "an ordinary login (remember me $remember) must not carry sky_embed"
     json_assert "$payload" '(.sky_session_started - .auth_time) as $gap | $gap >= -2 and $gap <= 2' \

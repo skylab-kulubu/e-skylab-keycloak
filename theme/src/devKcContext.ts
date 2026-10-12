@@ -83,6 +83,8 @@ const { getKcContextMock } = createGetKcContextMock({
   } satisfies KcContextExtension,
   kcContextExtensionPerPage: {
     "passkey-offer.ftl": {},
+    "sky-personal-email-offer.ftl": { skyOfferStage: "address", skyOfferCodeMinutes: "10" },
+    "sky-stay-signed-in.ftl": { skyStaySignedInIdleDays: "7", skyStaySignedInMaxDays: "30" },
     "sky-handoff-failed.ftl": { skyHandoffReason: "expired" }
   } satisfies KcContextExtensionPerPage,
   overrides: {
@@ -424,5 +426,28 @@ export function getDevKcContext(): KcContext {
     kcContext.skyHandoffReason = reason;
   }
 
+  // `?page=sky-personal-email-offer.ftl&offer=code` previews the code stage after a wrong code;
+  // `&offer=taken` the address stage with an address another account uses.
+  const offer = searchParams.get("offer");
+  if (kcContext.pageId === "sky-personal-email-offer.ftl" && offer !== null) {
+    Object.assign(kcContext, getPersonalEmailOfferPreview(offer));
+  }
+
   return kcContext;
+}
+
+/** The SPI's page attributes for one preview of the personal e-mail offer (see getDevKcContext). */
+export function getPersonalEmailOfferPreview(offer: string): Record<string, string> {
+  if (offer === "code") {
+    return {
+      skyOfferStage: "code",
+      skyOfferAddress: "ada.lovelace@example.org",
+      skyOfferError: "wrong_code",
+      skyOfferAttemptsLeft: "4"
+    };
+  }
+  if (offer === "taken") {
+    return { skyOfferStage: "address", skyOfferAddress: "ada.lovelace@example.org", skyOfferError: "email_taken" };
+  }
+  return { skyOfferStage: "address" };
 }

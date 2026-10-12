@@ -55,6 +55,25 @@ Only the two original brand image assets were carried forward.
   no file shows its name. The `sl-*` class contract handed out by `KcPage.tsx` is
   styled with the login tokens; `login-page-expired.ftl` is the only custom
   page body because Keycloak's markup cannot be phrased in Turkish.
+- `sky-personal-email-offer.ftl` is the SPI's one-time Personal e-mail offer at
+  the end of a first YTÜ login (required action `sky-personal-email-offer`,
+  eskylab-login-ux 21). The SPI decides everything and hands over
+  `skyOfferStage` (`address` or `code`), `skyOfferAddress`, `skyOfferError` (a code
+  from `src/login/offerErrors.ts`; anything else shows no error),
+  `skyOfferAttemptsLeft` and `skyOfferCodeMinutes`; `PersonalEmailOffer.tsx` only
+  words them. One form posts `sky-offer-action` = `send` (with `address`),
+  `verify` (with `code`), `change` or `skip`; the field ids `sky-offer-address`,
+  `sky-offer-code` and the error's `data-sky-offer-error` match the SPI's own
+  fallback template, which the harness drives.
+- `sky-stay-signed-in.ftl` is the SPI's "Bu cihazda oturumum açık kalsın mı?" at
+  the end of every YTÜ login (required action `sky-stay-signed-in`, Microsoft's
+  "Stay signed in?"). The SPI hands over the realm's remember-me idle time and
+  lifespan in whole days (`skyStaySignedInIdleDays`, `skyStaySignedInMaxDays`);
+  `StaySignedIn.tsx` words them and warns against "Evet" on a shared computer. One
+  form posts `sky-stay-signed-in` = `yes` ("Evet, açık kalsın", a remember-me
+  session) or `no` ("Hayır", an ordinary one); the form id `kc-stay-signed-in-form`
+  matches the SPI's own fallback template, which the harness drives. The password
+  form's "Beni hatırla" box is a separate, unchanged control.
 - `sky-handoff-failed.ftl` is the SPI's Web handoff failure page
   (`/realms/{realm}/sky-handoff/v1/failed?reason=`, rendered through Keycloak's
   login forms with the reason code as `skyHandoffReason`). `HandoffFailed.tsx`
@@ -95,7 +114,8 @@ Only the two original brand image assets were carried forward.
 - `src/login/pageIds.ts` lists every themed page id; `src/devKcContext.ts`
   serves realistic Turkish mock data for each of them at `?page=<id>.ftl`
   (`&lang=en` switches locale; `&reason=<code>` picks the Web handoff failure
-  reason of `sky-handoff-failed.ftl`; `&state=<name>` previews a server-side
+  reason of `sky-handoff-failed.ftl`; `&offer=code|taken` previews the code stage
+  or a taken address of `sky-personal-email-offer.ftl`; `&state=<name>` previews a server-side
   state from `previewStates`: `login.ftl` `reset-email-sent`,
   `invalid-credentials`, `idp-error`; `login-reset-password.ftl`
   `missing-username`).

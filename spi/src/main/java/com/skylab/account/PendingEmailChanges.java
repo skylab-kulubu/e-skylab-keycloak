@@ -15,7 +15,7 @@ import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
- * The personal e-mail change a person is waiting to prove, one per person, kept in Keycloak's
+ * The personal e-mail change a person is waiting to prove, one per owner, kept in Keycloak's
  * single-use object store so it is shared across cluster nodes and expires on its own.
  *
  * <p>The proof is a six-digit code mailed to the new address and typed back into the same
@@ -32,6 +32,11 @@ import java.util.regex.Pattern;
  * to exactly one caller in Infinispan, and a wrong attempt puts it back with one try fewer and
  * only the time it had left. Two racing attempts therefore cannot both spend the same try, and
  * the right code works at most once.
+ *
+ * <p>Two places prove a Personal e-mail with this store, each in its own key space: Account
+ * center keys the change by the person ({@link #PendingEmailChanges(SingleUseObjectProvider)}),
+ * and the offer at the end of a first YTÜ login keys it by an opaque handle that only its own
+ * sign-in session holds ({@link #forLoginSessions}), so that code works only in that browser tab.
  */
 final class PendingEmailChanges {
 
@@ -41,6 +46,7 @@ final class PendingEmailChanges {
 
     private static final int SALT_BYTES = 16;
     private static final String KEY_PREFIX = "sky-account:email-change:";
+    private static final String LOGIN_SESSION_KEY_PREFIX = "sky-account:login-email-offer:";
     private static final String ADDRESS_NOTE = "address";
     private static final String MAKE_PRIMARY_NOTE = "makePrimary";
     private static final String SALT_NOTE = "salt";
@@ -83,16 +89,32 @@ final class PendingEmailChanges {
     }
 
     private final SingleUseObjectProvider store;
+    private final String keyPrefix;
 
+    /** Account center's changes, one per person (the owner is the user id). */
     PendingEmailChanges(SingleUseObjectProvider store) {
+        this(store, KEY_PREFIX);
+    }
+
+    private PendingEmailChanges(SingleUseObjectProvider store, String keyPrefix) {
         this.store = store;
+        this.keyPrefix = keyPrefix;
+    }
+
+    /**
+     * Changes asked for inside a sign-in session, one per handle: the owner is a random handle the
+     * session keeps in an authentication note, never the user id, so a code from one sign-in
+     * session cannot be confirmed from another one or from Account center.
+     */
+    static PendingEmailChanges forLoginSessions(SingleUseObjectProvider store) {
+        return new PendingEmailChanges(store, LOGIN_SESSION_KEY_PREFIX);
     }
 
     /** Stores the change for this person, replacing any earlier one, and returns its code, once. */
     String issue(String userId, String address, boolean makePrimary) {
         String code = String.format("%06d", RANDOM.nextInt(1_000_000));
         String salt = Base64Url.encode(SecretGenerator.getInstance().randomBytes(SALT_BYTES));
-        store.put(key(userId), TTL_SECONDS, Map.of(
+        store.put(keyOf(userId), TTL_SECONDS, Map.of(
                 ADDRESS_NOTE, address,
                 MAKE_PRIMARY_NOTE, Boolean.toString(makePrimary),
                 SALT_NOTE, salt,
@@ -114,7 +136,7 @@ final class PendingEmailChanges {
         if (userId == null) {
             return null;
         }
-        Map<String, String> notes = store.get(key(userId));
+        Map<String, String> notes = store.get(keyOf(userId));
         if (notes == null) {
             return null;
         }
@@ -130,7 +152,7 @@ final class PendingEmailChanges {
 
     /** Drops a change whose mail could not be sent, so its code never works. */
     void discard(String userId) {
-        store.remove(key(userId));
+        store.remove(keyOf(userId));
     }
 
     /**
@@ -141,7 +163,7 @@ final class PendingEmailChanges {
         if (userId == null || code == null || !CODE.matcher(code).matches()) {
             return Outcome.none();
         }
-        String key = key(userId);
+        String key = keyOf(userId);
         Map<String, String> notes = store.remove(key);
         if (notes == null) {
             return Outcome.none();
@@ -174,8 +196,14 @@ final class PendingEmailChanges {
         return Outcome.wrongCode(left);
     }
 
+    /** The store key of Account center's change for a person. */
     static String key(String userId) {
         return KEY_PREFIX + userId;
+    }
+
+    /** The store key of this store's change for an owner. */
+    String keyOf(String owner) {
+        return keyPrefix + owner;
     }
 
     private static Integer integer(String value) {

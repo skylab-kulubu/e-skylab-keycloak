@@ -33,6 +33,18 @@ public final class RateLimiter {
      * budget than the other mutations: three verification mails per person per hour.
      */
     static final Limit EMAIL_CHANGE = new Limit("email-change", 3, 60 * 60);
+    /*
+     * The Personal e-mail offer at the end of a first YTÜ login (PersonalEmailOffer) mails a code
+     * to an address nobody proved yet as well, from a sign-in session instead of Account center, so
+     * sending is limited per sign-in session, per address, per IP class and overall (ADR-0063's
+     * Login code rules). Reaching the page at all takes a YTÜ Microsoft identity that never signed
+     * in before, so the IP class and overall budgets leave room for a club fair on one campus network.
+     * The windows are clock hours, so a session that spans the full hour may send 3 more.
+     */
+    static final Limit OFFER_SESSION = new Limit("offer-session", 3, 60 * 60);
+    static final Limit OFFER_ADDRESS = new Limit("offer-address", 3, 60 * 60);
+    static final Limit OFFER_IP_CLASS = new Limit("offer-ip-class", 100, 60 * 60);
+    static final Limit OFFER_ALL = new Limit("offer-all", 200, 60 * 60);
 
     private static final String KEY_PREFIX = "sky-account:rate:";
 

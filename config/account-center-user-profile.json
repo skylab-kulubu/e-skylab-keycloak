@@ -56,6 +56,16 @@
           "error-message": "ISO-8601 UTC zaman damgası olmalıdır (örnek: 2026-01-31T12:00:00Z)"
         }
       }
+    },
+    {
+      "name": "personalEmailOfferSkippedAt",
+      "displayName": "Kişisel e-posta önerisinin geçildiği zaman",
+      "validations": {
+        "pattern": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$",
+          "error-message": "ISO-8601 UTC zaman damgası olmalıdır (örnek: 2026-01-31T12:00:00Z)"
+        }
+      }
     }
   ]
 }

@@ -128,6 +128,10 @@ source "$SCRIPT_DIR/group-overage-mapper.sh"
 # core's per-resource client roles and their one-time seeding (ADR-0059); stages called below.
 # shellcheck source=core-roles.sh
 source "$SCRIPT_DIR/core-roles.sh"
+# SkyMail's Privileged role skymail:system-mails:read, seeded by the same operator step; stages
+# called below.
+# shellcheck source=skymail-roles.sh
+source "$SCRIPT_DIR/skymail-roles.sh"
 # core's service roles (media:attach, ticket:forms, url:forms, users:read) on the forms service
 # account; stages called below.
 # shellcheck source=core-service-roles.sh
@@ -799,6 +803,7 @@ v2_state_snapshot() {
     lca_state_snapshot
     ap_state_snapshot
     cr_state_snapshot
+    sr_state_snapshot
     csr_state_snapshot
     kcadm get authentication/flows -r "$V2_REALM" -c
   } | jq -S -c '.'
@@ -1442,6 +1447,7 @@ stage_v2_after_first_reconciliation
 stage_login_audiences_after_first_reconciliation
 stage_admin_panel_after_first_reconciliation
 stage_core_roles_after_first_reconciliation
+stage_skymail_roles_after_first_reconciliation
 stage_core_service_roles_after_first_reconciliation
 stage_event_retention_after_first_reconciliation
 
@@ -1818,6 +1824,8 @@ if group_runs roles; then
   stage_admin_panel_tokens
   # The operator seeds core's resource roles; the no-op reconciliation after it must leave them.
   stage_core_roles_seeded_by_operator
+  # The same operator runs seeded SkyMail's Privileged role.
+  stage_skymail_roles_seeded_by_operator
   # The operator grants core's service roles to the forms service account (forms exists since
   # core-erasure-client.sh); the no-op reconciliation after it must only verify.
   stage_core_service_roles_granted_by_operator

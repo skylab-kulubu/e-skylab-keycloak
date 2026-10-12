@@ -40,7 +40,7 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.18.0`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.19.0`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.1.1`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
@@ -338,6 +338,28 @@ yazar (User Profile'da, yalnız yönetici düzenler). Olaylar `CUSTOM_REQUIRED_A
 sayfası `sky-personal-email-offer.ftl` (`theme/src/login/PersonalEmailOffer.tsx`); temasız realm
 için SPI'nın kendi yedek şablonu vardır. Uzlaştırıcı: `KEYCLOAK_PERSONAL_EMAIL_OFFER=on` eylemi
 kaydeder ve açar, `off` kapatır (geri dönüş), varsayılan `keep` dokunmaz. Ayrıntı: runbook §23.
+
+SPI 1.19.0'dan sonra her YTÜ girişinin sonunda "Bu cihazda oturumum açık kalsın mı?" sorusu çıkar
+(Microsoft'un federasyonlu girişten sonraki "Stay signed in?" sorusunun karşılığı, Yusuf'un
+2026-10-12 kararı). [Evet, açık kalsın] oturumu beni-hatırla oturumu yapar (realm'in beni-hatırla
+süreleri, kalıcı çerez); [Hayır] olağan oturum bırakır, tarayıcı kapanınca biter. Sayfa ortak
+bilgisayarda Hayır'ı seçmeyi söyler ve beni-hatırla sürelerini realm'den gün olarak yazar. YTÜ
+düğmesi IdP'ye giden bir bağlantıdır: parola formundaki "Beni hatırla" kutusu oraya taşınmaz, bağlı
+bir hesabın sonraki YTÜ girişlerinde de realm'e bağlı hiçbir akış çalışmaz. Her girişte çalışan tek
+şey realm'in gerekli eylemleridir; soru bu yüzden SPI'daki `sky-stay-signed-in` gerekli eylemidir
+(`com.skylab.authenticator.SkyStaySignedIn`). `evaluateTriggers` onu giriş OBS üzerinden geldiyse
+kullanıcıya değil giriş oturumuna ekler. Cevap Keycloak'ın kendi `REMEMBER_ME` kimlik doğrulama
+notudur; Keycloak kullanıcı oturumunu gerekli eylemlerden sonra bu notla açar
+(`AuthenticationProcessor.attachSession`), parola formundaki kutu da aynı notu yazar. Realm'de
+beni-hatırla kapalıyken, IdP'ye `prompt=none` ile iletilen pasif girişte (gerekli eylem orada
+`interaction_required` olur), `kc_action`'da ve canlı bir oturumun içindeki yeniden kimlik
+doğrulamada (`prompt=login`, `max_age`: Keycloak o oturumu olduğu gibi tutar) sorulmaz. Aynı girişte
+bir kez sorulur. Olay `CUSTOM_REQUIRED_ACTION`, ayrıntı `sky_stay_signed_in` = `yes` ya da `no`.
+Parola ve geçiş anahtarı girişindeki "Beni hatırla" kutusu değişmedi. Tema sayfası
+`sky-stay-signed-in.ftl` (`theme/src/login/StaySignedIn.tsx`); temasız realm için SPI'nın yedek
+şablonu vardır. Uzlaştırıcı: `KEYCLOAK_STAY_SIGNED_IN=on` eylemi kaydeder, açar ve realm'in bütün
+gerekli eylemlerinden sonraya koyar (kişisel e-posta önerisinden sonra); `off` kapatır (geri dönüş);
+varsayılan `keep` dokunmaz, sıra bozulmuşsa uyarır. Ayrıntı: runbook §24.
 
 Hesap silmede (ADR-0051) core, SkyMail, CMS ve Forms'a ayrı bir gizli service
 account istemcisinden, `core-erasure`'dan aldığı token'larla gider. Operatör

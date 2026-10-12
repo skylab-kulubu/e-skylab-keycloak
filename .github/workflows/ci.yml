@@ -126,7 +126,9 @@ jobs:
   # from spi/ in the Dockerfile's Maven image, a mock YTÜ tenant behind OBS and real logins; needs
   # no build of this repository's image. Then the one-time Personal e-mail offer at its end
   # (ticket 21, required action sky-personal-email-offer, KEYCLOAK_PERSONAL_EMAIL_OFFER), with
-  # codes read from the integration harness's pinned Mailpit image.
+  # codes read from the integration harness's pinned Mailpit image, and the "Bu cihazda oturumum açık
+  # kalsın mı?" question after every YTÜ login (required action sky-stay-signed-in,
+  # KEYCLOAK_STAY_SIGNED_IN).
   ytu-first-login:
     runs-on: ubuntu-latest
     timeout-minutes: 30

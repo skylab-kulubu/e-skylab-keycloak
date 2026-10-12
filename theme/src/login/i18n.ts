@@ -71,6 +71,14 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     "personalEmailOfferError.wrong_code": "Kod yanlış. {0} deneme hakkın kaldı.",
     "personalEmailOfferError.code_expired": "Kodun süresi doldu ya da kod kullanıldı. Yeni bir kod iste.",
     "personalEmailOfferError.too_many_tries": "Çok fazla yanlış deneme. Yeni bir kod iste.",
+    // "Bu cihazda oturumum açık kalsın mı?" after every YTÜ login (SPI sky-stay-signed-in)
+    staySignedInTitle: "Bu cihazda oturumum açık kalsın mı?",
+    staySignedInDescription:
+      "Evet dersen bu tarayıcıda {0} güne kadar yeniden giriş yapman gerekmez; {1} gün hiç kullanmazsan oturumun kapanır.",
+    staySignedInSharedDevice:
+      "Ortak ya da başkasının bilgisayarındaysan (laboratuvar, kütüphane) Hayır'ı seç. Hayır dersen oturumun tarayıcıyı kapattığında biter.",
+    staySignedInYes: "Evet, açık kalsın",
+    staySignedInNo: "Hayır",
 
     // Web handoff failure page (SkyApp WebView, sky-handoff v1/failed): one sentence per reason
     "skyHandoffFailed.expired": "Bağlantının süresi doldu.",
@@ -373,6 +381,13 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     "personalEmailOfferError.wrong_code": "Wrong code. {0} tries left.",
     "personalEmailOfferError.code_expired": "The code has expired or was already used. Request a new code.",
     "personalEmailOfferError.too_many_tries": "Too many wrong tries. Request a new code.",
+    staySignedInTitle: "Stay signed in on this device?",
+    staySignedInDescription:
+      "If you say yes, you will not have to sign in again in this browser for up to {0} days; your session ends if you do not use it for {1} days.",
+    staySignedInSharedDevice:
+      "On a shared or someone else's computer (a lab, a library), choose No. With No, your session ends when you close the browser.",
+    staySignedInYes: "Yes, stay signed in",
+    staySignedInNo: "No",
 
     // Web handoff failure page (SkyApp WebView, sky-handoff v1/failed): one sentence per reason
     "skyHandoffFailed.expired": "This link has expired.",

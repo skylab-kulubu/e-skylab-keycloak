@@ -65,6 +65,15 @@ Only the two original brand image assets were carried forward.
   `verify` (with `code`), `change` or `skip`; the field ids `sky-offer-address`,
   `sky-offer-code` and the error's `data-sky-offer-error` match the SPI's own
   fallback template, which the harness drives.
+- `sky-stay-signed-in.ftl` is the SPI's "Bu cihazda oturumum açık kalsın mı?" at
+  the end of every YTÜ login (required action `sky-stay-signed-in`, Microsoft's
+  "Stay signed in?"). The SPI hands over the realm's remember-me idle time and
+  lifespan in whole days (`skyStaySignedInIdleDays`, `skyStaySignedInMaxDays`);
+  `StaySignedIn.tsx` words them and warns against "Evet" on a shared computer. One
+  form posts `sky-stay-signed-in` = `yes` ("Evet, açık kalsın", a remember-me
+  session) or `no` ("Hayır", an ordinary one); the form id `kc-stay-signed-in-form`
+  matches the SPI's own fallback template, which the harness drives. The password
+  form's "Beni hatırla" box is a separate, unchanged control.
 - `sky-handoff-failed.ftl` is the SPI's Web handoff failure page
   (`/realms/{realm}/sky-handoff/v1/failed?reason=`, rendered through Keycloak's
   login forms with the reason code as `skyHandoffReason`). `HandoffFailed.tsx`

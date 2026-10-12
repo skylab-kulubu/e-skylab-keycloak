@@ -1550,7 +1550,10 @@ unexpected_mapper_count=$(kcadm get \
   || fail "failed reconciliation mutated mapper state after its read failed"
 
 # The session drift is production's hand-made state before the session settings entered
-# config/account-center-realm.json: client sessions cut at 30 minutes idle and 10 hours, remember-me off.
+# config/account-center-realm.json: client sessions cut at 30 minutes idle, remember-me off.
+# Production's 10-hour client max (36000) cannot be injected: Keycloak refuses a client session
+# max above the realm SSO max ("Client session max lifespan cannot exceed realm SSO session max
+# lifespan."), so the drifted client max stays under the drifted SSO max.
 kcadm update realms/e-skylab-test \
   -s ssoSessionIdleTimeout=1800 \
   -s ssoSessionMaxLifespan=123 \
@@ -1558,7 +1561,7 @@ kcadm update realms/e-skylab-test \
   -s ssoSessionIdleTimeoutRememberMe=0 \
   -s ssoSessionMaxLifespanRememberMe=0 \
   -s clientSessionIdleTimeout=1800 \
-  -s clientSessionMaxLifespan=36000 \
+  -s clientSessionMaxLifespan=120 \
   -s webAuthnPolicyPasswordlessPasskeysEnabled=false \
   -s webAuthnPolicyPasswordlessMediation=none >/dev/null
 kcadm update authentication/required-actions/UPDATE_PASSWORD \

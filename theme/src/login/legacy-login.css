@@ -1029,6 +1029,27 @@ textarea.sl-legacy-input {
   font-size: 0.875rem;
 }
 
+.sl-stay-signed-in__warning {
+  margin: 0 0 1.25rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid rgba(224, 200, 229, 0.3);
+  border-radius: var(--sl-legacy-radius);
+  color: var(--sl-legacy-label);
+  background: rgba(224, 200, 229, 0.1);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+.sl-stay-signed-in__actions {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.sl-stay-signed-in__no {
+  min-height: 3rem;
+  font-size: 0.875rem;
+}
+
 /* 4. DefaultPage class contract ------------------------------------------- */
 
 .sl-legacy-content {

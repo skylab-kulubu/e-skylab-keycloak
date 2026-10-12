@@ -2404,3 +2404,128 @@ Hesap Merkezi tarafı `tests/sky-account-contract.sh`'ta: YTÜ alt alan adı `40
 (`field: "address"`), büyük harfle saklanmış başka `personalEmail` `409 email_taken`.
 Tema sayfası: `PersonalEmailOffer.test.tsx`, `Template.test.tsx` ve görsel temeller
 (`sky-personal-email-offer-{desktop,mobile}`, kod aşaması `sky-personal-email-offer-code-*`).
+
+## 24. YTÜ girişinden sonra "Bu cihazda oturumum açık kalsın mı?"
+
+Yusuf'un kararı (2026-10-12, Microsoft'un federasyonlu girişten sonraki "Stay signed in?" sorusu):
+kullanıcıların çoğu yalnız YTÜ (OBS) ile girer ve parola formundaki "Beni hatırla" kutusu YTÜ
+düğmesine taşınmaz, bu yüzden bugün bütün YTÜ oturumları olağan oturumdur. Her YTÜ girişinin
+sonunda bir soru çıkar: "Bu cihazda oturumum açık kalsın mı?" [Evet, açık kalsın] / [Hayır]. Evet
+oturumu beni-hatırla oturumu yapar (realm'in beni-hatırla süreleri: 7 gün hareketsizlik, en çok 30
+gün; kalıcı çerez), Hayır olağan oturum bırakır (2 saat hareketsizlik, en çok 8 saat; tarayıcı
+kapanınca biten çerez). Sayfa ortak ya da başkasının bilgisayarında Hayır'ı seçmeyi ve iş bitince
+çıkış yapmayı söyler (tarayıcılar oturum çerezini geri yükleyebilir, sunucu oturumu da boşta süre
+dolana kadar yaşar).
+Microsoft paylaşılan cihazı sezip soruyu gizliyor; biz sezemiyoruz, yalnız metinle uyarıyoruz.
+
+### Nasıl çalışır
+
+SPI 1.19.0'daki `sky-stay-signed-in` gerekli eylemi (`com.skylab.authenticator.SkyStaySignedIn`).
+Bir authenticator değil, çünkü bağlı bir hesabın YTÜ girişinde Keycloak IdP'den doğrudan girişin
+sonuna gider; realm'e bağlı hiçbir akış çalışmaz (yalnız IdP'ye özel post broker login akışı
+çalışırdı, onu da uzlaştırıcı kimliği okuyamaz). Her girişte çalışan şey realm'in gerekli
+eylemlerinin `evaluateTriggers`'ıdır. Eylem kendini kullanıcıya değil **giriş oturumuna** ekler
+(`authSession.addRequiredAction`), yalnız şunlar birlikte tutunca:
+
+- giriş OBS üzerinden geldi (Keycloak'ın `identity_provider` kullanıcı oturumu notu `OBS`);
+- realm'de beni-hatırla açık (`rememberMe=true`; kapalıyken Keycloak beni-hatırla oturumunu geçersiz sayar);
+- istemci SkyApp (`skyapp`) değil: uygulamanın giriş tarayıcısı yalnız uygulamaya kendi token'larını
+  verir, Microsoft da native uygulama girişinde "Stay signed in?" göstermez (Yusuf, 2026-10-12);
+- pasif giriş değil (IdP'ye iletilen `prompt=none`: Keycloak gerekli eylemle karşılaşan pasif girişi
+  `interaction_required` ile bitirir);
+- uygulamanın başlattığı bir eylem değil (`kc_action`);
+- giriş yeni bir kullanıcı oturumu açacak: aynı kimlikte canlı bir oturum varsa (`prompt=login`,
+  `max_age` ile yeniden kimlik doğrulama) Keycloak onu olduğu gibi tutar, cevap bir şey değiştirmezdi;
+- bu girişte daha önce cevaplanmadı.
+
+Cevap Keycloak'ın kendi `REMEMBER_ME` kimlik doğrulama notudur (Evet yazar, Hayır siler). Keycloak
+kullanıcı oturumunu gerekli eylemlerden sonra bu notla açar (`AuthenticationProcessor.attachSession`);
+parola formundaki kutu da aynı notu yazar (`AuthenticatorUtils.processRememberMe`). Kalıcı çerez,
+`KEYCLOAK_REMEMBER_ME` (giriş sayfasında kullanıcı adı ipucu) ve süreler Keycloak'ın beni-hatırla
+oturumundaki davranışıdır, SPI ayrıca bir şey yazmaz. Olay `CUSTOM_REQUIRED_ACTION`, ayrıntı
+`sky_stay_signed_in` = `yes` ya da `no`; `LOGIN` olayı Evet'te `remember_me=true` taşır.
+`kc_action` ile istenemez. Eylem elle bir kullanıcıya konursa sayfa çıkmaz, giriş sürer.
+
+Sayfa realm'in beni-hatırla hareketsizlik süresini ve en uzun ömrünü tam gün olarak alır
+(`skyStaySignedInIdleDays`, `skyStaySignedInMaxDays`; Keycloak'ın hesabıyla, olağan değerden kısa
+olamaz). Tema sayfası `sky-stay-signed-in.ftl` (`theme/src/login/StaySignedIn.tsx`), temasız realm
+için SPI'nın yedek şablonu (`theme-resources/templates/sky-stay-signed-in.ftl`).
+
+### Bayrak ve sıra
+
+`KEYCLOAK_STAY_SIGNED_IN` (§23'ün `KEYCLOAK_PERSONAL_EMAIL_OFFER`'ı gibi; ikisi aynı ortak işlevden
+geçer): `keep` (varsayılan) dokunmaz ve yalnız bildirir, hiçbir tam uzlaştırma soruyu açıp kapatmaz;
+`on` eylemi kaydeder (imaj sunmuyorsa hiçbir şey yazmadan durur), açar, `defaultAction=false` tutar
+ve realm'in bütün gerekli eylemlerinden sonraya koyar (girişin son sayfası; ilk YTÜ girişinde §23'ün
+önerisinden sonra); `off` kapatır. Eylem tam uzlaştırmada ve `KEYCLOAK_RECONCILE_ONLY=first-broker-login`
+operatör adımında çalışır. Satırlar:
+
+- `[reconcile] stay signed in required action: unchanged (not registered; KEYCLOAK_STAY_SIGNED_IN=on registers and enables it)`
+- `[reconcile] stay signed in required action: updated (registered and enabled)` (ilk `on`)
+- `[reconcile] stay signed in required action order: unchanged (priority N, after every other required action)`
+- `[reconcile] stay signed in required action order: updated (priority -> N, after every other required action)` (`on`, sıra bozulmuşsa)
+- `[reconcile] WARNING: the stay signed in question runs before another required action (…); KEYCLOAK_STAY_SIGNED_IN=on puts it last` (`keep`, sıra bozulmuşsa)
+- `[reconcile] WARNING: the realm has remember-me off: …` (eylem açık, realm'de beni-hatırla kapalı)
+- `[reconcile] stay signed in required action: updated (enabled=true -> disabled)` (`off`)
+
+Uzlaştırıcı kimliğinin `manage-realm` rolü yeter. Realm oturum ayarları (beni-hatırla açık, 7 g / 30 g)
+`config/account-center-realm.json`'dadır.
+
+### Üretim sırası
+
+1. SPI 1.19.0'ı ve yeni tema sayfasını taşıyan imaj yayımlanır (`main` → `production`). **Tema
+   değişti: Touch ID kapısı yeni bir fiziksel testle** (`keycloak-production` ortamındaki
+   değişkenler tam birleştirme SHA'sı ve issue #1 kanıtı). İmaj ve bayraksız tam uzlaştırmalar
+   soruyu açmaz.
+2. Sandbox önce, §22'deki operatör oturumuyla (`/tmp/fbl-kcadm.config`):
+
+   ```bash
+   docker exec -e KEYCLOAK_ADMIN_URL=http://127.0.0.1:8080 -e KEYCLOAK_REALM=e-skylab-sandbox \
+     -e KEYCLOAK_RECONCILE_ONLY=first-broker-login -e KEYCLOAK_RECONCILE_KCADM_CONFIG=/tmp/fbl-kcadm.config \
+     -e KEYCLOAK_STAY_SIGNED_IN=on "$kc" /opt/keycloak/config/reconcile-account-center.sh
+   ```
+
+   Beklenen satırlar: `stay signed in required action: updated (registered and enabled)` ve
+   `stay signed in required action order: … after every other required action`. Remember-me uyarısı
+   çıkarsa önce realm ayarları (`config/account-center-realm.json`, tam uzlaştırma).
+3. Sandbox yürüyüşü: YTÜ ile giriş, Microsoft'tan sonra soru gelir. Evet: uygulamaya dönülür;
+   tarayıcının geliştirici araçlarında `KEYCLOAK_IDENTITY` çerezinin bitişi yaklaşık 30 gün sonra;
+   tarayıcı kapatılıp açılınca giriş sayfasız. Başka bir tarayıcıda Hayır: çerez oturum çerezidir.
+   Parolalı giriş soruyu görmez, "Beni hatırla" kutusu eskisi gibi.
+4. Canlı: aynı komut `KEYCLOAK_REALM=e-skylab` ile; sonra `docker exec "$kc" rm -f /tmp/fbl-kcadm.config`.
+5. Sonraki tam uzlaştırmalar (`keep`) eylemi olduğu gibi bırakır.
+
+### Geri dönüş
+
+`KEYCLOAK_STAY_SIGNED_IN=off` eylemi kapatır; Keycloak kapalı eylemi giriş oturumundaki listeden
+de atlar, YTÜ girişi sorusuz biter ve olağan oturum açar. 1.19.0'dan eski bir imaja dönülecekse ÖNCE
+`off` koşulur. Acil yol (her imajda): Admin Console → Authentication → Required actions → "SKY LAB
+stay signed in (after a YTÜ login)" → Enabled kapalı. Evet denmiş açık oturumlar süreleri dolana dek
+beni-hatırla oturumu kalır; hemen bitirmek gerekirse Admin Console → Sessions ya da realm'de
+`rememberMe=false` (Keycloak beni-hatırla oturumlarını bir sonraki kullanımda geçersiz sayar; parola
+formundaki kutuyu da kapatır).
+
+### Gizlilik metni
+
+Gizlilik politikası taslağının çerez tablosu (`KEYCLOAK_IDENTITY`, `KEYCLOAK_SESSION`: en çok 8 saat,
+beni hatırla seçilirse en çok 30 gün) sürelerle tutarlı kalır. "Beni hatırla" satırına "YTÜ ile
+girişte giriş sonrasında sorulur" cümlesi eklenmeli. `KEYCLOAK_REMEMBER_ME` Keycloak 26.7.4'te
+kullanıcı adını (YTÜ girişinde okul adresini) giriş ipucu olarak bir yıla kadar tutar; tablo "seçimi
+saklar, en çok 30 gün" diyor.
+
+### Harness
+
+`tests/ytu-first-login.sh` (CI'da `ytu-first-login` işi) §23'ün aşamalarından sonra sorunun
+aşamalarını koşar; sayfa SPI'nın yedek şablonudur. Realm üretimin oturum ayarlarını alır. Sınananlar:
+`keep` kaydetmez; `on` uzlaştırıcı kimliğiyle kaydeder, açar ve öneriden sonraya koyar; öne alınmış
+eylemi `keep` yalnız uyarır, `on` yeniden sona koyar; ikinci koşular değiştirmez; geçersiz bayrak
+durur. Yeni YTÜ kimliği önce öneriyi, sonra soruyu görür (gün sayıları ve ortak bilgisayar uyarısı);
+Evet beni-hatırla kullanıcı oturumu, ~30 gün süreli `KEYCLOAK_IDENTITY` çerezi, `yes` olayı ve
+`remember_me=true` `LOGIN` olayı bırakır, aynı tarayıcı sonra sayfasız girer. Bağlı hesap yeniden
+sorulur; Hayır olağan oturum ve oturum çerezi bırakır. Parolalı giriş "Beni hatırla" ile sorulmaz ve
+yine beni-hatırla oturumu alır; canlı oturum içinde `prompt=login` ile YTÜ ve kiracıya iletilen
+`prompt=none` pasif girişi sorulmaz (pasif giriş uygulamaya kodla döner). `off` kapatır, YTÜ girişi
+doğrudan uygulamaya gider, `keep` kapalı bırakır. Kalan durumlar (`kc_action`, süresi dolmuş ya da
+kullanıcısız eski oturum, realm'de beni-hatırla kapalı, elle konmuş eylem, geçersiz cevap) birim
+testindedir (`SkyStaySignedInTest`). Tema sayfası: `StaySignedIn.test.tsx`, `Template.test.tsx` ve
+görsel temeller (`sky-stay-signed-in-{desktop,mobile}`).

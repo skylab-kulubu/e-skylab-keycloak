@@ -56,6 +56,16 @@
 #     domain (email_school_domain) are refused; the sign-in session's send budget runs out; no page for a
 #     linked account, A6, a School e-mail another account holds or a password login; off disables
 #     it and a new identity goes straight to the application (the expired code is a unit test);
+#   - "Bu cihazda oturumum açık kalsın mı?" (required action sky-stay-signed-in, the SPI's own page;
+#     KEYCLOAK_STAY_SIGNED_IN; the realm with production's remember-me settings): keep registers
+#     nothing, on registers and enables it after every other required action (the offer comes
+#     first), puts it last again when moved, second runs change nothing; a new YTÜ identity sees it
+#     after the offer and "Evet, açık kalsın" makes a remember-me session with a persistent identity
+#     cookie, after which the browser signs in without a page; a linked account is asked again and
+#     "Hayır" leaves an ordinary session with a browser-session cookie; a password login with
+#     "Beni hatırla" is never asked and still gets a remember-me session; a re-authentication
+#     (prompt=login) inside a live session and a passive login (prompt=none forwarded to the tenant)
+#     are not asked; off disables it and a YTÜ login goes straight to the application;
 #   - a realm bound to another flow is refused.
 # Requirements on the host: docker, jq, curl. YTU_FIRST_LOGIN_TEST_PORT (default 18097),
 # YTU_FIRST_LOGIN_TEST_MAIL_PORT (default 18098, Mailpit's API),
@@ -95,6 +105,7 @@ BUILT_IN='first broker login'
 COPY='sky first broker login'
 STEP=sky-ytu-first-login
 OFFER=sky-personal-email-offer
+STAY=sky-stay-signed-in
 CURRENT_STAGE=startup
 STATUS=''
 LOCATION=''
@@ -322,6 +333,8 @@ grep -q 'com/skylab/authenticator/SkyYtuFirstLogin.class' <<<"$spi_listing" \
   || fail "the SPI jar does not hold the $STEP step"
 grep -q 'com/skylab/account/PersonalEmailOffer.class' <<<"$spi_listing" \
   || fail "the SPI jar does not hold the $OFFER required action"
+grep -q 'com/skylab/authenticator/SkyStaySignedIn.class' <<<"$spi_listing" \
+  || fail "the SPI jar does not hold the $STAY required action"
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='Keycloak start'
@@ -892,6 +905,182 @@ output=$(reconcile "$SCOPED_CONFIG" 0)
 expect_line "$output" '[reconcile] personal e-mail offer required action: unchanged (enabled=false; KEYCLOAK_PERSONAL_EMAIL_OFFER=on or off changes it)' \
   'keep turned the offer back on'
 printf '    off disables the offer; a new identity goes straight to the application; keep stays off\n'
+
+# ---------------------------------------------------------------------------------------------------
+# "Bu cihazda oturumum açık kalsın mı?" after every YTÜ login (required action sky-stay-signed-in).
+# No SKY LAB theme runs here, so the page is the SPI's own fallback template (the same form id and
+# buttons as the theme's page). The realm gets production's session settings
+# (config/account-center-realm.json); this harness runs only the reconciler's first broker login step.
+
+# stay_state: "enabled,defaultAction,priority" of the realm's question, or "" while it is not registered.
+stay_state() {
+  kcadm get authentication/required-actions -r "$REALM" \
+    | jq -r --arg alias "$STAY" '.[] | select(.alias == $alias) | "\(.enabled),\(.defaultAction),\(.priority)"'
+}
+
+# Whether the question runs after every other required action of the realm.
+stay_is_last() {
+  kcadm get authentication/required-actions -r "$REALM" | jq -e --arg alias "$STAY" '
+    ([.[] | select(.alias == $alias) | .priority][0]) as $mine
+    | $mine != null and ([.[] | select(.alias != $alias) | .priority] | all(. < $mine))' >/dev/null
+}
+
+on_stay() {
+  [[ $LANDED == page ]] && grep -q 'id="kc-stay-signed-in-form"' <<<"$BODY"
+}
+
+stay_post() { # stay_post yes|no
+  follow "$JAR" "$(form_action kc-stay-signed-in-form)" --data-urlencode "sky-stay-signed-in=$1"
+}
+
+# end_sessions USER_ID: signs the person out everywhere, so the next login is the only session.
+end_sessions() {
+  local sid
+  for sid in $(kcadm get "users/$1/sessions" -r "$REALM" | jq -r '.[].id'); do
+    kcadm delete "sessions/$sid" -r "$REALM" >/dev/null
+  done
+}
+
+# session_remember_me USER_ID: the rememberMe flag of the person's only user session.
+session_remember_me() {
+  kcadm get "users/$1/sessions" -r "$REALM" \
+    | jq -r 'if length == 1 then (.[0].rememberMe // false | tostring) else "\(length) sessions" end'
+}
+
+# identity_cookie_expiry: when the browser drops Keycloak's SSO cookie (KEYCLOAK_IDENTITY of this
+# realm in JAR); 0 is a browser-session cookie.
+identity_cookie_expiry() {
+  awk -F '\t' -v path="/realms/$REALM/" '$3 == path && $6 == "KEYCLOAK_IDENTITY" { print $5 }' "$JAR" | tail -n 1
+}
+
+stay_events() { # stay_events USER_ID yes|no: the question's CUSTOM_REQUIRED_ACTION events with that answer
+  kcadm get events -r "$REALM" -q type=CUSTOM_REQUIRED_ACTION -q "user=$1" \
+    | jq --arg answer "$2" '[.[] | select(.details.sky_stay_signed_in == $answer)] | length'
+}
+
+stage 'stay signed in: reconciler'
+kcadm update "realms/$REALM" -s rememberMe=true -s ssoSessionIdleTimeout=7200 -s ssoSessionMaxLifespan=28800 \
+  -s ssoSessionIdleTimeoutRememberMe=604800 -s ssoSessionMaxLifespanRememberMe=2592000 \
+  -s clientSessionIdleTimeout=0 -s clientSessionMaxLifespan=0 >/dev/null
+output=$(reconcile "$SCOPED_CONFIG" 0)
+expect_line "$output" '[reconcile] stay signed in required action: unchanged (not registered; KEYCLOAK_STAY_SIGNED_IN=on registers and enables it)' \
+  'keep did not report the unregistered question'
+[[ -z $(stay_state) ]] || fail 'keep registered the question'
+# The offer back on (registered before the question): the question comes after it.
+output=$(reconcile "$SCOPED_CONFIG" 0 KEYCLOAK_PERSONAL_EMAIL_OFFER=on KEYCLOAK_STAY_SIGNED_IN=on)
+expect_line "$output" '[reconcile] stay signed in required action: updated (registered and enabled)' 'on did not register the question'
+# Keycloak registers an action after the last one; the reconciler moves it there if it is not.
+grep -Eq '^\[reconcile\] stay signed in required action order: (unchanged \(priority|updated \(priority ->) [0-9]+, after every other required action\)$' <<<"$output" \
+  || { printf '%s\n' "$output" >&2; fail 'on did not report the order'; }
+[[ $(stay_state) == true,false,* ]] || fail "the question is '$(stay_state)' after on"
+stay_is_last || fail 'the question does not run after every other required action'
+# Moved in front by hand: keep only warns, on puts it last again.
+kcadm update "authentication/required-actions/$STAY" -r "$REALM" -s priority=0 >/dev/null
+output=$(reconcile "$SCOPED_CONFIG" 0)
+grep -Fq '[reconcile] WARNING: the stay signed in question runs before another required action (priority 0,' <<<"$output" \
+  || { printf '%s\n' "$output" >&2; fail 'keep did not warn about the order'; }
+[[ $(stay_state) == true,false,0 ]] || fail 'keep changed the question'
+output=$(reconcile "$SCOPED_CONFIG" 0 KEYCLOAK_STAY_SIGNED_IN=on)
+grep -Eq '^\[reconcile\] stay signed in required action order: updated \(priority -> [0-9]+, after every other required action\)$' <<<"$output" \
+  || { printf '%s\n' "$output" >&2; fail 'on did not put the question last again'; }
+stay_is_last || fail 'the question is not last after on'
+output=$(reconcile "$SCOPED_CONFIG" 0 KEYCLOAK_STAY_SIGNED_IN=on)
+expect_quiet "$output" 'a second on changed something'
+expect_line "$output" '[reconcile] stay signed in required action: unchanged (enabled)' 'a second on did not report the question'
+output=$(reconcile "$SCOPED_CONFIG" 0)
+expect_line "$output" '[reconcile] stay signed in required action: unchanged (enabled=true; KEYCLOAK_STAY_SIGNED_IN=on or off changes it)' \
+  'keep did not keep the question'
+reconcile "$SCOPED_CONFIG" 1 KEYCLOAK_STAY_SIGNED_IN=maybe >/dev/null
+printf '    keep registers nothing; on registers and enables it last (after the offer), puts it last again; second runs change nothing\n'
+
+# ---------------------------------------------------------------------------------------------------
+stage 'stay signed in: a first YTÜ login says yes'
+mock_person Stay.Yes@std.yildiz.edu.tr 'Fizik'
+ytu_login stay-yes "$MOCK_USERNAME"
+on_offer || fail "the personal e-mail offer did not come first ($(page_summary))"
+offer_post skip
+on_stay || fail "no stay signed in question after the offer ($(page_summary))"
+if ! grep -q 'name="sky-stay-signed-in" value="yes"' <<<"$BODY" || ! grep -q 'name="sky-stay-signed-in" value="no"' <<<"$BODY"; then
+  fail 'the question has no yes and no buttons'
+fi
+if ! grep -q 'for up to 30 days' <<<"$BODY" || ! grep -q 'use it for 7 days' <<<"$BODY"; then
+  fail "the question does not word the realm's remember-me lifetimes"
+fi
+grep -q 'On a shared or someone else' <<<"$BODY" || fail 'the question has no shared computer warning'
+stay_post yes
+[[ $LANDED == app ]] || fail "Evet, açık kalsın did not reach the application ($(page_summary))"
+stay_yes_id=$(jq -r .id <<<"$(user_by_username stay.yes@std.yildiz.edu.tr)")
+[[ $(session_remember_me "$stay_yes_id") == true ]] || fail "yes did not make a remember-me session ($(session_remember_me "$stay_yes_id"))"
+expiry=$(identity_cookie_expiry)
+if [[ ! $expiry =~ ^[0-9]+$ ]] || ((expiry <= $(date +%s) + 29 * 86400)); then
+  fail "yes did not make the identity cookie last the remember-me lifespan (expiry '${expiry}')"
+fi
+[[ $(stay_events "$stay_yes_id" yes) == 1 ]] || fail 'no yes event'
+[[ $(kcadm get events -r "$REALM" -q type=LOGIN -q "user=$stay_yes_id" | jq '[.[] | select(.details.remember_me == "true")] | length') -ge 1 ]] \
+  || fail 'the login event does not say remember_me'
+# The same browser signs in again from the SSO session alone.
+follow "$JAR" "$(auth_url)"
+[[ $LANDED == app ]] || fail "the remembered browser saw a page ($(page_summary))"
+printf '    a new identity: the offer, then the question; yes: remember-me session, persistent cookie, SSO without a page\n'
+
+# ---------------------------------------------------------------------------------------------------
+stage 'stay signed in: a linked account says no'
+end_sessions "$linked_id"
+ytu_login stay-no linked.student@std.yildiz.edu.tr
+on_stay || fail "a linked account signing in again was not asked ($(page_summary))"
+stay_post no
+[[ $LANDED == app ]] || fail "Hayır did not reach the application ($(page_summary))"
+[[ $(session_remember_me "$linked_id") == false ]] || fail "no did not leave an ordinary session ($(session_remember_me "$linked_id"))"
+[[ $(identity_cookie_expiry) == 0 ]] || fail "no left a persistent identity cookie ($(identity_cookie_expiry))"
+[[ $(stay_events "$linked_id" no) == 1 ]] || fail 'no no event'
+printf '    a linked account: asked again; no: an ordinary session with a browser-session cookie\n'
+
+# ---------------------------------------------------------------------------------------------------
+stage 'stay signed in: not for a password login, a re-authentication or a passive login'
+stay_password_id=$(local_person stay-password stay.password@example.org)
+JAR="$STATE_DIR/stay-password.cookies"
+rm -f "$JAR"
+follow "$JAR" "$(auth_url)"
+follow "$JAR" "$(form_action kc-form-login)" --data-urlencode username=stay-password --data-urlencode "password=$LOCAL_PASSWORD" \
+  --data-urlencode rememberMe=on --data-urlencode credentialId=
+[[ $LANDED == app ]] || fail "a password login saw a page ($(page_summary))"
+[[ $(session_remember_me "$stay_password_id") == true ]] || fail 'the Beni hatırla box no longer makes a remember-me session'
+# prompt=login through YTÜ in the remembered browser: Keycloak keeps the live session, so no question.
+JAR="$STATE_DIR/stay-yes.cookies"
+follow "$JAR" "$(auth_url '&kc_idp_hint=OBS&prompt=login')"
+if [[ $LANDED == page ]] && grep -q 'id="kc-form-login"' <<<"$BODY"; then
+  follow "$JAR" "$(form_action kc-form-login)" --data-urlencode username=stay.yes@std.yildiz.edu.tr \
+    --data-urlencode "password=$MOCK_PASSWORD" --data-urlencode credentialId=
+fi
+[[ $LANDED == app ]] || { on_stay && fail 'a re-authentication inside a live session was asked'; fail "no application ($(page_summary))"; }
+[[ $(session_remember_me "$stay_yes_id") == true ]] || fail 'the re-authentication changed the session'
+# prompt=none forwarded to the tenant (signed in there, not here): a required action would turn the
+# passive login into interaction_required.
+kcadm update identity-provider/instances/OBS -r "$REALM" -s config.acceptsPromptNoneForwardFromClient=true >/dev/null
+JAR="$STATE_DIR/stay-passive.cookies"
+grep -v -F "/realms/$REALM/" "$STATE_DIR/stay-yes.cookies" >"$JAR"
+end_sessions "$stay_yes_id"
+follow "$JAR" "$(auth_url '&kc_idp_hint=OBS&prompt=none')"
+[[ $LANDED == app ]] || fail "the passive login did not reach the application ($(page_summary))"
+kcadm update identity-provider/instances/OBS -r "$REALM" -s config.acceptsPromptNoneForwardFromClient=false >/dev/null
+[[ $(stay_events "$stay_yes_id" yes) == 1 && $(stay_events "$stay_yes_id" no) == 0 ]] || fail 'a later login was asked'
+printf '    not asked: a password login (Beni hatırla still works), prompt=login in a live session, prompt=none\n'
+
+# ---------------------------------------------------------------------------------------------------
+stage 'stay signed in: off'
+output=$(reconcile "$SCOPED_CONFIG" 0 KEYCLOAK_STAY_SIGNED_IN=off)
+expect_line "$output" '[reconcile] stay signed in required action: updated (enabled=true -> disabled)' 'off did not disable the question'
+[[ $(stay_state) == false,false,* ]] || fail "the question is '$(stay_state)' after off"
+end_sessions "$linked_id"
+ytu_login stay-off linked.student@std.yildiz.edu.tr
+[[ $LANDED == app ]] || fail "the question still showed after off ($(page_summary))"
+[[ $(session_remember_me "$linked_id") == false ]] || fail 'off left a remember-me session'
+output=$(reconcile "$SCOPED_CONFIG" 0 KEYCLOAK_STAY_SIGNED_IN=off)
+expect_line "$output" '[reconcile] stay signed in required action: unchanged (disabled)' 'a second off changed something'
+output=$(reconcile "$SCOPED_CONFIG" 0)
+expect_line "$output" '[reconcile] stay signed in required action: unchanged (enabled=false; KEYCLOAK_STAY_SIGNED_IN=on or off changes it)' \
+  'keep turned the question back on'
+printf '    off disables the question; a YTÜ login goes straight to the application; keep stays off\n'
 
 # ---------------------------------------------------------------------------------------------------
 stage 'a realm bound to another flow'

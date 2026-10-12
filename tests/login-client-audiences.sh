@@ -37,6 +37,7 @@ LCA_HAND_MADE_MAPPER_UUID=''
 LCA_ACCESS_TOKEN=''
 LCA_ACCESS_PAYLOAD=''
 LCA_ID_PAYLOAD=''
+LCA_REFRESH_EXPIRES_IN=''
 
 lca_client_uuid() {
   kcadm get clients -r "$V2_REALM" -q "clientId=$1" -c \
@@ -134,16 +135,18 @@ stage_login_audiences_after_first_reconciliation() {
 }
 
 # Authorization code with PKCE and Keycloak's own login form, like v2_login_account_center but
-# without PAR; leaves the access token in LCA_ACCESS_TOKEN and both token payloads in
-# LCA_ACCESS_PAYLOAD and LCA_ID_PAYLOAD. A public client and the audience fixture person unless
-# the optional arguments name a client secret, another person and the requested scope.
+# without PAR; leaves the access token in LCA_ACCESS_TOKEN, both token payloads in
+# LCA_ACCESS_PAYLOAD and LCA_ID_PAYLOAD and the refresh token's lifetime in LCA_REFRESH_EXPIRES_IN.
+# A public client and the audience fixture person unless the optional arguments name a client
+# secret, another person, the requested scope and "Remember me" (on; off by default).
 lca_login() {
   local client_id=$1 redirect_uri=$2 client_secret=${3:-} username=${4:-$LCA_USER}
-  local password=${5:-$LCA_PASSWORD} scope=${6:-openid}
+  local password=${5:-$LCA_PASSWORD} scope=${6:-openid} remember=${7:-off}
   local verifier challenge page login_action status location code response token
-  local client_auth=()
+  local client_auth=() remember_form=()
   local cookies="$TEST_STATE_DIR/lca-$client_id.cookies" headers="$TEST_STATE_DIR/lca-$client_id.headers"
   [[ -z $client_secret ]] || client_auth=(--user "$client_id:$client_secret")
+  [[ $remember != on ]] || remember_form=(--data-urlencode rememberMe=on)
   # A fresh browser every time: a leftover Keycloak session cookie would skip the login form.
   rm -f "$cookies"
   verifier="lca-$client_id-verifier-0123456789abcdefghijklmnopqrstuvwxyz"
@@ -171,6 +174,7 @@ lca_login() {
     --data-urlencode "username=$username" \
     --data-urlencode "password=$password" \
     --data-urlencode credentialId= \
+    ${remember_form[@]+"${remember_form[@]}"} \
     "$login_action")
   [[ $status == 302 ]] || fail "$client_id login: credential submission did not redirect (HTTP $status)"
   location=$(awk '
@@ -193,6 +197,7 @@ lca_login() {
   LCA_ACCESS_TOKEN=$(jq -r .access_token <<<"$response")
   [[ -n $LCA_ACCESS_TOKEN && $LCA_ACCESS_TOKEN != null ]] || fail "$client_id login: no access token was issued"
   LCA_ACCESS_PAYLOAD=$(v2_jwt_payload "$LCA_ACCESS_TOKEN")
+  LCA_REFRESH_EXPIRES_IN=$(jq -r .refresh_expires_in <<<"$response")
   token=$(jq -r .id_token <<<"$response")
   [[ -n $token && $token != null ]] || fail "$client_id login: no ID token was issued"
   LCA_ID_PAYLOAD=$(v2_jwt_payload "$token")

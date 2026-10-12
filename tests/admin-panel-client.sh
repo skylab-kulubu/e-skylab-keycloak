@@ -188,11 +188,13 @@ ap_assert_contract() {
   local client scope_uuid mappings resource resource_uuid mapped every
   client=$(kcadm get "clients/$AP_UUID" -r "$V2_REALM" -c)
   json_assert "$client" \
-    '.clientId == $client and .publicClient == false and .fullScopeAllowed == false and .attributes["standard.token.exchange.enabled"] == "true" and .redirectUris == [$redirect]' \
-    'the admin client differs from the contract (confidential, no full scope, standard token exchange, redirect kept)' \
+    '.clientId == $client and .publicClient == false and .fullScopeAllowed == false and .attributes["standard.token.exchange.enabled"] == "true" and .attributes["client.session.max.lifespan"] == "28800" and .redirectUris == [$redirect]' \
+    'the admin client differs from the contract (confidential, no full scope, standard token exchange, 8-hour client session, redirect kept)' \
     --arg client "$AP_CLIENT" --arg redirect "$AP_REDIRECT"
   json_assert "$client" '[.protocolMappers[].name] | sort == ["groups", "inscribed-roles"]' \
     "the reconciler touched the admin client's own mappers"
+  json_assert "$client" '.attributes["harness.keep"] == "kept"' \
+    "the reconciler's attribute write dropped another attribute of the admin client"
   [[ $(ap_client_secret) == "$AP_SECRET" ]] || fail 'reconciliation changed the admin client secret'
   json_assert "$(kcadm get "clients/$AP_UUID/scope-mappings/realm" -r "$V2_REALM" -c)" 'length == 0' \
     'a realm role is still in the scope of the admin client'
@@ -233,6 +235,8 @@ stage_admin_panel_hand_made() {
   json_assert "$(kcadm get "clients/$AP_UUID" -r "$V2_REALM" -c)" '.publicClient == false and .fullScopeAllowed == true' \
     'the fixture admin client is not shaped like production (confidential, full scope)'
   kcadm create "clients/$AP_UUID/client-secret" -r "$V2_REALM" >/dev/null 2>&1
+  # An attribute the reconciler does not own must survive its attribute write.
+  kcadm update "clients/$AP_UUID" -r "$V2_REALM" -s 'attributes."harness.keep"=kept' >/dev/null
   AP_SECRET=$(ap_client_secret)
   [[ -n $AP_SECRET ]] || fail 'the fixture admin client has no client secret'
   lca_login "$AP_CLIENT" "$AP_REDIRECT" "$AP_SECRET" "$AP_USER" "$AP_PASSWORD" "$AP_PANEL_SCOPE"
@@ -255,14 +259,16 @@ stage_admin_panel_after_first_reconciliation() {
   [[ $(lca_client_uuid "$AP_CLIENT") == "$AP_UUID" ]] || fail 'the admin client was replaced instead of adopted'
   ap_assert_contract core
 
-  # Drift: full scope back on, token exchange off, a core role out of the scope, a realm role and a
+  # Drift: full scope back on, token exchange off, the 8-hour client session removed (Keycloak drops
+  # an attribute set to ""), a core role out of the scope, a realm role and a
   # foreign client role in it, the audience scope among the optional scopes, one audience mapper
   # into the ID token and a foreign mapper.
   core_uuid=$(lca_client_uuid core)
   skymail_uuid=$(lca_client_uuid skymail)
   scope_uuid=$(lca_scope_uuids "$AP_SCOPE")
   kcadm update "clients/$AP_UUID" -r "$V2_REALM" \
-    -s fullScopeAllowed=true -s 'attributes."standard.token.exchange.enabled"=false' >/dev/null
+    -s fullScopeAllowed=true -s 'attributes."standard.token.exchange.enabled"=false' \
+    -s 'attributes."client.session.max.lifespan"=""' >/dev/null
   kcadm delete "clients/$AP_UUID/scope-mappings/clients/$core_uuid" -r "$V2_REALM" \
     -b "$(v2_role_body "$core_uuid" url:read)" >/dev/null
   kcadm create "clients/$AP_UUID/scope-mappings/clients/$skymail_uuid" -r "$V2_REALM" \
@@ -361,6 +367,13 @@ stage_admin_panel_tokens() {
     --arg client "$AP_CLIENT" --arg forms_role "$AP_FORMS_ROLE"
   json_assert "$payload" '.roles == ["content:read"] and .groups == ["/UYELER/YK"]' \
     "the panel token lost inscribed's flat roles claim or the group paths"
+  # The panel's refresh token: an ordinary login lives for the SSO idle time (2 hours); a remember-me
+  # login would live 7 days idle in any other client, the panel's client session cuts it at 8 hours.
+  [[ $LCA_REFRESH_EXPIRES_IN =~ ^[0-9]+$ ]] && ((LCA_REFRESH_EXPIRES_IN >= 7190 && LCA_REFRESH_EXPIRES_IN <= 7200)) \
+    || fail "the panel's ordinary refresh token does not live for the SSO idle time (refresh_expires_in $LCA_REFRESH_EXPIRES_IN)"
+  lca_login "$AP_CLIENT" "$AP_REDIRECT" "$AP_SECRET" "$AP_USER" "$AP_PASSWORD" "$AP_PANEL_SCOPE" on
+  [[ $LCA_REFRESH_EXPIRES_IN =~ ^[0-9]+$ ]] && ((LCA_REFRESH_EXPIRES_IN >= 28790 && LCA_REFRESH_EXPIRES_IN <= 28800)) \
+    || fail "the panel's remember-me refresh token is not cut at 8 hours by its client session (refresh_expires_in $LCA_REFRESH_EXPIRES_IN)"
   # A person without a role of any API still gets all three audiences: they come from the hardcoded
   # mappers, not from audience-resolve (the reason members got 401 on SkyForms).
   lca_login "$AP_CLIENT" "$AP_REDIRECT" "$AP_SECRET" "$LCA_USER" "$LCA_PASSWORD" "$AP_PANEL_SCOPE"

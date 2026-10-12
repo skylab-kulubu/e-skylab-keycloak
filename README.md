@@ -182,7 +182,14 @@ anlayana kadar açılmaz. Harness: JUnit (`SkyGroupOverageMapperTest`) ve `tests
 
 Realm oturumu, giriş ayarları ve tema `config/account-center-realm.json`
 (`editUsernameAllowed=false`, `loginWithEmailAllowed=true`,
-`duplicateEmailsAllowed=false`), brute-force koruması ve parola politikası
+`duplicateEmailsAllowed=false`; SSO oturumu 2 saat hareketsizlikte, en geç 8 saatte
+biter: `ssoSessionIdleTimeout=7200`, `ssoSessionMaxLifespan=28800`; "Beni hatırla"
+açık, o oturum 7 gün hareketsizlikte, en geç 30 günde biter:
+`rememberMe=true`, `ssoSessionIdleTimeoutRememberMe=604800`,
+`ssoSessionMaxLifespanRememberMe=2592000`; istemci oturumu SSO oturumundan miras
+alır, `clientSessionIdleTimeout=0` ve `clientSessionMaxLifespan=0`, yani refresh
+token SSO oturumu yaşadıkça yaşar, ayrı bir 30 dakika ya da 10 saat sınırı yoktur),
+brute-force koruması ve parola politikası
 `config/account-center-realm-security.json` (10 deneme, 60 sn artan bekleme,
 en çok 15 dk, 12 saat sıfırlama, kalıcı kilit yok;
 `length(8) and notUsername and notEmail`), şifresiz passkey politikası

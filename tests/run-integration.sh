@@ -1549,8 +1549,16 @@ unexpected_mapper_count=$(kcadm get \
 [[ $unexpected_mapper_count == 1 ]] \
   || fail "failed reconciliation mutated mapper state after its read failed"
 
+# The session drift is production's hand-made state before the session settings entered
+# config/account-center-realm.json: client sessions cut at 30 minutes idle and 10 hours, remember-me off.
 kcadm update realms/e-skylab-test \
+  -s ssoSessionIdleTimeout=1800 \
   -s ssoSessionMaxLifespan=123 \
+  -s rememberMe=false \
+  -s ssoSessionIdleTimeoutRememberMe=0 \
+  -s ssoSessionMaxLifespanRememberMe=0 \
+  -s clientSessionIdleTimeout=1800 \
+  -s clientSessionMaxLifespan=36000 \
   -s webAuthnPolicyPasswordlessPasskeysEnabled=false \
   -s webAuthnPolicyPasswordlessMediation=none >/dev/null
 kcadm update authentication/required-actions/UPDATE_PASSWORD \
@@ -1603,8 +1611,16 @@ json_assert "$client" '.attributes["backchannel.logout.session.required"] == "tr
 
 realm=$(kcadm get realms/e-skylab-test -c)
 json_assert "$realm" \
-  '.sslRequired == "external" and .registrationAllowed == false and .resetPasswordAllowed == true and .ssoSessionIdleTimeout == 1800 and .ssoSessionMaxLifespan == 28800 and .accessCodeLifespanUserAction == 300 and .internationalizationEnabled == true and .defaultLocale == "tr" and (.supportedLocales | sort) == ["en", "tr"] and .loginTheme == "e-skylab-theme"' \
-  'realm security, session or theme desired state differs'
+  '.sslRequired == "external" and .registrationAllowed == false and .resetPasswordAllowed == true and .accessCodeLifespanUserAction == 300 and .internationalizationEnabled == true and .defaultLocale == "tr" and (.supportedLocales | sort) == ["en", "tr"] and .loginTheme == "e-skylab-theme"' \
+  'realm security or theme desired state differs'
+# Sessions: 2 hours idle and 8 hours at most; remember-me 7 days idle and 30 days at most; client
+# sessions inherit the SSO session (0), so a refresh token lives as long as the SSO session does.
+json_assert "$realm" \
+  '.ssoSessionIdleTimeout == 7200 and .ssoSessionMaxLifespan == 28800 and .rememberMe == true and .ssoSessionIdleTimeoutRememberMe == 604800 and .ssoSessionMaxLifespanRememberMe == 2592000 and .clientSessionIdleTimeout == 0 and .clientSessionMaxLifespan == 0' \
+  'realm session desired state differs'
+grep -Eq '^\[reconcile\] realm session, login and theme settings: updated \(.*clientSessionIdleTimeout' \
+  "$TEST_STATE_DIR/reconcile-second.log" \
+  || fail 'the second reconciliation did not report repairing the realm session settings'
 json_assert "$realm" \
   '.webAuthnPolicyPasswordlessRpEntityName == "SKY LAB" and .webAuthnPolicyPasswordlessResidentKey == "required" and .webAuthnPolicyPasswordlessUserVerificationRequirement == "required" and .webAuthnPolicyPasswordlessPasskeysEnabled == true and .webAuthnPolicyPasswordlessMediation == "conditional"' \
   'passwordless WebAuthn desired state differs'
@@ -1860,6 +1876,10 @@ skyapp_token_response=$(curl --fail --silent --show-error \
 skyapp_access_token=$(jq -r .access_token <<<"$skyapp_token_response")
 [[ -n $skyapp_access_token && $skyapp_access_token != null ]] \
   || fail 'skyapp direct grant did not return an access token'
+# The refresh token of an ordinary session lives as long as the SSO session's 2-hour idle time: the
+# realm's client session settings are 0 (inherited), so they no longer cut it at 30 minutes.
+json_assert "$skyapp_token_response" '.refresh_expires_in >= 7190 and .refresh_expires_in <= 7200' \
+  'an ordinary refresh token does not live for the SSO session idle time (2 hours)'
 skyapp_payload_segment=$(cut -d. -f2 <<<"$skyapp_access_token")
 case $((${#skyapp_payload_segment} % 4)) in
   2) skyapp_payload_segment="${skyapp_payload_segment}==" ;;

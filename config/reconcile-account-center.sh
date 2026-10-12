@@ -111,6 +111,8 @@ else
   ADMIN_PANEL_CLIENT_ID=${KEYCLOAK_ADMIN_PANEL_CLIENT_ID:-admin}
 fi
 ADMIN_PANEL_SCOPE_NAME=admin-panel-api-audience
+# Seconds the panel's client session lives at most, remember-me or not (see reconcile_admin_panel_client).
+ADMIN_PANEL_CLIENT_SESSION_MAX_LIFESPAN=28800
 # The API clients whose every role the panel's token may carry (skycms reads the panel's own roles).
 ADMIN_PANEL_API_CLIENTS=(core forms)
 # An operator runs one step with a kcadm session they logged in themselves (the sandbox realm has no
@@ -1618,6 +1620,16 @@ remove_groups_claim() {
 # first, full scope off last. A role made on core or forms outside the reconciler reaches the panel's
 # token with the next run.
 #
+# The client session of the panel lasts at most 8 hours (client.session.max.lifespan, the realm's
+# SSO max): Keycloak takes the client's own value before the realm's and before remember-me
+# (SessionExpirationUtils), so a panel refresh token dies 8 hours after the panel's client session
+# began, even in a 30-day remember-me session, whatever the panel's code checks. It asks for no
+# credential: while the SSO session lives, a silent panel login starts a new client session (another
+# 8 hours); re-authentication is the panel's max_age. 28800 is the realm's ssoSessionMaxLifespan in
+# config/account-center-realm.json: Keycloak refuses a client max above the realm's SSO max (the
+# remember-me max when remember-me is on), so lowering that one means lowering this one. A PUT that
+# carries "attributes" writes only the attributes it names; the client's other attributes stay.
+#
 # A missing client is skipped with a warning. A public one fails the run before anything is written
 # to it: token exchange needs a confidential client, and making it confidential changes how the panel
 # signs in (it must then send the client secret), which is the panel's change (admin-token-authz
@@ -1647,7 +1659,8 @@ reconcile_admin_panel_client() {
   ensure_default_audience_scope "$ADMIN_PANEL_CLIENT_ID" "$client_uuid" "$ADMIN_PANEL_SCOPE_NAME" \
     "$CONFIG_DIR/admin-panel-api-audience-mappers.json"
   reconcile_role_scope "$ADMIN_PANEL_CLIENT_ID" "$client_uuid" "${ADMIN_PANEL_API_CLIENTS[@]}"
-  printf '{"fullScopeAllowed":false,"attributes":{"standard.token.exchange.enabled":"true"}}\n' >"$desired_file"
+  printf '{"fullScopeAllowed":false,"attributes":{"standard.token.exchange.enabled":"true","client.session.max.lifespan":"%s"}}\n' \
+    "$ADMIN_PANEL_CLIENT_SESSION_MAX_LIFESPAN" >"$desired_file"
   apply_fields_if_changed "client $ADMIN_PANEL_CLIENT_ID (no full scope, standard token exchange)" \
     "$desired_file" "clients/$client_uuid" -r "$TARGET_REALM"
 }

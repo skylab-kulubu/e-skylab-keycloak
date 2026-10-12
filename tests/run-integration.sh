@@ -19,7 +19,7 @@ ADMIN_CONFIG=/tmp/integration-kcadm.config
 #   roles    (core-erasure fixture) admin panel tokens, core resource roles, core service roles,
 #            exchange claims, no-op reconciliation, identity guardrails, group overage mapper
 #   login    (core-erasure fixture, operator state) OIDC/PAR basics, K4 sign-in by e-mail with
-#            its reconciler runs
+#            its reconciler runs, re-authentication forwarded to Microsoft (PR #89)
 #   spi      (core-erasure fixture, operator state) OIDC/PAR basics, web handoff, browser login
 #            and token contracts, Chromium, passkey cleanup, K5, K4b, sky-account SPI, passkey
 #            ceremonies
@@ -1549,8 +1549,19 @@ unexpected_mapper_count=$(kcadm get \
 [[ $unexpected_mapper_count == 1 ]] \
   || fail "failed reconciliation mutated mapper state after its read failed"
 
+# The session drift is production's hand-made state before the session settings entered
+# config/account-center-realm.json: client sessions cut at 30 minutes idle, remember-me off.
+# Production's 10-hour client max (36000) cannot be injected: Keycloak refuses a client session
+# max above the realm SSO max ("Client session max lifespan cannot exceed realm SSO session max
+# lifespan."), so the drifted client max stays under the drifted SSO max.
 kcadm update realms/e-skylab-test \
+  -s ssoSessionIdleTimeout=1800 \
   -s ssoSessionMaxLifespan=123 \
+  -s rememberMe=false \
+  -s ssoSessionIdleTimeoutRememberMe=0 \
+  -s ssoSessionMaxLifespanRememberMe=0 \
+  -s clientSessionIdleTimeout=1800 \
+  -s clientSessionMaxLifespan=120 \
   -s webAuthnPolicyPasswordlessPasskeysEnabled=false \
   -s webAuthnPolicyPasswordlessMediation=none >/dev/null
 kcadm update authentication/required-actions/UPDATE_PASSWORD \
@@ -1603,8 +1614,16 @@ json_assert "$client" '.attributes["backchannel.logout.session.required"] == "tr
 
 realm=$(kcadm get realms/e-skylab-test -c)
 json_assert "$realm" \
-  '.sslRequired == "external" and .registrationAllowed == false and .resetPasswordAllowed == true and .ssoSessionIdleTimeout == 1800 and .ssoSessionMaxLifespan == 28800 and .accessCodeLifespanUserAction == 300 and .internationalizationEnabled == true and .defaultLocale == "tr" and (.supportedLocales | sort) == ["en", "tr"] and .loginTheme == "e-skylab-theme"' \
-  'realm security, session or theme desired state differs'
+  '.sslRequired == "external" and .registrationAllowed == false and .resetPasswordAllowed == true and .accessCodeLifespanUserAction == 300 and .internationalizationEnabled == true and .defaultLocale == "tr" and (.supportedLocales | sort) == ["en", "tr"] and .loginTheme == "e-skylab-theme"' \
+  'realm security or theme desired state differs'
+# Sessions: 2 hours idle and 8 hours at most; remember-me 7 days idle and 30 days at most; client
+# sessions inherit the SSO session (0), so a refresh token lives as long as the SSO session does.
+json_assert "$realm" \
+  '.ssoSessionIdleTimeout == 7200 and .ssoSessionMaxLifespan == 28800 and .rememberMe == true and .ssoSessionIdleTimeoutRememberMe == 604800 and .ssoSessionMaxLifespanRememberMe == 2592000 and .clientSessionIdleTimeout == 0 and .clientSessionMaxLifespan == 0' \
+  'realm session desired state differs'
+grep -Eq '^\[reconcile\] realm session, login and theme settings: updated \(.*clientSessionIdleTimeout' \
+  "$TEST_STATE_DIR/reconcile-second.log" \
+  || fail 'the second reconciliation did not report repairing the realm session settings'
 json_assert "$realm" \
   '.webAuthnPolicyPasswordlessRpEntityName == "SKY LAB" and .webAuthnPolicyPasswordlessResidentKey == "required" and .webAuthnPolicyPasswordlessUserVerificationRequirement == "required" and .webAuthnPolicyPasswordlessPasskeysEnabled == true and .webAuthnPolicyPasswordlessMediation == "conditional"' \
   'passwordless WebAuthn desired state differs'
@@ -1860,6 +1879,10 @@ skyapp_token_response=$(curl --fail --silent --show-error \
 skyapp_access_token=$(jq -r .access_token <<<"$skyapp_token_response")
 [[ -n $skyapp_access_token && $skyapp_access_token != null ]] \
   || fail 'skyapp direct grant did not return an access token'
+# The refresh token of an ordinary session lives as long as the SSO session's 2-hour idle time: the
+# realm's client session settings are 0 (inherited), so they no longer cut it at 30 minutes.
+json_assert "$skyapp_token_response" '.refresh_expires_in >= 7190 and .refresh_expires_in <= 7200' \
+  'an ordinary refresh token does not live for the SSO session idle time (2 hours)'
 skyapp_payload_segment=$(cut -d. -f2 <<<"$skyapp_access_token")
 case $((${#skyapp_payload_segment} % 4)) in
   2) skyapp_payload_segment="${skyapp_payload_segment}==" ;;
@@ -1935,8 +1958,47 @@ json_assert "$aia_par_response" \
 fixture_user_uuid=$(kcadm get users -r e-skylab-test -q username=account-fixture -c \
   | jq -r '.[] | select(.username == "account-fixture") | .id')
 
+# PR #89 in the built (optimized) image, with the production browser flow and theme: once a live
+# session is older than the client's max_age, the identity provider redirector (kc_idp_hint=OBS)
+# sends the browser to Microsoft with exactly one prompt=login (SkyMicrosoftIdentityProviderFactory
+# replaced Keycloak's own microsoft factory at kc.sh build). Microsoft is never called: only the
+# Location header is read. tests/microsoft-reauthentication.sh covers the other cases in dev mode.
+stage_microsoft_reauthentication() {
+  CURRENT_STAGE='re-authentication forwarded to Microsoft as prompt=login (optimized image)'
+  local client_secret=$1 cookies par url status headers="$TEST_STATE_DIR/ms-reauth.headers" hops=0 prompts
+  kcadm delete identity-provider/instances/OBS -r "$V2_REALM" >/dev/null 2>&1 || true
+  kcadm create identity-provider/instances -r "$V2_REALM" -s alias=OBS -s providerId=microsoft -s enabled=true \
+    -s config.clientId=integration-client -s config.clientSecret=integration-secret \
+    -s config.tenantId=00000000-0000-4000-8000-000000000001 >/dev/null
+  v2_login_account_center ms-reauth fixture-password-change-me "$client_secret"
+  cookies="$TEST_STATE_DIR/v2-login-ms-reauth.cookies"
+  sleep 2
+  par=$(curl --fail --silent --show-error --user "account-center:$client_secret" \
+    --data-urlencode client_id=account-center --data-urlencode response_type=code --data-urlencode scope=openid \
+    --data-urlencode redirect_uri=https://my.yildizskylab.com/api/auth/callback \
+    --data-urlencode code_challenge=QWxhZGRpbjpPcGVuU2VzYW1lMTIzNDU2Nzg5MDEyMzQ1Njc \
+    --data-urlencode code_challenge_method=S256 --data-urlencode max_age=1 --data-urlencode kc_idp_hint=OBS \
+    "http://localhost:18080/realms/$V2_REALM/protocol/openid-connect/ext/par/request")
+  url="http://localhost:18080/realms/$V2_REALM/protocol/openid-connect/auth?client_id=account-center&request_uri=$(jq -r '.request_uri | @uri' <<<"$par")"
+  while :; do
+    status=$(curl --silent --show-error --output /dev/null --dump-header "$headers" --write-out '%{http_code}' \
+      --cookie-jar "$cookies" --cookie "$cookies" "$url")
+    [[ $status == 30[1237] ]] || fail "re-authentication: Keycloak answered HTTP $status instead of redirecting to Microsoft"
+    url=$(awk 'tolower($1) == "location:" { print $2 }' "$headers" | tr -d '\r' | tail -n 1)
+    [[ $url == http* ]] || url="http://localhost:18080$url"
+    [[ $url != https://my.yildizskylab.com/* ]] || fail 're-authentication: max_age was not enforced (code without Microsoft)'
+    [[ $url != https://login.microsoftonline.com/* ]] || break
+    hops=$((hops + 1))
+    ((hops < 10)) || fail 're-authentication: too many redirects before Microsoft'
+  done
+  prompts=$(tr '&' '\n' <<<"${url#*\?}" | sed -n 's/^prompt=//p' | paste -sd, -)
+  [[ $prompts == login ]] || fail "re-authentication: prompt sent to Microsoft is '$prompts', wanted 'login'"
+  kcadm delete identity-provider/instances/OBS -r "$V2_REALM" >/dev/null
+}
+
 if group_runs login; then
   stage_login_by_either_email "$client_secret"
+  stage_microsoft_reauthentication "$client_secret"
 fi
 
 group_runs spi || finish_group

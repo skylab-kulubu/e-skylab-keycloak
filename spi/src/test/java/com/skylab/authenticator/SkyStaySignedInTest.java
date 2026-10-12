@@ -17,6 +17,7 @@ import org.keycloak.events.Details;
 import org.keycloak.events.EventBuilder;
 import org.keycloak.forms.login.LoginFormsProvider;
 import org.keycloak.http.HttpRequest;
+import org.keycloak.models.ClientModel;
 import org.keycloak.models.Constants;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
@@ -187,6 +188,21 @@ class SkyStaySignedInTest {
         trigger();
 
         assertTrue(requiredActions.isEmpty(), "prompt=none meeting a required action fails with interaction_required");
+    }
+
+    @Test
+    void noQuestionInSkyApp() {
+        ClientModel skyapp = mock(ClientModel.class);
+        when(skyapp.getClientId()).thenReturn("skyapp");
+        when(authSession.getClient()).thenReturn(skyapp);
+
+        trigger();
+
+        assertTrue(requiredActions.isEmpty(), "SkyApp's sign-in browser keeps its own tokens (Yusuf, 2026-10-12)");
+
+        when(skyapp.getClientId()).thenReturn("account-center");
+        trigger();
+        assertEquals(List.of(SkyStaySignedIn.PROVIDER_ID), requiredActions, "a web client still asks");
     }
 
     @Test

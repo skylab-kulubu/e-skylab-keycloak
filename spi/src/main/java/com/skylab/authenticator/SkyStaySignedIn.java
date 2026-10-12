@@ -7,6 +7,7 @@ import org.keycloak.authentication.RequiredActionContext;
 import org.keycloak.authentication.RequiredActionFactory;
 import org.keycloak.authentication.RequiredActionProvider;
 import org.keycloak.events.Details;
+import org.keycloak.models.ClientModel;
 import org.keycloak.models.Constants;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.KeycloakSessionFactory;
@@ -21,8 +22,8 @@ import org.keycloak.sessions.AuthenticationSessionModel;
  * login, the counterpart of Microsoft's "Stay signed in?" after a federated sign-in (Yusuf's
  * decision of 2026-10-12). "Evet, açık kalsın" makes the new Keycloak session a remember-me session
  * (the realm's remember-me idle time and lifespan, a persistent cookie); "Hayır" leaves it an
- * ordinary one, which ends when the browser closes. The page warns against "Evet" on a shared
- * computer. The password and passkey sign-in keeps its own "Beni hatırla" box; this page never
+ * ordinary one: a session cookie, and a server session that ends after the realm's idle time. The
+ * page asks people on a shared computer to choose "Hayır" and sign out when done. The password and passkey sign-in keeps its own "Beni hatırla" box; this page never
  * shows there.
  *
  * <p>The YTÜ button is a link to the identity provider, so Keycloak never sees the box and no
@@ -38,6 +39,8 @@ import org.keycloak.sessions.AuthenticationSessionModel;
  * <p>It does not ask when the answer could not count or must not be asked:
  * <ul>
  *   <li>the realm has remember-me off (Keycloak would refuse such a session);</li>
+ *   <li>SkyApp ({@value #SKYAPP_CLIENT_ID}): its sign-in browser only hands the app its own tokens,
+ *       as Microsoft shows no "Stay signed in?" in a native app's sign-in (Yusuf, 2026-10-12);</li>
  *   <li>a passive login ({@code prompt=none} forwarded to the identity provider): Keycloak fails a
  *       passive login that meets a required action with {@code interaction_required};</li>
  *   <li>an application-initiated action ({@code kc_action});</li>
@@ -55,6 +58,8 @@ public final class SkyStaySignedIn implements RequiredActionProvider, RequiredAc
     /** The alias of YTÜ's identity provider (Microsoft, OBS), as the reconciler names it. */
     static final String YTU_IDP_ALIAS = "OBS";
     static final String TEMPLATE = "sky-stay-signed-in.ftl";
+    /** SkyApp's public client, as config/reconcile-account-center.sh names it (SKYAPP_CLIENT_ID). */
+    static final String SKYAPP_CLIENT_ID = "skyapp";
 
     /** Present once the person answered in this sign-in session. */
     static final String ANSWERED_NOTE = "sky-stay-signed-in.answered";
@@ -80,11 +85,12 @@ public final class SkyStaySignedIn implements RequiredActionProvider, RequiredAc
 
     /**
      * Whether this sign-in should ask: it came through YTÜ, the realm has remember-me on, it is not
-     * passive, not an application-initiated action, and it will open a new user session.
+     * SkyApp's, not passive, not an application-initiated action, and it will open a new user session.
      */
     static boolean due(KeycloakSession session, RealmModel realm, AuthenticationSessionModel authSession) {
         if (realm == null || !realm.isRememberMe()
                 || !YTU_IDP_ALIAS.equals(authSession.getUserSessionNotes().get(Details.IDENTITY_PROVIDER))
+                || isSkyApp(authSession.getClient())
                 || Boolean.parseBoolean(authSession.getAuthNote(AuthenticationProcessor.FORWARDED_PASSIVE_LOGIN))
                 || !isBlank(authSession.getClientNote(Constants.KC_ACTION))) {
             return false;
@@ -141,6 +147,10 @@ public final class SkyStaySignedIn implements RequiredActionProvider, RequiredAc
     /** Whole days, at least one, as the page words them. */
     static String days(int seconds) {
         return Integer.toString(Math.max(1, seconds / DAY_SECONDS));
+    }
+
+    private static boolean isSkyApp(ClientModel client) {
+        return client != null && SKYAPP_CLIENT_ID.equals(client.getClientId());
     }
 
     private static boolean isBlank(String value) {

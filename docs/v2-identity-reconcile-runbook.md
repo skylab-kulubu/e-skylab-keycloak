@@ -2413,7 +2413,9 @@ düğmesine taşınmaz, bu yüzden bugün bütün YTÜ oturumları olağan oturu
 sonunda bir soru çıkar: "Bu cihazda oturumum açık kalsın mı?" [Evet, açık kalsın] / [Hayır]. Evet
 oturumu beni-hatırla oturumu yapar (realm'in beni-hatırla süreleri: 7 gün hareketsizlik, en çok 30
 gün; kalıcı çerez), Hayır olağan oturum bırakır (2 saat hareketsizlik, en çok 8 saat; tarayıcı
-kapanınca biten çerez). Sayfa ortak ya da başkasının bilgisayarında Hayır'ı seçmeyi söyler.
+kapanınca biten çerez). Sayfa ortak ya da başkasının bilgisayarında Hayır'ı seçmeyi ve iş bitince
+çıkış yapmayı söyler (tarayıcılar oturum çerezini geri yükleyebilir, sunucu oturumu da boşta süre
+dolana kadar yaşar).
 Microsoft paylaşılan cihazı sezip soruyu gizliyor; biz sezemiyoruz, yalnız metinle uyarıyoruz.
 
 ### Nasıl çalışır
@@ -2427,6 +2429,8 @@ eylemlerinin `evaluateTriggers`'ıdır. Eylem kendini kullanıcıya değil **gir
 
 - giriş OBS üzerinden geldi (Keycloak'ın `identity_provider` kullanıcı oturumu notu `OBS`);
 - realm'de beni-hatırla açık (`rememberMe=true`; kapalıyken Keycloak beni-hatırla oturumunu geçersiz sayar);
+- istemci SkyApp (`skyapp`) değil: uygulamanın giriş tarayıcısı yalnız uygulamaya kendi token'larını
+  verir, Microsoft da native uygulama girişinde "Stay signed in?" göstermez (Yusuf, 2026-10-12);
 - pasif giriş değil (IdP'ye iletilen `prompt=none`: Keycloak gerekli eylemle karşılaşan pasif girişi
   `interaction_required` ile bitirir);
 - uygulamanın başlattığı bir eylem değil (`kc_action`);

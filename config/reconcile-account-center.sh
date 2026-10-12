@@ -1878,7 +1878,7 @@ reconcile_core_roles() {
     fi
   done
   if [[ ${#privileged[@]} -gt 0 ]]; then
-    core_roles_seed_privileged "$core_uuid" "${privileged[@]}"
+    seed_privileged_client_roles core "$core_uuid" "${privileged[@]}"
   fi
   for name in ${renamed[@]+"${renamed[@]}"}; do
     core_role_seed_rename "$core_uuid" "$name" "$(core_role_rename_source "$name")"
@@ -1894,25 +1894,32 @@ core_role_rename_source() {
   return 0
 }
 
-# core_roles_seed_privileged CORE_UUID NAME...: grants each role to the Privileged groups once and
-# marks it (operator session). Nothing is written unless every check passes.
-core_roles_seed_privileged() {
-  local core_uuid=$1
-  shift
-  local names=("$@")
+# seed_privileged_client_roles LABEL CLIENT_UUID NAME...: grants each client role to the Privileged
+# groups once and marks it (operator session). Nothing is written unless every check passes. LABEL
+# (core, skymail) names the roles in the messages ("<LABEL> role <name>: seeded once to ...").
+# core's resource roles (runbook §19) and SkyMail's Privileged roles (§25) share it.
+seed_privileged_client_roles() {
+  local label=$1 client_uuid=$2
+  shift 2
+  local names=("$@") kind
+  if [[ $label == core ]]; then
+    kind='core resource roles'
+  else
+    kind="$label Privileged roles"
+  fi
   local name groups default path gid stamp granted held role_id paths role_ids body defaults
   if ! groups=$(core_privileged_groups); then
     return 1
   fi
   if [[ -z $groups ]]; then
-    warn "no Privileged group (/ADMIN, /YK, /DK or under /UYELER) exists in realm $TARGET_REALM; nothing was granted, the roles stay unseeded"
+    warn "no Privileged group (/ADMIN, /YK, /DK or under /UYELER) exists in realm $TARGET_REALM; nothing was granted, the $kind stay unseeded"
     return 0
   fi
   # Read into a variable first: a failed read inside a process substitution would pass as "no
   # default group" and seed anyway. This check is what keeps every new user from getting the roles.
   if ! defaults=$(kcadm get "realms/$TARGET_REALM/default-groups" --fields path --format csv --noquotes); then
-    printf 'The default groups of realm %s could not be read; nothing was granted (a Privileged default group would give every new user the core resource roles)\n' \
-      "$TARGET_REALM" >&2
+    printf 'The default groups of realm %s could not be read; nothing was granted (a Privileged default group would give every new user the %s)\n' \
+      "$TARGET_REALM" "$kind" >&2
     return 1
   fi
   while IFS= read -r default; do
@@ -1920,44 +1927,44 @@ core_roles_seed_privileged() {
     [[ -n $default ]] || continue
     while IFS=$'\t' read -r path gid; do
       if [[ $default == "$path" || $default == "$path"/* ]]; then
-        printf 'The default group %s is at or under the Privileged group %s: every new user would get the core resource roles. Nothing was granted\n' \
-          "$default" "$path" >&2
+        printf 'The default group %s is at or under the Privileged group %s: every new user would get the %s. Nothing was granted\n' \
+          "$default" "$path" "$kind" >&2
         return 1
       fi
     done <<<"$groups"
   done <<<"$defaults"
   for name in "${CORE_PRIVILEGED_NAMES[@]}"; do
     grep -Eq "^(/UYELER)?/$name"$'\t' <<<"$groups" \
-      || warn "no Privileged group $name (neither /$name nor /UYELER/$name) in realm $TARGET_REALM; it gets no core resource role"
+      || warn "no Privileged group $name (neither /$name nor /UYELER/$name) in realm $TARGET_REALM; it gets none of the $kind"
   done
   paths=$(cut -f1 <<<"$groups" | paste -sd, -)
   stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  role_ids=$(kcadm get "clients/$core_uuid/roles" -r "$TARGET_REALM" --fields id,name --format csv --noquotes \
+  role_ids=$(kcadm get "clients/$client_uuid/roles" -r "$TARGET_REALM" --fields id,name --format csv --noquotes \
     | tr -d '\r')
   declare -A granted_to=()
   # One read and at most one write per group.
   while IFS=$'\t' read -r path gid; do
-    held=$(kcadm get "groups/$gid/role-mappings/clients/$core_uuid" -r "$TARGET_REALM" --fields name --format csv \
+    held=$(kcadm get "groups/$gid/role-mappings/clients/$client_uuid" -r "$TARGET_REALM" --fields name --format csv \
       --noquotes | tr -d '\r')
     body=''
     for name in "${names[@]}"; do
       grep -Fxq -- "$name" <<<"$held" && continue
       role_id=$(sed -n "s/^\([^,]*\),$name\$/\1/p" <<<"$role_ids")
-      [[ -n $role_id ]] || { printf 'core role %s could not be read back\n' "$name" >&2; return 1; }
+      [[ -n $role_id ]] || { printf '%s role %s could not be read back\n' "$label" "$name" >&2; return 1; }
       body="$body,$(role_reference "$role_id" "$name")"
       granted_to[$name]="${granted_to[$name]:-}, $path"
     done
     if [[ -n $body ]]; then
-      kcadm_quiet create "groups/$gid/role-mappings/clients/$core_uuid" -r "$TARGET_REALM" \
+      kcadm_quiet create "groups/$gid/role-mappings/clients/$client_uuid" -r "$TARGET_REALM" \
         -b "[${body#,}]" || return 1
     fi
   done <<<"$groups"
   # The mark comes last: a run cut before it grants the same (idempotently) next time.
   for name in "${names[@]}"; do
-    kcadm_quiet update "clients/$core_uuid/roles/$name" -r "$TARGET_REALM" \
+    kcadm_quiet update "clients/$client_uuid/roles/$name" -r "$TARGET_REALM" \
       -s "attributes.\"$CORE_ROLE_SEED_ATTRIBUTE\"=[\"$stamp $paths\"]" || return 1
     granted=${granted_to[$name]:-, none (every group already held it)}
-    log "core role $name: seeded once to $paths (granted to: ${granted#, })"
+    log "$label role $name: seeded once to $paths (granted to: ${granted#, })"
   done
 }
 
@@ -2414,8 +2421,9 @@ reconcile_core_service_roles() {
 # core_privileged_groups, the default-group refusal). The other skymail:* roles were granted by hand
 # and are not managed here. Every run creates a missing role (manage-clients; the description is
 # written only then); the operator's core-roles step (KEYCLOAK_RECONCILE_ONLY=core-roles) grants an
-# unmarked role to the Privileged groups once and marks it, so a mapping changed in the admin panel
-# stays that way. Nothing here removes a mapping or a role. skymail is SkyMail's login client too,
+# unmarked role to the Privileged groups once and marks it (seed_privileged_client_roles, shared with
+# core), so a mapping changed later in the SKY LAB admin panel (its group page lists every
+# client's roles, skymail's too) or the Keycloak Admin Console stays that way. Nothing here removes a mapping or a role. skymail is SkyMail's login client too,
 # and its own roles always pass its role scope, so a Privileged person's SkyMail token carries them.
 # name|description (the description is written only when the role is created)
 SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS=(
@@ -2424,7 +2432,7 @@ SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS=(
 
 reconcile_skymail_privileged_roles() {
   local skymail_uuid roles_csv definition name description created='' seeds role_name role_seed_value seed
-  local unseeded=() groups defaults default path gid paths stamp role_ids held body role_id granted
+  local unseeded=()
   if ! skymail_uuid=$(optional_lookup client_id_by_client_id "$SKYMAIL_CLIENT_ID"); then
     return 2
   fi
@@ -2468,59 +2476,8 @@ reconcile_skymail_privileged_roles() {
     return 0
   fi
 
-  # Operator session: seed. Nothing is written unless every check passes (as for core's roles).
-  if ! groups=$(core_privileged_groups); then
-    return 1
-  fi
-  if [[ -z $groups ]]; then
-    warn "no Privileged group (/ADMIN, /YK, /DK or under /UYELER) exists in realm $TARGET_REALM; nothing was granted, the skymail roles stay unseeded"
-    return 0
-  fi
-  if ! defaults=$(kcadm get "realms/$TARGET_REALM/default-groups" --fields path --format csv --noquotes); then
-    printf 'The default groups of realm %s could not be read; nothing was granted (a Privileged default group would give every new user the skymail roles)\n' \
-      "$TARGET_REALM" >&2
-    return 1
-  fi
-  while IFS= read -r default; do
-    default=${default%$'\r'}
-    [[ -n $default ]] || continue
-    while IFS=$'\t' read -r path gid; do
-      if [[ $default == "$path" || $default == "$path"/* ]]; then
-        printf 'The default group %s is at or under the Privileged group %s: every new user would get the skymail roles. Nothing was granted\n' \
-          "$default" "$path" >&2
-        return 1
-      fi
-    done <<<"$groups"
-  done <<<"$defaults"
-  paths=$(cut -f1 <<<"$groups" | paste -sd, -)
-  stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  role_ids=$(kcadm get "clients/$skymail_uuid/roles" -r "$TARGET_REALM" --fields id,name --format csv --noquotes \
-    | tr -d '\r')
-  declare -A granted_to=()
-  # One read and at most one write per group.
-  while IFS=$'\t' read -r path gid; do
-    held=$(kcadm get "groups/$gid/role-mappings/clients/$skymail_uuid" -r "$TARGET_REALM" --fields name \
-      --format csv --noquotes | tr -d '\r')
-    body=''
-    for name in "${unseeded[@]}"; do
-      grep -Fxq -- "$name" <<<"$held" && continue
-      role_id=$(sed -n "s/^\([^,]*\),$name\$/\1/p" <<<"$role_ids")
-      [[ -n $role_id ]] || { printf 'skymail role %s could not be read back\n' "$name" >&2; return 1; }
-      body="$body,$(role_reference "$role_id" "$name")"
-      granted_to[$name]="${granted_to[$name]:-}, $path"
-    done
-    if [[ -n $body ]]; then
-      kcadm_quiet create "groups/$gid/role-mappings/clients/$skymail_uuid" -r "$TARGET_REALM" \
-        -b "[${body#,}]" || return 1
-    fi
-  done <<<"$groups"
-  # The mark comes last: a run cut before it grants the same (idempotently) next time.
-  for name in "${unseeded[@]}"; do
-    kcadm_quiet update "clients/$skymail_uuid/roles/$name" -r "$TARGET_REALM" \
-      -s "attributes.\"$CORE_ROLE_SEED_ATTRIBUTE\"=[\"$stamp $paths\"]" || return 1
-    granted=${granted_to[$name]:-, none (every group already held it)}
-    log "skymail role $name: seeded once to $paths (granted to: ${granted#, })"
-  done
+  # Operator session: seed, with the same checks and mark as core's resource roles.
+  seed_privileged_client_roles skymail "$skymail_uuid" "${unseeded[@]}"
 }
 
 # The keycloak-mailer service-account client (K5) is provisioned by the operator with

@@ -84,6 +84,9 @@ stage_skymail_roles_seeded_by_operator() {
   grep -Fq "[reconcile] skymail role $SR_ROLE: seeded once to /ADMIN,/UYELER/YK (granted to: /UYELER/YK)" <<<"$output" \
     || { printf '%s\n' "$output" >&2; fail "the unmarked $SR_ROLE was not seeded again"; }
   ! grep -Eq '^\[reconcile\] core role .*: seeded once' <<<"$output" || fail 'reseeding skymail seeded a core role'
+  # The shared seeding (seed_privileged_client_roles) names each missing Privileged group.
+  grep -Fq '[reconcile] WARNING: no Privileged group DK (neither /DK nor /UYELER/DK) in realm '"$V2_REALM"'; it gets none of the skymail Privileged roles' <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'reseeding skymail did not report the missing DK group'; }
   json_assert "$(sr_group_roles /UYELER/YK)" 'index($r) != null' "/UYELER/YK did not get $SR_ROLE back" --arg r "$SR_ROLE"
 }
 

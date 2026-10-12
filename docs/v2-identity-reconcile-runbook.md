@@ -2602,10 +2602,12 @@ olsun. Bu yüzden rol §19'daki core kaynak rolleriyle aynı biçimde yönetilir
   `skymail` istemcisi yoksa uyarıyla atlanır.
 - Rol Privileged gruplara (`/ADMIN`, `/YK`, `/DK`, `/UYELER/ADMIN`, `/UYELER/YK`, `/UYELER/DK`;
   hangileri varsa) **bir kez** verilir; rolün `skylab.seeded-group-mappings` özniteliği zamanı ve
-  yolları kaydeder. İşaretli role eşleme eklenmez, admin panelinde değişen eşlemeye dokunulmaz,
+  yolları kaydeder. İşaretli role eşleme eklenmez, sonradan SKY LAB admin panelinde ya da Keycloak Admin
+  Console'da değişen eşlemeye dokunulmaz,
   hiçbir koşu eşleme ya da rol silmez. Privileged bir varsayılan grup varsa, varsayılan grupların ya
   da bir Privileged grubun okunması "yok" dışında bir nedenle başarısız olursa hiçbir şey yazılmaz
-  (§19'un denetimleri, aynı fonksiyonlar).
+  (§19'un denetimleri; iki adım aynı `seed_privileged_client_roles` gövdesini kullanır, eksik
+  Privileged grup ad başına uyarılır).
 - Uzlaştırıcı kimliği yalnız rolü oluşturur ve `WARNING: skymail roles not yet granted to the
   Privileged groups: skymail:system-mails:read …` yazar. Tohumlamayı operatörün §19'daki
   `KEYCLOAK_RECONCILE_ONLY=core-roles` koşusu yapar (aynı komut; core rollerinden sonra SkyMail
@@ -2621,7 +2623,9 @@ gizli). Bu yüzden Keycloak yayını ve operatör tohumlaması skymail-backend #
 yapılırsa YK/DK/ADMIN #61 yayınlandığı an içeriği görür; sonra yapılırsa arada içerik kimseye
 görünmez (zararsız, yalnız gecikme).
 
-Geri dönüş: eşlemeler Admin Console'dan ya da SKY LAB admin panelinden kaldırılır; işaret kaldığı
+Geri dönüş: eşlemeler SKY LAB admin panelinin grup sayfasından (core'un `/v1/client-roles`'u
+her istemcinin rollerini, `skymail`'inkileri de listeler) ya da Keycloak Admin Console'dan kaldırılır;
+işaret kaldığı
 için uzlaştırıcı onları geri koymaz.
 
 Harness (`tests/skymail-roles.sh`, `run-integration.sh` çağırır, `roles` grubu): ilk tam koşu rolü

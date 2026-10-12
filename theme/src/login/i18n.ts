@@ -76,7 +76,7 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     staySignedInDescription:
       "Evet dersen bu tarayıcıda {0} güne kadar yeniden giriş yapman gerekmez; {1} gün hiç kullanmazsan oturumun kapanır.",
     staySignedInSharedDevice:
-      "Ortak ya da başkasının bilgisayarındaysan (laboratuvar, kütüphane) Hayır'ı seç. Hayır dersen oturumun tarayıcıyı kapattığında biter.",
+      "Ortak ya da başkasının bilgisayarındaysan (laboratuvar, kütüphane) Hayır'ı seç ve işin bitince çıkış yap. Hayır dersen oturumun bu cihazda kalıcı olmaz, bir süre kullanmadığında kendiliğinden biter.",
     staySignedInYes: "Evet, açık kalsın",
     staySignedInNo: "Hayır",
 
@@ -385,7 +385,7 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     staySignedInDescription:
       "If you say yes, you will not have to sign in again in this browser for up to {0} days; your session ends if you do not use it for {1} days.",
     staySignedInSharedDevice:
-      "On a shared or someone else's computer (a lab, a library), choose No. With No, your session ends when you close the browser.",
+      "On a shared or someone else's computer (a lab, a library), choose No and sign out when you are done. With No, your session is not kept on this device and ends on its own after a while without use.",
     staySignedInYes: "Yes, stay signed in",
     staySignedInNo: "No",
 

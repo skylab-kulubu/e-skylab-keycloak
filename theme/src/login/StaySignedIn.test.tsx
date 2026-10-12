@@ -36,7 +36,7 @@ describe("stay signed in after a YTÜ login (sky-stay-signed-in.ftl)", () => {
       "Evet dersen bu tarayıcıda 30 güne kadar yeniden giriş yapman gerekmez; 7 gün hiç kullanmazsan oturumun kapanır."
     );
     expect(container.querySelector("#sky-stay-signed-in-shared-device")).toHaveTextContent(
-      "Ortak ya da başkasının bilgisayarındaysan (laboratuvar, kütüphane) Hayır'ı seç. Hayır dersen oturumun tarayıcıyı kapattığında biter."
+      "Ortak ya da başkasının bilgisayarındaysan (laboratuvar, kütüphane) Hayır'ı seç ve işin bitince çıkış yap. Hayır dersen oturumun bu cihazda kalıcı olmaz, bir süre kullanmadığında kendiliğinden biter."
     );
     expect(document.title).toBe("Bu cihazda oturumum açık kalsın mı? · SKY LAB");
   });

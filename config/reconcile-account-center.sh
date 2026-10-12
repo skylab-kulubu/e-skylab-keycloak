@@ -1622,9 +1622,13 @@ remove_groups_claim() {
 #
 # The client session of the panel lasts at most 8 hours (client.session.max.lifespan, the realm's
 # SSO max): Keycloak takes the client's own value before the realm's and before remember-me
-# (SessionExpirationUtils), so a panel refresh token dies 8 hours after the panel's login even in a
-# 30-day remember-me session, whatever the panel's code checks. A PUT that carries "attributes"
-# writes only the attributes it names; the client's other attributes stay.
+# (SessionExpirationUtils), so a panel refresh token dies 8 hours after the panel's client session
+# began, even in a 30-day remember-me session, whatever the panel's code checks. It asks for no
+# credential: while the SSO session lives, a silent panel login starts a new client session (another
+# 8 hours); re-authentication is the panel's max_age. 28800 is the realm's ssoSessionMaxLifespan in
+# config/account-center-realm.json: Keycloak refuses a client max above the realm's SSO max (the
+# remember-me max when remember-me is on), so lowering that one means lowering this one. A PUT that
+# carries "attributes" writes only the attributes it names; the client's other attributes stay.
 #
 # A missing client is skipped with a warning. A public one fails the run before anything is written
 # to it: token exchange needs a confidential client, and making it confidential changes how the panel

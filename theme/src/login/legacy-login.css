@@ -44,8 +44,8 @@
   --sl-legacy-surface-active: rgba(255, 255, 255, 0.15);
   --sl-legacy-input-bg: var(--input-background);
   --sl-legacy-input-border: var(--input);
-  /* skylcn-ui's ring at 60% instead of 40%, so the field focus ring clears 3:1 on the card (WCAG 1.4.11) */
-  --sl-legacy-ring: rgba(235, 213, 238, 0.6);
+  /* skylcn-ui's ring (60% in dark since 0.1.7) clears 3:1 on the card (WCAG 1.4.11) */
+  --sl-legacy-ring: var(--ring);
   /* skylcn-ui's primary button: a lilac wash and outline around near-white lilac text. */
   --sl-legacy-brand-text: var(--skylab-300);
   --sl-legacy-brand-wash: rgba(224, 200, 229, 0.14);

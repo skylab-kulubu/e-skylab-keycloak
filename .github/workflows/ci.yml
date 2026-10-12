@@ -120,6 +120,38 @@ jobs:
       - name: Primary e-mail fill script against a throwaway Keycloak
         run: bash tests/fill-missing-primary-from-school.sh
 
+  # The first YTÜ login (eskylab-login-ux 07): the SPI's sky-ytu-first-login step and the
+  # reconciler's first broker login step (KEYCLOAK_RECONCILE_ONLY=first-broker-login,
+  # KEYCLOAK_YTU_FIRST_LOGIN) against the stock Keycloak image in dev mode, with the SPI jar built
+  # from spi/ in the Dockerfile's Maven image, a mock YTÜ tenant behind OBS and real logins; needs
+  # no build of this repository's image. Then the one-time Personal e-mail offer at its end
+  # (ticket 21, required action sky-personal-email-offer, KEYCLOAK_PERSONAL_EMAIL_OFFER), with
+  # codes read from the integration harness's pinned Mailpit image, and the "Bu cihazda oturumum açık
+  # kalsın mı?" question after every YTÜ login (required action sky-stay-signed-in,
+  # KEYCLOAK_STAY_SIGNED_IN).
+  ytu-first-login:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: First YTÜ login against a throwaway Keycloak
+        run: bash tests/ytu-first-login.sh
+
+  # The SPI's microsoft identity provider: Keycloak's re-authentication (max_age exceeded,
+  # prompt=login) goes to Microsoft as prompt=login; an ordinary first login and SSO unchanged;
+  # SKY_FORWARD_REAUTHENTICATION=false gives Keycloak's own behaviour back. Stock Keycloak image
+  # in dev mode with the SPI jar built from spi/ in the Dockerfile's Maven image; only Keycloak's
+  # redirect is read, Microsoft is never called.
+  microsoft-reauthentication:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Re-authentication forwarded to Microsoft against a throwaway Keycloak
+        run: bash tests/microsoft-reauthentication.sh
+
   # config/site-clients.sh and config/site-editor-grants.sh (the event sites' Site clients, with
   # inscribed-cms-roles.sh between them) against the stock Keycloak image in dev mode, with a real
   # authorization code flow (PKCE); needs no build of this repository's image.
@@ -183,13 +215,35 @@ jobs:
       - name: Landing page at / against a throwaway Keycloak
         run: bash tests/welcome-page.sh
 
-  integration:
+  # tests/run-integration.sh in parallel groups (INTEGRATION_GROUP; the list and what each group
+  # runs are at the top of the script). In one job the harness took 96-124 minutes (#79, #80 and
+  # main 6321258 on 2026-10-07). Each group starts its own Keycloak and runs the shared realm
+  # prefix (17-22 minutes, by runner), so a group takes that prefix plus its share. First split
+  # run (#81, run 37656800805): erasure 53, roles 55, login 44 (on a runner whose prefix took 17
+  # minutes; about 57 on one that takes 22), spi 53 minutes. Timeouts are about 1.5 times that;
+  # the "[harness <group> +MmSSs]" lines of the log show where a group grows. Each job builds the
+  # candidate itself from the GitHub Actions cache (about 30 s warm), which is cheaper than a build
+  # job with an image artifact that every group would wait for and download.
+  integration-group:
+    name: integration (${{ matrix.group }})
     runs-on: ubuntu-latest
-    # The full harness takes 56-83 minutes depending on the runner (2026-10); 120 leaves headroom.
-    timeout-minutes: 120
     needs: theme
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: erasure
+            timeout: 80
+          - group: roles
+            timeout: 85
+          - group: login
+            timeout: 85
+          - group: spi
+            timeout: 80
+    timeout-minutes: ${{ matrix.timeout }}
     env:
       KEYCLOAK_TEST_IMAGE: account-keycloak:ci
+      INTEGRATION_GROUP: ${{ matrix.group }}
     steps:
       - uses: actions/checkout@v7
 
@@ -206,9 +260,16 @@ jobs:
 
       - name: Build the source-controlled login theme and check its contract
         working-directory: theme
+        timeout-minutes: 20
         run: |
           npm ci --ignore-scripts
-          npx playwright install --with-deps chromium
+          # The runner's apt mirror can hang (run 37664358276: 80 minutes in apt-get update until the
+          # job timeout): each attempt gets 5 minutes, three attempts.
+          for attempt in 1 2 3; do
+            timeout 300 npx playwright install --with-deps chromium && break
+            if [ "$attempt" = 3 ]; then exit 1; fi
+            echo "playwright install attempt $attempt failed or timed out; retrying" >&2
+          done
           npm run build-keycloak-theme
           bash ../tests/check-theme-contract.sh
           npm run build-welcome-theme
@@ -224,7 +285,22 @@ jobs:
           platforms: linux/amd64
           tags: ${{ env.KEYCLOAK_TEST_IMAGE }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # One writer: the groups build the same layers.
+          cache-to: ${{ matrix.group == 'erasure' && 'type=gha,mode=max' || '' }}
 
       - name: Run Keycloak, OIDC and RabbitMQ contracts
         run: bash tests/run-integration.sh
+
+  # One check named integration, green only when every group is.
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: integration-group
+    if: always()
+    steps:
+      - name: Every integration group passed
+        env:
+          GROUPS_RESULT: ${{ needs.integration-group.result }}
+        run: |
+          echo "integration groups: $GROUPS_RESULT"
+          test "$GROUPS_RESULT" = success

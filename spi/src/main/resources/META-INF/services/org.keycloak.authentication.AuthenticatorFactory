@@ -2,3 +2,4 @@ com.skylab.authenticator.Oauth2UserCreatorFactory
 com.skylab.passkey.PasskeyOfferAuthenticatorFactory
 com.skylab.authenticator.SkyUsernamePasswordFormFactory
 com.skylab.authenticator.SkyResetCredentialChooseUser
+com.skylab.authenticator.SkyYtuFirstLogin

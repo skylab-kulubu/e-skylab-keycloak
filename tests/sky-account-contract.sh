@@ -1020,6 +1020,17 @@ expect 200 - 'the replacement code must finish the change'
 json_assert "$SKY_BODY" \
   '.personalEmail == "email-third-new@example.invalid" and .primary == "personal" and .email == "email-third-new@example.invalid" and .emailVerified == true' \
   'replacing the personal primary must move the primary to the new address'
+# Ticket 21: an address on the university's domain (any subdomain, any case) is never a Personal
+# e-mail; account-center maps the code onto the address field.
+sky POST email/change-request "$token_t" "$sudo_t" '{"address":"Email-Third@CE.Yildiz.EDU.tr"}'
+expect 400 email_school_domain 'a university address must be refused as a personal e-mail'
+json_assert "$SKY_BODY" '.field == "address"' 'email_school_domain must name the address field'
+# The taken check ignores case in the real store: another person's Personal e-mail written in capitals.
+mixed_holder=$(kcadm create users -r "$REALM" -i -s username=email-mixed-holder -s enabled=true \
+  -s firstName=Email -s lastName=Mixed -s 'attributes.personalEmail=["Mixed.Held@Example.invalid"]')
+sky POST email/change-request "$token_t" "$sudo_t" '{"address":"mixed.held@example.invalid"}'
+expect 409 email_taken 'another person personal e-mail stored in capitals must be refused'
+kcadm delete "users/$mixed_holder" -r "$REALM" >/dev/null
 kcadm delete "users/$email_third_uuid" -r "$REALM" >/dev/null
 
 # A1c: a primary set before v2 that is neither the school nor a personal address (a legacy

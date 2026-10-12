@@ -44,8 +44,8 @@
   --sl-legacy-surface-active: rgba(255, 255, 255, 0.15);
   --sl-legacy-input-bg: var(--input-background);
   --sl-legacy-input-border: var(--input);
-  /* skylcn-ui's ring at 60% instead of 40%, so the field focus ring clears 3:1 on the card (WCAG 1.4.11) */
-  --sl-legacy-ring: rgba(235, 213, 238, 0.6);
+  /* skylcn-ui's ring (60% in dark since 0.1.7) clears 3:1 on the card (WCAG 1.4.11) */
+  --sl-legacy-ring: var(--ring);
   /* skylcn-ui's primary button: a lilac wash and outline around near-white lilac text. */
   --sl-legacy-brand-text: var(--skylab-300);
   --sl-legacy-brand-wash: rgba(224, 200, 229, 0.14);
@@ -999,6 +999,53 @@ textarea.sl-legacy-input {
 }
 
 .sl-passkey-offer__later {
+  min-height: 3rem;
+  font-size: 0.875rem;
+}
+
+.sl-personal-email-offer__sent {
+  margin: 0 0 1rem;
+  color: var(--sl-legacy-label);
+  font-size: 0.875rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.sl-personal-email-offer__actions {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+.sl-personal-email-offer__note {
+  margin: 0.25rem 0 0;
+  color: var(--sl-legacy-label);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+.sl-personal-email-offer__secondary {
+  min-height: 3rem;
+  font-size: 0.875rem;
+}
+
+.sl-stay-signed-in__warning {
+  margin: 0 0 1.25rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid rgba(224, 200, 229, 0.3);
+  border-radius: var(--sl-legacy-radius);
+  color: var(--sl-legacy-label);
+  background: rgba(224, 200, 229, 0.1);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+.sl-stay-signed-in__actions {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.sl-stay-signed-in__no {
   min-height: 3rem;
   font-size: 0.875rem;
 }

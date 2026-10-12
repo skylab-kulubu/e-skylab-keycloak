@@ -50,6 +50,36 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     passkeyOfferNow: "Şimdi ekle",
     passkeyOfferLater: "30 gün boyunca tekrar sorma",
 
+    // Personal e-mail offer: once, at the end of a first YTÜ login (SPI sky-personal-email-offer)
+    personalEmailOfferTitle: "Kişisel e-posta ekle",
+    personalEmailOfferDescription: "Mezun olunca okul adresin kapanabilir. Kişisel e-postanı ekle.",
+    personalEmailOfferAddressLabel: "Kişisel e-posta adresin",
+    personalEmailOfferSend: "Kod gönder",
+    personalEmailOfferSkip: "Şimdilik geç",
+    personalEmailOfferCodeSent: "{0} adresine 6 haneli bir kod gönderdik. Kod {1} dakika geçerli.",
+    personalEmailOfferCodeLabel: "Kod",
+    personalEmailOfferVerify: "Doğrula ve devam et",
+    personalEmailOfferChange: "Başka bir adres yaz",
+    personalEmailOfferPrimaryNote: "Birincil adresin okul adresin olarak kalır; Hesap Merkezi'nden değiştirebilirsin.",
+    "personalEmailOfferError.invalid_address": "Geçerli bir e-posta adresi yaz.",
+    "personalEmailOfferError.own_address": "Bu adres zaten hesabında. Okul adresinden başka bir adres yaz.",
+    "personalEmailOfferError.email_school_domain": "Okul adresi mezun olunca kapanabilir; okul dışı bir adres gir.",
+    "personalEmailOfferError.email_taken": "Bu e-posta adresi başka bir hesapta kayıtlı. Başka bir adres dene.",
+    "personalEmailOfferError.rate_limited": "Çok fazla kod istendi. Biraz sonra yeniden dene ya da şimdilik geç.",
+    "personalEmailOfferError.email_not_sent": "Kod gönderilemedi. Biraz sonra yeniden dene ya da şimdilik geç.",
+    "personalEmailOfferError.malformed_code": "Kod 6 rakamdan oluşur.",
+    "personalEmailOfferError.wrong_code": "Kod yanlış. {0} deneme hakkın kaldı.",
+    "personalEmailOfferError.code_expired": "Kodun süresi doldu ya da kod kullanıldı. Yeni bir kod iste.",
+    "personalEmailOfferError.too_many_tries": "Çok fazla yanlış deneme. Yeni bir kod iste.",
+    // "Bu cihazda oturumum açık kalsın mı?" after every YTÜ login (SPI sky-stay-signed-in)
+    staySignedInTitle: "Bu cihazda oturumum açık kalsın mı?",
+    staySignedInDescription:
+      "Evet dersen bu tarayıcıda {0} güne kadar yeniden giriş yapman gerekmez; {1} gün hiç kullanmazsan oturumun kapanır.",
+    staySignedInSharedDevice:
+      "Ortak ya da başkasının bilgisayarındaysan (laboratuvar, kütüphane) Hayır'ı seç ve işin bitince çıkış yap. Hayır dersen oturumun bu cihazda kalıcı olmaz, bir süre kullanmadığında kendiliğinden biter.",
+    staySignedInYes: "Evet, açık kalsın",
+    staySignedInNo: "Hayır",
+
     // Web handoff failure page (SkyApp WebView, sky-handoff v1/failed): one sentence per reason
     "skyHandoffFailed.expired": "Bağlantının süresi doldu.",
     "skyHandoffFailed.used": "Bu bağlantı zaten kullanıldı.",
@@ -329,6 +359,35 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
       "Your passkey stays protected on this device; SKY LAB never receives your biometric data.",
     passkeyOfferNow: "Add now",
     passkeyOfferLater: "Do not ask again for 30 days",
+
+    // Personal e-mail offer: once, at the end of a first YTÜ login (SPI sky-personal-email-offer)
+    personalEmailOfferTitle: "Add a personal e-mail",
+    personalEmailOfferDescription: "Your school address may close after you graduate. Add your personal e-mail.",
+    personalEmailOfferAddressLabel: "Your personal e-mail address",
+    personalEmailOfferSend: "Send code",
+    personalEmailOfferSkip: "Skip for now",
+    personalEmailOfferCodeSent: "We sent a 6-digit code to {0}. It is valid for {1} minutes.",
+    personalEmailOfferCodeLabel: "Code",
+    personalEmailOfferVerify: "Verify and continue",
+    personalEmailOfferChange: "Use another address",
+    personalEmailOfferPrimaryNote: "Your school address stays your primary address; you can change it in Account Center.",
+    "personalEmailOfferError.invalid_address": "Enter a valid e-mail address.",
+    "personalEmailOfferError.own_address": "This address is already on your account. Enter an address other than your school address.",
+    "personalEmailOfferError.email_school_domain": "A school address may close after you graduate; enter a non-school address.",
+    "personalEmailOfferError.email_taken": "This e-mail address is registered to another account. Try another address.",
+    "personalEmailOfferError.rate_limited": "Too many codes were requested. Try again later or skip for now.",
+    "personalEmailOfferError.email_not_sent": "The code could not be sent. Try again later or skip for now.",
+    "personalEmailOfferError.malformed_code": "The code has 6 digits.",
+    "personalEmailOfferError.wrong_code": "Wrong code. {0} tries left.",
+    "personalEmailOfferError.code_expired": "The code has expired or was already used. Request a new code.",
+    "personalEmailOfferError.too_many_tries": "Too many wrong tries. Request a new code.",
+    staySignedInTitle: "Stay signed in on this device?",
+    staySignedInDescription:
+      "If you say yes, you will not have to sign in again in this browser for up to {0} days; your session ends if you do not use it for {1} days.",
+    staySignedInSharedDevice:
+      "On a shared or someone else's computer (a lab, a library), choose No and sign out when you are done. With No, your session is not kept on this device and ends on its own after a while without use.",
+    staySignedInYes: "Yes, stay signed in",
+    staySignedInNo: "No",
 
     // Web handoff failure page (SkyApp WebView, sky-handoff v1/failed): one sentence per reason
     "skyHandoffFailed.expired": "This link has expired.",

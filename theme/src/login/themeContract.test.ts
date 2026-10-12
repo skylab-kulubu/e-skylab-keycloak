@@ -188,6 +188,14 @@ describe("SKY LAB theme: one design system", () => {
     }
   });
 
+  it("takes the field focus ring from skylcn-ui, at 3:1 or more against the card (WCAG 1.4.11)", () => {
+    // skylcn-ui 0.1.7+ ships the dark ring at 60%, so the login keeps no override of its own.
+    expect(declaration(":root", "--sl-legacy-ring")).toBe("var(--ring)");
+    expect(declaration(".sl-legacy-input:focus", "box-shadow")).toBe("0 0 0 2px var(--sl-legacy-ring)");
+    const ring = composite(parseColor("var(--sl-legacy-ring)"), cardSurface);
+    expect(contrastRatio(ring, cardSurface)).toBeGreaterThanOrEqual(3);
+  });
+
   it("has explicit keyboard focus, reduced-motion and forced-colors behavior", () => {
     expect(css).toContain(":focus-visible");
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");

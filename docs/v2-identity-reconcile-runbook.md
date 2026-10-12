@@ -18,23 +18,24 @@ entegrasyon testi bunu doğrular.
 
 | Adım | Uygulanan durum |
 | --- | --- |
-| Realm oturum/giriş/tema (`account-center-realm.json`) | `editUsernameAllowed=false`, `loginWithEmailAllowed=true`, `duplicateEmailsAllowed=false`, oturum süreleri, `e-skylab-theme` |
+| Realm oturum/giriş/tema (`account-center-realm.json`) | `editUsernameAllowed=false`, `loginWithEmailAllowed=true`, `duplicateEmailsAllowed=false`, `e-skylab-theme`; oturum süreleri: `ssoSessionIdleTimeout=7200` (2 saat hareketsizlik), `ssoSessionMaxLifespan=28800` (en çok 8 saat), `rememberMe=true`, `ssoSessionIdleTimeoutRememberMe=604800` (7 gün), `ssoSessionMaxLifespanRememberMe=2592000` (30 gün), `clientSessionIdleTimeout=0` ve `clientSessionMaxLifespan=0` (istemci oturumu SSO oturumundan miras alır; refresh token SSO oturumu yaşadıkça yaşar). Bu alanlar elle değiştirilirse sonraki uzlaştırma geri yazar. Offline oturum ayarları (`offlineSession*`, SkyApp) yönetilmez. |
 | Brute force ve parola politikası (`account-center-realm-security.json`) | `bruteForceProtected=true`, `permanentLockout=false`, `failureFactor=10`, `waitIncrementSeconds=60`, `maxFailureWaitSeconds=900`, `maxDeltaTimeSeconds=43200`, `quickLoginCheckMilliSeconds=1000`, `minimumQuickLoginWaitSeconds=60`, `passwordPolicy="length(8) and notUsername and notEmail"` |
 | Olay saklama süresi (hesap silme 09; değerler betiğin başındaki `EVENT_RETENTION_*` sabitlerinde) | `eventsEnabled=true`, `eventsExpiration=2592000`, `adminEventsEnabled=true`, `adminEventsDetailsEnabled=true` ve realm özniteliği `adminEventsExpiration=2592000`: kullanıcı ve admin olayları 30 gün sonra silinir, admin olay ayrıntıları denetim için açık kalır (Yusuf'un seçimi). Neden: Keycloak silinen kişinin olaylarını silmez. `CREATE`/`UPDATE` admin olayları kişinin tam temsilini (e-posta, ad, okul ve kişisel e-posta), `DELETE` kullanıcı adını, `LOGIN`/`LOGIN_ERROR` yazılan adresi tutar. Süre kapatılırsa bunlar süresiz kalır; 30 gün KVKK'nın başvuruyu sonuçlandırma süresidir. Öznitelik, canlı öznitelik haritasının üstüne birleştirilerek yazılır. Dinleyiciler ve kaydedilen olay türleri yönetilmez. Yetki: realm PUT'u `manage-realm` ister, uzlaştırıcı kimliğinde var; `events/config` uç noktası (`manage-events`) kullanılmaz. Üretimde bu değerler 2026-09-26'dan önce elle kurulmuştu; ilk koşuda `[reconcile] realm event retention (…): unchanged` beklenir, `updated (…)` görülürse biri ayarı değiştirmiştir, not edin. Harness: `tests/event-retention.sh`. |
-| Şifresiz passkey politikası (`account-center-passkey-policy.json` + ortam) | `webAuthnPolicyPasswordlessRpId=yildizskylab.com`, `webAuthnPolicyPasswordlessExtraOrigins=["https://my.yildizskylab.com"]`; entity name `SKY LAB`, ES256/RS256, resident key ve kullanıcı doğrulaması zorunlu, passkeys açık, conditional mediation; diğer alanlar Keycloak varsayılanları. Relying party id gerçekten değişiyorsa politika yazılmadan önce realm özniteliği `skylab.passkeyRpIdSwitchedAt=<ISO-8601 UTC>` kaydedilir (öznitelik haritası canlı halinin üstüne birleştirilir, başka öznitelik silinmez) ve `[reconcile] passkey relying party id switches from '…' to '…'` satırı basılır; §5'teki temizlik bu anı cutover alır. İki faktörlü (`webAuthnPolicy*`) politika yönetilmez. `attributes` taşımayan realm PUT'ları CIBA/PAR sürelerini Keycloak varsayılanına sıfırlar (önceden de böyleydi). |
+| Şifresiz passkey politikası (`account-center-passkey-policy.json` + ortam) | `webAuthnPolicyPasswordlessRpId=yildizskylab.com`, `webAuthnPolicyPasswordlessExtraOrigins=["https://my.yildizskylab.com"]`; entity name `SKY LAB`, ES256/RS256, resident key ve kullanıcı doğrulaması zorunlu, passkeys açık, conditional mediation; diğer alanlar Keycloak varsayılanları. Relying party id gerçekten değişiyorsa politika yazılmadan önce realm özniteliği `skylab.passkeyRpIdSwitchedAt=<ISO-8601 UTC>` kaydedilir (öznitelik haritası canlı halinin üstüne birleştirilir, başka öznitelik silinmez) ve `[reconcile] passkey relying party id switches from '…' to '…'` satırı basılır; §5'teki temizlik bu anı cutover alır. İki faktörlü (`webAuthnPolicy*`) politika yönetilmez. `attributes` taşımayan realm PUT'ları CIBA/PAR sürelerini ve cihaz kodu ömrünü (`oauth2DeviceCodeLifespan`) Keycloak varsayılanına sıfırlar (önceden de böyleydi). |
 | User Profile (`account-center-user-profile.json`) | Canlı yapı korunur (gruplar, açıklamalar, mesaj anahtarları, ek öznitelikler); `firstName`, `lastName`, `email` kişi için salt okunur (`edit=[admin]`, `view=[admin,user]`); `username` izinleri olduğu gibi; `schoolEmail`, `personalEmail`, `skyNumber`, `department`, `university`, `skyMail`, `usernameChangedAt` `view=[admin,user]`, `edit=[admin]`; e-posta özniteliklerinde `email`, `usernameChangedAt` için ISO-8601 UTC `pattern` doğrulayıcısı; eksik Türkçe görünen adlar eklenir, mevcutlar korunur; `unmanagedAttributePolicy=ADMIN_VIEW` (asla `ENABLED`) |
 | `account-center-account-api` kapsamı | `account-api-audience` (`account`), `account-api-core-audience` (`core`), `account-api-manage-account`, `account-api-view-profile`, `account-api-manage-account-links` (sabit roller), `account-api-roles` (`resource_access.account.roles`), `account-api-sky-authorization` (SPI mapper'ı `sky-authorization-mapper`: `sky_authorization.<istemci>.roles`, yalnız access token ve introspection; ID token/userinfo'da yok; `realm-management`, `broker`, `account`, `account-console`, `security-admin-console`, `admin-cli`, `*-realm` hariç; sıralı; 64 istemci / 256 rol sınırı; rol yoksa claim yok). Audience-resolve mapper yoktur; `aud` tam olarak `["account","core"]` kalır. |
 | `account-center-core-claims` kapsamı (`account-center-core-claims-mappers.json`) | `sub`, `auth_time`, `sky_session_lifetime` (`sky_session_started`/`sky_session_expires`), `sky_embed` (ayrıntı `docs/sky-handoff-api.md`) ve C2'den beri `university`, `department` (`oidc-usermodel-attribute-mapper`, aynı adlı kullanıcı özniteliğinden, `jsonType.label=String`, `multivalued=false`: realm'in `department_ve_university_to_jwt` kapsamıyla aynı biçim, düz metin; yalnız access token ve introspection; ID token/userinfo'da yok; öznitelik yoksa claim yok). core bu iki claim'i taşıyan her token'da kişinin üniversite, bölüm ve fakültesini yeniler ve `ytu_linked` yapar (§9). Kapsamdaki diğer mapper'lar silinir. |
 | `frontend-main-core-audience`, `frontend-arge-core-audience` ve `skyforms-forms-audience` kapsamları | `frontend-main`, `frontend-arge` ve `skyforms` giriş istemcilerinin varsayılan kapsamları; access token'ın `aud`'una `core`, `core` ve `forms` ekler. Üretimde elle kuruldular, uzlaştırıcı adlarıyla devralır. İstemci realm'de yoksa uyarı yazılır ve o kalem atlanır (§0.1). |
 | Giriş istemcilerinin dar token'ı (`frontend-main`, `frontend-arge`, `skymail`; ADR-0058, ADR-0059; §21) | Elle kurulmuş istemciler yerinde daraltılır: audience'lar varsayılan kapsamlardaki sabit mapper'lardan (sitelerde kendi `core` kapsamı ve ortak `skycms-audience`, SkyMail'de `skymail-api-audience`), rol kapsamında realm rolü ve başka istemcinin rolü yok, `fullScopeAllowed=false`. Siteler tam yollu `groups`'u tutar; `groups` yazan kapsamlar yalnız `skymail`'den ayrılır, `skymail`'in grup mapper'ı silinir. İstemci yoksa uyarı yazılır ve atlanır. |
-| Admin panelinin istemcisi (`admin`, sandbox'ta `superadmin`; ADR-0058) | Elle kurulmuş gizli istemci yerinde daraltılır: `fullScopeAllowed=false`, `standard.token.exchange.enabled=true`, rol kapsamında yalnız `core` ve `forms`'un her rolü, varsayılan kapsam `admin-panel-api-audience` (sabit `core`, `forms`, `skycms` audience'ı). Adım en son koşar. İstemci yoksa uyarı; public ise koşu ona yazmadan hata verir (§16). |
-| core'un kaynak rolleri (ADR-0059, §19) | `core` istemcisinde 13 rol her koşuda var edilir (yoksa açıklamasıyla oluşturulur; varsa dokunulmaz). Privileged gruplara (`/ADMIN`, `/YK`, `/DK`, `/UYELER/` altındakiler, hangileri varsa) **bir kez** verilir ve rol özniteliği `skylab.seeded-group-mappings` bunu kaydeder; işaretli role sonraki koşular eşleme eklemez, hiçbir koşu eşleme ya da rol silmez. Gruba rol vermek kullanıcı yetkisi ister: uzlaştırıcı kimliği yalnız rolleri oluşturur ve işaretsiz rolleri uyarıyla bildirir; tohumlamayı operatör `KEYCLOAK_RECONCILE_ONLY=core-roles` ile yapar. Adım admin panelinin adımından önce koşar. |
+| Admin panelinin istemcisi (`admin`, sandbox'ta `superadmin`; ADR-0058) | Elle kurulmuş gizli istemci yerinde daraltılır: `fullScopeAllowed=false`, `standard.token.exchange.enabled=true`, `client.session.max.lifespan=28800` (panelin istemci oturumu beni-hatırla olsa da başladığından en çok 8 saat sonra biter; istemci değeri realm'in ve beni-hatırlanın önüne geçer), rol kapsamında yalnız `core` ve `forms`'un her rolü, varsayılan kapsam `admin-panel-api-audience` (sabit `core`, `forms`, `skycms` audience'ı). Adım en son koşar. İstemci yoksa uyarı; public ise koşu ona yazmadan hata verir (§16). |
+| core'un kaynak rolleri (ADR-0059, §19) | `core` istemcisinde 14 rol her koşuda var edilir (yoksa açıklamasıyla oluşturulur; varsa dokunulmaz). Privileged gruplara (`/ADMIN`, `/YK`, `/DK`, `/UYELER/` altındakiler, hangileri varsa) **bir kez** verilir ve rol özniteliği `skylab.seeded-group-mappings` bunu kaydeder; işaretli role sonraki koşular eşleme eklemez, hiçbir koşu eşleme ya da rol silmez. Gruba rol vermek kullanıcı yetkisi ister: uzlaştırıcı kimliği yalnız rolleri oluşturur ve işaretsiz rolleri uyarıyla bildirir; tohumlamayı operatör `KEYCLOAK_RECONCILE_ONLY=core-roles` ile yapar. `competition:manage` (`competitor:manage`'ın yeni adı, ADR-0068) Privileged gruplara değil, eski rolün bulunduğu her yere bir kez verilir (§19.1). Adım admin panelinin adımından önce koşar. |
 | `account-center` istemcisi | v1 sözleşmesi, `fullScopeAllowed=false` **kalır**: Keycloak Admin REST `AdminAuth.hasAppRole = user.hasRole && client.hasScope` ile yetkilendirir ve tam kapsam açıkken `client.hasScope` her rol için doğrudur; `realm-management` rolü olan bir kişinin `my.` token'ı Admin REST'te geçerli olurdu. `sky_authorization` bu yüzden kapsamdan bağımsız SPI mapper'ından gelir ve token'ın yetkisini genişletmez (harness: `view-users` sahibinin `account-center` token'ı ile `GET /admin/realms/{realm}/users` → 403; tam kapsamla 200 alırdı). Token'daki `resource_access` yalnız `account` rollerini içerir, `core` rolü taşımaz (test edilir). `account` istemci rolü scope mapping izin listesi: `manage-account`, `view-profile`, `manage-account-links` (AIA `idp_link` `client.hasScope` denetimi için). |
 | `keycloak-mailer` istemcisi (K5) | Uzlaştırıcı **yalnız doğrular**: istemci yoksa uyarı ve çalıştırılacak komut; bayraklar (gizli, yalnız service account, standard flow / direct grant / implicit kapalı, `fullScopeAllowed=false`, `roles` varsayılan kapsamı) yanlışsa koşu hata ile durur; service account rolleri uzlaştırıcı kimliğiyle okunamadığından (kullanıcı yetkisi yok) uyarı olarak raporlanır. İstemciyi ve rolleri operatör `config/create-mailer-client.sh` ile oluşturur (§6). Gizli anahtarı Keycloak üretir, hiçbir betik yazdırmaz. |
 | `core-erasure` istemcisi (hesap silme, ADR-0051) | Uzlaştırıcı **yalnız doğrular** (`keycloak-mailer` gibi): istemci yoksa uyarı ve çalıştırılacak komut. Şunlardan biri sözleşmeden farklıysa koşu hata ile durur ve operatör komutunu yazar: bayraklar (gizli, yalnız service account, standard flow / direct grant / implicit kapalı, `fullScopeAllowed=false`), varsayılan kapsamlar (tam olarak `basic` ve `roles`; Keycloak'ın eklediği `service_account` hoş görülür), isteğe bağlı kapsamlar (tam olarak üç `account-erase-*`), doğrudan scope mapping (olmamalı), her erase kapsamının tek audience mapper'ı ve tek rolü, servis istemcilerinin (`skymail`, `skycms`, `forms`) varlığı. Service account rolleri uzlaştırıcı kimliğiyle okunamadığından uyarı olarak raporlanır. İstemciyi, kapsamları ve rolleri operatör `config/create-erasure-client.sh` ile kurar (§11). |
 | Parola formu (K4, §15) | Realm tarayıcı akışı `browser plus passkey`'deki `auth-username-password-form`'un yerine aynı alt akışta, aynı öncelik ve `REQUIRED` ile `sky-username-password-form` konur; akışın geri kalanına dokunulmaz. İki formdan tam olarak biri yoksa, form `REQUIRED` değilse ya da yanındaki bir yürütmeyle aynı önceliği paylaşıyorsa koşu hiçbir şey yazmadan durur. `KEYCLOAK_PASSWORD_FORM=auth-username-password-form` Keycloak'ın formunu geri koyar. |
 | Parola sıfırlamanın kişi seçme adımı (K4b, §17) | Realm'in `reset credentials` akışındaki `reset-credentials-choose-user`'ın yerine aynı öncelik ve `REQUIRED` ile `sky-reset-credentials-choose-user` konur. Keycloak'ın yerleşik akışı değiştirilemediği için realm yerleşik bir akışa bağlıysa akış bir kez `sky reset credentials` adıyla kopyalanır, adım kopyada değiştirilir, realm ancak ondan sonra kopyaya bağlanır. Durdurma kuralları parola formununkiyle aynıdır. `KEYCLOAK_RESET_CHOOSE_USER=reset-credentials-choose-user` Keycloak'ın adımını bağlı akışa geri koyar. |
 | Kimlik korumaları: core sertifika rolleri, OBS `department mapper`, core'un `manage-clients` rolü | Uzlaştırıcı **dokunmaz**: kimliğinin kullanıcı ve kimlik sağlayıcısı yetkisi yoktur. Operatör `config/identity-guardrails.sh` ile uygular (§8). |
+| SkyMail'in Privileged rolü (§25) | `skymail` istemcisinde `skymail:system-mails:read` her koşuda var edilir (yoksa açıklamasıyla oluşturulur). core'un kaynak rolleri gibi Privileged gruplara **bir kez** verilir ve `skylab.seeded-group-mappings` ile işaretlenir; tohumlamayı operatörün `KEYCLOAK_RECONCILE_ONLY=core-roles` koşusu yapar. Diğer `skymail:*` rolleri elle verilmiştir, uzlaştırıcı onlara dokunmaz. |
 
 Ortam değişkenleri: `KEYCLOAK_PASSKEY_RP_ID` (varsayılan `yildizskylab.com`) ve
 `KEYCLOAK_PASSKEY_EXTRA_ORIGINS` (virgülle ayrılmış, varsayılan
@@ -1338,7 +1339,7 @@ Uzlaştırıcı (`reconcile_admin_panel_client`) istemciyi adıyla bulur ve yeri
 | --- | --- |
 | `admin-panel-api-audience` kapsamı | `config/admin-panel-api-audience-mappers.json`: `core-audience`, `forms-audience`, `skycms-audience` (`oidc-audience-mapper`, access token ve introspection açık, ID token kapalı); başka mapper silinir; istemcinin varsayılan kapsamı, isteğe bağlı listede olmaz (§0.1 düzeni) |
 | Rol kapsamı (scope mapping) | `core` ve `forms` istemcilerinin **her** rolü; başka istemcinin rolü ve realm rolü kaldırılır. İstemcinin kendi rolleri (`content:*`, inscribed) Keycloak'ta her zaman geçer. Realm'de `forms` yoksa uyarı yazılır, rolleri istemci oluşunca eklenir |
-| İstemci | `fullScopeAllowed=false`, öznitelik `standard.token.exchange.enabled=true`. Başka alana (secret, adresler, bayraklar, istemci mapper'ları) dokunulmaz |
+| İstemci | `fullScopeAllowed=false`, öznitelikler `standard.token.exchange.enabled=true` ve `client.session.max.lifespan=28800` (panelin refresh token'ı, beni-hatırla oturumunda bile, panelin istemci oturumu başladıktan en geç 8 saat sonra ölür; SSO yaşıyorsa sessiz bir panel girişi kimlik bilgisi istemeden yeni bir 8 saatlik istemci oturumu açar, yeniden kimlik doğrulamayı panelin `max_age`'i ister. 28800, realm'in SSO max'ını aşamaz: Keycloak istemci max'ının realm SSO max'ını, beni-hatırla açıksa beni-hatırla max'ını aşmasını reddeder). Yalnız bu iki öznitelik yazılır, istemcinin diğer öznitelikleri kalır. Başka alana (secret, adresler, bayraklar, istemci mapper'ları) dokunulmaz |
 
 Sonuç: access token'da `aud` tam olarak `core`, `forms`, `skycms`; `realm_access` yok;
 `resource_access` yalnız `core`, `forms` ve istemcinin kendisi; `groups`, düz `roles`, `azp`,
@@ -1747,7 +1748,7 @@ vermek kullanıcı yetkisi (`manage-users`) ister; uzlaştırıcı kimliğinde y
 - Tam uzlaştırma (uzlaştırıcı kimliği) eksik rolleri oluşturur ve işaretsiz roller için
   `WARNING: core roles not yet granted to the Privileged groups: … run this step alone with an
   operator session: KEYCLOAK_RECONCILE_ONLY=core-roles` yazar. Hepsi işaretliyse iki satır da
-  `unchanged`'dir (`client roles of core (13 resource roles): unchanged`, `group mappings of the
+  `unchanged`'dir (`client roles of core (14 resource roles): unchanged`, `group mappings of the
   core resource roles: unchanged (…)`).
 - Operatör aynı adımı kendi kcadm oturumuyla tek başına koşar ve tohumlar (Keycloak konteynerinde;
   kullanıcı adını `read` sorar, parola kcadm'ın kendi prompt'una girilir, config dosyası sonda
@@ -1783,14 +1784,14 @@ uyarıyla atlanır.
 production'a ancak bu adım production'da tohumlandıktan sonra çıkar.
 
 **Token boyutu.** Bir Privileged kişinin `core` rolleri olan her token'ı (bugün `admin`, ve tam
-kapsamlı giriş istemcileri) en çok 13 rol adı (~230 bayt) büyür. `admin` 02'de daraldığı için bu
+kapsamlı giriş istemcileri) en çok 14 rol adı (~250 bayt) büyür. `admin` 02'de daraldığı için bu
 pay oradan geliyor; tam kapsamlı diğer istemciler admin-token-authz 16–19'da daralır.
 
 Geri dönüş: roller zararsızdır (core 04'e kadar okumaz). Eşlemeler Admin Console'dan ya da SKY LAB
 admin panelinden kaldırılabilir; işaret kaldığı için uzlaştırıcı onları geri koymaz. Yeniden
 tohumlamak için rolün özniteliği silinir ve operatör adımı koşulur.
 
-Harness (`tests/core-roles.sh`, `run-integration.sh` çağırır): ilk tam koşu 13 rolü açıklamalarıyla
+Harness (`tests/core-roles.sh`, `run-integration.sh` çağırır): ilk tam koşu 14 rolü açıklamalarıyla
 oluşturur, hiçbirini gruba vermez, işaretlemez ve operatör adımını söyleyen uyarıyı basar; admin
 panelinin kapsamı yeni rolleri içerir. Operatör adımı: Privileged bir varsayılan grup varken
 reddeder ve yazmaz; varsayılan grupların ya da `/UYELER/YK`'nın okunması (enjekte edilmiş bir
@@ -1803,50 +1804,134 @@ bir eşleme silinmez; işareti kaldırılan rol (listeye yeni eklenmiş gibi) ü
 gruba verilir. Değişiklik üretmeyen tam koşu rolleri, işaretleri ve grupların eşlemelerini de
 karşılaştırır.
 
-## 20. Servis bağlama rolü `media:attach` (Forms servis hesabı; ADR-0052)
+### 19.1 `competition:manage`: `competitor:manage`'ın yeni adı (yarışma modülü, ADR-0068)
 
-core'un servis bağlama uçları (`POST /v1/media/{id}/attachments`,
-`DELETE /v1/media/{id}/attachments/{attachmentId}`) ve anonim form yüklemesinin kuralı yalnız şu
-token'ı kabul eder: `aud` içinde `core`; `azp` ve `client_id` core'un `MEDIA_SERVICE_CLIENTS`
-listesindeki bir istemci (ayarsızken `forms:forms`); `resource_access.core.roles` içinde
-`media:attach`. Kişinin token'ında `client_id` yoktur; rol ona verilse de reddedilir. Rol `core`
-istemcisinin bir rolüdür ve yalnız listedeki ürünlerin servis hesabında bulunur: kişide, grupta ya
-da varsayılan rolde (`default-roles-<realm>`) olmaz. Uzlaştırıcının listesi
-(`MEDIA_ATTACH_CLIENTS`, bugün `forms`) core'un `MEDIA_SERVICE_CLIENTS`'ıyla aynı tutulur; CMS'in
-servis istemcisi ikisine birlikte eklenir.
+core'un yarışma modülü (core-backend `feat/competitions-core`, `docs/authz-roles.md`) eski
+yarışmacı yetkisini `competition:manage` adıyla okur. Geçişte core iki adı eşdeğer sayar
+(`renamedRoles`): birini taşıyan ikisinin verdiğini alır. Sıra: core yayınlanır; Keycloak yeni rolü
+oluşturur ve eskinin bulunduğu her yere verir (bu adım); eski `competitor:manage` daha sonraki bir
+değişiklikte kalkar (yarışma bileti 02b), bu adım onu silmez.
 
-**Ne yapılır** (`reconcile_media_attach`, core rollerinin adımından sonra, admin panelinin adımından
-önce):
+Uzlaştırıcı rolü diğerleri gibi her koşuda oluşturur (açıklamasıyla) ve işaretsizse ayrı bir uyarıyla
+bildirir (`WARNING: core roles not yet carried over from their old names: competition:manage (from
+competitor:manage) …`; Privileged grupların uyarısında geçmez). Operatörün
+`core-roles` koşusu onu Privileged gruplara **değil**, o anda `competitor:manage`'ın bulunduğu her yere
+**bir kez** verir; böylece ad değişikliği kimseye yetki kazandırmaz, kimseden almaz (admin panelinden
+bir gruptan kaldırılmış ya da bir gruba eklenmiş eski rol aynen izlenir):
+
+- doğrudan eşlendiği gruplar ve kullanıcılar (servis hesapları dahil);
+- onu içeren kompozit roller (realm rolleri ve her istemcinin rolleri);
+- `fullScopeAllowed`'ı kapalı istemcilerin rol kapsamı ve istemci kapsamları (client scope) — rol
+  token'a ancak kapsamdaysa girer.
+
+Önce her şey okunur; bir okuma başarısız olursa (`… could not be read in realm …; nothing was
+granted`) hiçbir şey yazılmadan koşu durur; bir yazma başarısız olursa işaret yazılmadan durur (yeniden
+koşmak eksikleri tamamlar). Sonra eksik yerlere yeni rol eklenir, en son işaret yazılır. İşaret yalnız
+sayı taşır, çünkü Keycloak'ta bir rol özniteliğinin değeri en çok 255 karakterdir ve çok sayıda grup
+yolu sığmaz: `skylab.seeded-group-mappings` = `<zaman> where competitor:manage is held: groups <sayı>;
+users <sayı>; composite roles <sayı>; role scopes <sayı>; client scopes <sayı>`. Adlar log satırındadır:
+`core role competition:manage: seeded once where competitor:manage is held: groups <yollar>; users
+<sayı>; composite roles <adlar>; role scopes <istemciler>; client scopes <adlar> (granted to N of them;
+the rest already held it)`. Kullanıcı adları ne log'a ne işarete yazılır, yalnız sayıları. Eski rol
+henüz işaretsizse (ör. Privileged grubu olmayan yeni bir realm) yeni rol işaretlenmez, uyarılır
+(`not carried over: its old name competitor:manage is not seeded yet`); eski rol tohumlandığı koşuda
+ya da sonrakinde yeni rol onu izler. Yeni bir
+realm'de iki rol aynı koşuda işaretsizse önce Privileged roller tohumlanır, sonra yeni ad eskinin
+gruplarını izler. İşaretli rol için sonraki koşular bir şey yapmaz; işaret silinirse sonraki
+operatör koşusu yalnız eksik yerlere yeniden verir.
+
+Production sırası: Keycloak yayını (§19'daki gibi uzlaştırma) → operatörün `core-roles` koşusu
+(`seeded once where competitor:manage is held` satırı; `granted to` sayısı eski rolün bulunduğu yer
+sayısına yakın olmalı) → `admin-panel-client` adımı. Rol Keycloak'ta oluşana kadar core'un açılış
+denetimi onu eksik listeler; bu arada kimse bir şey kaybetmez (core iki adı eşdeğer okur).
+
+**Geri alma ve 02b.** Tohumlamadan sonra core iki adı eşdeğer okur: bir yerden yetkiyi geri almak
+için **iki rol de** kaldırılır (yalnız `competitor:manage`'ı kaldırmak yetmez). Tohumlama tek seferliktir:
+sonradan admin panelinden yalnız eski rolün verildiği yerlere yeni rol kendiliğinden gitmez (geçişte
+kayıp yok, core eşdeğer okur). Eski rolü silen değişiklikten (yarışma 02b) önce: yeni rolün işareti
+silinir, operatör `core-roles`'u yeniden koşar (eksikleri tamamlar), eski rolün sahipleri ⊆ yeni rolün
+sahipleri denetlenir; rol adıyla atıf yapan ama eşleme olmayan yerler (kimlik sağlayıcı, federasyon ve
+protokol mapper'ları, yetkilendirme politikaları, `conditional-user-role` akış koşulları) ve eski rolün
+kompozit olup olmadığı ayrıca denetlenir.
+
+Harness (`tests/core-roles.sh`): ilk koşu 14 rolü oluşturur, `competition:manage` açıklamasında
+`competitor:manage` ve ADR-0068 geçer. Operatör koşusundan önce eski rol Privileged olmayan bir gruba,
+uzun adlı 8 takım grubuna (yolları toplamı 255'i aşar), bir kullanıcıya, bir realm kompozit rolüne ve
+bir istemci kapsamına eşlenir; koşudan sonra yeni rolün
+grupları eskininkilerle birebir aynı, doğrudan kullanıcısı aynı, kompozit rol ve istemci kapsamı iki adı
+da içerir, admin panelinin rol kapsamı ikisini de taşır, log bütün yolları adlandırır, işaret 255
+karakteri aşmaz ve sayıları doğrudur, işaret ve log'da kullanıcı adı yok. İlk koşunun uyarısı rolü
+Privileged gruplara değil eski adına bağlar. Sonra
+işareti silinip `/ADMIN`'den kaldırılan rol için `client-scopes` okuması enjekte edilerek bozulur:
+koşu yazmadan ve işaretlemeden reddeder; gerçek koşu yalnız `/ADMIN`'e verir (`granted to 1 of them`).
+
+## 20. core'un servis rolleri: `media:attach`, `ticket:forms`, `url:forms`, `users:read` (Forms servis hesabı)
+
+Bir ürünün servis hesabının (client credentials) taşıdığı ve core'un `resource_access.core.roles`'tan
+okuduğu `core` istemci rolleri. Hepsinde core `aud` içinde `core` ister.
+
+| Rol | core'da ne açar | Sahibi |
+| --- | --- | --- |
+| `media:attach` | `POST /v1/media/{id}/attachments`, `DELETE …/attachments/{attachmentId}`, anonim form yüklemesinin kuralı (ADR-0052); `azp`/`client_id` core'un `MEDIA_SERVICE_CLIENTS` listesinde olmalı (ayarsızken `forms:forms`) | yalnız servis hesapları |
+| `ticket:forms` | Forms cevaplarını bildirir, `POST /v1/forms/{formId}/responses` (core `docs/form-response-tickets.md`); core, bir Etkinlik formuna kabul edilen cevabın kazandırdığı Ticket'ları yazar. core yalnız `forms` ürününün servis hesabından kabul eder | yalnız servis hesapları |
+| `url:forms` | forma bağlı kısa linkler (`/v1/urls/forms/{formId}`, `GET /v1/urls/availability`) | yalnız servis hesapları |
+| `users:read` | `GET /v1/users/{id}` | kişiler de taşıyabilir (Java döneminden) |
+
+`ticket:forms` adını core verir (`internal/authz/authorizer.go`, core-backend#201): admin-token-authz
+sözleşmesindeki `ticket:manage` ve `ticket:validate` ile aynı biçim, o tablodaki bir rolle çakışmaz;
+Privileged rol değildir, hiçbir gruba verilmez. Forms Guest apply'ı artık çağırmaz; Guest apply için
+servis rolü yoktur. `url:forms` ve `users:read` production'da daha önce elle verilmişti (forms-url-role wizard'ı,
+Java dönemi); şimdi öbür ikisiyle aynı adımda kodlu. Kişinin token'ında `client_id` yoktur; core
+servis rollerini kişiden kabul etmez. Uzlaştırıcının listesi (`CORE_SERVICE_ROLE_DEFINITIONS`; rol,
+istemciler, sahiplik, açıklama) `media:attach` için core'un `MEDIA_SERVICE_CLIENTS`'ıyla aynı
+tutulur; CMS'in servis istemcisi ikisine birlikte eklenir. `ticket:forms` ve `url:forms` yalnız
+`forms` içindir. core ürünü `client_id == azp`'den okur: `forms` yalnız servis hesabıdır (standart
+akış, implicit akış ve direct access grants kapalı), yani `forms` token'ı her zaman servis
+hesabınındır. Forms kişileri `skyforms` istemcisiyle giriş yaptırır; forms-frontend `forms`'u yalnız
+core sorgusunda parametre olarak, forms-backend yalnız client-credentials kimliği olarak kullanır
+(forms-frontend `f94a441`, forms-backend `b7baa07`, `origin/production`, 2026-10-07). Production ve
+sandbox'ta `standardFlowEnabled=true` ölçüldü (2026-10-07, Evaluate); operatör adımı kapatır.
+
+**Ne yapılır** (`reconcile_core_service_roles`, core rollerinin adımından sonra, admin panelinin
+adımından önce):
 
 | Ne | Kim | Davranış |
 | --- | --- | --- |
-| `core` istemcisinde `media:attach` rolü | her koşu | yoksa açıklamasıyla oluşturulur (`manage-clients`); yeni rol aynı koşuda admin panelinin rol kapsamına girer (§16), kimse taşımadığı için panel token'ına girmez |
+| `core` istemcisinde dört rol | her koşu | yoksa açıklamasıyla oluşturulur (`manage-clients`; varsa açıklamaya dokunulmaz); yeni rol aynı koşuda admin panelinin rol kapsamına girer (§16), kişi taşımadığı için panel token'ına girmez |
 | `forms`'un varsayılan kapsamı `roles` | her koşu | yalnız doğrulanır: `resource_access`'i ve audience resolve mapper'ı ile `aud: core`'u o verir. Yoksa uyarı; istemciye dokunulmaz. İkinci bir audience mapper **eklenmez** |
-| `forms`'un rol kapsamı | her koşu | `fullScopeAllowed=false` ise `core/media:attach` kapsam eşlemesine eklenir (yoksa rol token'a girmez); tam kapsamda bir şey yapılmaz |
-| `service-account-forms`'a rol | yalnız operatör | yoksa verilir; rolün `skylab.granted-service-accounts` özniteliğine zaman ve servis hesapları yazılır (ör. `2026-10-04T20:00:00Z service-account-forms`) |
-| Başka sahipler | yalnız operatör | rolü taşıyan kullanıcı, grup ya da varsayılan rol uyarıyla bildirilir; **hiçbir şey silinmez** |
+| `forms`'un rol kapsamı | her koşu | `fullScopeAllowed=false` ise eksik `core/<rol>` kapsam eşlemesine eklenir (yoksa rol token'a girmez); tam kapsamda bir şey yapılmaz |
+| `forms` yalnız servis hesabı (`CORE_SERVICE_ONLY_CLIENTS`) | uzlaştırıcı doğrular, operatör yazar | `standardFlowEnabled`, `implicitFlowEnabled`, `directAccessGrantsEnabled` `false` ise `client forms: service account only, verified`; değilse uzlaştırıcı kimliği uyarır ve dokunmaz, operatör adımı `false` olmayanları `false` yapar (`would set standardFlowEnabled=false on client forms …`, `client forms: updated (…)`). Başka istemciye dokunulmaz |
+| `service-account-forms`'a roller | yalnız operatör | eksik olan verilir; rolün `skylab.granted-service-accounts` özniteliğine zaman ve servis hesapları yazılır (ör. `2026-10-06T20:00:00Z service-account-forms`); elle verilmiş rol `unchanged (held)` olur ve yalnız kaydı yazılır |
+| Başka sahipler | yalnız operatör | yalnız servis hesaplarının rolünü taşıyan kullanıcı, grup ya da varsayılan rol uyarıyla bildirilir (`users:read` için değil); servis hesabının listede olmayan core rolleri `NOTE` ile bildirilir; **hiçbir şey silinmez** |
 
 `forms` istemcisi yoksa ya da servis hesabı kapalıysa uyarı yazılır ve atlanır; istemcinin
 ayarları değiştirilmez. `core` yoksa adım atlanır.
 
 **Kim yazar.** Servis hesabına rol vermek ve onun rollerini okumak kullanıcı yetkisi ister;
-uzlaştırıcı kimliğinde yoktur (§19 ile aynı gerekçe). Uzlaştırıcı kimliği rolü ve kapsam eşlemesini
-kurar, servis hesabını okuyamaz: öznitelikte servis hesabı yazılıysa `service account
-service-account-forms: media:attach unchanged (granted by the operator step at …)`, yazılı
-değilse `WARNING: media:attach is not yet granted to service account service-account-forms by the
-operator step … KEYCLOAK_RECONCILE_ONLY=media-attach (runbook §20)` basar. Operatör adımı her
-koşuda servis hesabının rollerini yeniden okur.
+uzlaştırıcı kimliğinde yoktur (§19 ile aynı gerekçe). Uzlaştırıcı kimliği rolleri ve kapsam
+eşlemelerini kurar, servis hesabını okuyamaz: öznitelikte servis hesabı yazılıysa `service account
+service-account-forms: <rol> unchanged (granted by the operator step at …)`, yazılı değilse
+`WARNING: <rol> is not yet granted to service account service-account-forms by the operator step …
+KEYCLOAK_RECONCILE_ONLY=service-roles (runbook §20)` basar. Operatör adımı her koşuda servis
+hesabının rollerini yeniden okur. Adımın eski adı `KEYCLOAK_RECONCILE_ONLY=media-attach` aynı adımı
+koşar.
+
+**Kuru koşu.** `KEYCLOAK_RECONCILE_CHECK=true` (yalnız operatör oturumu ve `service-roles` ile; başka
+türlüsü 2 ile reddedilir) her şeyi okur, her değişikliği `would create …`, `would set … on client
+forms …`, `would map …`, `would grant
+<rol> to service account …`, `would record the grant of …` diye yazar ve hiçbir şey yazmaz. Son
+satırlar `check: N change(s) pending; nothing was written` ve `Core service roles are checked;
+nothing was written.` Uygulayan koşu `applied N change(s)` ve `Core service roles are reconciled.`
+ile biter; ikinci koşu `applied 0 change(s)`.
 
 **Kapalı tarafta başarısızlık.** Operatör adımı önce her şeyi okur (istemci, bayraklar, varsayılan
-kapsamlar, rol kapsamı, servis hesabı ve rolleri, rolün kullanıcıları, grupları, varsayılan rol),
-sonra yazar. Bir okuma Keycloak'ın "yok" cevabı dışında başarısız olursa (`… could not be read in
-realm …; nothing was granted`) koşu hiçbir şey vermeden ve işaretlemeden hata verir; boş cevap
-"yok" sayılmaz. Rolün kendisinin oluşturulması (zararsız, hiçbir şey vermez) okumalardan önce gelir.
-İkinci operatör koşusu hiçbir şey yazmaz (`media:attach unchanged (held)`, admin olayı yok).
+kapsamlar, rol kapsamı, servis hesabı ve rolleri, varsayılan rol, rollerin kullanıcıları ve
+grupları), sonra yazar. Bir okuma Keycloak'ın "yok" cevabı dışında başarısız olursa (`… could not be
+read in realm …; nothing was granted`) koşu hiçbir şey vermeden ve işaretlemeden hata verir; boş
+cevap "yok" sayılmaz. Eksik rolün oluşturulması (zararsız, hiçbir şey vermez) okumalardan önce gelir.
 
 Operatör adımı (Keycloak konteynerinde; kullanıcı adını `read` sorar, parola kcadm'ın kendi
-prompt'una girilir, config dosyası sonda silinir). Bu değişikliği içeren sürüm çıktıktan sonra
-(iki realm aynı Keycloak'tadır), önce sandbox, sonra production:
+prompt'una girilir, config dosyası sonda silinir). Önce sandbox, sonra production; önce kuru koşu:
 
 ```bash
 read -r -p 'master realm geçici yönetici: ' OPERATOR_USER
@@ -1854,50 +1939,63 @@ read -r -p 'master realm geçici yönetici: ' OPERATOR_USER
   --server http://localhost:8080 --realm master --user "$OPERATOR_USER"
 KEYCLOAK_REALM=e-skylab-sandbox \
 KEYCLOAK_RECONCILE_KCADM_CONFIG=/tmp/kcadm-operator.config \
-KEYCLOAK_RECONCILE_ONLY=media-attach \
+KEYCLOAK_RECONCILE_ONLY=service-roles KEYCLOAK_RECONCILE_CHECK=true \
   /opt/keycloak/config/reconcile-account-center.sh
 KEYCLOAK_REALM=e-skylab-sandbox \
 KEYCLOAK_RECONCILE_KCADM_CONFIG=/tmp/kcadm-operator.config \
-KEYCLOAK_RECONCILE_ONLY=admin-panel-client \
+KEYCLOAK_RECONCILE_ONLY=service-roles \
   /opt/keycloak/config/reconcile-account-center.sh
 rm -f /tmp/kcadm-operator.config
 ```
 
-Production için aynı iki komut `KEYCLOAK_REALM=e-skylab` ile koşar (production'da ikinci komut
-gerekmez: tam uzlaştırma panelin kapsamını zaten günceller). Beklenen ilk koşu: `client role
-media:attach of core: created` (ya da `unchanged`), `default client scope roles of forms:
-verified …`, `role scope of forms: unchanged (full scope …)`, `service account
-service-account-forms: media:attach granted`, `client role media:attach of core: grant recorded
-(…)`, son satır `Media attach role is reconciled.` İkinci koşuda `media:attach unchanged (held)`
-ve `grant recorded` satırı yok.
+Production için aynı komutlar `KEYCLOAK_REALM=e-skylab` ile koşar. sky_lab_genel'deki
+`ops/wizards/keycloak-forms-service-roles-wizard.sh` bunu iki realm için yapar (kuru koşu, onay,
+uygulama, yeniden kuru koşu 0, Evaluate ve `forms`'un giriş bayrakları: standart akış ve direct
+access grants kapalı beklenir). Rolleri verilmiş bir realm'de (2026-10-07 sonrası) beklenen tek
+değişiklik `would set standardFlowEnabled=false on client forms (…)`'tur. Beklenen ilk koşu
+(production, `users:read`, `url:forms`, `media:attach` elle ya da önceki adımla verilmişken): `client
+role ticket:forms of core: created`, `service account service-account-forms: ticket:forms granted`, öbür üçü için
+`unchanged (held)`, yazılmamış kayıtlar için `grant recorded (…)`. İkinci koşu: dördü `unchanged
+(held)`, `applied 0 change(s)`.
 
 **Doğrulama.** Admin Console → Clients → `forms` → Client scopes → Evaluate → kullanıcı
 `service-account-forms`: üretilen access token'da `aud` `core`'u, `resource_access.core.roles`
-`media:attach`'i içerir (`client_id` yalnız gerçek client-credentials token'ında görünür). Uçtan
-uca: sandbox core'a Forms konteynerinin kendi kimliğiyle `POST
+dört rolü içerir (`client_id` yalnız gerçek client-credentials token'ında görünür). Uçtan uca
+(`media:attach`): sandbox core'a Forms konteynerinin kendi kimliğiyle `POST
 /v1/media/00000000-0000-4000-8000-000000000000/attachments`: `422 media_not_linkable` her kimlik
 denetiminin geçtiğini, `403 media_attach_forbidden` geçmediğini gösterir.
 
-Geri dönüş: Admin Console → Users → `service-account-forms` → Role mapping → `core`
-`media:attach` kaldırılır ve rolün `skylab.granted-service-accounts` özniteliği silinir (yoksa
-uzlaştırıcı "granted" der); operatör adımı bir sonraki koşusunda rolü yeniden verir, yani kalıcı
-geri dönüş `MEDIA_ATTACH_CLIENTS`'tan istemciyi çıkaran sürümdür. Rolün kendisi zararsızdır.
+Geri dönüş: Admin Console → Users → `service-account-forms` → Role mapping → `core` rolü
+kaldırılır ve rolün `skylab.granted-service-accounts` özniteliği silinir (yoksa uzlaştırıcı
+"granted" der); operatör adımı bir sonraki koşusunda rolü yeniden verir, yani kalıcı geri dönüş
+rolü ya da istemciyi listeden çıkaran sürümdür. Rollerin kendisi zararsızdır. `forms`'un bayrakları
+için geri dönüş yoktur: bir kişinin `forms`'la girmesi core'un ürün varsayımını bozar; gerekirse
+Admin Console → Clients → `forms` → Capability config'den açılır, operatör adımı yeniden kapatır.
 
 Bilinen sınır: rolü bir bileşik rolün (composite) içinden taşıyan sahipler yalnız varsayılan rol
 için aranır; başka bir bileşik rolün içine konmuşsa bildirilmez.
 
-Harness (`tests/media-attach.sh`, `run-integration.sh` çağırır): ilk tam koşu rolü açıklamasıyla
-oluşturur, `forms` yokluğunu bildirir, kimse rolü taşımaz. `forms` oluştuktan (core-erasure) sonra:
-yetkisiz kontrol token'ında rol yok; uzlaştırıcı kimliğiyle adım vermez, işaretlemez ve operatör
-adımını söyler; dört okumadan (varsayılan kapsamlar, servis hesabının rolleri, rolün kullanıcıları,
+Harness (`tests/core-service-roles.sh`, `run-integration.sh` çağırır): ilk tam koşu dört rolü
+açıklamasıyla oluşturur, `forms` yokluğunu bildirir, kimse rolleri taşımaz. `forms` oluştuktan
+(core-erasure) sonra: kontrol token'ında rol yok; uzlaştırıcı kimliğiyle adım (eski adıyla
+`media-attach`) vermez, işaretlemez ve operatör adımını söyler; uzlaştırıcı kimliğinin kuru koşusu
+reddedilir; dört okumadan (varsayılan kapsamlar, servis hesabının rolleri, rolün kullanıcıları,
 varsayılan rol) biri enjekte edilmiş kcadm hatasıyla başarısız olunca operatör adımı hiçbir şey
-yazmadan durur; elle rol verilmiş bir kişi ve `/ADMIN` grubu bildirilir ve silinmez; servis
-hesabı rolü alır, öznitelik yazılır. Gerçek client-credentials token'ında `azp` ve `client_id`
-`forms`, `aud` içinde `core`, `resource_access.core.roles` içinde `media:attach`; `core-erasure`'ın
-token'ında yok. İkinci operatör koşusu admin olayı üretmez. `fullScopeAllowed=false` yapılınca rol
-token'dan düşer (kontrol), uzlaştırıcı kimliği kapsam eşlemesini ekler ve rol `aud: core` ile geri
-gelir. Değişiklik üretmeyen tam koşu `forms`'un bayraklarını, rol kapsamını ve servis hesabının
-`core` rollerini de karşılaştırır.
+yazmadan durur. `forms` fikstürü production gibi `standardFlowEnabled=true` ile başlar; uzlaştırıcı kimliği bunu
+uyarır ve dokunmaz. `users:read` servis hesabına elle verilmiş, `ticket:forms` bir kişiye ve
+`/ADMIN`'e, `users:read` bir kişiye, `url:create` servis hesabına elle verilmişken: kuru koşu yalnız
+`standardFlowEnabled=false`'u, eksik üç rolü ve dört kaydı planlar (8), `users:read`'i vermeye
+kalkmaz, kişinin `users:read`'ini bildirmez, admin olayı üretmez; uygulayan koşu aynı 8 değişikliği
+yapar (sonra `forms`'un üç bayrağı `false`, `skyforms` değişmez), öbür sahipleri uyarıyla ve
+`url:create`'i `NOTE` ile bildirir, hiçbirini silmez. Gerçek client-credentials token'ında `azp` ve
+`client_id` `forms`, `aud` içinde `core`, `resource_access.core.roles` içinde dört rol;
+`ticket:forms`'u servis hesabından başka kullanıcı (`core-erasure`'ınki dahil) ve grup taşımaz,
+`core-erasure`'ın token'ında servis rolü yok; bayraklar kapandıktan sonra `forms`'un client-credentials
+token'ı aynı dört rolle çalışır. İkinci operatör koşusu `applied 0 change(s)`, admin olayı yok; ardından
+kuru koşu `0 change(s) pending`. `fullScopeAllowed=false` yapılınca roller token'dan düşer
+(kontrol), uzlaştırıcı kimliği dört kapsam eşlemesini ekler ve roller `aud: core` ile geri gelir.
+Değişiklik üretmeyen tam koşu `forms`'un bayraklarını, rol kapsamını, servis hesabının `core`
+rollerini ve kayıtları da karşılaştırır.
 
 ## 21. Giriş istemcilerinin dar token'ı: `frontend-main`, `frontend-arge`, `skymail` (ADR-0058, ADR-0059)
 
@@ -2035,3 +2133,504 @@ yeniden giriş gerekmez. Kaymalar onarılır. Sandbox realm'inde `site-clients.s
 üç betiğin `--check`'i sonra sıfır değişiklik planlar. Tam uzlaştırma yolu `run-integration.sh`'te
 (`tests/login-client-audiences.sh`): `skymail` ilk koşuda, siteler ikinci koşuda daralır, değişiklik
 üretmeyen koşu bu istemcilerin durumunu da karşılaştırır.
+
+## 22. İlk YTÜ girişinde okul adresi birincil (eskylab-login-ux 07, ADR-0063)
+
+`MicrosoftMapper` her YTÜ girişinde aracı e-postasını boşaltır (bağlı hesabın birincil adresi
+hiçbir girişte değişmesin diye). Bu yüzden ilk YTÜ girişiyle açılan hesap birincil e-postasız
+kalıyordu; Forms kopyaları, takım ve SkyMail postaları bu kişilere 400 ile düşüyordu (bilet 06
+eldekileri bir kez düzeltti). SPI 1.17.0'daki `sky-ytu-first-login`
+(`com.skylab.authenticator.SkyYtuFirstLogin`) first broker login akışının ilk adımıdır ve yeni
+hesabın birincil adresini okul adresi yapar. `MicrosoftMapper` değişmedi.
+
+### Adımın kararı
+
+Aracı kimliğin `schoolEmail` özniteliği (OBS'nin öznitelik eşleyicisi onu akıştan önce Graph
+`userPrincipalName`'den yazar) kırpılır, küçük harfe çevrilir. Geçerli bir adres değilse ya da
+YTÜ alan adlarından birinde (`std.yildiz.edu.tr`, `yildiz.edu.tr`; ADR-0063) değilse hiçbir şey
+yapılmaz: doğrulanmış birincil adres olacak değer kiracı kilidine ve eşleyicinin alanına güvenmez.
+
+- Adres kimsede yok: aracı e-postası olur. `trustEmail=true` ile hesap onu doğrulanmış birincil
+  olarak alır; doğrulama postası gitmez, profil sayfası çıkmaz.
+- Adres bir hesabın doğrulanmış `email`'i ya da (e-postayla giriş açıkken) kullanıcı adı: yine yazılır.
+  Keycloak'ın "Create User If Unique" adımı o hesabı bulur ve hazır "Handle Existing Account"
+  yoluna geçer: "Confirm Link Existing Account", sonra yeniden kimlik doğrulama (parola, OTP ya da
+  passkey). Bağlantıyla doğrulama kapalı (aşağıda). İkinci hesap açılmaz.
+- Adres yalnız başka bir hesabın `schoolEmail` ya da `personalEmail`'i, ya da başka bir hesabın
+  **doğrulanmamış** `email`'i: yazılmaz, profil sayfası zorla gösterilir (`ENFORCE_UPDATE_PROFILE`);
+  bugünkü yol budur (kişi gerekirse sayfada kullanıcı adını değiştirip kendi hesabını açar;
+  doğrulanmamış bir adres gerçek sahibini kilitleyemez). Bilet 12 buraya "Zaten bir SKY LAB hesabın
+  var mı?" sayfasını koyacak.
+- IdP `syncMode=FORCE` iken Keycloak'ın bildiği bir adres de, Keycloak'ın bir hesabı bulacağı aracı
+  kullanıcı adı da yazılmaz: FORCE'ta Keycloak aracı e-postasını bağlanan hesaba kopyalar, YTÜ
+  girişi ise var olan hesabın birincilini değiştiremez. Profil sayfasında elle yazılan bir kullanıcı
+  adı bu korumanın dışındadır: **OBS FORCE'a alınmadan önce adım kapatılır** (`KEYCLOAK_YTU_FIRST_LOGIN=off`).
+  Üretim `LEGACY`; operatör koşusu FORCE görürse uyarı basar.
+- Akışta zaten bir kişi var (bağlama ya da yeniden doğrulama), aracı kimlik bir e-posta taşıyor
+  ya da "existing account" yolu başlamış: hiçbir şey yapılmaz. A6'nın `kc_action=idp_link`'i first
+  broker login'e hiç girmez.
+
+Adım hiçbir sayfa göstermez, adresin kime ait olduğunu söylemez, her durumda akışa devam eder.
+
+### Uzlaştırıcı
+
+`reconcile_first_broker_login`, `reconcile_reset_choose_user`'dan hemen sonra koşar
+(`KEYCLOAK_RECONCILE_ONLY=first-broker-login` ile tek başına da). Bayrak `KEYCLOAK_YTU_FIRST_LOGIN`:
+`keep` (varsayılan) bağlamayı olduğu gibi bırakır, realm kopyaya bağlıysa kopyanın üç düzenlemesini
+denetler ve onarır; böylece hiçbir tam uzlaştırma (wizard'lar dahil) özelliği kendiliğinden açıp
+kapatmaz. `on` açar, `off` geri alır; başka değer koşuyu durdurur. `on` ile realm'in `firstBrokerLoginFlow`
+bağlaması Keycloak'ın yerleşik `first broker login`'iyse akış bir kez `sky first broker login`
+adıyla kopyalanır (K4b'deki gibi; kesilmiş bir koşunun bıraktığı kopya yeniden kullanılır).
+Kopyada:
+
+1. `sky-ytu-first-login` en üst düzeyde, "review profile"ın hemen önünde (onun önceliği eksi 1),
+   REQUIRED (biri DISABLED yaptıysa sonraki koşu `updated (sky-ytu-first-login DISABLED -> REQUIRED)`
+   ile geri koyar; okuma denetimi REQUIRED ister);
+2. "review profile"ın kendi config'inde `update.profile.on.first.login=missing` (yerleşik akışın
+   config'ine dokunulmaz);
+3. her `idp-email-verification` ("Verify Existing Account By Email") DISABLED (ADR-0044).
+
+Realm ancak bundan sonra kopyaya bağlanır. Realm başka bir akışa bağlıysa (yerleşik değil, kopya
+değil) koşu hiçbir şey yazmadan durur: geri dönüş tam olarak yerleşik akışı geri verebilmeli.
+`ReconcileJson first-broker-login` planlayıcısı "review profile" bir tane ve en üst düzeyde
+değilse, adım iki kez ya da yanlış yerdeyse durdurur.
+
+İlk koşunun satırları (yerleşik akıştan):
+
+- `[reconcile] authentication flow 'sky first broker login': created (an editable copy of the built-in 'first broker login')`
+- `[reconcile] first login step of flow 'sky first broker login': updated (added sky-ytu-first-login before the review profile step, priority 9, REQUIRED)`
+- `[reconcile] link verification of flow 'sky first broker login': updated (idp-email-verification ALTERNATIVE -> DISABLED)`
+- `[reconcile] review profile of flow 'sky first broker login': updated (update.profile.on.first.login=missing)`
+- `[reconcile] realm first broker login flow binding: updated (first broker login -> sky first broker login)`
+- `[reconcile] identity provider OBS first login flow: ...` (aşağıda)
+
+İkinci koşuda hepsi `unchanged`; bayraksız (`keep`) koşuda bağlama satırı
+`unchanged (sky first broker login; KEYCLOAK_YTU_FIRST_LOGIN=on or off changes it)`. Öncelik
+Keycloak 26'nın yerleşik akışında 10'dur (adım 9). Kopya yerleşik akışı dondurur: Keycloak
+yükseltmesinde yerleşik `first broker login` değişirse kopyaya geçmez (K4b'nin `sky reset
+credentials`'ı gibi yükseltme listesine).
+
+**OBS'nin kendi ilk giriş akışı.** Bir IdP'de "First login flow override" seçiliyse realm
+bağlaması o IdP için geçmez. Keycloak 24'ten önce kurulan IdP'lerde bu alan çoğu zaman
+`first broker login`'dir; üretimdeki değer bilinmiyor. Uzlaştırıcı kimliği IdP okuyamaz (tasarım
+gereği), satır şöyle olur:
+`identity provider OBS first login flow: unchanged (not readable with this identity; an operator checks it with KEYCLOAK_RECONCILE_ONLY=first-broker-login)`.
+Bir yönetici oturumuyla koşulan adım OBS'yi okur: geçersiz kılma `first broker login` ya da
+`sky first broker login` ise kaldırılır (`updated (its override is removed; it follows the realm binding)`),
+yoksa `unchanged (follows the realm binding)`; başka bir akışı gösteriyorsa dokunulmaz, uyarı
+basılır. `off` ile kopyayı gösteren geçersiz kılma da kaldırılır (geri dönüş OBS'ye de ulaşır).
+OBS'yi elle kopyaya bağlamayın; realm bağlaması yeter. OBS'nin geri kalanı (secret dahil) aynı kalır. Böylece açma ve geri alma yalnız realm
+bağlamasıdır ve uzlaştırıcı kimliğiyle de yapılır.
+
+### Üretim sırası
+
+1. SPI 1.17.0'ı taşıyan imaj yayımlanır (`main` → `production`, Touch ID kapısı). Tema
+   değişmedi (kişisel e-posta teklifi metinleri bilet 21'e taşındı).
+2. Sandbox önce (`e-skylab-sandbox`'ta uzlaştırıcı kimliği yok; operatör oturumu). Sandbox'ta OBS
+   yoksa adım akışı kurar ve bağlar, satır `identity provider OBS first login flow: unchanged
+   (absent)` olur; yürüyüş için önce sandbox'a OBS eklenir (bilet 02, yol a).
+
+   ```bash
+   kc=$(docker ps -q -f name=sky-lab-production-keycloak | head -n 1)
+   docker exec -it "$kc" /opt/keycloak/bin/kcadm.sh config credentials --config /tmp/fbl-kcadm.config \
+     --server http://127.0.0.1:8080 --realm master --user <geçici-yönetici>
+   docker exec -e KEYCLOAK_ADMIN_URL=http://127.0.0.1:8080 -e KEYCLOAK_REALM=e-skylab-sandbox \
+     -e KEYCLOAK_RECONCILE_ONLY=first-broker-login -e KEYCLOAK_RECONCILE_KCADM_CONFIG=/tmp/fbl-kcadm.config \
+     -e KEYCLOAK_YTU_FIRST_LOGIN=on "$kc" /opt/keycloak/config/reconcile-account-center.sh
+   ```
+3. Sandbox yürüyüşü (bilet 02'nin adımları): yeni bir YTÜ kimliğiyle Microsoft'tan sonra sayfa
+   çıkmamalı; Admin Console'da `email` = okul adresi, Email verified açık, Required user actions boş.
+4. Canlı: aynı komut `KEYCLOAK_REALM=e-skylab` ile (`KEYCLOAK_YTU_FIRST_LOGIN=on` açıkça). Satırlar yukarıdaki gibi; OBS satırı
+   `updated (its override is removed ...)` ya da `unchanged (follows the realm binding)` olmalı.
+   Sonra oturum dosyası silinir: `docker exec "$kc" rm -f /tmp/fbl-kcadm.config`.
+5. Sonraki tam uzlaştırmalar (wizard'lar, uzlaştırıcı kimliği, bayraksız) bağlamayı korur
+   (`unchanged`); 2-4'ten önce koşan bir tam uzlaştırma özelliği açmaz.
+6. 7 gün sonra bilet 03'ün sayımı: `email_bos` 0 kalmalı, ilk YTÜ girişini tamamlama oranı.
+
+### Geri dönüş
+
+`KEYCLOAK_YTU_FIRST_LOGIN=off` realm'i yerleşik `first broker login`'e geri bağlar:
+`realm first broker login flow binding: updated (sky first broker login -> first broker login)`.
+Yerleşik akış hiç değişmediği için bugünkü davranış (profil sayfası, boş birincil) aynen döner.
+Kopya kalır; bayraksız (`keep`) sonraki koşular geri dönüşü korur, yalnız `on` yeniden bağlar.
+1.17.0'dan eski bir
+imaja dönülecekse ÖNCE geri dönüş koşulur; yoksa realm'in her ilk YTÜ girişi bilinmeyen adım
+yüzünden düşer. Geri dönüş uzlaştırıcı kimliğiyle de (wizard) operatör oturumuyla da koşar; OBS
+kopyayı gösteren bir geçersiz kılma taşıyorsa onu yalnız operatör oturumu kaldırabilir (uzlaştırıcı
+kimliği IdP okuyamaz). OBS'nin `first broker login` geçersiz kılması geri konmaz (realm bağlamasını
+izlemesi zararsızdır). Acil yol (her imajda): Admin Console → Authentication → yerleşik
+`first broker login` → Bind flow → First broker login flow; OBS'nin "First login flow override"ı
+kopyayı gösteriyorsa onu da boşaltın.
+
+### Harness
+
+`tests/ytu-first-login.sh` (CI'da `ytu-first-login` işi): stok Keycloak imajı dev kipinde, SPI
+jar'ı `/opt/keycloak/providers`'ta, `config/` salt okunur. YTÜ kiracısını ikinci bir realm
+(`ytu-mock`) OIDC IdP `OBS` arkasında oynar: Keycloak'ın Microsoft sağlayıcısı gibi kullanıcı adı
+olarak adresi verir, e-posta vermez (MicrosoftMapper'ın bıraktığı durum), `upn` → `schoolEmail`,
+`department` FORCE, `university` sabit; her aşama taze kcadm oturumuyla başlar; OBS'nin geçersiz kılması
+`first broker login`. `e-skylab` üretim ayarlarında (`verifyEmail=true`, üretim User Profile'ı,
+yerleşik "review profile" `on`). Önce bugünkü hata görülür (profil sayfası, birincilsiz hesap),
+sonra bayraksız (`keep`) koşunun hiçbir şey açmadığı, `on` ile uzlaştırıcının realm-management
+rolleriyle (OBS okunamaz) ve yönetici oturumuyla (geçersiz kılma kalkar) kurulduğu, ikinci
+koşuların (`on`, `keep`) bir şey değiştirmediği ve DISABLED yapılan adımın REQUIRED'a döndüğü
+görülür; yeni kimlik, bağlı hesap, başka hesabın `personalEmail`'i, doğrulanmış `email`'i (onay,
+parolayla yeniden doğrulama, posta yok) ve doğrulanmamış `email`'i (sahip kilitlenmez), OBS FORCE
+(uyarı, bağlanan hesabın birincili değişmez), A6, kopyayı gösteren OBS geçersiz kılmasıyla geri
+dönüş, `keep`'in kapalı bırakması, yeniden açma ve başka akışa bağlı realm'in reddi gerçek
+girişlerle (curl, Keycloak'ın kendi sayfaları) denenir. Birim testi: `SkyYtuFirstLoginTest`
+(kırpma, büyük/küçük harf, alan adı ve tırnaklı yerel kısım, sahip türleri, FORCE yolları).
+
+## 23. İlk YTÜ girişinin sonunda kişisel e-posta önerisi (eskylab-login-ux 21)
+
+Yusuf'un kararı (2026-10-11, Microsoft "security info" ve Google kurtarma e-postası deseni):
+§22'nin açtığı yeni hesabın birincil adresi okul adresidir; mezun olunca okul posta kutusu
+kapanabilir, "Şifremi unuttum" ve kulüp postası yalnız birincil adrese gider. İlk YTÜ girişinin
+sonunda bir kez, atlanabilir bir sayfa çıkar: "Mezun olunca okul adresin kapanabilir. Kişisel
+e-postanı ekle." Adres kutusu, [Kod gönder], [Şimdilik geç]. Kod aynı sayfada yazılır; doğruysa
+`personalEmail` doğrulanmış olarak yazılır, birincil okul adresi kalır (Hesap Merkezi'nden
+değişir), giriş uygulamaya döner. my.'ya yönlendirme yoktur. Hatırlatma hoş geldin postasındadır
+(bilet 21 (c), skymail-frontend) ve Hesap Merkezi'nin uyarısındadır; sayfa yeniden sorulmaz.
+
+### Ne zaman çıkar
+
+SPI 1.18.0'daki `sky-personal-email-offer` gerekli eylemi (`com.skylab.account.PersonalEmailOffer`).
+Onu yalnız `sky-ytu-first-login` ekler, kullanıcıya değil giriş oturumuna
+(`authSession.addRequiredAction`), ve yalnız okul adresini yeni hesabın birincili olarak yazdığında
+(adres kimsede yokken; §22'nin ilk maddesi) ve realm'de eylem kayıtlı ve açıkken. Sayfa gelmeden
+önce eylem yeniden bakar:
+
+- hesabı bu giriş oturumu açtı (Keycloak'ın `BROKER_REGISTERED_NEW_USER` notu; bağlanan hesapta yok),
+- `email` hâlâ o okul adresi ve doğrulanmış,
+- `personalEmail` yok, `personalEmailOfferSkippedAt` yok.
+
+Biri tutmazsa giriş sayfasız sürer. Bu yüzden sayfa bağlanan hesapta, adresi başka hesapta olan
+(profil sayfası yolu) ya da Keycloak'ın "existing account" yoluna giden ilk girişte, A6'da
+(`kc_action=idp_link` first broker login'e girmez), YTÜ'süz girişte ve ikinci girişte çıkmaz.
+`kc_action` ile istenemez.
+
+### Kod ve sınırlar
+
+Hesap Merkezi'nin `email/change-request` / `email/confirm`'üyle aynı ortak parça
+(`PersonalEmailVerification`, `PendingEmailChanges`): 6 hane, 10 dakika, 5 yanlışta ölür, tek
+kullanım, depoda yalnız tuzlu SHA-256 özeti, aynı `sky-personal-email-confirm` postası (SkyMail'de
+`keycloak.personal-email-confirm`, SkyMail yoksa Keycloak SMTP). Depodaki kayıt kullanıcıya değil,
+bu giriş oturumunun notundaki rastgele bir tutamağa bağlıdır: kod başka bir oturumda ya da Hesap
+Merkezi'nde çalışmaz, oturum bitince ölür. Başka hesabın `email`, `schoolEmail` ya da
+`personalEmail`'i ya da kullanıcı adı (büyük/küçük harf gözetmeden) `email_taken`; kişinin kendi
+okul adresi `own_address`; üniversite alan adı ve her alt alan adı (`yildiz.edu.tr`,
+`std.yildiz.edu.tr`, bölüm alan adları; Yusuf 2026-10-11) `email_school_domain` (okul adresi mezun
+olunca kapanabilir). Alan adı ASCII biçiminde (IDNA `toASCII`) karşılaştırılır: Keycloak'ın
+doğrulayıcısının kabul ettiği tam genişlikli harf, ideografik nokta, sıfır genişlikli boşluk ya da
+yumuşak tire içeren benzerleri de (SMTP göndericisi onları yine `yildiz.edu.tr`'ye çevirir)
+reddedilir; ASCII biçimi olmayan alan adı ve geçersiz adres `invalid_address`. Aynı alan adı kuralı Hesap Merkezi'nin
+`email/change-request` ve `email/confirm`'ünde de geçerlidir (`400 email_school_domain`,
+`field: "address"`): elde YTÜ alan adlı `personalEmail`'ler kalır (göç yok), A1c yolunda YTÜ alan
+adlı eski bir birincil artık kişisel e-posta olarak kanıtlanamaz. Adresin başkasında olduğunu Hesap
+Merkezi kadar söyler, daha fazla değil: bütçeler bu denemeden önce düşülür (alan adı, geçersiz ve
+kendi adres yanıtları bütçe harcamaz, başka hesap hakkında bir şey söylemez). Gönderim bütçeleri
+(`RateLimiter`, single-use deposu): giriş oturumu başına 3, adres başına saatte 3, IP sınıfı başına
+(IPv4 /24, IPv6 /64) saatte 100, realm genelinde saatte 200. Pencereler saat dilimleridir (saat
+başını aşan bir oturum 3 kod daha alabilir). IP sınıfı, adres ve oturum anahtarları realm'e özeldir
+(sandbox aynı sunucudadır) ve HMAC-SHA256'dır; HMAC anahtarı realm'in etkin HS512 anahtarından
+türetilir (`HMAC(anahtar, "sky-personal-email-limits")`; imzalama anahtarı doğrudan kullanılmaz).
+HS512 anahtarı olmayan realm'e Keycloak kendisi bir `fallback-HS512` anahtarı yaratır; SHA-256 yalnız
+anahtar yöneticisi olmayan birim testlerinde kullanılır. IP'nin kendisi hiçbir yere yazılmaz; /24 ya
+da /64 sınıfı yalnız bu HMAC olarak, saat dilimi bitene dek bellekte durur. Anahtarın dönmesi
+bütçeleri yalnız bir kez sıfırlar (realm geneli sınırı realm kimliğine bağlıdır, sıfırlanmaz). Günlükte yalnız kullanıcı kimliği geçer. IP
+sınıfı bütçesi bir kampüs ağında aynı saatte çok sayıda ilk girişe (kulüp tanıtım günü) yer
+bırakır; sayfaya ulaşmak zaten hiç girmemiş bir YTÜ Microsoft kimliği ister.
+
+**Büyük/küçük harf ve veritabanı.** `schoolEmail`/`personalEmail` karşılaştırması Keycloak'ın
+JPA aramasında `lower(value)` ile yapılır; Postgres'te `lower()` veritabanının `LC_CTYPE`'ına
+uyar. Türkçe bir ctype'ta `lower('I')` `ı` verir ve Graph'ın büyük `I`'lı yazdığı adresler eşleşmez
+(§22'nin `holder()`'ı ve parolalı giriş de aynı aramayı kullanır). PostgreSQL 15+ ICU yerel ayar
+sağlayıcısıyla kurulduysa `lower()` ICU yerel ayarına uyar ve `SHOW lc_ctype` bunu göstermez; bu
+yüzden veritabanı satırına da bakılır. Bir kez denetlenir (production sunucusu, Keycloak
+veritabanı; beklenen: `datlocprovider` = `c` ve `datctype` `en_US.utf8` ya da `C`; ICU (`i`) ise
+`datlocale` (PostgreSQL 17+) ya da `daticulocale` (15-16) `tr` olmamalı):
+
+```bash
+docker exec -it "$(docker ps -q -f name=keycloak-db | head -n 1)" psql -U postgres -d keycloak -c 'SHOW lc_ctype'
+```
+
+```bash
+docker exec -it "$(docker ps -q -f name=keycloak-db | head -n 1)" psql -U postgres -d keycloak -x -c 'SELECT * FROM pg_database WHERE datname = current_database()'
+```
+
+(konteyner adı ortama göre değişir, Dokploy'daki adı `docker ps` ile bulunur; production'da süper
+kullanıcı dışındaki roller NOLOGIN olduğu için `-U postgres`; sonuç değişiklik kaydına yazılır).
+
+"Şimdilik geç" kişiye `personalEmailOfferSkippedAt` (ISO-8601 UTC; User Profile'da, yalnız yönetici
+düzenler) yazar. Ölçüm (spec §11) olaylardan: `CUSTOM_REQUIRED_ACTION`, ayrıntı
+`sky_personal_email_offer` = `shown` (oturum başına bir), `code_sent`, `added`, `skip`;
+`wrong_code`, `address_taken`, `send_failed` hata olarak. 30 gün içinde ekleyenler
+`personalEmailVerifiedAt`'ten sayılır. **Sorgular olay türünü süzmeli** (`type=CUSTOM_REQUIRED_ACTION`
+ve `details.custom_required_action=sky-personal-email-offer`): `skip` ve `added` girişin ortak olay
+kaydına yazıldığı için ardından gelen `LOGIN` olayında da görünür; sayfa gerekmediğinde (koşul
+tutmadı) Keycloak ayrıntısız bir `CUSTOM_REQUIRED_ACTION` başarısı da yazar. Örnek (Admin REST):
+
+```bash
+kcadm.sh get events -r e-skylab -q type=CUSTOM_REQUIRED_ACTION -q max=10000 \
+  | jq '[.[] | select(.details.custom_required_action == "sky-personal-email-offer") | .details.sky_personal_email_offer // "none"] | group_by(.) | map({(.[0]): length}) | add'
+```
+
+### Uzlaştırıcı
+
+`reconcile_personal_email_offer`, `reconcile_first_broker_login`'den hemen sonra koşar
+(`KEYCLOAK_RECONCILE_ONLY=first-broker-login` ile de). Bayrak `KEYCLOAK_PERSONAL_EMAIL_OFFER`:
+`keep` (varsayılan) dokunmaz ve yalnız bildirir; `on` eylemi kaydeder (imaj sunmuyorsa koşu hiçbir
+şey yazmadan durur) ve açar, `defaultAction` hep `false` (yoksa her yeni hesaba eklenirdi); `off`
+kapatır. Eylem `account-center-required-actions.tsv`'de değildir: o dosya eylemlerin açık/kapalı
+hâlini her koşuda dayatır, bu eylem ise yalnız bayrakla değişir. Her yazmadan sonra okunur. Satırlar:
+
+- `[reconcile] personal e-mail offer required action: unchanged (not registered; KEYCLOAK_PERSONAL_EMAIL_OFFER=on registers and enables it)`
+- `[reconcile] personal e-mail offer required action: updated (registered and enabled)` (ilk `on`)
+- `[reconcile] personal e-mail offer required action: unchanged (enabled)` (ikinci `on`)
+- `[reconcile] personal e-mail offer required action: updated (enabled=true -> disabled)` (`off`)
+- `[reconcile] personal e-mail offer required action: unchanged (enabled=true|false; KEYCLOAK_PERSONAL_EMAIL_OFFER=on or off changes it)` (`keep`)
+
+Uzlaştırıcı kimliğinin `manage-realm` rolü yeter.
+
+### Üretim sırası
+
+1. SPI 1.18.0'ı ve yeni tema sayfasını taşıyan imaj yayımlanır (`main` → `production`). **Tema
+   değişti: Touch ID kapısı yeni bir fiziksel testle** (`keycloak-production` ortamındaki
+   değişkenler tam birleştirme SHA'sı ve issue #1 kanıtı). §22'nin adımı (`KEYCLOAK_YTU_FIRST_LOGIN=on`)
+   açık değilse öneri hiç çıkmaz; önce o. Bu imajla Hesap Merkezi YTÜ alan adlı kişisel adresi
+   `400 email_school_domain` ile reddeder; account-center'ın bu kodu tanıyan sürümü (account-center
+   #79) aynı sırada yayımlanmalı.
+1a. **`on`'dan önce IP denetimi:** IP sınıfı bütçesi Keycloak'ın gördüğü istemci IP'si kadar
+   doğrudur. Keycloak Traefik'in adresini görüyorsa herkes tek bir /24 kovasını paylaşır (öneri realm
+   genelinde saatte 100 gönderimle sınırlanır); güvenilen vekil listesi yoksa ve `X-Forwarded-For`
+   istemciden geçiyorsa bütçe atlatılabilir (oturum ve genel sınır yine bağlar). Wizard
+   `ops/wizards/real-client-ip-diagnostics-v2.sh` Mac'ten sunucuya kopyalanır ve **production
+   sunucusunda root olarak** koşulur (kendi başlığındaki gibi). Mac'te:
+
+   ```bash
+   cd ~/Projects/sky_lab_genel/ops/wizards && scp -P 1911 real-client-ip-diagnostics-v2.sh yusssss@api.yildizskylab.com:~/
+   ```
+
+   Production sunucusunda:
+
+   ```bash
+   sudo bash ~/real-client-ip-diagnostics-v2.sh
+   ```
+
+   Keycloak satırı `KC_PROXY_HEADERS=xforwarded` ve `KC_PROXY_TRUSTED_ADDRESSES` göstermeli ve
+   Keycloak gerçek istemci IP sınıfını görmeli. Değilse önce Dokploy'daki Keycloak ortamı düzeltilir.
+2. Sandbox önce, §22'deki operatör oturumuyla:
+
+   ```bash
+   docker exec -e KEYCLOAK_ADMIN_URL=http://127.0.0.1:8080 -e KEYCLOAK_REALM=e-skylab-sandbox \
+     -e KEYCLOAK_RECONCILE_ONLY=first-broker-login -e KEYCLOAK_RECONCILE_KCADM_CONFIG=/tmp/fbl-kcadm.config \
+     -e KEYCLOAK_PERSONAL_EMAIL_OFFER=on "$kc" /opt/keycloak/config/reconcile-account-center.sh
+   ```
+
+   (`KEYCLOAK_YTU_FIRST_LOGIN` verilmezse `keep`: §22'nin bağlaması olduğu gibi kalır.)
+3. Sandbox yürüyüşü: yeni bir YTÜ kimliği Microsoft'tan sonra öneriyi görür; kişisel bir adrese kod
+   gider (SkyMail gönderim kaydı), kod yazılınca uygulamaya dönülür; Admin Console'da
+   `personalEmail` ve `personalEmailVerifiedAt` dolu, `email` okul adresi. İkinci bir kimlikle
+   "Şimdilik geç": uygulamaya dönülür, ikinci girişte sayfa yok. SkyMail'in
+   `keycloak.personal-email-confirm` metni "Hesap Merkezi'nde açık olan sayfaya" der; giriş
+   sayfası için de doğru olsun diye skymail-frontend'de metin genelleştirilmeli (açık iş).
+4. Canlı: aynı komut `KEYCLOAK_REALM=e-skylab` ile; sonra `docker exec "$kc" rm -f /tmp/fbl-kcadm.config`.
+5. Sonraki tam uzlaştırmalar (`keep`) eylemi olduğu gibi bırakır.
+
+### Geri dönüş
+
+`KEYCLOAK_PERSONAL_EMAIL_OFFER=off` eylemi kapatır; Keycloak kapalı eylemi giriş oturumundaki
+listeden de atlar, ilk YTÜ girişi sayfasız biter (§22 değişmez). 1.18.0'dan eski bir imaja
+dönülecekse ÖNCE `off` koşulur. Acil yol (her imajda): Admin Console → Authentication → Required
+actions → "SKY LAB personal e-mail offer (first YTÜ login)" → Enabled kapalı. Yazılmış
+`personalEmail`'ler kalır (Hesap Merkezi'ndekiyle aynı kayıt); `personalEmailOfferSkippedAt`
+zararsızdır.
+
+### Harness
+
+`tests/ytu-first-login.sh` (CI'da `ytu-first-login` işi) §22'nin aşamalarından sonra önerinin
+aşamalarını koşar. Tema burada yok, sayfa SPI'nın yedek şablonudur (aynı alanlar, düğmeler ve
+`data-sky-offer-error` kodları). Keycloak'ın SMTP'si Mailpit'e (entegrasyon harness'ının sabitli
+imajı) teslim eder; kod oradan okunur, postada bağlantı olmadığı denetlenir. Sınananlar: `keep`
+kaydetmez, `on` uzlaştırıcı kimliğiyle kaydeder ve açar, ikinci koşular değiştirmez; yeni kimlik
+sayfayı bir kez görür, "Şimdilik geç" uygulamaya döner, işaret yazılır, ikinci girişte sayfa yok;
+kodla `personalEmail` eklenir, birincil okul adresi kalır; başka hesabın kullanıcı adı alınmış
+sayılır; beş yanlış kod kodu öldürür; başka hesabın `email`'i ve büyük harfle saklanmış
+`personalEmail`'i (gerçek JPA aramasında büyük/küçük harf), kendi okul adresi ve üniversite alt
+alan adı (`email_school_domain`) reddedilir, postalanmaz; oturumun dördüncü
+gönderimi sınıra takılır; bağlı hesap, A6, başkasında olan okul adresi ve parolalı giriş sayfa
+görmez; `off` kapatır, yeni kimlik doğrudan uygulamaya gider. Süresi dolan kod, IP sınıfı ve adres
+bütçeleri, realm'e özel HMAC'li anahtarlar, başka oturumdan kod ve gönderim hatası birim
+testindedir (`PersonalEmailOfferTest`; alan adı kuralı ve kullanıcı adı `PersonalEmailVerificationTest`).
+Hesap Merkezi tarafı `tests/sky-account-contract.sh`'ta: YTÜ alt alan adı `400 email_school_domain`
+(`field: "address"`), büyük harfle saklanmış başka `personalEmail` `409 email_taken`.
+Tema sayfası: `PersonalEmailOffer.test.tsx`, `Template.test.tsx` ve görsel temeller
+(`sky-personal-email-offer-{desktop,mobile}`, kod aşaması `sky-personal-email-offer-code-*`).
+
+## 24. YTÜ girişinden sonra "Bu cihazda oturumum açık kalsın mı?"
+
+Yusuf'un kararı (2026-10-12, Microsoft'un federasyonlu girişten sonraki "Stay signed in?" sorusu):
+kullanıcıların çoğu yalnız YTÜ (OBS) ile girer ve parola formundaki "Beni hatırla" kutusu YTÜ
+düğmesine taşınmaz, bu yüzden bugün bütün YTÜ oturumları olağan oturumdur. Her YTÜ girişinin
+sonunda bir soru çıkar: "Bu cihazda oturumum açık kalsın mı?" [Evet, açık kalsın] / [Hayır]. Evet
+oturumu beni-hatırla oturumu yapar (realm'in beni-hatırla süreleri: 7 gün hareketsizlik, en çok 30
+gün; kalıcı çerez), Hayır olağan oturum bırakır (2 saat hareketsizlik, en çok 8 saat; tarayıcı
+kapanınca biten çerez). Sayfa ortak ya da başkasının bilgisayarında Hayır'ı seçmeyi ve iş bitince
+çıkış yapmayı söyler (tarayıcılar oturum çerezini geri yükleyebilir, sunucu oturumu da boşta süre
+dolana kadar yaşar).
+Microsoft paylaşılan cihazı sezip soruyu gizliyor; biz sezemiyoruz, yalnız metinle uyarıyoruz.
+
+### Nasıl çalışır
+
+SPI 1.19.0'daki `sky-stay-signed-in` gerekli eylemi (`com.skylab.authenticator.SkyStaySignedIn`).
+Bir authenticator değil, çünkü bağlı bir hesabın YTÜ girişinde Keycloak IdP'den doğrudan girişin
+sonuna gider; realm'e bağlı hiçbir akış çalışmaz (yalnız IdP'ye özel post broker login akışı
+çalışırdı, onu da uzlaştırıcı kimliği okuyamaz). Her girişte çalışan şey realm'in gerekli
+eylemlerinin `evaluateTriggers`'ıdır. Eylem kendini kullanıcıya değil **giriş oturumuna** ekler
+(`authSession.addRequiredAction`), yalnız şunlar birlikte tutunca:
+
+- giriş OBS üzerinden geldi (Keycloak'ın `identity_provider` kullanıcı oturumu notu `OBS`);
+- realm'de beni-hatırla açık (`rememberMe=true`; kapalıyken Keycloak beni-hatırla oturumunu geçersiz sayar);
+- istemci SkyApp (`skyapp`) değil: uygulamanın giriş tarayıcısı yalnız uygulamaya kendi token'larını
+  verir, Microsoft da native uygulama girişinde "Stay signed in?" göstermez (Yusuf, 2026-10-12);
+- pasif giriş değil (IdP'ye iletilen `prompt=none`: Keycloak gerekli eylemle karşılaşan pasif girişi
+  `interaction_required` ile bitirir);
+- uygulamanın başlattığı bir eylem değil (`kc_action`);
+- giriş yeni bir kullanıcı oturumu açacak: aynı kimlikte canlı bir oturum varsa (`prompt=login`,
+  `max_age` ile yeniden kimlik doğrulama) Keycloak onu olduğu gibi tutar, cevap bir şey değiştirmezdi;
+- bu girişte daha önce cevaplanmadı.
+
+Cevap Keycloak'ın kendi `REMEMBER_ME` kimlik doğrulama notudur (Evet yazar, Hayır siler). Keycloak
+kullanıcı oturumunu gerekli eylemlerden sonra bu notla açar (`AuthenticationProcessor.attachSession`);
+parola formundaki kutu da aynı notu yazar (`AuthenticatorUtils.processRememberMe`). Kalıcı çerez,
+`KEYCLOAK_REMEMBER_ME` (giriş sayfasında kullanıcı adı ipucu) ve süreler Keycloak'ın beni-hatırla
+oturumundaki davranışıdır, SPI ayrıca bir şey yazmaz. Olay `CUSTOM_REQUIRED_ACTION`, ayrıntı
+`sky_stay_signed_in` = `yes` ya da `no`; `LOGIN` olayı Evet'te `remember_me=true` taşır.
+`kc_action` ile istenemez. Eylem elle bir kullanıcıya konursa sayfa çıkmaz, giriş sürer.
+
+Sayfa realm'in beni-hatırla hareketsizlik süresini ve en uzun ömrünü tam gün olarak alır
+(`skyStaySignedInIdleDays`, `skyStaySignedInMaxDays`; Keycloak'ın hesabıyla, olağan değerden kısa
+olamaz). Tema sayfası `sky-stay-signed-in.ftl` (`theme/src/login/StaySignedIn.tsx`), temasız realm
+için SPI'nın yedek şablonu (`theme-resources/templates/sky-stay-signed-in.ftl`).
+
+### Bayrak ve sıra
+
+`KEYCLOAK_STAY_SIGNED_IN` (§23'ün `KEYCLOAK_PERSONAL_EMAIL_OFFER`'ı gibi; ikisi aynı ortak işlevden
+geçer): `keep` (varsayılan) dokunmaz ve yalnız bildirir, hiçbir tam uzlaştırma soruyu açıp kapatmaz;
+`on` eylemi kaydeder (imaj sunmuyorsa hiçbir şey yazmadan durur), açar, `defaultAction=false` tutar
+ve realm'in bütün gerekli eylemlerinden sonraya koyar (girişin son sayfası; ilk YTÜ girişinde §23'ün
+önerisinden sonra); `off` kapatır. Eylem tam uzlaştırmada ve `KEYCLOAK_RECONCILE_ONLY=first-broker-login`
+operatör adımında çalışır. Satırlar:
+
+- `[reconcile] stay signed in required action: unchanged (not registered; KEYCLOAK_STAY_SIGNED_IN=on registers and enables it)`
+- `[reconcile] stay signed in required action: updated (registered and enabled)` (ilk `on`)
+- `[reconcile] stay signed in required action order: unchanged (priority N, after every other required action)`
+- `[reconcile] stay signed in required action order: updated (priority -> N, after every other required action)` (`on`, sıra bozulmuşsa)
+- `[reconcile] WARNING: the stay signed in question runs before another required action (…); KEYCLOAK_STAY_SIGNED_IN=on puts it last` (`keep`, sıra bozulmuşsa)
+- `[reconcile] WARNING: the realm has remember-me off: …` (eylem açık, realm'de beni-hatırla kapalı)
+- `[reconcile] stay signed in required action: updated (enabled=true -> disabled)` (`off`)
+
+Uzlaştırıcı kimliğinin `manage-realm` rolü yeter. Realm oturum ayarları (beni-hatırla açık, 7 g / 30 g)
+`config/account-center-realm.json`'dadır.
+
+### Üretim sırası
+
+1. SPI 1.19.0'ı ve yeni tema sayfasını taşıyan imaj yayımlanır (`main` → `production`). **Tema
+   değişti: Touch ID kapısı yeni bir fiziksel testle** (`keycloak-production` ortamındaki
+   değişkenler tam birleştirme SHA'sı ve issue #1 kanıtı). İmaj ve bayraksız tam uzlaştırmalar
+   soruyu açmaz.
+2. Sandbox önce, §22'deki operatör oturumuyla (`/tmp/fbl-kcadm.config`):
+
+   ```bash
+   docker exec -e KEYCLOAK_ADMIN_URL=http://127.0.0.1:8080 -e KEYCLOAK_REALM=e-skylab-sandbox \
+     -e KEYCLOAK_RECONCILE_ONLY=first-broker-login -e KEYCLOAK_RECONCILE_KCADM_CONFIG=/tmp/fbl-kcadm.config \
+     -e KEYCLOAK_STAY_SIGNED_IN=on "$kc" /opt/keycloak/config/reconcile-account-center.sh
+   ```
+
+   Beklenen satırlar: `stay signed in required action: updated (registered and enabled)` ve
+   `stay signed in required action order: … after every other required action`. Remember-me uyarısı
+   çıkarsa önce realm ayarları (`config/account-center-realm.json`, tam uzlaştırma).
+3. Sandbox yürüyüşü: YTÜ ile giriş, Microsoft'tan sonra soru gelir. Evet: uygulamaya dönülür;
+   tarayıcının geliştirici araçlarında `KEYCLOAK_IDENTITY` çerezinin bitişi yaklaşık 30 gün sonra;
+   tarayıcı kapatılıp açılınca giriş sayfasız. Başka bir tarayıcıda Hayır: çerez oturum çerezidir.
+   Parolalı giriş soruyu görmez, "Beni hatırla" kutusu eskisi gibi.
+4. Canlı: aynı komut `KEYCLOAK_REALM=e-skylab` ile; sonra `docker exec "$kc" rm -f /tmp/fbl-kcadm.config`.
+5. Sonraki tam uzlaştırmalar (`keep`) eylemi olduğu gibi bırakır.
+
+### Geri dönüş
+
+`KEYCLOAK_STAY_SIGNED_IN=off` eylemi kapatır; Keycloak kapalı eylemi giriş oturumundaki listeden
+de atlar, YTÜ girişi sorusuz biter ve olağan oturum açar. 1.19.0'dan eski bir imaja dönülecekse ÖNCE
+`off` koşulur. Acil yol (her imajda): Admin Console → Authentication → Required actions → "SKY LAB
+stay signed in (after a YTÜ login)" → Enabled kapalı. Evet denmiş açık oturumlar süreleri dolana dek
+beni-hatırla oturumu kalır; hemen bitirmek gerekirse Admin Console → Sessions ya da realm'de
+`rememberMe=false` (Keycloak beni-hatırla oturumlarını bir sonraki kullanımda geçersiz sayar; parola
+formundaki kutuyu da kapatır).
+
+### Gizlilik metni
+
+Gizlilik politikası taslağının çerez tablosu (`KEYCLOAK_IDENTITY`, `KEYCLOAK_SESSION`: en çok 8 saat,
+beni hatırla seçilirse en çok 30 gün) sürelerle tutarlı kalır. "Beni hatırla" satırına "YTÜ ile
+girişte giriş sonrasında sorulur" cümlesi eklenmeli. `KEYCLOAK_REMEMBER_ME` Keycloak 26.7.4'te
+kullanıcı adını (YTÜ girişinde okul adresini) giriş ipucu olarak bir yıla kadar tutar; tablo "seçimi
+saklar, en çok 30 gün" diyor.
+
+### Harness
+
+`tests/ytu-first-login.sh` (CI'da `ytu-first-login` işi) §23'ün aşamalarından sonra sorunun
+aşamalarını koşar; sayfa SPI'nın yedek şablonudur. Realm üretimin oturum ayarlarını alır. Sınananlar:
+`keep` kaydetmez; `on` uzlaştırıcı kimliğiyle kaydeder, açar ve öneriden sonraya koyar; öne alınmış
+eylemi `keep` yalnız uyarır, `on` yeniden sona koyar; ikinci koşular değiştirmez; geçersiz bayrak
+durur. Yeni YTÜ kimliği önce öneriyi, sonra soruyu görür (gün sayıları ve ortak bilgisayar uyarısı);
+Evet beni-hatırla kullanıcı oturumu, ~30 gün süreli `KEYCLOAK_IDENTITY` çerezi, `yes` olayı ve
+`remember_me=true` `LOGIN` olayı bırakır, aynı tarayıcı sonra sayfasız girer. Bağlı hesap yeniden
+sorulur; Hayır olağan oturum ve oturum çerezi bırakır. Parolalı giriş "Beni hatırla" ile sorulmaz ve
+yine beni-hatırla oturumu alır; canlı oturum içinde `prompt=login` ile YTÜ ve kiracıya iletilen
+`prompt=none` pasif girişi sorulmaz (pasif giriş uygulamaya kodla döner). `off` kapatır, YTÜ girişi
+doğrudan uygulamaya gider, `keep` kapalı bırakır. Kalan durumlar (`kc_action`, süresi dolmuş ya da
+kullanıcısız eski oturum, realm'de beni-hatırla kapalı, elle konmuş eylem, geçersiz cevap) birim
+testindedir (`SkyStaySignedInTest`). Tema sayfası: `StaySignedIn.test.tsx`, `Template.test.tsx` ve
+görsel temeller (`sky-stay-signed-in-{desktop,mobile}`).
+
+## 25. SkyMail'in Privileged rolü: `skymail:system-mails:read` (skymail-backend #61)
+
+skymail-backend #61 tekil sistem postalarının (doğrulama, bildirim gibi tek alıcılı postalar)
+içeriğini ayrı bir role bağlar: `skymail:system-mails:read`. Karar (Yusuf): rol YK, DK ve ADMIN'de
+olsun. Bu yüzden rol §19'daki core kaynak rolleriyle aynı biçimde yönetilir:
+
+- Her koşu `skymail` istemcisinde rolü var eder (yoksa açıklamasıyla oluşturur; varsa dokunmaz).
+  `skymail` istemcisi yoksa uyarıyla atlanır.
+- Rol Privileged gruplara (`/ADMIN`, `/YK`, `/DK`, `/UYELER/ADMIN`, `/UYELER/YK`, `/UYELER/DK`;
+  hangileri varsa) **bir kez** verilir; rolün `skylab.seeded-group-mappings` özniteliği zamanı ve
+  yolları kaydeder. İşaretli role eşleme eklenmez, sonradan SKY LAB admin panelinde ya da Keycloak Admin
+  Console'da değişen eşlemeye dokunulmaz,
+  hiçbir koşu eşleme ya da rol silmez. Privileged bir varsayılan grup varsa, varsayılan grupların ya
+  da bir Privileged grubun okunması "yok" dışında bir nedenle başarısız olursa hiçbir şey yazılmaz
+  (§19'un denetimleri; iki adım aynı `seed_privileged_client_roles` gövdesini kullanır, eksik
+  Privileged grup ad başına uyarılır).
+- Uzlaştırıcı kimliği yalnız rolü oluşturur ve `WARNING: skymail roles not yet granted to the
+  Privileged groups: skymail:system-mails:read …` yazar. Tohumlamayı operatörün §19'daki
+  `KEYCLOAK_RECONCILE_ONLY=core-roles` koşusu yapar (aynı komut; core rollerinden sonra SkyMail
+  rolünü de tohumlar): `skymail role skymail:system-mails:read: seeded once to <yollar> (granted to:
+  …)`. Sonraki koşularda iki satır da `unchanged`'dir (`Privileged roles of skymail (1): unchanged`,
+  `group mappings of the skymail Privileged roles: unchanged (…)`).
+- `skymail` SkyMail'in giriş istemcisidir; istemcinin kendi rolleri dar rol kapsamından (§21) her
+  zaman geçer, yani Privileged bir kişinin SkyMail token'ındaki `resource_access.skymail.roles` rolü
+  taşır. Ek kapsam eşlemesi gerekmez.
+
+**Sıra.** Rol SkyMail'de yalnız bir yetkiyi açar; rol yokken #61'in kapısı kapalı kalır (içerik
+gizli). Bu yüzden Keycloak yayını ve operatör tohumlaması skymail-backend #61'in yayınından önce
+yapılırsa YK/DK/ADMIN #61 yayınlandığı an içeriği görür; sonra yapılırsa arada içerik kimseye
+görünmez (zararsız, yalnız gecikme).
+
+Geri dönüş: eşlemeler SKY LAB admin panelinin grup sayfasından (core'un `/v1/client-roles`'u
+her istemcinin rollerini, `skymail`'inkileri de listeler) ya da Keycloak Admin Console'dan kaldırılır;
+işaret kaldığı
+için uzlaştırıcı onları geri koymaz.
+
+Harness (`tests/skymail-roles.sh`, `run-integration.sh` çağırır, `roles` grubu): ilk tam koşu rolü
+açıklamasıyla oluşturur, kimseye vermez, işaretlemez ve uyarır; operatörün `core-roles` koşusu rolü
+`/ADMIN` ve `/UYELER/YK`'ya verir ve işaretler; YK üyesinin etkin `skymail` rolleri `skymail:access`
+ve bu rol, gruba üye olmayan kişide rol yok. Gruptan kaldırılan eşleme sonraki koşuda geri gelmez;
+işareti silinen rol yalnız eksik gruba yeniden verilir. Değişiklik üretmeyen tam koşu rolleri,
+işaretleri ve grupların `skymail` eşlemelerini de karşılaştırır.

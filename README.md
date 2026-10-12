@@ -352,9 +352,13 @@ yeğler), bu yüzden OBS'nin ayarına dokunulmaz. Keycloak'ın kendi kararı kul
 SSO'da istek değişmez; IdP'de ayarlı ya da istemcinin gönderdiği bir `prompt` olduğu gibi gider.
 `SKY_FORWARD_REAUTHENTICATION=false` (ya da SPI seçeneği
 `spi-social--microsoft--forward-reauthentication`) Keycloak'ın kendi davranışını geri getirir
-(geri dönüş, yeniden başlatmayla); varsayılan `true`, başka bir değer sunucuyu başlatmaz. Harness
+(geri dönüş, yeniden başlatmayla; runbook: `docs/keycloak-26.7.4-upgrade-runbook.md` §8); varsayılan
+`true`, başka bir değer ERROR loglanır ve `false` sayılır, sunucu yine açılır. İstemcinin
+`prompt`'u (boş ya da `none` dahil) Keycloak'ın kuralıyla olduğu gibi gider, ikinci bir `prompt`
+eklenmez. Harness
 `tests/microsoft-reauthentication.sh` tek başına çalışır (stok imaj, SPI jar'ı, `microsoft` tipinde
-OBS; Microsoft'a gidilmez, yalnız Keycloak'ın yönlendirmesi okunur).
+OBS; Microsoft'a gidilmez, yalnız Keycloak'ın yönlendirmesi okunur); optimize imajda
+`run-integration.sh`'ın `login` grubu da aynı yönlendirmeye bakar.
 
 Hesap silmede (ADR-0051) core, SkyMail, CMS ve Forms'a ayrı bir gizli service
 account istemcisinden, `core-erasure`'dan aldığı token'larla gider. Operatör

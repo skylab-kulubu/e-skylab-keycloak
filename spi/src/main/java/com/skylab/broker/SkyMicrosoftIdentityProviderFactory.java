@@ -1,5 +1,6 @@
 package com.skylab.broker;
 
+import org.jboss.logging.Logger;
 import org.keycloak.Config;
 import org.keycloak.models.IdentityProviderModel;
 import org.keycloak.models.KeycloakSession;
@@ -19,13 +20,18 @@ import java.util.Map;
  *
  * <p>{@code SKY_FORWARD_REAUTHENTICATION} (or the SPI option
  * {@code spi-social--microsoft--forward-reauthentication}) is {@code true} by default; {@code false}
- * gives back exactly Keycloak's own behaviour (the rollback, after a restart). Anything else stops
- * the server at start.
+ * gives back exactly Keycloak's own behaviour (the rollback, after a restart). Any other value is
+ * logged as an ERROR and treated as {@code false}: the server still starts.
+ *
+ * <p>{@link #create} repeats the body of {@code MicrosoftIdentityProviderFactory.create}; a Keycloak
+ * upgrade compares the two (docs/keycloak-26.7.4-upgrade-runbook.md).
  */
 public class SkyMicrosoftIdentityProviderFactory extends MicrosoftIdentityProviderFactory {
 
     static final String FORWARD_REAUTHENTICATION_CONFIG = "forward-reauthentication";
     static final String FORWARD_REAUTHENTICATION_ENV = "SKY_FORWARD_REAUTHENTICATION";
+
+    private static final Logger LOG = Logger.getLogger(SkyMicrosoftIdentityProviderFactory.class);
 
     private volatile boolean forwardReauthentication = true;
 
@@ -53,7 +59,13 @@ public class SkyMicrosoftIdentityProviderFactory extends MicrosoftIdentityProvid
         return switch (candidate.trim().toLowerCase(Locale.ROOT)) {
             case "true" -> true;
             case "false" -> false;
-            default -> throw new IllegalStateException(FORWARD_REAUTHENTICATION_ENV + " must be true or false.");
+            default -> {
+                // Written by hand only in an emergency rollback: a typo must not keep Keycloak
+                // (every login, not only YTÜ) from starting. Keycloak's own behaviour is the safe side.
+                LOG.errorf("%s must be true or false; it is ignored and the re-authentication is not "
+                        + "forwarded to Microsoft (Keycloak's own behaviour)", FORWARD_REAUTHENTICATION_ENV);
+                yield false;
+            }
         };
     }
 }

@@ -21,8 +21,8 @@ import org.keycloak.social.microsoft.MicrosoftIdentityProviderConfig;
  * Microsoft Entra passes a fresh-login request on to a federated identity provider.
  *
  * <p>An ordinary login (no Keycloak session) and a valid SSO session are unchanged. A
- * {@code prompt} configured on the identity provider, or sent by the client, is left exactly as
- * Keycloak forwards it.
+ * {@code prompt} configured on the identity provider, or sent by the client (also an empty one, and
+ * {@code none}), is left exactly as Keycloak forwards it.
  */
 public class SkyMicrosoftIdentityProvider extends MicrosoftIdentityProvider {
 
@@ -41,15 +41,24 @@ public class SkyMicrosoftIdentityProvider extends MicrosoftIdentityProvider {
         UriBuilder uriBuilder = super.createAuthorizationUrl(request);
         AuthenticationSessionModel authSession = request.getAuthenticationSession();
         if (forwardReauthentication
-                && isBlank(getConfig().getPrompt())
-                && isBlank(authSession.getClientNote(OAuth2Constants.PROMPT))
+                && !keycloakSendsPrompt(getConfig().getPrompt(), authSession.getClientNote(OAuth2Constants.PROMPT))
                 && AuthenticatorUtil.isForcedReauthentication(authSession)) {
             uriBuilder.queryParam(OAuth2Constants.PROMPT, PROMPT_LOGIN);
         }
         return uriBuilder;
     }
 
-    private static boolean isBlank(String value) {
-        return value == null || value.isBlank();
+    /**
+     * Whether {@code AbstractOAuth2IdentityProvider.createAuthorizationUrl} already put a
+     * {@code prompt} on the request, with its own rule word for word: the identity provider's
+     * {@code prompt} unless it is null or empty, otherwise the client's {@code prompt} note unless
+     * it is null. An empty or blank value counts as sent, so no second {@code prompt} follows it.
+     */
+    static boolean keycloakSendsPrompt(String configuredPrompt, String clientPrompt) {
+        String prompt = configuredPrompt;
+        if (prompt == null || prompt.isEmpty()) {
+            prompt = clientPrompt;
+        }
+        return prompt != null;
     }
 }

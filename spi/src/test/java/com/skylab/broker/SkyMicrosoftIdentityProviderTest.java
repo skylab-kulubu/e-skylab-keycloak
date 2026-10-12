@@ -24,7 +24,6 @@ import java.util.ServiceLoader;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -132,9 +131,41 @@ class SkyMicrosoftIdentityProviderTest {
                 Map.of(SkyMicrosoftIdentityProviderFactory.FORWARD_REAUTHENTICATION_ENV, "false")));
         assertFalse(SkyMicrosoftIdentityProviderFactory.resolveForwardReauthentication("false",
                 Map.of(SkyMicrosoftIdentityProviderFactory.FORWARD_REAUTHENTICATION_ENV, "true")));
-        assertThrows(IllegalStateException.class, () -> SkyMicrosoftIdentityProviderFactory
-                .resolveForwardReauthentication(null,
-                        Map.of(SkyMicrosoftIdentityProviderFactory.FORWARD_REAUTHENTICATION_ENV, "off")));
+    }
+
+    @Test
+    void aMistypedSwitchFallsBackToKeycloaksOwnBehaviourAndStillStarts() {
+        for (String typo : List.of("off", "0", "no", "\"false\"", "yes")) {
+            assertFalse(SkyMicrosoftIdentityProviderFactory.resolveForwardReauthentication(null,
+                    Map.of(SkyMicrosoftIdentityProviderFactory.FORWARD_REAUTHENTICATION_ENV, typo)), typo);
+            assertFalse(SkyMicrosoftIdentityProviderFactory.resolveForwardReauthentication(typo, Map.of()), typo);
+        }
+    }
+
+    @Test
+    void anEmptyPromptFromTheClientIsKeycloaksOwnAndGetsNoSecondPrompt() {
+        Map<String, String> authNotes = Map.of(AuthenticationManager.FORCED_REAUTHENTICATION, "true");
+
+        assertEquals(List.of(""), prompts(authorizationUrl(true, null, Map.of("prompt", ""), authNotes)));
+        assertEquals(List.of(" "), prompts(authorizationUrl(true, " ", Map.of(), authNotes)));
+    }
+
+    @Test
+    void promptNoneNeverBecomesLogin() {
+        Map<String, String> forced = Map.of(AuthenticationManager.FORCED_REAUTHENTICATION, "true");
+
+        assertEquals(List.of("none"), prompts(authorizationUrl(true, null, Map.of("prompt", "none"), forced)));
+        assertEquals(List.of("none"), prompts(authorizationUrl(true, null, Map.of("prompt", "none"), Map.of())));
+    }
+
+    @Test
+    void thePromptRuleIsKeycloaksWordForWord() {
+        assertFalse(SkyMicrosoftIdentityProvider.keycloakSendsPrompt(null, null));
+        assertFalse(SkyMicrosoftIdentityProvider.keycloakSendsPrompt("", null));
+        assertTrue(SkyMicrosoftIdentityProvider.keycloakSendsPrompt("", ""));
+        assertTrue(SkyMicrosoftIdentityProvider.keycloakSendsPrompt(" ", null));
+        assertTrue(SkyMicrosoftIdentityProvider.keycloakSendsPrompt(null, "none"));
+        assertTrue(SkyMicrosoftIdentityProvider.keycloakSendsPrompt("consent", null));
     }
 
     @Test

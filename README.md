@@ -540,7 +540,8 @@ dışındaki her realm'i girişten önce reddeder. Sunucuda sky_lab_genel'deki
 `tests/sandbox-admin-local-client.sh` tek başına çalışır.
 
 core'un kaynak rollerini (ADR-0059: `event:manage`, `ticket:manage`, `certificate:manage`,
-`users:manage` gibi 11 yeni rol ve var olan `url:moderator`, `url:access`) uzlaştırıcı her koşuda
+`users:manage` gibi 11 yeni rol, var olan `url:moderator`, `url:access` ve yarışma modülünün
+`competition:manage`'ı) uzlaştırıcı her koşuda
 `core` istemcisinde var eder ve admin panelinin adımından önce koşar. Roller Privileged gruplara
 (`ADMIN`, `YK`, `DK`; `/<AD>` ya da `/UYELER/<AD>`) **bir kez** verilir; rol özniteliği
 `skylab.seeded-group-mappings` bunu kaydeder ve sonraki koşular SKY LAB admin panelinde değişen
@@ -548,6 +549,9 @@ eşlemelere dokunmaz, hiçbir eşlemeyi silmez. Gruba rol vermek kullanıcı yet
 uzlaştırıcı kimliği değil operatör yapar: `KEYCLOAK_RECONCILE_KCADM_CONFIG` +
 `KEYCLOAK_RECONCILE_ONLY=core-roles`; uzlaştırıcı işaretsiz rolleri uyarıyla bildirir. Rol listesi
 sky_lab_genel'deki admin-token-authz spec'inin sözleşme tablosudur (runbook §19).
+`competition:manage`, `competitor:manage`'ın yeni adıdır (ADR-0068; geçişte core ikisini eşdeğer
+okur): Privileged gruplara değil, operatör koşusunda eski rolün o an bulunduğu her yere (gruplar,
+kullanıcılar, kompozit roller, rol kapsamları) bir kez verilir; eski rol silinmez (runbook §19.1).
 
 core'un servis rollerini (`media:attach`: ADR-0052, Forms'un core'a Media bağlaması ve anonim form
 yüklemesi; `ticket:forms`: Forms'un cevap bildirimi, core `docs/form-response-tickets.md`; `url:forms`:

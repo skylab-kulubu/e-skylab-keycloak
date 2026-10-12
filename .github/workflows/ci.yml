@@ -138,6 +138,20 @@ jobs:
       - name: First YTÜ login against a throwaway Keycloak
         run: bash tests/ytu-first-login.sh
 
+  # The SPI's microsoft identity provider: Keycloak's re-authentication (max_age exceeded,
+  # prompt=login) goes to Microsoft as prompt=login; an ordinary first login and SSO unchanged;
+  # SKY_FORWARD_REAUTHENTICATION=false gives Keycloak's own behaviour back. Stock Keycloak image
+  # in dev mode with the SPI jar built from spi/ in the Dockerfile's Maven image; only Keycloak's
+  # redirect is read, Microsoft is never called.
+  microsoft-reauthentication:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Re-authentication forwarded to Microsoft against a throwaway Keycloak
+        run: bash tests/microsoft-reauthentication.sh
+
   # config/site-clients.sh and config/site-editor-grants.sh (the event sites' Site clients, with
   # inscribed-cms-roles.sh between them) against the stock Keycloak image in dev mode, with a real
   # authorization code flow (PKCE); needs no build of this repository's image.

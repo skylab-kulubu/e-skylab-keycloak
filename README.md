@@ -40,7 +40,7 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.19.0`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.20.0`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.1.1`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
@@ -360,6 +360,27 @@ Parola ve geçiş anahtarı girişindeki "Beni hatırla" kutusu değişmedi. Tem
 şablonu vardır. Uzlaştırıcı: `KEYCLOAK_STAY_SIGNED_IN=on` eylemi kaydeder, açar ve realm'in bütün
 gerekli eylemlerinden sonraya koyar (kişisel e-posta önerisinden sonra); `off` kapatır (geri dönüş);
 varsayılan `keep` dokunmaz, sıra bozulmuşsa uyarır. Ayrıntı: runbook §24.
+
+SPI 1.20.0'dan sonra Keycloak'ın yeniden kimlik doğrulaması YTÜ'ye iletilir. Keycloak açık bir
+oturumu olan kişiden yeniden kimlik doğrulama istediğinde (istemcinin `max_age`'i aşıldı, bir
+`kc_action` taze giriş istiyor ya da istemci `prompt=login` gönderdi) YTÜ düğmesi ve
+`kc_idp_hint=OBS` Microsoft'a `prompt=login` gönderir; Microsoft kimlik bilgisi ister, açık bir
+Microsoft oturumu artık girişi sessiz geçirmez. Microsoft Entra'nın federasyondaki IdP'ye taze
+giriş isteğini iletmesinin (`promptLoginBehavior`) karşılığıdır. Bunu SPI'daki
+`com.skylab.broker.SkyMicrosoftIdentityProviderFactory` yapar: Keycloak'ın yerleşik `microsoft`
+sağlayıcısının yerine aynı kimlikle kaydolur (Keycloak aynı kimlikte özel fabrikayı yerleşiğe
+yeğler), bu yüzden OBS'nin ayarına dokunulmaz. Keycloak'ın kendi kararı kullanılır:
+`CookieAuthenticator`'ın yazdığı `FORCED_REAUTHENTICATION` notu. Oturumsuz ilk girişte ve geçerli
+SSO'da istek değişmez; IdP'de ayarlı ya da istemcinin gönderdiği bir `prompt` olduğu gibi gider.
+`SKY_FORWARD_REAUTHENTICATION=false` (ya da SPI seçeneği
+`spi-social--microsoft--forward-reauthentication`) Keycloak'ın kendi davranışını geri getirir
+(geri dönüş, yeniden başlatmayla; runbook: `docs/keycloak-26.7.4-upgrade-runbook.md` §8); varsayılan
+`true`, başka bir değer ERROR loglanır ve `false` sayılır, sunucu yine açılır. İstemcinin
+`prompt`'u (boş ya da `none` dahil) Keycloak'ın kuralıyla olduğu gibi gider, ikinci bir `prompt`
+eklenmez. Harness
+`tests/microsoft-reauthentication.sh` tek başına çalışır (stok imaj, SPI jar'ı, `microsoft` tipinde
+OBS; Microsoft'a gidilmez, yalnız Keycloak'ın yönlendirmesi okunur); optimize imajda
+`run-integration.sh`'ın `login` grubu da aynı yönlendirmeye bakar.
 
 Hesap silmede (ADR-0051) core, SkyMail, CMS ve Forms'a ayrı bir gizli service
 account istemcisinden, `core-erasure`'dan aldığı token'larla gider. Operatör

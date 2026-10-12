@@ -35,6 +35,7 @@ entegrasyon testi bunu doğrular.
 | Parola formu (K4, §15) | Realm tarayıcı akışı `browser plus passkey`'deki `auth-username-password-form`'un yerine aynı alt akışta, aynı öncelik ve `REQUIRED` ile `sky-username-password-form` konur; akışın geri kalanına dokunulmaz. İki formdan tam olarak biri yoksa, form `REQUIRED` değilse ya da yanındaki bir yürütmeyle aynı önceliği paylaşıyorsa koşu hiçbir şey yazmadan durur. `KEYCLOAK_PASSWORD_FORM=auth-username-password-form` Keycloak'ın formunu geri koyar. |
 | Parola sıfırlamanın kişi seçme adımı (K4b, §17) | Realm'in `reset credentials` akışındaki `reset-credentials-choose-user`'ın yerine aynı öncelik ve `REQUIRED` ile `sky-reset-credentials-choose-user` konur. Keycloak'ın yerleşik akışı değiştirilemediği için realm yerleşik bir akışa bağlıysa akış bir kez `sky reset credentials` adıyla kopyalanır, adım kopyada değiştirilir, realm ancak ondan sonra kopyaya bağlanır. Durdurma kuralları parola formununkiyle aynıdır. `KEYCLOAK_RESET_CHOOSE_USER=reset-credentials-choose-user` Keycloak'ın adımını bağlı akışa geri koyar. |
 | Kimlik korumaları: core sertifika rolleri, OBS `department mapper`, core'un `manage-clients` rolü | Uzlaştırıcı **dokunmaz**: kimliğinin kullanıcı ve kimlik sağlayıcısı yetkisi yoktur. Operatör `config/identity-guardrails.sh` ile uygular (§8). |
+| SkyMail'in Privileged rolü (§25) | `skymail` istemcisinde `skymail:system-mails:read` her koşuda var edilir (yoksa açıklamasıyla oluşturulur). core'un kaynak rolleri gibi Privileged gruplara **bir kez** verilir ve `skylab.seeded-group-mappings` ile işaretlenir; tohumlamayı operatörün `KEYCLOAK_RECONCILE_ONLY=core-roles` koşusu yapar. Diğer `skymail:*` rolleri elle verilmiştir, uzlaştırıcı onlara dokunmaz. |
 
 Ortam değişkenleri: `KEYCLOAK_PASSKEY_RP_ID` (varsayılan `yildizskylab.com`) ve
 `KEYCLOAK_PASSKEY_EXTRA_ORIGINS` (virgülle ayrılmış, varsayılan
@@ -2590,3 +2591,46 @@ doğrudan uygulamaya gider, `keep` kapalı bırakır. Kalan durumlar (`kc_action
 kullanıcısız eski oturum, realm'de beni-hatırla kapalı, elle konmuş eylem, geçersiz cevap) birim
 testindedir (`SkyStaySignedInTest`). Tema sayfası: `StaySignedIn.test.tsx`, `Template.test.tsx` ve
 görsel temeller (`sky-stay-signed-in-{desktop,mobile}`).
+
+## 25. SkyMail'in Privileged rolü: `skymail:system-mails:read` (skymail-backend #61)
+
+skymail-backend #61 tekil sistem postalarının (doğrulama, bildirim gibi tek alıcılı postalar)
+içeriğini ayrı bir role bağlar: `skymail:system-mails:read`. Karar (Yusuf): rol YK, DK ve ADMIN'de
+olsun. Bu yüzden rol §19'daki core kaynak rolleriyle aynı biçimde yönetilir:
+
+- Her koşu `skymail` istemcisinde rolü var eder (yoksa açıklamasıyla oluşturur; varsa dokunmaz).
+  `skymail` istemcisi yoksa uyarıyla atlanır.
+- Rol Privileged gruplara (`/ADMIN`, `/YK`, `/DK`, `/UYELER/ADMIN`, `/UYELER/YK`, `/UYELER/DK`;
+  hangileri varsa) **bir kez** verilir; rolün `skylab.seeded-group-mappings` özniteliği zamanı ve
+  yolları kaydeder. İşaretli role eşleme eklenmez, sonradan SKY LAB admin panelinde ya da Keycloak Admin
+  Console'da değişen eşlemeye dokunulmaz,
+  hiçbir koşu eşleme ya da rol silmez. Privileged bir varsayılan grup varsa, varsayılan grupların ya
+  da bir Privileged grubun okunması "yok" dışında bir nedenle başarısız olursa hiçbir şey yazılmaz
+  (§19'un denetimleri; iki adım aynı `seed_privileged_client_roles` gövdesini kullanır, eksik
+  Privileged grup ad başına uyarılır).
+- Uzlaştırıcı kimliği yalnız rolü oluşturur ve `WARNING: skymail roles not yet granted to the
+  Privileged groups: skymail:system-mails:read …` yazar. Tohumlamayı operatörün §19'daki
+  `KEYCLOAK_RECONCILE_ONLY=core-roles` koşusu yapar (aynı komut; core rollerinden sonra SkyMail
+  rolünü de tohumlar): `skymail role skymail:system-mails:read: seeded once to <yollar> (granted to:
+  …)`. Sonraki koşularda iki satır da `unchanged`'dir (`Privileged roles of skymail (1): unchanged`,
+  `group mappings of the skymail Privileged roles: unchanged (…)`).
+- `skymail` SkyMail'in giriş istemcisidir; istemcinin kendi rolleri dar rol kapsamından (§21) her
+  zaman geçer, yani Privileged bir kişinin SkyMail token'ındaki `resource_access.skymail.roles` rolü
+  taşır. Ek kapsam eşlemesi gerekmez.
+
+**Sıra.** Rol SkyMail'de yalnız bir yetkiyi açar; rol yokken #61'in kapısı kapalı kalır (içerik
+gizli). Bu yüzden Keycloak yayını ve operatör tohumlaması skymail-backend #61'in yayınından önce
+yapılırsa YK/DK/ADMIN #61 yayınlandığı an içeriği görür; sonra yapılırsa arada içerik kimseye
+görünmez (zararsız, yalnız gecikme).
+
+Geri dönüş: eşlemeler SKY LAB admin panelinin grup sayfasından (core'un `/v1/client-roles`'u
+her istemcinin rollerini, `skymail`'inkileri de listeler) ya da Keycloak Admin Console'dan kaldırılır;
+işaret kaldığı
+için uzlaştırıcı onları geri koymaz.
+
+Harness (`tests/skymail-roles.sh`, `run-integration.sh` çağırır, `roles` grubu): ilk tam koşu rolü
+açıklamasıyla oluşturur, kimseye vermez, işaretlemez ve uyarır; operatörün `core-roles` koşusu rolü
+`/ADMIN` ve `/UYELER/YK`'ya verir ve işaretler; YK üyesinin etkin `skymail` rolleri `skymail:access`
+ve bu rol, gruba üye olmayan kişide rol yok. Gruptan kaldırılan eşleme sonraki koşuda geri gelmez;
+işareti silinen rol yalnız eksik gruba yeniden verilir. Değişiklik üretmeyen tam koşu rolleri,
+işaretleri ve grupların `skymail` eşlemelerini de karşılaştırır.

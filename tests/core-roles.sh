@@ -23,6 +23,10 @@ CR_RENAMED_FROM=competitor:manage
 CR_PRIVILEGED=(/ADMIN /UYELER/YK)
 CR_SUBGROUP=core-roles-subgroup-fixture
 CR_RENAME_GROUP=core-roles-rename-group-fixture
+# Team-like groups with long names that also hold the old role: their paths together are far longer
+# than a role attribute value may be (255), so a mark naming them could not be written.
+CR_RENAME_LONG_GROUPS=8
+CR_RENAME_LONG_PREFIX=core-roles-rename-long-team-group-fixture
 CR_RENAME_USER=core-roles-rename-user-fixture
 CR_RENAME_COMPOSITE=core-roles-rename-composite-fixture
 CR_RENAME_SCOPE=core-roles-rename-scope-fixture
@@ -92,6 +96,10 @@ stage_core_roles_after_first_reconciliation() {
     || fail 'the first reconciliation did not create the core resource roles'
   grep -Fq '[reconcile] WARNING: core roles not yet granted to the Privileged groups: event:manage season:manage' "$log" \
     || fail 'the first reconciliation did not report the unseeded core roles'
+  grep -Fq "[reconcile] WARNING: core roles not yet carried over from their old names: $CR_RENAMED (from $CR_RENAMED_FROM)" "$log" \
+    || fail "the first reconciliation did not report $CR_RENAMED as waiting for its old name"
+  ! grep -E '^\[reconcile\] WARNING: core roles not yet granted to the Privileged groups: ' "$log" | grep -Fq "$CR_RENAMED" \
+    || fail "the first reconciliation said $CR_RENAMED goes to the Privileged groups"
   grep -Fq 'KEYCLOAK_RECONCILE_ONLY=core-roles' "$log" \
     || fail 'the warning does not name the operator step'
   roles=$(kcadm get "clients/$(lca_client_uuid core)/roles" -r "$V2_REALM" -c)
@@ -255,6 +263,10 @@ cr_rename_fixtures_create() {
   old_body=$(v2_role_body "$core_uuid" "$CR_RENAMED_FROM")
   group_id=$(kcadm create groups -r "$V2_REALM" -s "name=$CR_RENAME_GROUP" -i)
   kcadm create "groups/$group_id/role-mappings/clients/$core_uuid" -r "$V2_REALM" -b "$old_body" >/dev/null
+  for n in $(seq 1 "$CR_RENAME_LONG_GROUPS"); do
+    group_id=$(kcadm create groups -r "$V2_REALM" -s "name=$CR_RENAME_LONG_PREFIX-$n" -i)
+    kcadm create "groups/$group_id/role-mappings/clients/$core_uuid" -r "$V2_REALM" -b "$old_body" >/dev/null
+  done
   user_id=$(kcadm create users -r "$V2_REALM" -i -s "username=$CR_RENAME_USER" -s enabled=true \
     -s "email=$CR_RENAME_USER@example.invalid" -s emailVerified=true -s firstName=Rename -s lastName=Fixture)
   kcadm create "users/$user_id/role-mappings/clients/$core_uuid" -r "$V2_REALM" -b "$old_body" >/dev/null
@@ -270,6 +282,9 @@ cr_rename_fixture_ids() {
 
 cr_rename_fixtures_delete() {
   kcadm delete "groups/$(cr_group_id "/$CR_RENAME_GROUP")" -r "$V2_REALM" >/dev/null
+  for n in $(seq 1 "$CR_RENAME_LONG_GROUPS"); do
+    kcadm delete "groups/$(cr_group_id "/$CR_RENAME_LONG_PREFIX-$n")" -r "$V2_REALM" >/dev/null
+  done
   kcadm delete "users/$(kcadm get users -r "$V2_REALM" -q "username=$CR_RENAME_USER" -q exact=true -c | jq -r '.[0].id')" \
     -r "$V2_REALM" >/dev/null
   kcadm delete "roles/$CR_RENAME_COMPOSITE" -r "$V2_REALM" >/dev/null
@@ -295,6 +310,14 @@ cr_assert_renamed_follows_old() {
   grep -Eq "client scopes ([^(]*,)?${CR_RENAME_SCOPE}[, ]" <<<"$line" || fail "the rename missed the client scope: $line"
   grep -Eq "role scopes ([^;]*,)?${AP_CLIENT}[,;]" <<<"$line" || fail "the rename missed the admin panel's role scope: $line"
   mark=$(cr_seed_marks | jq -r --arg n "$CR_RENAMED" '.[$n]')
+  # The paths of the long-named groups are all in the log, but the mark holds counts only and fits a
+  # role attribute value (255).
+  for n in $(seq 1 "$CR_RENAME_LONG_GROUPS"); do
+    grep -Fq "/$CR_RENAME_LONG_PREFIX-$n" <<<"$line" || fail "the rename log does not name /$CR_RENAME_LONG_PREFIX-$n: $line"
+  done
+  ((${#mark} <= 255)) || fail "the mark of $CR_RENAMED is ${#mark} characters, more than a role attribute holds: $mark"
+  [[ $mark == *" groups $((${#CR_PRIVILEGED[@]} + 1 + CR_RENAME_LONG_GROUPS)); users 1; composite roles 1; "* ]] \
+    || fail "the mark of $CR_RENAMED does not count the holders of $CR_RENAMED_FROM: $mark"
   [[ $mark =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\ where\ $CR_RENAMED_FROM\ is\ held: ]] \
     || fail "$CR_RENAMED lacks its mark: $mark"
   grep -Fq "$CR_RENAME_USER" <<<"$mark$line" && fail 'the rename wrote a user name into its log or mark'

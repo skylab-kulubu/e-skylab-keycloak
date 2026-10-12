@@ -1811,7 +1811,9 @@ yarışmacı yetkisini `competition:manage` adıyla okur. Geçişte core iki ad�
 oluşturur ve eskinin bulunduğu her yere verir (bu adım); eski `competitor:manage` daha sonraki bir
 değişiklikte kalkar (yarışma bileti 02b), bu adım onu silmez.
 
-Uzlaştırıcı rolü diğerleri gibi her koşuda oluşturur (açıklamasıyla) ve işaretsizse uyarır. Operatörün
+Uzlaştırıcı rolü diğerleri gibi her koşuda oluşturur (açıklamasıyla) ve işaretsizse ayrı bir uyarıyla
+bildirir (`WARNING: core roles not yet carried over from their old names: competition:manage (from
+competitor:manage) …`; Privileged grupların uyarısında geçmez). Operatörün
 `core-roles` koşusu onu Privileged gruplara **değil**, o anda `competitor:manage`'ın bulunduğu her yere
 **bir kez** verir; böylece ad değişikliği kimseye yetki kazandırmaz, kimseden almaz (admin panelinden
 bir gruptan kaldırılmış ya da bir gruba eklenmiş eski rol aynen izlenir):
@@ -1822,11 +1824,17 @@ bir gruptan kaldırılmış ya da bir gruba eklenmiş eski rol aynen izlenir):
   token'a ancak kapsamdaysa girer.
 
 Önce her şey okunur; bir okuma başarısız olursa (`… could not be read in realm …; nothing was
-granted`) hiçbir şey yazılmadan koşu durur. Sonra eksik yerlere yeni rol eklenir, en son işaret
-yazılır: `skylab.seeded-group-mappings` = `<zaman> where competitor:manage is held: groups <yollar>;
-users <sayı>; composite roles <adlar>; role scopes <istemciler>; client scopes <adlar>`. Log satırı
-`core role competition:manage: seeded once where competitor:manage is held: … (granted to N of them;
-the rest already held it)`. Kullanıcı adları ne log'a ne işarete yazılır, yalnız sayıları. Yeni bir
+granted`) hiçbir şey yazılmadan koşu durur; bir yazma başarısız olursa işaret yazılmadan durur (yeniden
+koşmak eksikleri tamamlar). Sonra eksik yerlere yeni rol eklenir, en son işaret yazılır. İşaret yalnız
+sayı taşır, çünkü Keycloak'ta bir rol özniteliğinin değeri en çok 255 karakterdir ve çok sayıda grup
+yolu sığmaz: `skylab.seeded-group-mappings` = `<zaman> where competitor:manage is held: groups <sayı>;
+users <sayı>; composite roles <sayı>; role scopes <sayı>; client scopes <sayı>`. Adlar log satırındadır:
+`core role competition:manage: seeded once where competitor:manage is held: groups <yollar>; users
+<sayı>; composite roles <adlar>; role scopes <istemciler>; client scopes <adlar> (granted to N of them;
+the rest already held it)`. Kullanıcı adları ne log'a ne işarete yazılır, yalnız sayıları. Eski rol
+henüz işaretsizse (ör. Privileged grubu olmayan yeni bir realm) yeni rol işaretlenmez, uyarılır
+(`not carried over: its old name competitor:manage is not seeded yet`); eski rol tohumlandığı koşuda
+ya da sonrakinde yeni rol onu izler. Yeni bir
 realm'de iki rol aynı koşuda işaretsizse önce Privileged roller tohumlanır, sonra yeni ad eskinin
 gruplarını izler. İşaretli rol için sonraki koşular bir şey yapmaz; işaret silinirse sonraki
 operatör koşusu yalnız eksik yerlere yeniden verir.
@@ -1836,11 +1844,23 @@ Production sırası: Keycloak yayını (§19'daki gibi uzlaştırma) → operat�
 sayısına yakın olmalı) → `admin-panel-client` adımı. Rol Keycloak'ta oluşana kadar core'un açılış
 denetimi onu eksik listeler; bu arada kimse bir şey kaybetmez (core iki adı eşdeğer okur).
 
+**Geri alma ve 02b.** Tohumlamadan sonra core iki adı eşdeğer okur: bir yerden yetkiyi geri almak
+için **iki rol de** kaldırılır (yalnız `competitor:manage`'ı kaldırmak yetmez). Tohumlama tek seferliktir:
+sonradan admin panelinden yalnız eski rolün verildiği yerlere yeni rol kendiliğinden gitmez (geçişte
+kayıp yok, core eşdeğer okur). Eski rolü silen değişiklikten (yarışma 02b) önce: yeni rolün işareti
+silinir, operatör `core-roles`'u yeniden koşar (eksikleri tamamlar), eski rolün sahipleri ⊆ yeni rolün
+sahipleri denetlenir; rol adıyla atıf yapan ama eşleme olmayan yerler (kimlik sağlayıcı, federasyon ve
+protokol mapper'ları, yetkilendirme politikaları, `conditional-user-role` akış koşulları) ve eski rolün
+kompozit olup olmadığı ayrıca denetlenir.
+
 Harness (`tests/core-roles.sh`): ilk koşu 14 rolü oluşturur, `competition:manage` açıklamasında
 `competitor:manage` ve ADR-0068 geçer. Operatör koşusundan önce eski rol Privileged olmayan bir gruba,
-bir kullanıcıya, bir realm kompozit rolüne ve bir istemci kapsamına eşlenir; koşudan sonra yeni rolün
+uzun adlı 8 takım grubuna (yolları toplamı 255'i aşar), bir kullanıcıya, bir realm kompozit rolüne ve
+bir istemci kapsamına eşlenir; koşudan sonra yeni rolün
 grupları eskininkilerle birebir aynı, doğrudan kullanıcısı aynı, kompozit rol ve istemci kapsamı iki adı
-da içerir, admin panelinin rol kapsamı ikisini de taşır, işaret ve log'da kullanıcı adı yok. Sonra
+da içerir, admin panelinin rol kapsamı ikisini de taşır, log bütün yolları adlandırır, işaret 255
+karakteri aşmaz ve sayıları doğrudur, işaret ve log'da kullanıcı adı yok. İlk koşunun uyarısı rolü
+Privileged gruplara değil eski adına bağlar. Sonra
 işareti silinip `/ADMIN`'den kaldırılan rol için `client-scopes` okuması enjekte edilerek bozulur:
 koşu yazmadan ve işaretlemeden reddeder; gerçek koşu yalnız `/ADMIN`'e verir (`granted to 1 of them`).
 

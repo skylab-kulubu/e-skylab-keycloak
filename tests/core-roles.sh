@@ -9,17 +9,27 @@
 # the step alone (KEYCLOAK_RECONCILE_ONLY=core-roles). After seeding, a Privileged person's token
 # carries them (inherited by subgroup members too), nobody else's does, and later runs never undo
 # what the admin panel changed. The fixture realm has /ADMIN and /UYELER/YK, no DK.
+# competition:manage renames competitor:manage (ADR-0068): it is seeded once wherever the old role is
+# held (groups, users, composite roles, role scopes of clients and client scopes), not to the
+# Privileged groups.
 
 CR_ATTRIBUTE=skylab.seeded-group-mappings
 # The contract table of sky_lab_genel .scratch/admin-token-authz/spec.md.
 CR_ROLES=(event:manage season:manage ticket:manage ticket:validate competitor:manage media:manage
   media:private:read certificate:manage users:manage groups:manage github:activity:read url:moderator
   url:access)
+CR_RENAMED=competition:manage
+CR_RENAMED_FROM=competitor:manage
 CR_PRIVILEGED=(/ADMIN /UYELER/YK)
 CR_SUBGROUP=core-roles-subgroup-fixture
+CR_RENAME_GROUP=core-roles-rename-group-fixture
+CR_RENAME_USER=core-roles-rename-user-fixture
+CR_RENAME_COMPOSITE=core-roles-rename-composite-fixture
+CR_RENAME_SCOPE=core-roles-rename-scope-fixture
 
+# Every core resource role: the Privileged ones and the renamed one.
 cr_roles_json() {
-  printf '%s\n' "${CR_ROLES[@]}" | jq -R . | jq -s -c 'sort'
+  printf '%s\n' "${CR_ROLES[@]}" "$CR_RENAMED" | jq -R . | jq -s -c 'sort'
 }
 
 cr_group_id() {
@@ -77,7 +87,7 @@ cr_panel_login() {
 stage_core_roles_after_first_reconciliation() {
   CURRENT_STAGE='core resource roles: created by the first reconciliation, not granted'
   local log="$TEST_STATE_DIR/reconcile-first.log" roles marks path
-  grep -E '^\[reconcile\] client roles of core \(13 resource roles\): created \(' "$log" \
+  grep -E '^\[reconcile\] client roles of core \(14 resource roles\): created \(' "$log" \
     | grep -Fq 'event:manage' \
     || fail 'the first reconciliation did not create the core resource roles'
   grep -Fq '[reconcile] WARNING: core roles not yet granted to the Privileged groups: event:manage season:manage' "$log" \
@@ -88,6 +98,8 @@ stage_core_roles_after_first_reconciliation() {
   json_assert "$roles" '($want - [.[].name]) == []' 'a core resource role is missing' --argjson want "$(cr_roles_json)"
   json_assert "$roles" '[.[] | select(.name == "event:manage") | .description] == ["Her takımın etkinliklerini, etkinlik günlerini ve oturumlarını yönetir; kapı görevlisi atar (ADR-0059)"]' \
     'event:manage was created without its description'
+  json_assert "$roles" '[.[] | select(.name == $n) | .description | test("competitor:manage") and test("ADR-0068")] == [true]' \
+    "$CR_RENAMED was created without its description" --arg n "$CR_RENAMED"
   marks=$(cr_seed_marks)
   json_assert "$marks" '[.[]] | all(. == "")' 'the reconciler identity marked a role as seeded'
   for path in "${CR_PRIVILEGED[@]}"; do
@@ -132,6 +144,10 @@ stage_core_roles_seeded_by_operator() {
   cr_injected_failure_refuses group-by-path/UYELER/YK \
     "The Privileged group /UYELER/YK could not be looked up in realm $V2_REALM; nothing was granted"
 
+  # Holders of the old role outside the Privileged groups: the renamed role must follow each of them
+  # (core reads the two names as one; nobody gains or loses a right).
+  cr_rename_fixtures_create
+
   output=$(cr_operator_reconcile) || { printf '%s\n' "$output" >&2; fail 'the operator step failed'; }
   grep -Fq 'Core resource roles are reconciled.' <<<"$output" || fail 'the operator step did not report completion'
   grep -Fq '[reconcile] WARNING: no Privileged group DK (neither /DK nor /UYELER/DK)' <<<"$output" \
@@ -142,13 +158,16 @@ stage_core_roles_seeded_by_operator() {
   done
   marks=$(cr_seed_marks)
   seeded_pattern='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z /ADMIN,/UYELER/YK$'
-  json_assert "$marks" '[.[$want[]]] | all(test($p))' 'a seeded role lacks its mark' \
-    --argjson want "$want" --arg p "$seeded_pattern"
+  json_assert "$marks" '[.[$want[] | select(. != $renamed)]] | all(test($p))' 'a seeded role lacks its mark' \
+    --argjson want "$want" --arg p "$seeded_pattern" --arg renamed "$CR_RENAMED"
   json_assert "$marks" '.["url:create"] == "" and .["certificate:issue"] == ""' 'a role outside the list was marked'
+  cr_assert_renamed_follows_old "$output"
   for path in "${CR_PRIVILEGED[@]}"; do
     json_assert "$(cr_group_roles "$path")" '. == $want' "$path does not hold exactly the core resource roles" \
       --argjson want "$want"
   done
+
+  cr_rename_fixtures_delete
 
   CURRENT_STAGE='core resource roles: in the tokens of Privileged people only'
   cr_panel_login "$AP_USER" "$AP_PASSWORD"
@@ -195,11 +214,107 @@ stage_core_roles_seeded_by_operator() {
   json_assert "$(cr_group_roles /UYELER/YK)" 'index("event:manage") == null' \
     'seeding a new role restored a mapping removed after seeding'
 
+  # The renamed role unmarked (as if new) and missing from /ADMIN: a failed read stops it before any
+  # write; the next run grants it to /ADMIN only, where the old role is held.
+  CURRENT_STAGE='core resource roles: the renamed role is seeded where the old one is held'
+  kcadm update "clients/$core_uuid/roles/$CR_RENAMED" -r "$V2_REALM" -s 'attributes={}' >/dev/null
+  kcadm delete "groups/$(cr_group_id /ADMIN)/role-mappings/clients/$core_uuid" -r "$V2_REALM" \
+    -b "$(v2_role_body "$core_uuid" "$CR_RENAMED")" >/dev/null
+  refused="$TEST_STATE_DIR/core-roles-rename-refused.log"
+  if cr_operator_reconcile -e KCADM_BIN=/tmp/kcadm-core-roles-failure.sh -e KCADM_INJECT_FAIL=client-scopes >"$refused"; then
+    cat "$refused" >&2
+    fail 'the renamed role was seeded although reading the client scopes failed'
+  fi
+  grep -Fq "The client scopes could not be read in realm $V2_REALM; nothing was granted" "$refused" \
+    || { cat "$refused" >&2; fail 'the refused rename step did not say why'; }
+  json_assert "$(cr_seed_marks)" '.[$n] == ""' 'the refused rename step marked the role' --arg n "$CR_RENAMED"
+  json_assert "$(cr_group_roles /ADMIN)" 'index($n) == null' 'the refused rename step granted the role' \
+    --arg n "$CR_RENAMED"
+  output=$(cr_operator_reconcile) || { printf '%s\n' "$output" >&2; fail 'the rename operator step failed'; }
+  grep -Eq "^\[reconcile\] core role $CR_RENAMED: seeded once where $CR_RENAMED_FROM is held: .*\(granted to 1 of them;" <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'the renamed role was not seeded to the one holder that lacked it'; }
+  [[ $(grep -Ec '^\[reconcile\] core role .*: seeded once' <<<"$output") == 1 ]] \
+    || fail 'the rename operator step seeded more than the renamed role'
+  json_assert "$(cr_group_roles /ADMIN)" 'index($n) != null' 'the renamed role did not come back to /ADMIN' \
+    --arg n "$CR_RENAMED"
+  json_assert "$(cr_group_roles /UYELER/YK)" 'index("event:manage") == null' \
+    'seeding the renamed role restored a mapping removed after seeding'
+
   # Leave the fixture as seeded for the stages after this one.
   kcadm create "groups/$yk_id/role-mappings/clients/$core_uuid" -r "$V2_REALM" \
     -b "$(v2_role_body "$core_uuid" event:manage)" >/dev/null
   kcadm delete "groups/$admin_sub_id/role-mappings/clients/$core_uuid" -r "$V2_REALM" \
     -b "$(v2_role_body "$core_uuid" ticket:validate)" >/dev/null
+}
+
+# Holders of the old role that are not Privileged groups: a group, a user, a realm composite role
+# and a client scope (the admin panel client's role scope already maps every core role).
+cr_rename_fixtures_create() {
+  local core_uuid old_body group_id user_id scope_id
+  core_uuid=$(lca_client_uuid core)
+  old_body=$(v2_role_body "$core_uuid" "$CR_RENAMED_FROM")
+  group_id=$(kcadm create groups -r "$V2_REALM" -s "name=$CR_RENAME_GROUP" -i)
+  kcadm create "groups/$group_id/role-mappings/clients/$core_uuid" -r "$V2_REALM" -b "$old_body" >/dev/null
+  user_id=$(kcadm create users -r "$V2_REALM" -i -s "username=$CR_RENAME_USER" -s enabled=true \
+    -s "email=$CR_RENAME_USER@example.invalid" -s emailVerified=true -s firstName=Rename -s lastName=Fixture)
+  kcadm create "users/$user_id/role-mappings/clients/$core_uuid" -r "$V2_REALM" -b "$old_body" >/dev/null
+  kcadm create roles -r "$V2_REALM" -s "name=$CR_RENAME_COMPOSITE" >/dev/null
+  kcadm create "roles/$CR_RENAME_COMPOSITE/composites" -r "$V2_REALM" -b "$old_body" >/dev/null
+  scope_id=$(kcadm create client-scopes -r "$V2_REALM" -s "name=$CR_RENAME_SCOPE" -s protocol=openid-connect -i)
+  kcadm create "client-scopes/$scope_id/scope-mappings/clients/$core_uuid" -r "$V2_REALM" -b "$old_body" >/dev/null
+}
+
+cr_rename_fixture_ids() {
+  kcadm get client-scopes -r "$V2_REALM" -c | jq -r --arg n "$CR_RENAME_SCOPE" '.[] | select(.name == $n) | .id'
+}
+
+cr_rename_fixtures_delete() {
+  kcadm delete "groups/$(cr_group_id "/$CR_RENAME_GROUP")" -r "$V2_REALM" >/dev/null
+  kcadm delete "users/$(kcadm get users -r "$V2_REALM" -q "username=$CR_RENAME_USER" -q exact=true -c | jq -r '.[0].id')" \
+    -r "$V2_REALM" >/dev/null
+  kcadm delete "roles/$CR_RENAME_COMPOSITE" -r "$V2_REALM" >/dev/null
+  kcadm delete "client-scopes/$(cr_rename_fixture_ids)" -r "$V2_REALM" >/dev/null
+}
+
+# The names of core roles a role-scope or composite endpoint returns, sorted JSON array.
+cr_names() {
+  kcadm get "$1" -r "$V2_REALM" -c | jq -c '[.[].name] | sort'
+}
+
+# After the first operator run: the renamed role is held exactly where the old one is, and nowhere
+# else. $1: the run's output.
+cr_assert_renamed_follows_old() {
+  local output=$1 core_uuid line mark old_groups new_groups scope_id
+  core_uuid=$(lca_client_uuid core)
+  line=$(grep -E "^\[reconcile\] core role $CR_RENAMED: seeded once where $CR_RENAMED_FROM is held: " <<<"$output") \
+    || { printf '%s\n' "$output" >&2; fail "the operator step did not seed $CR_RENAMED where $CR_RENAMED_FROM is held"; }
+  ! grep -Fq "core role $CR_RENAMED: seeded once to /ADMIN" <<<"$output" \
+    || fail "$CR_RENAMED was seeded to the Privileged groups instead of where $CR_RENAMED_FROM is held"
+  grep -Fq 'users 1;' <<<"$line" || fail "the rename did not count the one user holding $CR_RENAMED_FROM: $line"
+  grep -Eq "composite roles ([^;]*,)?${CR_RENAME_COMPOSITE}[,;]" <<<"$line" || fail "the rename missed the composite role: $line"
+  grep -Eq "client scopes ([^(]*,)?${CR_RENAME_SCOPE}[, ]" <<<"$line" || fail "the rename missed the client scope: $line"
+  grep -Eq "role scopes ([^;]*,)?${AP_CLIENT}[,;]" <<<"$line" || fail "the rename missed the admin panel's role scope: $line"
+  mark=$(cr_seed_marks | jq -r --arg n "$CR_RENAMED" '.[$n]')
+  [[ $mark =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\ where\ $CR_RENAMED_FROM\ is\ held: ]] \
+    || fail "$CR_RENAMED lacks its mark: $mark"
+  grep -Fq "$CR_RENAME_USER" <<<"$mark$line" && fail 'the rename wrote a user name into its log or mark'
+  old_groups=$(kcadm get "clients/$core_uuid/roles/$CR_RENAMED_FROM/groups" -r "$V2_REALM" -c | jq -c '[.[].path] | sort')
+  new_groups=$(kcadm get "clients/$core_uuid/roles/$CR_RENAMED/groups" -r "$V2_REALM" -c | jq -c '[.[].path] | sort')
+  json_assert "$new_groups" '. == $old' "$CR_RENAMED is not mapped to exactly the groups of $CR_RENAMED_FROM" \
+    --argjson old "$old_groups"
+  json_assert "$new_groups" 'index($g) != null and index("/ADMIN") != null and index("/UYELER/YK") != null' \
+    "$CR_RENAMED did not reach the Privileged groups and the fixture group" --arg g "/$CR_RENAME_GROUP"
+  json_assert "$(kcadm get "clients/$core_uuid/roles/$CR_RENAMED/users" -r "$V2_REALM" -c | jq -c '[.[].username]')" \
+    '. == $u' "$CR_RENAMED is not held directly by exactly the user holding $CR_RENAMED_FROM" \
+    --argjson u "[\"$CR_RENAME_USER\"]"
+  json_assert "$(cr_names "roles/$CR_RENAME_COMPOSITE/composites/clients/$core_uuid")" \
+    '. == ([$a, $b] | sort)' "the composite role does not contain both names" --arg a "$CR_RENAMED" --arg b "$CR_RENAMED_FROM"
+  scope_id=$(cr_rename_fixture_ids)
+  json_assert "$(cr_names "client-scopes/$scope_id/scope-mappings/clients/$core_uuid")" \
+    '. == ([$a, $b] | sort)' "the client scope does not map both names" --arg a "$CR_RENAMED" --arg b "$CR_RENAMED_FROM"
+  json_assert "$(cr_names "clients/$(lca_client_uuid "$AP_CLIENT")/scope-mappings/clients/$core_uuid")" \
+    'index($a) != null and index($b) != null' "the admin panel's role scope lacks a name" \
+    --arg a "$CR_RENAMED" --arg b "$CR_RENAMED_FROM"
 }
 
 # Part of v2_state_snapshot: the core roles with their marks and the Privileged groups' mappings.

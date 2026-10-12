@@ -26,7 +26,8 @@
 #   - site-editor-grants.sh grants cms:access to /ADMIN, /UYELER/YK, /UYELER/DK and, by default, the
 #     Leader groups of the owning lab team and of the event's organization team, client:admin to
 #     /ADMIN only, nothing to a person; a --team adds a team; a missing organization team is a
-#     WARNING; a holder outside the set is a WARNING and is not taken away; a second run writes
+#     WARNING; a --team that is no top team (/UYELER/<area>/<team>) is refused (exit 2) before a
+#     login; a holder outside the set is a WARNING and is not taken away; a second run writes
 #     nothing; a site without roles is reported (exit 1);
 #   - a real authorization code flow with PKCE (as NextAuth runs it) gives an AIRLAB leader an
 #     access token with azp frontend-artlab, aud ⊇ {skycms, core}, full-path groups, roles ⊇
@@ -226,6 +227,12 @@ for script in site-clients.sh site-editor-grants.sh; do
   reject_line "$refused" 'realm=' 'the refused --site main run went on'
 done
 printf '    --site main refused in e-skylab (exit 2) before a login\n'
+for team in artlab=/UYELER/ARGE/AIRLAB/AGC main=/UYELER/ARGE/AIRLAB/AGC artlab=/UYELER/ARGE; do
+  refused=$(run_expecting 2 site-editor-grants.sh "$REALM" --apply --site artlab --team "$team")
+  expect_line "$refused" "refusing --team $team: only a top team" 'a --team that is no top team was not refused'
+  reject_line "$refused" 'realm=' 'the refused --team run went on'
+done
+printf '    --team below or above a top team refused (exit 2) before a login\n'
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='fixture realm'

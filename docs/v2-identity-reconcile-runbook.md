@@ -883,9 +883,9 @@ ister, §6). Realm yeniden kurulursa betik yeniden koşulur.
 
 | İstemci | Rol | Gruplar |
 |---|---|---|
-| `frontend-main` | `cms:access` | `/ADMIN`, `/UYELER/YK`, `/UYELER/DK`, her `…/LIDERLER` ve `…/KOORDINATORLER` |
+| `frontend-main` | `cms:access` | `/ADMIN`, `/UYELER/YK`, `/UYELER/DK`, yalnız en üst takımların (`/UYELER/<alan>/<ekip>`) `LIDERLER` ve `KOORDINATORLER` grupları |
 | `frontend-main` | `client:admin` | `/ADMIN`, `/UYELER/YK` |
-| `frontend-arge` | `cms:access` | `/ADMIN`, `/UYELER/YK`, her `…/LIDERLER` ve `…/KOORDINATORLER` |
+| `frontend-arge` | `cms:access` | `/ADMIN`, `/UYELER/YK`, yalnız en üst takımların (`/UYELER/<alan>/<ekip>`) `LIDERLER` ve `KOORDINATORLER` grupları |
 | `frontend-arge` | `client:admin` | `/ADMIN`, `/UYELER/YK` |
 | `admin` | `content:read`, `content:write` | `/ADMIN`, `/UYELER/YK`, `/UYELER/DK` |
 
@@ -895,8 +895,14 @@ ister, §6). Realm yeniden kurulursa betik yeniden koşulur.
   `cms:access` alan lider ana sitenin bütün sayfa bloklarını da düzenleyebilir. Fatih
   yalnız koleksiyona yazma yeteneğini getirene kadar kabul edildi. Hangi takımı
   düzenleyeceğini `teams` koleksiyonunun `ClaimDerived` kuralı sınırlar.
-- Yeni takım açılınca `LIDERLER` ve `KOORDINATORLER` gruplarına iki sitede de
-  `cms:access` verilir.
+- Yeni bir en üst takım (`/UYELER/<alan>/<ekip>`) açılınca `LIDERLER` ve
+  `KOORDINATORLER` gruplarına iki sitede de `cms:access` verilir. Alt ekiplerin
+  (`/UYELER/<alan>/<ekip>/<alt ekip>` ve daha derin) Leader gruplarına, takım ya da alan
+  gruplarının kendisine `cms:access` verilmez (ADR-0065'in 2026-10-12 eki). Site editörlüğü
+  (`content:write`, `cms:access` dahil) taşıyan grup ve altı ekip yetki devrinde yalnız
+  Privileged'ca yönetilir. Alt ekip Leader grubuna verilseydi üst ekibin Leader'ı oraya üye
+  ekleyerek site geneli yazmayı dağıtabilirdi. Bu kural inscribed'a koleksiyon ya da kayıt bazında
+  yazma gelene kadar geçerlidir.
 
 ### Geçiş gecesi: `--post-cutover`
 
@@ -1650,7 +1656,9 @@ yazar, ikinci koşu hiçbir şey yazmaz; kcadm prompt'u ya da `--kcadm-config`):
    ARTLAB → `/UYELER/ARGE/AIRLAB` + `/UYELER/ORGANIZASYON/ARTLAB`, YıldızJam → `/UYELER/ARGE/GAMELAB`
    + `/UYELER/ORGANIZASYON/YILDIZJAM`, SkyDays → `/UYELER/ARGE/SKYSEC` + `/UYELER/ORGANIZASYON/SKYDAYS`.
    Realm'de olmayan bir takım ya da `LIDERLER`/`KOORDINATORLER`'i olmayan bir takım `WARNING`'dir; öbür
-   yetkiler yine verilir. `--team` bir siteye bir takım daha ekler. Kişiye, `/UYELER`'e ya da bir
+   yetkiler yine verilir. `--team` bir siteye bir en üst takım (`/UYELER/<alan>/<ekip>`) daha ekler;
+   daha derin (alt ekip) ya da daha sığ bir yol girişten önce `refusing --team …` ile 2 döner
+   (ADR-0065'in 2026-10-12 eki). Kişiye, `/UYELER`'e ya da bir
    varsayılan grubu kapsayan gruba rol verilmez (`PROBLEM`). Hiçbir şey geri alınmaz: beklenmeyen bir
    sahip `WARNING`'dir. İstemci ya da rolleri yoksa site `MISSING` ile atlanır, çıkış 1.
 

@@ -90,6 +90,7 @@ chmod 0644 "$sky_mail_dir/client.secret"
 "$SCRIPT_DIR/check-production-preflight.sh"
 "$SCRIPT_DIR/check-account-center-origin.sh"
 "$SCRIPT_DIR/check-operator-login-prompts.sh"
+"$SCRIPT_DIR/check-site-editor-grants-team.sh"
 
 fail() {
   printf 'integration failure: %s\n' "$1" >&2

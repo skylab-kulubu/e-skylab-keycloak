@@ -85,6 +85,25 @@ below have recorded evidence and an owner.
   source-built theme rendering. It does not replace the recorded Touch ID
   check or deliver backchannel logout to the BFF; those remain release gates.
   Face ID and the other deferred surfaces stay post-release compatibility work.
+- The SPI (1.20.0 and later) replaces Keycloak's built-in `microsoft` identity
+  provider factory under the same ID (`com.skylab.broker`, PR #89): a
+  re-authentication Keycloak asks for goes to Microsoft as `prompt=login`. On
+  every Keycloak upgrade, before the candidate image:
+  - diff the new `org.keycloak.social.microsoft.MicrosoftIdentityProviderFactory`
+    and `MicrosoftIdentityProvider` against the previous version.
+    `SkyMicrosoftIdentityProviderFactory.create` copies the built-in `create`
+    body (`new MicrosoftIdentityProviderConfig(model)`); a change there must be
+    copied, or it is silently lost;
+  - check that `AbstractOAuth2IdentityProvider.createAuthorizationUrl` still
+    chooses the `prompt` the way `SkyMicrosoftIdentityProvider.keycloakSendsPrompt`
+    repeats it, and that `CookieAuthenticator` still marks a forced
+    re-authentication with `AuthenticationManager.FORCED_REAUTHENTICATION`
+    (`AuthenticatorUtil.isForcedReauthentication`);
+  - check that `ProviderManager.compareFactories` still prefers a custom factory
+    over an internal one with the same ID (the image build logs
+    `KC-SERVICES0047: microsoft (com.skylab.broker.SkyMicrosoftIdentityProviderFactory)`).
+  `tests/microsoft-reauthentication.sh` (dev mode) and the `login` integration
+  group (the built image) fail if the forwarding disappears or doubles.
 
 ## 1. Capture and verify a backup
 
@@ -263,3 +282,13 @@ the prior image.
    digest at it, validate readiness/login, then reopen traffic.
 5. Account for writes made after the backup explicitly. Do not silently merge
    Keycloak tables between old and migrated databases.
+
+### Turning off the re-authentication forwarding (no image change)
+
+If YTÜ re-authentication misbehaves after release (PR #89), go back to
+Keycloak's own behaviour without rolling the image back (which would also
+roll back every other change in the same release): Dokploy → the Keycloak
+Application → Environment, add `SKY_FORWARD_REAUTHENTICATION=false` (no
+quotes), then Deploy (a restart; no rebuild, the flag is read at start). Any
+value other than `true` or `false` is logged as an ERROR and also means off;
+the server still starts. Remove the line and Deploy again to turn it back on.

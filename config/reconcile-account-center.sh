@@ -67,6 +67,17 @@ YTU_FIRST_LOGIN=${KEYCLOAK_YTU_FIRST_LOGIN:-keep}
 PERSONAL_EMAIL_OFFER_ACTION=sky-personal-email-offer
 PERSONAL_EMAIL_OFFER_NAME='SKY LAB personal e-mail offer (first YTÜ login)'
 PERSONAL_EMAIL_OFFER=${KEYCLOAK_PERSONAL_EMAIL_OFFER:-keep}
+# "Bu cihazda oturumum açık kalsın mı?" (Microsoft's "Stay signed in?", Yusuf's decision of
+# 2026-10-12): at the end of every YTÜ login the SPI's required action sky-stay-signed-in asks once
+# whether the new session stays signed in on this device ("Evet, açık kalsın": a remember-me session;
+# "Hayır": an ordinary one), with a warning against yes on a shared computer. The password form's
+# "Beni hatırla" box is unchanged. KEYCLOAK_STAY_SIGNED_IN=on registers and enables it and runs it
+# after every other required action (realm by realm: sandbox first), off disables it (the rollback;
+# run it before going back to an image without the action). The default, keep, changes nothing, so a
+# full reconciliation never turns the question on or off.
+STAY_SIGNED_IN_ACTION=sky-stay-signed-in
+STAY_SIGNED_IN_NAME='SKY LAB stay signed in (after a YTÜ login)'
+STAY_SIGNED_IN=${KEYCLOAK_STAY_SIGNED_IN:-keep}
 SCOPE_NAME=account-center-account-api
 CORE_SCOPE_NAME=account-center-core-claims
 SKYAPP_CLIENT_ID=skyapp
@@ -227,6 +238,13 @@ case $PERSONAL_EMAIL_OFFER in
   keep | on | off) ;;
   *)
     printf 'KEYCLOAK_PERSONAL_EMAIL_OFFER must be keep (default), on or off (rollback), not %s\n' "$PERSONAL_EMAIL_OFFER" >&2
+    exit 1
+    ;;
+esac
+case $STAY_SIGNED_IN in
+  keep | on | off) ;;
+  *)
+    printf 'KEYCLOAK_STAY_SIGNED_IN must be keep (default), on or off (rollback), not %s\n' "$STAY_SIGNED_IN" >&2
     exit 1
     ;;
 esac
@@ -819,68 +837,115 @@ reconcile_ytu_idp_first_login_flow() {
 }
 
 # eskylab-login-ux 21: the realm's required action sky-personal-email-offer (see
-# PERSONAL_EMAIL_OFFER above). on registers it when the image offers it and Keycloak lists it as
-# unregistered (Keycloak registers it enabled), then enables it and keeps defaultAction false; off
-# disables a registered action and leaves an unregistered one alone; keep only reports. The state is
-# read back after every write.
+# PERSONAL_EMAIL_OFFER above).
 reconcile_personal_email_offer() {
+  reconcile_switched_required_action 'personal e-mail offer' "$PERSONAL_EMAIL_OFFER_ACTION" \
+    "$PERSONAL_EMAIL_OFFER_NAME" KEYCLOAK_PERSONAL_EMAIL_OFFER "$PERSONAL_EMAIL_OFFER" 1.18.0
+}
+
+# "Bu cihazda oturumum açık kalsın mı?" after a YTÜ login: the realm's required action
+# sky-stay-signed-in (see STAY_SIGNED_IN above). With on it also runs after every other required
+# action of the realm (the last page before the application, as Microsoft asks); keep only reports
+# when it does not. The question needs the realm's remember-me on (config/account-center-realm.json):
+# without it the action never asks, and the run says so.
+reconcile_stay_signed_in() {
+  local actions_csv mine others last remember_me
+  reconcile_switched_required_action 'stay signed in' "$STAY_SIGNED_IN_ACTION" \
+    "$STAY_SIGNED_IN_NAME" KEYCLOAK_STAY_SIGNED_IN "$STAY_SIGNED_IN" 1.19.0
+  actions_csv=$(kcadm get authentication/required-actions -r "$TARGET_REALM" \
+    --fields alias,enabled,priority --format csv --noquotes)
+  mine=$(grep -E "^$STAY_SIGNED_IN_ACTION,true," <<<"$actions_csv" | cut -d, -f3 || true)
+  [[ -n $mine ]] || return 0
+  others=$(grep -Ev "^$STAY_SIGNED_IN_ACTION," <<<"$actions_csv" | cut -d, -f3 | sort -n | tail -n 1 || true)
+  last=${others:--1}
+  if ((mine > last)); then
+    log "stay signed in required action order: unchanged (priority $mine, after every other required action)"
+  elif [[ $STAY_SIGNED_IN == on ]]; then
+    kcadm update "authentication/required-actions/$STAY_SIGNED_IN_ACTION" -r "$TARGET_REALM" \
+      -s "priority=$((last + 1))" >/dev/null
+    mine=$(kcadm get authentication/required-actions -r "$TARGET_REALM" --fields alias,priority --format csv --noquotes \
+      | grep -E "^$STAY_SIGNED_IN_ACTION," | cut -d, -f2 || true)
+    if [[ $mine != "$((last + 1))" ]]; then
+      printf 'Required action %s has priority "%s" after the change, not %s; inspect it in the Admin Console\n' \
+        "$STAY_SIGNED_IN_ACTION" "$mine" "$((last + 1))" >&2
+      return 1
+    fi
+    log "stay signed in required action order: updated (priority -> $mine, after every other required action)"
+  else
+    warn "the stay signed in question runs before another required action (priority $mine, the last is $last); KEYCLOAK_STAY_SIGNED_IN=on puts it last"
+  fi
+  remember_me=$(kcadm_json "realms/$TARGET_REALM" --fields rememberMe | json_tool field rememberMe)
+  if [[ $remember_me != true ]]; then
+    warn "the realm has remember-me off: the stay signed in question is never asked until rememberMe=true (config/account-center-realm.json)"
+  fi
+}
+
+# A required action of the SPI that a flag switches realm by realm (KEYCLOAK_PERSONAL_EMAIL_OFFER,
+# KEYCLOAK_STAY_SIGNED_IN): on registers it when the image offers it and Keycloak lists it as
+# unregistered (Keycloak registers it enabled), then enables it and keeps defaultAction false; off
+# disables a registered action and leaves an unregistered one alone; keep only reports, so a full
+# reconciliation never turns it on or off. It is never a default action (that would put it on every
+# new account). The state is read back after every write.
+# reconcile_switched_required_action LABEL ACTION NAME FLAG_NAME FLAG_VALUE SPI_VERSION
+reconcile_switched_required_action() {
+  local label=$1 action=$2 name=$3 flag_name=$4 flag=$5 spi_version=$6
   local actions_csv current enabled default_action unregistered
   actions_csv=$(kcadm get authentication/required-actions -r "$TARGET_REALM" \
     --fields alias,enabled,defaultAction --format csv --noquotes)
-  current=$(grep -E "^$PERSONAL_EMAIL_OFFER_ACTION," <<<"$actions_csv" || true)
+  current=$(grep -E "^$action," <<<"$actions_csv" || true)
   IFS=, read -r _ enabled default_action <<<"${current:-,,}"
-  if [[ $PERSONAL_EMAIL_OFFER == keep ]]; then
+  if [[ $flag == keep ]]; then
     if [[ -z $current ]]; then
-      log "personal e-mail offer required action: unchanged (not registered; KEYCLOAK_PERSONAL_EMAIL_OFFER=on registers and enables it)"
+      log "$label required action: unchanged (not registered; $flag_name=on registers and enables it)"
     else
-      log "personal e-mail offer required action: unchanged (enabled=$enabled; KEYCLOAK_PERSONAL_EMAIL_OFFER=on or off changes it)"
+      log "$label required action: unchanged (enabled=$enabled; $flag_name=on or off changes it)"
     fi
     return 0
   fi
-  if [[ $PERSONAL_EMAIL_OFFER == off ]]; then
+  if [[ $flag == off ]]; then
     if [[ -z $current ]]; then
-      log "personal e-mail offer required action: unchanged (not registered; KEYCLOAK_PERSONAL_EMAIL_OFFER=off)"
+      log "$label required action: unchanged (not registered; $flag_name=off)"
     elif [[ $enabled == false && $default_action == false ]]; then
-      log "personal e-mail offer required action: unchanged (disabled)"
+      log "$label required action: unchanged (disabled)"
     else
-      kcadm update "authentication/required-actions/$PERSONAL_EMAIL_OFFER_ACTION" -r "$TARGET_REALM" \
+      kcadm update "authentication/required-actions/$action" -r "$TARGET_REALM" \
         -s enabled=false -s defaultAction=false >/dev/null
-      verify_personal_email_offer false
-      log "personal e-mail offer required action: updated (enabled=$enabled -> disabled)"
+      verify_switched_required_action "$action" false
+      log "$label required action: updated (enabled=$enabled -> disabled)"
     fi
     return 0
   fi
   if [[ -z $current ]]; then
     unregistered=$(kcadm get authentication/unregistered-required-actions -r "$TARGET_REALM" --fields providerId \
       --format csv --noquotes)
-    if ! grep -Fxq "$PERSONAL_EMAIL_OFFER_ACTION" <<<"$unregistered"; then
-      printf 'The image offers no %s required action (SPI 1.18.0 or later); nothing was changed\n' \
-        "$PERSONAL_EMAIL_OFFER_ACTION" >&2
+    if ! grep -Fxq "$action" <<<"$unregistered"; then
+      printf 'The image offers no %s required action (SPI %s or later); nothing was changed\n' \
+        "$action" "$spi_version" >&2
       return 1
     fi
     kcadm create authentication/register-required-action -r "$TARGET_REALM" \
-      -b "{\"providerId\":\"$PERSONAL_EMAIL_OFFER_ACTION\",\"name\":\"$PERSONAL_EMAIL_OFFER_NAME\"}" >/dev/null
-    kcadm update "authentication/required-actions/$PERSONAL_EMAIL_OFFER_ACTION" -r "$TARGET_REALM" \
+      -b "{\"providerId\":\"$action\",\"name\":\"$name\"}" >/dev/null
+    kcadm update "authentication/required-actions/$action" -r "$TARGET_REALM" \
       -s enabled=true -s defaultAction=false >/dev/null
-    verify_personal_email_offer true
-    log "personal e-mail offer required action: updated (registered and enabled)"
+    verify_switched_required_action "$action" true
+    log "$label required action: updated (registered and enabled)"
   elif [[ $enabled == true && $default_action == false ]]; then
-    log "personal e-mail offer required action: unchanged (enabled)"
+    log "$label required action: unchanged (enabled)"
   else
-    kcadm update "authentication/required-actions/$PERSONAL_EMAIL_OFFER_ACTION" -r "$TARGET_REALM" \
+    kcadm update "authentication/required-actions/$action" -r "$TARGET_REALM" \
       -s enabled=true -s defaultAction=false >/dev/null
-    verify_personal_email_offer true
-    log "personal e-mail offer required action: updated (enabled=$enabled defaultAction=$default_action -> enabled)"
+    verify_switched_required_action "$action" true
+    log "$label required action: updated (enabled=$enabled defaultAction=$default_action -> enabled)"
   fi
 }
 
-verify_personal_email_offer() {
-  local wanted=$1 actual
+verify_switched_required_action() {
+  local action=$1 wanted=$2 actual
   actual=$(kcadm get authentication/required-actions -r "$TARGET_REALM" --fields alias,enabled,defaultAction \
-    --format csv --noquotes | grep -E "^$PERSONAL_EMAIL_OFFER_ACTION," || true)
-  if [[ $actual != "$PERSONAL_EMAIL_OFFER_ACTION,$wanted,false" ]]; then
+    --format csv --noquotes | grep -E "^$action," || true)
+  if [[ $actual != "$action,$wanted,false" ]]; then
     printf 'Required action %s is "%s" after the change, not enabled=%s defaultAction=false; inspect it in the Admin Console\n' \
-      "$PERSONAL_EMAIL_OFFER_ACTION" "$actual" "$wanted" >&2
+      "$action" "$actual" "$wanted" >&2
     return 1
   fi
 }
@@ -2297,6 +2362,7 @@ fi
 if [[ $RECONCILE_ONLY == first-broker-login ]]; then
   reconcile_first_broker_login
   reconcile_personal_email_offer
+  reconcile_stay_signed_in
   printf 'First broker login flow is reconciled.\n'
   exit 0
 fi
@@ -2325,6 +2391,7 @@ reconcile_password_form "$BROWSER_FLOW_ALIAS"
 reconcile_reset_choose_user
 reconcile_first_broker_login
 reconcile_personal_email_offer
+reconcile_stay_signed_in
 reconcile_account_center_client
 
 ensure_client_scope "$SCOPE_NAME" \

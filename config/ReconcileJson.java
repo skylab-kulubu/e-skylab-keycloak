@@ -55,8 +55,14 @@ import java.util.TreeMap;
  *                               "unchanged<TAB>id" (TO is there, FROM is not),
  *                               "swap<TAB>id<TAB>parentFlowId|-<TAB>priority" (FROM is there: add
  *                               TO under the same parent with the same priority, then delete id),
- *                               or "finish<TAB>id" (an interrupted swap left both side by side:
- *                               delete id). Anything else is refused with exit status 4.
+ *                               "finish<TAB>id" (an interrupted swap left both side by side:
+ *                               delete id), "resume<TAB>id<TAB>toId<TAB>priority" (a swap cut
+ *                               before TO, added DISABLED, was made REQUIRED: make toId REQUIRED
+ *                               with that priority, then delete id) or "retire<TAB>id" (FROM is
+ *                               DISABLED next to a REQUIRED TO in the same flow, as an Admin
+ *                               Console change leaves it: delete id) or "discard<TAB>toId" (TO
+ *                               is DISABLED elsewhere in the flow of a REQUIRED FROM: delete toId,
+ *                               then plan again). Anything else is refused with exit status 4.
  *   first-broker-login STEP     stdin is the flat execution list of a first broker login flow;
  *                               prints what eskylab-login-ux 07 edits in it, one line each:
  *                               "step<TAB>id|-<TAB>priority<TAB>requirement|-" (STEP at the top
@@ -468,9 +474,28 @@ public final class ReconcileJson {
         if (fromList.size() == 1 && toList.size() == 1) {
             Execution old = fromList.get(0);
             Execution added = toList.get(0);
-            if (old.parent().equals(added.parent()) && old.priority() == added.priority()
-                    && "REQUIRED".equals(old.requirement()) && "REQUIRED".equals(added.requirement())) {
+            boolean sameFlow = old.parent().equals(added.parent()) && !"?".equals(old.parent());
+            boolean samePlace = sameFlow && old.priority() == added.priority();
+            if (samePlace && "REQUIRED".equals(old.requirement()) && "REQUIRED".equals(added.requirement())) {
                 out.println("finish\t" + old.id());
+                return 0;
+            }
+            // Admin REST adds an execution DISABLED whenever its factory offers more than one
+            // requirement (auth-otp-form and reset-otp do), so a swap can also be cut before the
+            // added one was made REQUIRED.
+            if (samePlace && "REQUIRED".equals(old.requirement()) && "DISABLED".equals(added.requirement())) {
+                out.println("resume\t" + old.id() + "\t" + added.id() + "\t" + old.priority());
+                return 0;
+            }
+            // FROM no longer runs; removing it changes nothing a person sees.
+            if (sameFlow && "DISABLED".equals(old.requirement()) && "REQUIRED".equals(added.requirement())) {
+                out.println("retire\t" + old.id());
+                return 0;
+            }
+            // A DISABLED TO elsewhere in the flow (an Admin Console change taken back) never runs
+            // either; once it is removed, the flow is planned again.
+            if (sameFlow && "REQUIRED".equals(old.requirement()) && "DISABLED".equals(added.requirement())) {
+                out.println("discard\t" + added.id());
                 return 0;
             }
         }

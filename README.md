@@ -230,6 +230,12 @@ uzlaştırıcı onu bir kez `sky reset credentials` adıyla kopyalar, adımı ko
 realm'i kopyaya bağlar; `KEYCLOAK_RESET_CHOOSE_USER=reset-credentials-choose-user` Keycloak'ın
 adımını geri koyar. Ayrıntı ve geri dönüş sırası: runbook §17.
 
+OTP'li kişi parolayı sıfırlarken kayıtlı doğrulayıcısının kodunu girer (Microsoft SSPR ve
+Google gibi): uzlaştırıcı kopyanın "Reset - Conditional OTP" alt akışında Keycloak'ın `reset-otp`'si
+(yeni doğrulayıcı kurdurur) yerine `auth-otp-form`'u koyar; koşul (`conditional-user-configured`)
+aynen kalır, OTP'siz kişiye kod sorulmaz, OTP kaydı silinmez. `KEYCLOAK_RESET_OTP_STEP=reset`
+Keycloak'ın adımını geri koyar. Ayrıntı: runbook §17.1.
+
 User Profile (`config/account-center-user-profile.json`) canlı yapısını
 koruyarak uzlaştırılır: `firstName`, `lastName`, `email` kişi için salt
 okunur olur, `username` izinlerine dokunulmaz, `schoolEmail`, `personalEmail`

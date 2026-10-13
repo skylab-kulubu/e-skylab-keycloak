@@ -464,7 +464,7 @@ stage_reset_by_either_email() {
   action=$(rbe_context_url loginAction "$page")
   [[ -n $action ]] || fail 'K4b: the reset link did not lead to the new-password page'
   # A has no OTP: the condition of the OTP subflow does not hold, no code is asked.
-  [[ $(rbe_page_id "$page") == login-update-password.ftl ]] \
+  [[ $(rbe_page_id "$page") == login-update-password ]] \
     || fail "reset OTP step: a person without OTP got $(rbe_page_id "$page") after the reset link, not the new-password page"
   status=$(curl --silent --show-error \
     --output /dev/null \
@@ -490,9 +490,10 @@ stage_reset_by_either_email() {
   kcadm delete identity-provider/instances/OBS -r "$V2_REALM" >/dev/null
 }
 
-# The pageId of a login page's kcContext ("login-otp.ftl"), empty when there is none.
+# The pageId of a login page's kcContext without its ".ftl" ("login-otp"; the page may carry it
+# either way), empty when there is none.
 rbe_page_id() {
-  grep -Eo '"?pageId"?[[:space:]]*[:=][[:space:]]*"[^"]+"' <<<"$1" | head -n 1 | sed -E 's/.*"([^"]+)"$/\1/' || true
+  grep -Eo '"?pageId"?[[:space:]]*[:=][[:space:]]*"[^"]+"' <<<"$1" | head -n 1 | sed -E 's/.*"([^"]+)"$/\1/; s/\.ftl$//' || true
 }
 
 # The Base32 form of a raw OTP secret, as an authenticator app gets it.
@@ -548,9 +549,9 @@ stage_reset_verifies_otp() {
   # The link asks for the code of the registered authenticator, not for a new one.
   page=$(curl --fail --silent --show-error --location \
     --cookie-jar "$RBE_COOKIES" --cookie "$RBE_COOKIES" "$link")
-  [[ $(rbe_page_id "$page") == login-otp.ftl ]] \
+  [[ $(rbe_page_id "$page") == login-otp ]] \
     || fail "reset OTP step: the reset link led a person with OTP to $(rbe_page_id "$page"), not to the code page"
-  [[ $page != *'login-config-totp.ftl'* && $page != *'totpSecret'* ]] \
+  [[ $page != *'totpSecretQrCode'* && $page != *'totpSecretEncoded'* ]] \
     || fail 'reset OTP step: the reset offered a new authenticator (QR) to a person with OTP'
 
   # A wrong code keeps the person on the code page; the right one leads to the new password.
@@ -559,14 +560,14 @@ stage_reset_verifies_otp() {
   page=$(curl --silent --show-error --location \
     --cookie-jar "$RBE_COOKIES" --cookie "$RBE_COOKIES" \
     --data-urlencode "otp=$(( (${code:0:1} + 5) % 10 ))${code:1}" "$action")
-  [[ $(rbe_page_id "$page") == login-otp.ftl ]] \
+  [[ $(rbe_page_id "$page") == login-otp ]] \
     || fail "reset OTP step: a wrong code led to $(rbe_page_id "$page")"
   code=$(node "$SCRIPT_DIR/totp-code.mjs" "$(rbe_base32 "$RBE_OTP_SECRET")")
   action=$(rbe_context_url loginAction "$page")
   page=$(curl --silent --show-error --location \
     --cookie-jar "$RBE_COOKIES" --cookie "$RBE_COOKIES" \
     --data-urlencode "otp=$code" "$action")
-  [[ $(rbe_page_id "$page") == login-update-password.ftl ]] \
+  [[ $(rbe_page_id "$page") == login-update-password ]] \
     || fail "reset OTP step: the right code led to $(rbe_page_id "$page"), not to the new-password page"
   action=$(rbe_context_url loginAction "$page")
   status=$(curl --silent --show-error \

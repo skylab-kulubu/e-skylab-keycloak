@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import skyLabWatermarkUrl from "../assets/skylab-watermark.svg";
 import AnimatedSkyLabLogo from "./AnimatedSkyLabLogo";
+import DeveloperCredit from "./DeveloperCredit";
 import GridBackdrop from "./GridBackdrop";
 import TeamMarquee from "./TeamMarquee";
 import YtuMark from "./YtuMark";
@@ -151,7 +152,7 @@ export default function LegacyFrame(props: LegacyFrameProps) {
               {kvkkSuffix}
             </p>
             <strong>e-skylab by WEBLAB</strong>
-            <span className="sl-legacy-credit">Developed by Yusuf Açmacı</span>
+            <DeveloperCredit />
 
             {showLanguageMenu && (
               <nav className="sl-legacy-languages" aria-label={languageMenu.label}>

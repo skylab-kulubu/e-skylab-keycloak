@@ -62,14 +62,18 @@ describe("Web handoff failure page", () => {
     expect(document.documentElement.lang).toBe("tr");
   });
 
-  it("offers no form, no login link and no language switch, only the skip link and the KVKK notice", async () => {
+  it("offers no form, no login link and no language switch, only the skip link, the KVKK notice and the developer credit", async () => {
     for (const reason of handoffFailureReasons) {
       const { container, unmount } = await renderFailure(reason);
 
       expect(container.querySelector("form, input, button")).toBeNull();
       expect(container.querySelector("nav.sl-legacy-languages")).toBeNull();
       const links = [...container.querySelectorAll("a")].map(link => link.getAttribute("href"));
-      expect(links).toEqual(["#sl-handoff-failed-main", "https://skyl.app/kvkk-metni"]);
+      expect(links).toEqual([
+        "#sl-handoff-failed-main",
+        "https://skyl.app/kvkk-metni",
+        "https://www.linkedin.com/in/yusuf-acmaci/"
+      ]);
       expect(container.querySelector('[data-skylab-logo-animation="draw"]')).not.toBeNull();
       expect(container.querySelector("footer.sl-legacy-footer")).toHaveAttribute("role", "contentinfo");
       unmount();

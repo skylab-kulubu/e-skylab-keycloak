@@ -1,4 +1,5 @@
 import AnimatedSkyLabLogo from "../login/AnimatedSkyLabLogo";
+import DeveloperCredit from "../login/DeveloperCredit";
 import YtuMark from "../login/YtuMark";
 
 /**
@@ -298,7 +299,7 @@ export default function WelcomePage() {
           <a href="https://yildizskylab.com/">yildizskylab.com</a>
         </p>
         <strong>e-skylab by WEBLAB</strong>
-        <span className="sl-legacy-credit">Developed by Yusuf Açmacı</span>
+        <DeveloperCredit />
       </footer>
     </div>
   );

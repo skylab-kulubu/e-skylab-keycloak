@@ -61,6 +61,9 @@ describe("every Keycloak page renders inside the login page chrome", () => {
     expect(footer).toHaveAttribute("role", "contentinfo");
     expect(footer?.querySelector('a[href="https://skyl.app/kvkk-metni"]')).toHaveTextContent("KVKK Metni");
     expect(footer).toHaveTextContent("e-skylab by WEBLAB");
+    expect(footer?.querySelector('a.sl-legacy-credit[href="https://www.linkedin.com/in/yusuf-acmaci/"]')).toHaveTextContent(
+      "Developed by Yusuf Açmacı"
+    );
     if (pagesWithoutLanguageMenu.includes(pageId)) {
       expect(footer?.querySelector("nav.sl-legacy-languages")).toBeNull();
     } else {

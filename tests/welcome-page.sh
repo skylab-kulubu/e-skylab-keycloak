@@ -116,6 +116,8 @@ while IFS= read -r link; do
       'href="https://place.yildizskylab.com/"' | 'href="https://yildizskylab.com/"' | \
       'href="https://yildizskylab.com/kvkk-metni.pdf"' | 'href="#'*'"') ;;
     'href="resources/'*'/welcome/e-skylab-welcome/'*'"') ;;
+    # The developer credit, the one link that opens a new tab (tests/check-welcome-theme.sh allows it too).
+    'href="https://www.linkedin.com/in/yusuf-acmaci/"') ;;
     *) fail "the served page links outside the allowlist: $link" ;;
   esac
 done < <(grep -o 'href="[^"]*"' "$WORK/root.body" | LC_ALL=C sort -u)

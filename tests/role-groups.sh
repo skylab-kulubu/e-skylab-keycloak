@@ -460,7 +460,9 @@ CURRENT_STAGE='leader-app-roles: only the top teams Leader groups'
 # KOORDINATORLER holds the Java era's AIRLAB_LEADER (its members already have the seat through the
 # composite); LIDERLER does not: its member gets the roles newly, in a NEW SEAT line.
 kcadm create roles -r "$REALM" -s name=AIRLAB_LEADER >/dev/null
-kcadm add-roles -r "$REALM" --gpath /UYELER/ARGE/AIRLAB/KOORDINATORLER --rolename AIRLAB_LEADER >/dev/null
+# (by id: kcadm add-roles --gpath finds no exact match for a nested path)
+kcadm create "groups/$(group_id "$REALM" /UYELER/ARGE/AIRLAB/KOORDINATORLER)/role-mappings/realm" -r "$REALM" \
+  -b "$(kcadm get roles/AIRLAB_LEADER -r "$REALM" | jq -c '[{id, name}]')" >/dev/null
 before=$(events "$REALM")
 checked=$(run_expecting 0 leader-app-roles.sh "$REALM")
 expect_line "$checked" 'Leader groups of the top teams: 2' 'the top teams were not read from the tree'

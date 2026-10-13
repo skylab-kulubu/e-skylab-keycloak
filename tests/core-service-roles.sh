@@ -206,7 +206,7 @@ stage_core_service_roles_after_first_reconciliation() {
 # reconciliation (which then proves the steady state writes nothing).
 stage_core_service_roles_granted_by_operator() {
   CURRENT_STAGE='core service roles: the reconciler identity reports, it does not grant'
-  local output core_uuid forms_uuid account_id user_id admin_id new_body hand_body extra_body before markers role
+  local roles_scope_id audience_uuid output core_uuid forms_uuid account_id user_id admin_id new_body hand_body extra_body before markers role
   local reconciler_lines=() operator_lines=()
   core_uuid=$(lca_client_uuid core)
   forms_uuid=$(lca_client_uuid "$CSR_CLIENT")
@@ -220,6 +220,11 @@ stage_core_service_roles_granted_by_operator() {
   csr_service_token
   [[ $(csr_token_service_roles) == '[]' ]] || fail 'the forms service token carries a core service role before any grant'
 
+  # skymail-backend without the default client scope roles: its token would carry neither
+  # resource_access.core nor aud core, so the step attaches it (client configuration, both identities).
+  roles_scope_id=$(kcadm get client-scopes -r "$V2_REALM" -c | jq -r '.[] | select(.name == "roles") | .id')
+  audience_uuid=$(lca_client_uuid "$CSR_AUDIENCE_CLIENT")
+  kcadm delete "clients/$audience_uuid/default-client-scopes/$roles_scope_id" -r "$V2_REALM" >/dev/null
   # The step's old name still runs it.
   output=$(csr_reconciler media-attach) || { printf '%s\n' "$output" >&2; fail 'the reconciler identity failed on the service-roles step'; }
   reconciler_lines=('Core service roles are reconciled.'
@@ -232,7 +237,7 @@ stage_core_service_roles_granted_by_operator() {
       "[reconcile] WARNING: $role is not yet granted to service account $CSR_ACCOUNT by the operator step")
   done
   reconciler_lines+=("[reconcile] client role $CSR_AUDIENCE_ROLE of core: unchanged"
-    "[reconcile] default client scope roles of $CSR_AUDIENCE_CLIENT: verified"
+    "[reconcile] default client scope roles of $CSR_AUDIENCE_CLIENT: added (it puts resource_access and, through audience resolve, aud core in the token)"
     "[reconcile] WARNING: $CSR_AUDIENCE_ROLE is not yet granted to service account $CSR_AUDIENCE_ACCOUNT by the operator step"
     '[reconcile] default client scope roles of core: verified (it puts resource_access and, through audience resolve, aud skymail in the token)')
   for role in "${CSR_SKYMAIL_ROLES[@]}"; do
@@ -241,6 +246,8 @@ stage_core_service_roles_granted_by_operator() {
   done
   csr_expect_lines "$output" 'the reconciler identity' "${reconciler_lines[@]}"
   [[ $(csr_account_roles_of "$CSR_AUDIENCE_CLIENT" core) == '[]' ]] || fail "the reconciler identity granted $CSR_AUDIENCE_ROLE"
+  json_assert "$(kcadm get "clients/$audience_uuid/default-client-scopes" -r "$V2_REALM" -c)" '[.[].name] | index("roles") != null' \
+    "the step did not attach the default client scope roles to $CSR_AUDIENCE_CLIENT"
   [[ $(csr_account_roles) == '[]' ]] || fail 'the reconciler identity granted a core service role'
   json_assert "$(csr_forms_client)" "$CSR_FLAGS_PRODUCTION" 'the reconciler identity changed the login flags of forms'
   ! csr_markers | grep -q '=.' || fail 'the reconciler identity recorded a grant'

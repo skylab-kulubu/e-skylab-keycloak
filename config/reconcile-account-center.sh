@@ -2245,7 +2245,7 @@ reconcile_service_roles() {
   local resource_uuid roles_file marks role_name value definition name clients holders description
   local role_id client client_uuid flags full_scope scopes mapped sa_line sa_id sa_name held
   local stderr_file line accounts stamp label others account users groups defaults extra
-  local flag flag_value open
+  local flag flag_value open roles_scope_id
   local operator=false
   local names=() all_clients=() plan=() sets=()
   local -A role_ids=() role_clients=() role_holders=() markers=() granted=() client_lines=() person_logins=()
@@ -2323,7 +2323,18 @@ reconcile_service_roles() {
     if grep -Fxq roles <<<"$scopes"; then
       log "default client scope roles of $client: verified (it puts resource_access and, through audience resolve, aud $resource in the token)"
     else
-      warn "client $client has no default client scope roles: its token carries neither resource_access.$resource nor aud $resource; nothing was changed on the client, add roles back to its default client scopes"
+      # Without it the service token carries neither resource_access.<resource> nor aud <resource>,
+      # and the roles granted below would not reach it (core requires aud core). Attaching a default
+      # client scope is client configuration (manage-clients): both identities do it.
+      if ! roles_scope_id=$(optional_lookup client_scope_id_by_name roles); then
+        return 2
+      fi
+      if [[ -z $roles_scope_id ]]; then
+        warn "client $client has no default client scope roles and realm $TARGET_REALM has no client scope roles: its token carries neither resource_access.$resource nor aud $resource"
+      elif service_role_change "add the default client scope roles to client $client (its token lacks resource_access.$resource and aud $resource without it)"; then
+        kcadm_quiet update "clients/$client_uuid/default-client-scopes/$roles_scope_id" -r "$TARGET_REALM"
+        log "default client scope roles of $client: added (it puts resource_access and, through audience resolve, aud $resource in the token)"
+      fi
     fi
     mapped=-
     if [[ $full_scope == false ]]; then

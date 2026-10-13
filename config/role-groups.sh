@@ -16,17 +16,21 @@
 #     from the direct grants by the rol-temizligi F2 wizard).
 # A leaf whose client or one of whose roles does not exist in the realm is a WARNING and is skipped
 # (not created), so the same file serves e-skylab and e-skylab-sandbox. A leaf name that contains a
-# team code of the realm (a group /UYELER/<area>/<team>) is a PROBLEM and is skipped (spec §7.3:
-# role group names never read as a team). A default group at or under /ROLLER is a PROBLEM and
+# team code of the realm (a top team /UYELER/<area>/<team> or a Sub-team right under one) is a
+# PROBLEM and is skipped (spec §7.3: role group names never read as a team). A default group at or under /ROLLER is a PROBLEM and
 # nothing is written (every new user would get the roles).
 #
 # --audit adds the rules' read-only report (spec §4.1), with counts and group paths only, never a
 # person's name:
 #   K1  people (service accounts excluded) who hold client roles or realm roles directly, per role;
 #   K3  people and groups that hold a realm-management role;
-#   K4  groups that hold a role outside the allowed places: the Privileged roots (/ADMIN, /YK, /DK,
-#       /UYELER/ADMIN, /UYELER/YK, /UYELER/DK), the Leader groups of a top team
-#       (/UYELER/<area>/<team>/LIDERLER or KOORDINATORLER) and the leaves /ROLLER/<NAME>.
+#   K4  groups that hold a role outside the allowed places, the same rule as core's RolePlacement
+#       (internal/authz/role_placement.go) with its default roots (DefaultPrivilegedRoots): a
+#       Privileged root itself (/ADMIN, /YK, /DK, /UYELER/ADMIN, /UYELER/YK, /UYELER/DK; production
+#       has three of them), the Leader groups of a top team (/UYELER/<area>/<team>/LIDERLER or
+#       KOORDINATORLER) and a leaf /ROLLER/<NAME> without subgroups.
+# A failed read of a group (anything but Keycloak's "not found") stops the run with exit 1: it is
+# never taken for "absent".
 # The audit reads every client role's and realm role's holders (two kcadm calls a role): minutes in
 # production.
 #
@@ -213,12 +217,24 @@ id_of() {
   return 0
 }
 
-# group_id PATH: the id of the group at exactly this path (empty when absent).
+# group_id PATH: the id of the group at exactly this path (empty when Keycloak says it does not
+# exist). Any other failed read stops the run (exit 1): a read error is never "absent".
 group_id() {
+  local out err
   [[ $1 =~ ^(/[A-Za-z0-9_.-]+)+$ ]] || { printf 'refusing the group path %s\n' "$1" >&2; exit 2; }
-  csv "group-by-path$1" id,path 2>/dev/null | while IFS=, read -r id path; do
-    if [[ $path == "$1" ]]; then printf '%s\n' "$id"; fi
-  done || true
+  err=$(mktemp "$WORK_DIR/stderr.XXXXXX")
+  if out=$(kcadm get "group-by-path$1" -r "$TARGET_REALM" --fields id,path --format csv --noquotes 2>"$err"); then
+    out=$(tr -d '\r' <<<"$out" | sed '/^$/d')
+    if [[ ${out#*,} == "$1" && -n ${out%%,*} ]]; then printf '%s\n' "${out%%,*}"; fi
+    return 0
+  fi
+  if grep -Eqi 'not found|does not exist|could not find' "$err"; then
+    return 0
+  fi
+  cat "$err" >&2
+  printf '[role-groups] the group %s could not be read in realm %s; stopped (a failed read is never taken for "absent")\n' \
+    "$1" "$TARGET_REALM" >&2
+  exit 1
 }
 
 # children ID: the direct subgroups of the group, one "id,name" per line.
@@ -287,7 +303,8 @@ if [[ $problems != 0 ]]; then
   exit 1
 fi
 
-# --- the team codes of the realm (spec §7.3): the top teams /UYELER/<area>/<team> -----------------
+# --- the team codes of the realm (spec §7.3): the top teams /UYELER/<area>/<team> and the
+# Sub-teams right under them (not their Leader groups) ----------------------------------------------
 # Every list is read into a variable first: a failed read must stop the run, not pass as "empty".
 team_codes=()
 members_id=$(group_id /UYELER)
@@ -296,8 +313,13 @@ if [[ -n $members_id ]]; then
   while IFS=, read -r area_id area; do
     [[ -n $area_id && " ${PRIVILEGED_NAMES[*]} " != *" $area "* ]] || continue
     teams=$(children "$area_id")
-    while IFS=, read -r _ team; do
-      if [[ -n $team ]]; then team_codes+=("$team"); fi
+    while IFS=, read -r team_id team; do
+      [[ -n $team_id ]] || continue
+      team_codes+=("$team")
+      sub_teams=$(children "$team_id")
+      while IFS=, read -r _ sub_team; do
+        if [[ -n $sub_team && " ${LEADER_GROUPS[*]} " != *" $sub_team "* ]]; then team_codes+=("$sub_team"); fi
+      done <<<"$sub_teams"
     done <<<"$teams"
   done <<<"$areas"
 fi
@@ -355,7 +377,9 @@ for leaf in "${LEAVES[@]}"; do
   fi
   role_lines=$(csv "clients/$uuid/roles" id,name -q first=0 -q max=10000)
   bodies=()
-  for role in $roles; do
+  # Into an array: a role name like skyforms:* must never be expanded as a file name.
+  read -r -a role_list <<<"$roles"
+  for role in "${role_list[@]}"; do
     role_id=$(id_of "$role_lines" "$role")
     if [[ -z $role_id ]]; then
       warning "$path: the role $client/$role does not exist in realm $TARGET_REALM; skipped (not created)"
@@ -422,7 +446,9 @@ for name in "${!existing[@]}"; do
 done
 
 # --- the audit (read only, counts and group paths only) --------------------------------------------
-# allowed_place PATH: true for the places a role may be mapped to (spec §4.1 K4).
+# allowed_place PATH: true for the places a role may be mapped to: core's RolePlacement
+# (internal/authz/role_placement.go) with DefaultPrivilegedRoots, spec §4.1 K4.
+declare -A roles_not_leaf=()
 allowed_place() {
   case $1 in
     /ADMIN | /YK | /DK | /UYELER/ADMIN | /UYELER/YK | /UYELER/DK) return 0 ;;
@@ -430,10 +456,15 @@ allowed_place() {
   if [[ $1 =~ ^/UYELER/([^/]+)/[^/]+/(LIDERLER|KOORDINATORLER)$ && " ${PRIVILEGED_NAMES[*]} " != *" ${BASH_REMATCH[1]} "* ]]; then
     return 0
   fi
-  [[ $1 =~ ^/$ROOT/[^/]+$ ]]
+  [[ $1 =~ ^/$ROOT/[^/]+$ && -z ${roles_not_leaf[$1]:-} ]]
 }
 
 if [[ $AUDIT == true ]]; then
+  # The role groups with groups under them (core refuses a role there: it would flow down).
+  for name in "${!existing[@]}"; do
+    leaf_children=$(children "${existing[$name]}")
+    if [[ -n $leaf_children ]]; then roles_not_leaf[/$ROOT/$name]=1; fi
+  done
   declare -A client_people=() realm_people=() k3_people=() k4=()
   k3_groups=''
   default_role="default-roles-${TARGET_REALM,,}"
@@ -476,7 +507,7 @@ if [[ $AUDIT == true ]]; then
   k3_groups=${k3_groups#, }
   log "audit K3: ${#k3_people[@]} person(s) hold realm-management roles directly; groups holding them: ${k3_groups:-none} (target 0 and none)"
   if [[ ${#k4[@]} == 0 ]]; then
-    log 'audit K4: every role is mapped to an allowed place (Privileged roots, top team Leader groups, role groups)'
+    log 'audit K4: every role is mapped to an allowed place (Privileged roots, top team Leader groups, role groups without subgroups)'
   else
     log "audit K4: ${#k4[@]} group(s) hold roles outside the allowed places:"
     while IFS= read -r path; do

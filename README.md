@@ -572,11 +572,12 @@ core'un `MEDIA_SERVICE_CLIENTS`'ıyla aynı tutulur (runbook §20).
 Aynı adım SkyMail'in servis hesabına (`skymail-backend`) core'un `audience:read` rolünü (core #242,
 haber ve duyuru kitlesi) ve core'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`,
 `skymail:lists:read`, `skymail:lists:write` rollerini verir; SkyMail'in rollerini oluşturmaz, eksikse
-uyarır (runbook §20.1). `skymail:announcements:send` (haber ve duyuruyu Mail onayı olmadan gönderme)
+uyarır; listelenen servis istemcisinde varsayılan `roles` kapsamı yoksa ekler (runbook §20.1). `skymail:announcements:send` (haber ve duyuruyu Mail onayı olmadan gönderme)
 `skymail:system-mails:read` gibi bir kez tohumlanır ama yalnız ADMIN ve YK'ya (runbook §25).
 
 Uygulama rolü grupları `/ROLLER/<UYGULAMA>-<ROL>` (Entra'nın uygulama rolü güvenlik grupları;
-`config/role-groups.json`) ve en üst ekiplerin Leader gruplarına Forms koltuğu iki operatör betiğiyle
+`config/role-groups.json`) ve en üst ekiplerin Leader gruplarına Forms koltuğu (`skyforms:access`) ile
+`skycloud:access` iki operatör betiğiyle
 kurulur: `config/role-groups.sh` ve `config/leader-app-roles.sh` (kuru koşu varsayılan, `--apply`
 yazar, ikinci koşu 0 değişiklik; uzlaştırıcıda `KEYCLOAK_RECONCILE_ONLY=role-groups` ve
 `leader-app-roles`). Hiçbiri üye eklemez ya da bir şey almaz; `role-groups.sh --audit` doğrudan rol

@@ -7,17 +7,17 @@
 # and no volume, copies config/ into the container and runs the scripts there the way an operator
 # does; tokens are real password grants of a harness login client.
 #
-# Fixtures: realm e-skylab with the clients forms, place, skymail and cloudflare-zero-trust and their
-# roles, the tree /ADMIN, /UYELER/YK (with a task group that has a LIDERLER group), the top teams
+# Fixtures: realm e-skylab with the clients forms, place, skymail, cloudflare-zero-trust and skycloud
+# and their roles, the tree /ADMIN, /UYELER/YK (with a task group that has a LIDERLER group), the top teams
 # /UYELER/ARGE/AIRLAB (LIDERLER, KOORDINATORLER and a Sub-team with its own LIDERLER) and
 # /UYELER/ORGANIZASYON/ARTLAB (no Leader group); a person with a direct client role and a direct realm
 # role, and /UYELER holding a realm role. Realm e-skylab-sandbox with forms (only skyforms:access) and
-# skymail and nothing else.
+# skymail and nothing else (no skycloud).
 #
 # What it proves:
 #   - every realm but e-skylab and e-skylab-sandbox is refused before a login (exit 2), an invalid
 #     role group file too;
-#   - role-groups: --check plans /ROLLER and the 13 leaves with their roles and writes nothing;
+#   - role-groups: --check plans /ROLLER and the 15 leaves with their roles and writes nothing;
 #     --apply makes exactly that (attributes, one client's roles a leaf, no member); a second --apply
 #     writes nothing (no admin event); drift (a role taken away, an attribute changed) is repaired,
 #     and what is beyond the file (an extra role on a leaf, a role on /ROLLER, a subgroup, a group
@@ -26,10 +26,12 @@
 #     sandbox a leaf whose client is missing is skipped with a WARNING (exit 0);
 #   - --audit counts direct holders and lists the groups outside the allowed places, and never
 #     prints a person's name;
-#   - leader-app-roles: only the top teams' LIDERLER and KOORDINATORLER get the four Forms roles (not
-#     a Sub-team's, not a YK task group's); a second --apply writes nothing; a Leader's token carries
-#     skyforms:access; a Sub-team Leader group holding it is a WARNING, a direct holder a NOTE with a
-#     count; in the sandbox a missing role is skipped with a WARNING;
+#   - leader-app-roles: only the top teams' LIDERLER and KOORDINATORLER get skyforms:access and
+#     skycloud:access (not a Sub-team's, not a YK task group's); a Leader group without a _LEADER
+#     realm role is a NEW SEAT line with a member count; a second --apply writes nothing; a Leader's
+#     token carries both; a Sub-team Leader group holding one is a WARNING, a direct holder a NOTE
+#     with a count; in the sandbox the missing skycloud client is skipped with a WARNING;
+#   - a failed group read (injected) stops both scripts with exit 1 and writes nothing;
 #   - the reconciler's operator steps run both scripts (dry run with KEYCLOAK_RECONCILE_CHECK=true)
 #     and refuse to run without an operator session.
 # Requirements on the host: docker, curl, jq. ROLE_GROUPS_TEST_PORT (default 18096),
@@ -51,8 +53,8 @@ REALM=e-skylab
 SANDBOX=e-skylab-sandbox
 LEAVES=(FORMS-ACCESS FORMS-ALL PLACE-ADMIN PLACE-MODERATOR SKYMAIL-ACCESS SKYMAIL-TEMPLATES-READ
   SKYMAIL-TEMPLATES-WRITE SKYMAIL-LISTS-READ SKYMAIL-LISTS-WRITE SKYMAIL-MAILS-READ SKYMAIL-MAILS-WRITE
-  SKYMAIL-MAILS-APPROVE CF-ZERO-TRUST-ACCESS)
-FORMS_ROLES='["skyforms:access","skyforms:feedback:manage","skyforms:form:manage","skyforms:response:manage"]'
+  SKYMAIL-MAILS-APPROVE CF-ZERO-TRUST-ACCESS SKYCLOUD-ACCESS SKYCLOUD-ADMIN)
+LEADER_ROLES='["forms/skyforms:access","skycloud/skycloud:access"]'
 CURRENT_STAGE=startup
 
 fail() {
@@ -199,6 +201,10 @@ make_fixture() {
     kcadm create clients -r "$realm" -s clientId=cloudflare-zero-trust -s publicClient=false >/dev/null
     kcadm create "clients/$(client_uuid "$realm" cloudflare-zero-trust)/roles" -r "$realm" \
       -s name=cloudflare:zero-trust:access >/dev/null
+    kcadm create clients -r "$realm" -s clientId=skycloud -s publicClient=false >/dev/null
+    for role in skycloud:access admin; do
+      kcadm create "clients/$(client_uuid "$realm" skycloud)/roles" -r "$realm" -s "name=$role" >/dev/null
+    done
   else
     kcadm create "clients/$(client_uuid "$realm" forms)/roles" -r "$realm" -s name=skyforms:access >/dev/null
   fi
@@ -225,11 +231,11 @@ make_fixture() {
 CURRENT_STAGE='Keycloak start'
 [[ -n $IMAGE ]] || fail 'Dockerfile has no ARG KEYCLOAK_IMAGE'
 for tool in jq curl; do command -v "$tool" >/dev/null || fail "$tool is required"; done
-jq -e '.groups | length == 13' "$REPOSITORY_ROOT/config/role-groups.json" >/dev/null \
-  || fail 'config/role-groups.json does not list the 13 role groups of the ticket'
+jq -e '.groups | length == 15' "$REPOSITORY_ROOT/config/role-groups.json" >/dev/null \
+  || fail 'config/role-groups.json does not list the 15 role groups (ticket 05 and SkyCloud)'
 # Static rules of the file (the script enforces them too): the team code name rule, one client a
 # leaf, no leaf name containing a team code of the club.
-jq -e '[.groups[].name] | all(test("^[A-Z][A-Z0-9-]{1,23}$")) and (unique | length == 13)' \
+jq -e '[.groups[].name] | all(test("^[A-Z][A-Z0-9-]{1,23}$")) and (unique | length == 15)' \
   "$REPOSITORY_ROOT/config/role-groups.json" >/dev/null || fail 'a role group name breaks the team code rule'
 jq -e '.groups | all((.client | type) == "string" and (.roles | length) > 0)' \
   "$REPOSITORY_ROOT/config/role-groups.json" >/dev/null || fail 'a role group does not name exactly one client'
@@ -250,6 +256,23 @@ docker exec "$CONTAINER" /opt/keycloak/bin/kcadm.sh config credentials --config 
   --server http://localhost:8080 --realm master --user admin --password "$ADMIN_PASSWORD" >/dev/null 2>&1 \
   || fail 'kcadm login failed'
 docker cp "$REPOSITORY_ROOT/config/." "$CONTAINER:$IN_CONTAINER_CONFIG/" >/dev/null
+docker exec -i "$CONTAINER" sh -c 'cat > /tmp/kcadm-fail.sh && chmod 755 /tmp/kcadm-fail.sh' \
+  <"$SCRIPT_DIR/kcadm-core-roles-failure.sh"
+
+# run_failing_read SCRIPT REALM READ ARGS...: the script with every kcadm read whose arguments contain
+# READ failing as a dropped connection would (nothing says "not found"); prints the output, which must
+# end in exit 1.
+run_failing_read() {
+  local script=$1 realm=$2 read=$3 output status=0
+  shift 3
+  trap - ERR
+  output=$(docker exec -e KEYCLOAK_ADMIN_URL=http://localhost:8080 -e KEYCLOAK_REALM="$realm" \
+    -e KCADM_BIN=/tmp/kcadm-fail.sh -e "KCADM_INJECT_FAIL=$read" "$CONTAINER" \
+    bash "$IN_CONTAINER_CONFIG/$script" --kcadm-config "$KCADM_CONFIG" "$@" 2>&1) || status=$?
+  trap 'on_error "$LINENO"' ERR
+  [[ $status == 1 ]] || { printf '%s\n' "$output" >&2; fail "$script did not exit 1 when reading $read failed (exit $status)"; }
+  printf '%s\n' "$output"
+}
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='refused realms and an invalid file'
@@ -293,21 +316,21 @@ for leaf in "${LEAVES[@]}"; do
 done
 expect_line "$checked" 'would map forms/skyforms:access to /ROLLER/FORMS-ACCESS' 'a mapping was not planned'
 expect_line "$checked" 'would map cloudflare-zero-trust/cloudflare:zero-trust:access to /ROLLER/CF-ZERO-TRUST-ACCESS' 'a mapping was not planned'
-expect_line "$checked" 'check: 27 change(s) pending, 0 warning(s), 0 problem(s)' 'the dry run did not count 1 + 13 + 13 changes'
+expect_line "$checked" 'check: 31 change(s) pending, 0 warning(s), 0 problem(s)' 'the dry run did not count 1 + 15 + 15 changes'
 ! group_exists "$REALM" /ROLLER || fail 'the dry run created /ROLLER'
 [[ $(events "$REALM") == "$before" ]] || fail 'the dry run wrote something'
-printf '    --check plans /ROLLER, 13 leaves and 13 mappings and writes nothing\n'
+printf '    --check plans /ROLLER, 15 leaves and 15 mappings and writes nothing\n'
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='role-groups: applied, then nothing more'
 applied=$(run_expecting 0 role-groups.sh "$REALM" --apply)
-expect_line "$applied" 'applied 27 change(s), 0 warning(s), 0 problem(s)' 'the apply did not make the planned changes'
+expect_line "$applied" 'applied 31 change(s), 0 warning(s), 0 problem(s)' 'the apply did not make the planned changes'
 [[ $(group_roles "$REALM" /ROLLER) == '[]' ]] || fail '/ROLLER holds a role'
 root=$(kcadm get "groups/$(group_id "$REALM" /ROLLER)" -r "$REALM")
 jq -e '.attributes.display_name_tr == ["Rol grupları"] and (.attributes.description_tr[0] | length) > 20' <<<"$root" >/dev/null \
   || fail "/ROLLER lacks its attributes: $root"
 [[ $(kcadm get "groups/$(group_id "$REALM" /ROLLER)/children" -r "$REALM" -q max=100 | jq -c '[.[].name] | sort') \
-  == "$(printf '%s\n' "${LEAVES[@]}" | jq -R . | jq -sc 'sort')" ]] || fail '/ROLLER does not hold exactly the 13 leaves'
+  == "$(printf '%s\n' "${LEAVES[@]}" | jq -R . | jq -sc 'sort')" ]] || fail '/ROLLER does not hold exactly the 15 leaves'
 while IFS=$'\t' read -r name client roles; do
   want=$(jq -nc --arg c "$client" --arg r "$roles" '[$r | split(" ")[] | $c + "/" + .] | sort')
   [[ $(group_roles "$REALM" "/ROLLER/$name") == "$want" ]] || fail "/ROLLER/$name does not hold exactly $want: $(group_roles "$REALM" "/ROLLER/$name")"
@@ -322,7 +345,7 @@ again=$(run_expecting 0 role-groups.sh "$REALM" --apply)
 expect_line "$again" 'applied 0 change(s), 0 warning(s), 0 problem(s)' 'the second apply changed something'
 expect_line "$again" '/ROLLER: unchanged' 'the second apply did not verify the root'
 [[ $(events "$REALM") == "$before" ]] || fail 'the second apply wrote something'
-printf '    --apply made /ROLLER and the 13 leaves (attributes, roles, no member); a second --apply writes nothing\n'
+printf '    --apply made /ROLLER and the 15 leaves (attributes, roles, no member); a second --apply writes nothing\n'
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='role-groups: a member carries the role'
@@ -370,16 +393,26 @@ printf '    drift repaired (a mapping, an attribute); extra role, subgroup, unli
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='role-groups: the audit counts, it names nobody'
+# core's RolePlacement refuses a role on a Privileged root's subgroup (a YK duty group) and on a role
+# group with groups under it: the audit lists both, next to /UYELER.
+create_group "$REALM" /ROLLER/SKYMAIL-ACCESS NESTED
+kcadm create "groups/$(group_id "$REALM" /UYELER/YK/BASKAN)/role-mappings/clients/$(client_uuid "$REALM" skymail)" -r "$REALM" \
+  -b "$(role_body "$REALM" skymail skymail:access)" >/dev/null
 audited=$(run_expecting 0 role-groups.sh "$REALM" --audit)
 expect_line "$audited" 'audit: skymail/skymail:mails:write: 1 person(s) directly; groups: /ROLLER/SKYMAIL-MAILS-WRITE' 'the per-role count is wrong'
 expect_line "$audited" 'audit K1: 1 person(s) hold client roles directly, 1 person(s) hold realm roles directly' 'K1 is wrong'
-expect_line "$audited" 'audit K4: 1 group(s) hold roles outside the allowed places:' 'K4 is wrong'
+expect_line "$audited" 'audit K4: 3 group(s) hold roles outside the allowed places:' 'K4 is wrong'
 expect_line "$audited" 'audit K4:   /UYELER: realm/USER' 'K4 did not name /UYELER'
-reject_line "$audited" 'audit K4:   /ROLLER/' 'K4 reported a role group'
+expect_line "$audited" 'audit K4:   /ROLLER/SKYMAIL-ACCESS: skymail/skymail:access' 'K4 did not name the role group with a subgroup'
+expect_line "$audited" 'audit K4:   /UYELER/YK/BASKAN: skymail/skymail:access' 'K4 did not name the YK duty group'
+reject_line "$audited" 'audit K4:   /ROLLER/SKYMAIL-MAILS' 'K4 reported a leaf role group'
+kcadm delete "groups/$(group_id "$REALM" /ROLLER/SKYMAIL-ACCESS/NESTED)" -r "$REALM" >/dev/null
+kcadm delete "groups/$(group_id "$REALM" /UYELER/YK/BASKAN)/role-mappings/clients/$(client_uuid "$REALM" skymail)" -r "$REALM" \
+  -b "$(role_body "$REALM" skymail skymail:access)" >/dev/null
 for name in direct-person leader-person role-group-person sub-leader-person; do
   reject_line "$audited" "$name" 'the audit printed a person'
 done
-printf '    --audit: per-role counts, K1 and K4 without a name\n'
+printf '    --audit: per-role counts, K1 and K4 (core'"'"'s placement rule) without a name\n'
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='role-groups: a default group under /ROLLER and a team-like name are refused'
@@ -390,11 +423,23 @@ refused=$(run_expecting 1 role-groups.sh "$REALM" --apply)
 expect_line "$refused" 'PROBLEM: the default group /ROLLER/SKYMAIL-ACCESS is at or under /ROLLER' 'the default group was not refused'
 [[ $(events "$REALM") == "$before" ]] || fail 'the run wrote something next to a default group under /ROLLER'
 kcadm delete "realms/$REALM/default-groups/$mail_access" >/dev/null
-create_group "$REALM" /UYELER/ARGE MAILS
+create_group "$REALM" /UYELER/ARGE LISTS
+create_group "$REALM" /UYELER/ARGE/AIRLAB MAILS
 refused=$(run_expecting 1 role-groups.sh "$REALM")
-expect_line "$refused" 'PROBLEM: /ROLLER/SKYMAIL-MAILS-READ: the name contains the team code MAILS' 'a team-like leaf name was not refused'
-kcadm delete "groups/$(group_id "$REALM" /UYELER/ARGE/MAILS)" -r "$REALM" >/dev/null
-printf '    a default group under /ROLLER and a leaf named like a team are PROBLEMs (exit 1)\n'
+expect_line "$refused" 'PROBLEM: /ROLLER/SKYMAIL-LISTS-READ: the name contains the team code LISTS' 'a leaf named like a top team was not refused'
+expect_line "$refused" 'PROBLEM: /ROLLER/SKYMAIL-MAILS-READ: the name contains the team code MAILS' 'a leaf named like a Sub-team was not refused'
+reject_line "$refused" 'the team code LIDERLER' 'a Leader group was taken for a team code'
+kcadm delete "groups/$(group_id "$REALM" /UYELER/ARGE/LISTS)" -r "$REALM" >/dev/null
+kcadm delete "groups/$(group_id "$REALM" /UYELER/ARGE/AIRLAB/MAILS)" -r "$REALM" >/dev/null
+printf '    a default group under /ROLLER and a leaf named like a top team or a Sub-team are PROBLEMs (exit 1)\n'
+
+CURRENT_STAGE='role-groups: a failed group read stops the run'
+before=$(events "$REALM")
+failed=$(run_failing_read role-groups.sh "$REALM" group-by-path/ROLLER --apply)
+expect_line "$failed" '[role-groups] the group /ROLLER could not be read in realm e-skylab; stopped' 'the failed read was not reported'
+reject_line "$failed" 'applied' 'the run went on after a failed read'
+[[ $(events "$REALM") == "$before" ]] || fail 'the run wrote something after a failed read'
+printf '    a failed read of /ROLLER stops role-groups.sh (exit 1), nothing written\n'
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='role-groups: the sandbox skips the leaves of missing clients'
@@ -404,51 +449,74 @@ for leaf in PLACE-ADMIN PLACE-MODERATOR; do
 done
 expect_line "$applied" "WARNING: /ROLLER/FORMS-ALL: the role forms/skyforms:* does not exist in realm $SANDBOX; skipped (not created)" 'FORMS-ALL was not skipped'
 expect_line "$applied" "WARNING: /ROLLER/CF-ZERO-TRUST-ACCESS: the client cloudflare-zero-trust does not exist in realm $SANDBOX" 'CF was not skipped'
-expect_line "$applied" 'applied 19 change(s), 4 warning(s), 0 problem(s)' 'the sandbox apply did not make the 9 leaves'
+expect_line "$applied" "WARNING: /ROLLER/SKYCLOUD-ADMIN: the client skycloud does not exist in realm $SANDBOX" 'SKYCLOUD-ADMIN was not skipped'
+expect_line "$applied" 'applied 19 change(s), 6 warning(s), 0 problem(s)' 'the sandbox apply did not make the 9 leaves'
 ! group_exists "$SANDBOX" /ROLLER/PLACE-ADMIN || fail 'a leaf without its client was created'
 [[ $(group_roles "$SANDBOX" /ROLLER/FORMS-ACCESS) == '["forms/skyforms:access"]' ]] || fail 'the sandbox FORMS-ACCESS is wrong'
-printf '    sandbox: 9 leaves made, 4 skipped with a WARNING (exit 0)\n'
+printf '    sandbox: 9 leaves made, 6 skipped with a WARNING (exit 0)\n'
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='leader-app-roles: only the top teams Leader groups'
+# KOORDINATORLER holds the Java era's AIRLAB_LEADER (its members already have the seat through the
+# composite); LIDERLER does not: its member gets the roles newly, in a NEW SEAT line.
+kcadm create roles -r "$REALM" -s name=AIRLAB_LEADER >/dev/null
+kcadm add-roles -r "$REALM" --gpath /UYELER/ARGE/AIRLAB/KOORDINATORLER --rolename AIRLAB_LEADER >/dev/null
 before=$(events "$REALM")
 checked=$(run_expecting 0 leader-app-roles.sh "$REALM")
 expect_line "$checked" 'Leader groups of the top teams: 2' 'the top teams were not read from the tree'
-expect_line "$checked" 'would grant forms/skyforms:access skyforms:form:manage skyforms:response:manage skyforms:feedback:manage to the group /UYELER/ARGE/AIRLAB/LIDERLER' 'LIDERLER was not planned'
-expect_line "$checked" 'would grant forms/skyforms:access skyforms:form:manage skyforms:response:manage skyforms:feedback:manage to the group /UYELER/ARGE/AIRLAB/KOORDINATORLER' 'KOORDINATORLER was not planned'
+for path in /UYELER/ARGE/AIRLAB/LIDERLER /UYELER/ARGE/AIRLAB/KOORDINATORLER; do
+  expect_line "$checked" "would grant forms/skyforms:access to the group $path" "the Forms seat was not planned for $path"
+  expect_line "$checked" "would grant skycloud/skycloud:access to the group $path" "SkyCloud was not planned for $path"
+done
+expect_line "$checked" 'NEW SEAT: /UYELER/ARGE/AIRLAB/LIDERLER holds no <TEAM>_LEADER realm role: its 1 member(s) get the roles newly' 'the new seat was not reported'
+reject_line "$checked" 'NEW SEAT: /UYELER/ARGE/AIRLAB/KOORDINATORLER' 'a Leader group with a _LEADER role was reported as a new seat'
+expect_line "$checked" 'new seats: 1 Leader group(s) without a <TEAM>_LEADER realm role, 1 member(s) in all' 'the new seat summary is wrong'
 expect_line "$checked" 'NOTE: /UYELER/ORGANIZASYON/ARTLAB has no LIDERLER or KOORDINATORLER group' 'the team without Leaders was not noted'
 expect_line "$checked" 'NOTE: forms/skyforms:access is granted directly to 1 person(s)' 'the direct holder was not counted'
+reject_line "$checked" 'skyforms:form:manage' 'an unread Forms role was planned'
 reject_line "$checked" 'SUB/LIDERLER' 'a Sub-team Leader group was planned'
 reject_line "$checked" '/UYELER/YK/' 'a YK task group was planned'
-reject_line "$checked" 'direct-person' 'a person was named'
-expect_line "$checked" 'check: 2 change(s) pending, 0 warning(s), 0 problem(s)' 'the dry run did not count two grants'
+for name in direct-person leader-person; do reject_line "$checked" "$name" 'a person was named'; done
+expect_line "$checked" 'check: 4 change(s) pending, 0 warning(s), 0 problem(s)' 'the dry run did not count four grants'
 [[ $(events "$REALM") == "$before" ]] || fail 'the dry run wrote something'
 applied=$(run_expecting 0 leader-app-roles.sh "$REALM" --apply)
-expect_line "$applied" 'applied 2 change(s), 0 warning(s), 0 problem(s)' 'the apply did not grant'
+expect_line "$applied" 'applied 4 change(s), 0 warning(s), 0 problem(s)' 'the apply did not grant'
 for path in /UYELER/ARGE/AIRLAB/LIDERLER /UYELER/ARGE/AIRLAB/KOORDINATORLER; do
-  [[ $(group_roles "$REALM" "$path" | jq -c 'map(ltrimstr("forms/"))') == "$FORMS_ROLES" ]] || fail "$path does not hold exactly the four Forms roles"
+  [[ $(group_roles "$REALM" "$path" | jq -c 'map(select(startswith("realm/") | not))') == "$LEADER_ROLES" ]] \
+    || fail "$path does not hold exactly skyforms:access and skycloud:access: $(group_roles "$REALM" "$path")"
 done
 [[ $(group_roles "$REALM" /UYELER/ARGE/AIRLAB/SUB/LIDERLER) == '[]' ]] || fail 'the Sub-team Leader group got a role'
 [[ $(group_roles "$REALM" /UYELER/YK/BASKAN/LIDERLER) == '[]' ]] || fail 'the YK task group got a role'
-[[ $(token_roles "$REALM" leader-person forms) == "$FORMS_ROLES" ]] || fail "the Leader's token lacks the Forms seat: $(token_roles "$REALM" leader-person forms)"
+[[ $(token_roles "$REALM" leader-person forms) == '["skyforms:access"]' ]] || fail "the Leader's token lacks the Forms seat: $(token_roles "$REALM" leader-person forms)"
+[[ $(token_roles "$REALM" leader-person skycloud) == '["skycloud:access"]' ]] || fail "the Leader's token lacks SkyCloud: $(token_roles "$REALM" leader-person skycloud)"
 [[ $(token_roles "$REALM" sub-leader-person forms) == '[]' ]] || fail "the Sub-team Leader's token carries a Forms role"
 before=$(events "$REALM")
 again=$(run_expecting 0 leader-app-roles.sh "$REALM" --apply)
 expect_line "$again" 'applied 0 change(s), 0 warning(s), 0 problem(s)' 'the second apply changed something'
+expect_line "$again" 'new seats: 0 Leader group(s)' 'the second apply reported a new seat'
 [[ $(events "$REALM") == "$before" ]] || fail 'the second apply wrote something'
 kcadm create "groups/$(group_id "$REALM" /UYELER/ARGE/AIRLAB/SUB/LIDERLER)/role-mappings/clients/$(client_uuid "$REALM" forms)" \
   -r "$REALM" -b "$(role_body "$REALM" forms skyforms:access)" >/dev/null
 checked=$(run_expecting 0 leader-app-roles.sh "$REALM")
 expect_line "$checked" 'WARNING: forms/skyforms:access is also held by the group(s) /UYELER/ARGE/AIRLAB/SUB/LIDERLER' 'the Sub-team holder was not reported'
 reject_line "$checked" '/ROLLER/FORMS-ACCESS (' 'the role group was reported as a stray holder'
-printf '    leader-app-roles: the two top team Leader groups get the four Forms roles, nothing more; idempotent\n'
+printf '    leader-app-roles: the two top team Leader groups get skyforms:access and skycloud:access, nothing more; NEW SEAT counted; idempotent\n'
 
-CURRENT_STAGE='leader-app-roles: the sandbox skips the missing roles'
+CURRENT_STAGE='leader-app-roles: a failed group read stops the run'
+before=$(events "$REALM")
+failed=$(run_failing_read leader-app-roles.sh "$REALM" group-by-path/UYELER --apply)
+expect_line "$failed" '[leader-app-roles] the group /UYELER could not be read in realm e-skylab; stopped' 'the failed read was not reported'
+reject_line "$failed" 'applied' 'the run went on after a failed read'
+reject_line "$failed" '/UYELER does not exist' 'the failed read was taken for a missing /UYELER'
+[[ $(events "$REALM") == "$before" ]] || fail 'the run wrote something after a failed read'
+printf '    a failed read of /UYELER stops leader-app-roles.sh (exit 1), nothing written\n'
+
+CURRENT_STAGE='leader-app-roles: the sandbox skips the missing client'
 applied=$(run_expecting 0 leader-app-roles.sh "$SANDBOX" --apply)
-expect_line "$applied" "WARNING: the role forms/skyforms:form:manage does not exist in realm $SANDBOX; skipped (not created)" 'a missing role was not skipped'
-expect_line "$applied" 'applied 2 change(s), 3 warning(s), 0 problem(s)' 'the sandbox grants are wrong'
+expect_line "$applied" "WARNING: the client skycloud does not exist in realm $SANDBOX; skycloud/skycloud:access skipped" 'the missing skycloud client was not skipped'
+expect_line "$applied" 'applied 2 change(s), 1 warning(s), 0 problem(s)' 'the sandbox grants are wrong'
 [[ $(group_roles "$SANDBOX" /UYELER/ARGE/AIRLAB/LIDERLER) == '["forms/skyforms:access"]' ]] || fail 'the sandbox Leader group is wrong'
-printf '    sandbox: skyforms:access granted, three missing roles skipped with a WARNING\n'
+printf '    sandbox: skyforms:access granted, the missing skycloud client skipped with a WARNING\n'
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='the reconciler operator steps'

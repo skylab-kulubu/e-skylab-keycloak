@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # Idempotent application roles of the Leader groups (rol-temizligi ticket 09; decisions S5, S7, S8 in
-# sky_lab_genel .scratch/rol-temizligi). The Java era's realm role <TEAM>_LEADER does one live thing:
-# its composite gives the Forms seat. This script maps the Forms seat to the Leader groups as client
-# roles, so that the realm role can go (rol-temizligi F3) without a Leader losing anything:
-#   forms  skyforms:access, skyforms:form:manage, skyforms:response:manage, skyforms:feedback:manage
-# (the composite of <TEAM>_LEADER today; skycloud:access is not mapped, S8: SkyCloud is not used).
+# sky_lab_genel .scratch/rol-temizligi). The Java era's realm role <TEAM>_LEADER does live things
+# only through its composite: the Forms seat and SkyCloud. This script maps them to the Leader groups
+# as client roles, so that the realm role can go (rol-temizligi F3) without a Leader losing access:
+#   forms     skyforms:access  (the Forms seat, S7; required)
+#   skycloud  skycloud:access  (Yusuf 2026-10-13: SkyCloud is used and stays; optional: a realm
+#                               without the client skycloud skips it with a WARNING)
+# The composite's other three Forms roles (skyforms:form:manage, response:manage, feedback:manage)
+# are not mapped: nothing reads them (forms-backend, forms-frontend), Fatih confirms (ticket 15).
+# A Leader group that holds no <TEAM>_LEADER realm role today gets the roles newly: the run says so in
+# a "NEW SEAT" line with the member count (never a name).
 # The groups: LIDERLER and KOORDINATORLER, the direct subgroups of every top team
 # /UYELER/<area>/<team>, read from the live tree (no list is kept here). A Sub-team's Leader groups
 # never get them (ADR-0065 addendum of 2026-10-12, as site-editor-grants.sh). The areas ADMIN, YK and
@@ -15,8 +20,9 @@
 # PROBLEM: the grant is not made). Nothing is ever taken away: a group outside the expected places
 # (the Leader groups above, the role groups /ROLLER/<NAME>, the Privileged roots) or a person holding
 # one of the roles directly is a WARNING (counts and group paths only, never a person's name). A
-# missing client forms is a PROBLEM (exit 1); a missing role is a WARNING and is skipped (the sandbox
-# realm may lack an old Forms role).
+# missing client forms is a PROBLEM (exit 1); a missing optional client or a missing role is a
+# WARNING and is skipped. A failed read of a group (anything but Keycloak's "not found") stops the run
+# with exit 1: it is never taken for "absent".
 #
 # It refuses every realm but e-skylab and e-skylab-sandbox, before it logs in; KEYCLOAK_REALM has no
 # default. The reconciler runs it as its operator step KEYCLOAK_RECONCILE_ONLY=leader-app-roles (with
@@ -46,8 +52,11 @@ KCADM_CONFIG=''
 OWN_CONFIG=false
 MODE=check
 
-APP_CLIENT=forms
-APP_ROLES=(skyforms:access skyforms:form:manage skyforms:response:manage skyforms:feedback:manage)
+# client|role|required or optional
+APP_ROLES=(
+  'forms|skyforms:access|required'
+  'skycloud|skycloud:access|optional'
+)
 PRIVILEGED_NAMES=(ADMIN YK DK)
 LEADER_GROUPS=(LIDERLER KOORDINATORLER)
 ROLE_GROUP_ROOT=/ROLLER
@@ -176,12 +185,28 @@ id_of() {
   return 0
 }
 
-# group_id PATH: the id of the group at exactly this path (empty when absent).
+# group_id PATH: the id of the group at exactly this path (empty when Keycloak says it does not
+# exist). Any other failed read stops the run (exit 1): a read error is never "absent".
 group_id() {
+  local out err status=0
   [[ $1 =~ ^(/[A-Za-z0-9_.-]+)+$ ]] || { printf 'refusing the group path %s\n' "$1" >&2; exit 2; }
-  csv "group-by-path$1" id,path 2>/dev/null | while IFS=, read -r id path; do
-    if [[ $path == "$1" ]]; then printf '%s\n' "$id"; fi
-  done || true
+  err=$(mktemp /tmp/leader-app-roles-stderr.XXXXXX)
+  out=$(kcadm get "group-by-path$1" -r "$TARGET_REALM" --fields id,path --format csv --noquotes 2>"$err") || status=$?
+  if [[ $status == 0 ]]; then
+    rm -f "$err"
+    out=$(tr -d '\r' <<<"$out" | sed '/^$/d')
+    if [[ ${out#*,} == "$1" && -n ${out%%,*} ]]; then printf '%s\n' "${out%%,*}"; fi
+    return 0
+  fi
+  if grep -Eqi 'not found|does not exist|could not find' "$err"; then
+    rm -f "$err"
+    return 0
+  fi
+  cat "$err" >&2
+  rm -f "$err"
+  printf '[leader-app-roles] the group %s could not be read in realm %s; stopped (a failed read is never taken for "absent")\n' \
+    "$1" "$TARGET_REALM" >&2
+  exit 1
 }
 
 # children ID: the direct subgroups of the group, one "id,name" per line.
@@ -198,7 +223,7 @@ credential_arguments=(
 if [[ $OWN_CONFIG == true ]]; then
   "$KCADM" config credentials "${credential_arguments[@]}"
 fi
-log "realm=$TARGET_REALM mode=$MODE roles=$APP_CLIENT: ${APP_ROLES[*]}"
+log "realm=$TARGET_REALM mode=$MODE roles=$(printf '%s ' "${APP_ROLES[@]%|*}" | sed 's/|/\//g; s/ $//')"
 
 if ! realm_name=$(kcadm get "realms/$TARGET_REALM" --fields realm --format csv --noquotes 2>/dev/null | tr -d '\r') \
   || [[ $realm_name != "$TARGET_REALM" ]]; then
@@ -206,24 +231,35 @@ if ! realm_name=$(kcadm get "realms/$TARGET_REALM" --fields realm --format csv -
   exit 1
 fi
 
-uuid=$(uuid_by "$APP_CLIENT")
-if [[ -z $uuid ]]; then
-  problem "the client $APP_CLIENT does not exist in realm $TARGET_REALM; nothing was granted"
+# --- the roles: client|uuid|role|role id, one entry each -------------------------------------------
+grants=()
+declare -A client_uuid_of=()
+for entry in "${APP_ROLES[@]}"; do
+  IFS='|' read -r client role need <<<"$entry"
+  if [[ -z ${client_uuid_of[$client]+set} ]]; then
+    client_uuid_of[$client]=$(uuid_by "$client")
+  fi
+  client_uuid=${client_uuid_of[$client]}
+  if [[ -z $client_uuid ]]; then
+    if [[ $need == required ]]; then
+      problem "the client $client does not exist in realm $TARGET_REALM; nothing was granted"
+    else
+      warning "the client $client does not exist in realm $TARGET_REALM; $client/$role skipped"
+    fi
+    continue
+  fi
+  role_lines=$(csv "clients/$client_uuid/roles" id,name -q first=0 -q max=10000)
+  role_id=$(id_of "$role_lines" "$role")
+  if [[ -z $role_id ]]; then
+    warning "the role $client/$role does not exist in realm $TARGET_REALM; skipped (not created)"
+    continue
+  fi
+  grants+=("$client|$client_uuid|$role|$role_id")
+done
+if [[ $problems != 0 ]]; then
   log "check: 0 change(s) pending, $warnings warning(s), $problems problem(s)"
   exit 1
 fi
-role_lines=$(csv "clients/$uuid/roles" id,name -q first=0 -q max=10000)
-roles=()
-declare -A role_ids=()
-for role in "${APP_ROLES[@]}"; do
-  role_id=$(id_of "$role_lines" "$role")
-  if [[ -z $role_id ]]; then
-    warning "the role $APP_CLIENT/$role does not exist in realm $TARGET_REALM; skipped (not created)"
-    continue
-  fi
-  roles+=("$role")
-  role_ids[$role]=$role_id
-done
 
 # --- the Leader groups of the top teams, from the live tree -----------------------------------------
 # Every list is read into a variable first: a failed read must stop the run, not pass as "empty".
@@ -258,6 +294,8 @@ log "Leader groups of the top teams: ${#leaders[@]}"
 default_groups=$(csv default-groups path)
 
 # --- grants -----------------------------------------------------------------------------------------
+new_seat_groups=0
+new_seat_members=0
 for path in ${leaders[@]+"${leaders[@]}"}; do
   refused=''
   while IFS= read -r default; do
@@ -266,27 +304,43 @@ for path in ${leaders[@]+"${leaders[@]}"}; do
     if [[ $default == "$path" || $default == "$path"/* ]]; then refused=$default; fi
   done <<<"$default_groups"
   if [[ -n $refused ]]; then
-    problem "refusing to grant the $APP_CLIENT roles to $path: the default group $refused would give them to every new user"
+    problem "refusing to grant the Leader roles to $path: the default group $refused would give them to every new user"
     continue
   fi
   gid=${gid_of[$path]}
-  held=$(csv "groups/$gid/role-mappings/clients/$uuid" name)
-  body=''
-  added=()
-  for role in ${roles[@]+"${roles[@]}"}; do
-    grep -Fxq -- "$role" <<<"$held" && continue
-    body+=",{\"id\":\"${role_ids[$role]}\",\"name\":\"$role\"}"
-    added+=("$role")
+  declare -A held_of=()
+  planned=0
+  for entry in ${grants[@]+"${grants[@]}"}; do
+    IFS='|' read -r client client_uuid role role_id <<<"$entry"
+    if [[ -z ${held_of[$client]+set} ]]; then
+      held_of[$client]=$(csv "groups/$gid/role-mappings/clients/$client_uuid" name)
+    fi
+    if grep -Fxq -- "$role" <<<"${held_of[$client]}"; then
+      continue
+    fi
+    planned=$((planned + 1))
+    change "grant $client/$role to the group $path"
+    if [[ $MODE == apply ]]; then
+      kcadm_write create "groups/$gid/role-mappings/clients/$client_uuid" -r "$TARGET_REALM" \
+        -b "[{\"id\":\"$role_id\",\"name\":\"$role\"}]"
+    fi
   done
-  if [[ -z $body ]]; then
-    log "$path: unchanged (holds ${roles[*]:-nothing to grant})"
+  unset held_of
+  if [[ $planned == 0 ]]; then
+    log "$path: unchanged"
     continue
   fi
-  change "grant $APP_CLIENT/${added[*]} to the group $path"
-  if [[ $MODE == apply ]]; then
-    kcadm_write create "groups/$gid/role-mappings/clients/$uuid" -r "$TARGET_REALM" -b "[${body#,}]"
+  # B7 of the #97 review: a Leader group without a <TEAM>_LEADER realm role gets the roles newly.
+  realm_held=$(csv "groups/$gid/role-mappings/realm" name)
+  if ! grep -q '_LEADER$' <<<"$realm_held"; then
+    members=$(csv "groups/$gid/members" id -q first=0 -q max=100000)
+    count=$(sed '/^$/d' <<<"$members" | wc -l | tr -d ' ')
+    new_seat_groups=$((new_seat_groups + 1))
+    new_seat_members=$((new_seat_members + count))
+    log "NEW SEAT: $path holds no <TEAM>_LEADER realm role: its $count member(s) get the roles newly (not carried over from the Java role)"
   fi
 done
+log "new seats: $new_seat_groups Leader group(s) without a <TEAM>_LEADER realm role, $new_seat_members member(s) in all"
 
 # --- other holders: reported, never taken away ------------------------------------------------------
 # expected_holder PATH: a Leader group of a top team, a role group or a Privileged root.
@@ -298,17 +352,18 @@ expected_holder() {
   esac
   [[ $1 =~ ^$ROLE_GROUP_ROOT/[^/]+$ ]]
 }
-for role in ${roles[@]+"${roles[@]}"}; do
-  holder_groups=$(csv "clients/$uuid/roles/$role/groups" path -q first=0 -q max=100000)
+for entry in ${grants[@]+"${grants[@]}"}; do
+  IFS='|' read -r client client_uuid role role_id <<<"$entry"
+  holder_groups=$(csv "clients/$client_uuid/roles/$role/groups" path -q first=0 -q max=100000)
   others=''
   while IFS= read -r holder; do
     [[ -n $holder ]] || continue
     expected_holder "$holder" || others+=", $holder"
   done <<<"$holder_groups"
-  [[ -z $others ]] || warning "$APP_CLIENT/$role is also held by the group(s) ${others#, } (a Sub-team's Leader group or another place; not taken away, remove it in the SKY LAB admin panel if unintended)"
-  holder_users=$(csv "clients/$uuid/roles/$role/users" username -q first=0 -q max=100000)
+  [[ -z $others ]] || warning "$client/$role is also held by the group(s) ${others#, } (a Sub-team's Leader group or another place; not taken away, remove it in the SKY LAB admin panel if unintended)"
+  holder_users=$(csv "clients/$client_uuid/roles/$role/users" username -q first=0 -q max=100000)
   people=$(sed '/^$/d' <<<"$holder_users" | grep -vc '^service-account-' || true)
-  [[ $people == 0 ]] || log "NOTE: $APP_CLIENT/$role is granted directly to $people person(s): rol-temizligi F2 moves them to $ROLE_GROUP_ROOT/FORMS-ACCESS or FORMS-ALL (not taken away here)"
+  [[ $people == 0 ]] || log "NOTE: $client/$role is granted directly to $people person(s): rol-temizligi F2 moves them to a role group under $ROLE_GROUP_ROOT (not taken away here)"
 done
 
 if [[ $MODE == apply ]]; then

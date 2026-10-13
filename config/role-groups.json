@@ -93,6 +93,20 @@
       "roles": ["cloudflare:zero-trust:access"],
       "display_name_tr": "Cloudflare Zero Trust: erişim",
       "description_tr": "Cloudflare Access ile korunan kulüp araçlarına girer (cloudflare:zero-trust:access)."
+    },
+    {
+      "name": "SKYCLOUD-ACCESS",
+      "client": "skycloud",
+      "roles": ["skycloud:access"],
+      "display_name_tr": "SkyCloud: erişim",
+      "description_tr": "SkyCloud'a (Nextcloud) girer (skycloud:access). Ekip liderleri bu rolü Leader grubundan alır."
+    },
+    {
+      "name": "SKYCLOUD-ADMIN",
+      "client": "skycloud",
+      "roles": ["admin"],
+      "display_name_tr": "SkyCloud: yönetici",
+      "description_tr": "SkyCloud'da (Nextcloud) yönetici (skycloud admin). core bu rolü sınıflandırmaz: korunan, yönetici sayılır."
     }
   ]
 }

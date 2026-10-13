@@ -883,20 +883,27 @@ ister, §6). Realm yeniden kurulursa betik yeniden koşulur.
 
 | İstemci | Rol | Gruplar |
 |---|---|---|
-| `frontend-main` | `cms:access` | `/ADMIN`, `/UYELER/YK`, `/UYELER/DK`, her `…/LIDERLER` ve `…/KOORDINATORLER` |
+| `frontend-main` | `cms:access` | `/ADMIN`, `/UYELER/YK`, `/UYELER/DK`, yalnız en üst takımların (`/UYELER/<alan>/<ekip>`) `LIDERLER` ve `KOORDINATORLER` grupları |
 | `frontend-main` | `client:admin` | `/ADMIN`, `/UYELER/YK` |
-| `frontend-arge` | `cms:access` | `/ADMIN`, `/UYELER/YK`, her `…/LIDERLER` ve `…/KOORDINATORLER` |
+| `frontend-arge` | `cms:access` | `/ADMIN`, `/UYELER/YK`, yalnız en üst takımların (`/UYELER/<alan>/<ekip>`) `LIDERLER` ve `KOORDINATORLER` grupları |
 | `frontend-arge` | `client:admin` | `/ADMIN`, `/UYELER/YK` |
 | `admin` | `content:read`, `content:write` | `/ADMIN`, `/UYELER/YK`, `/UYELER/DK` |
 
 - Hiçbir CMS rolü `/UYELER`'e, bir kişiye, varsayılan rollere ya da varsayılan gruplara
-  verilmez. `client:admin` liderlere verilmez.
+  verilmez. `client:admin` yalnız `ADMIN` ve `YK`'dadır (Yusuf, 2026-10-12): liderlere ve `DK`'ya
+  verilmez (`DK` okur, yazmaz). Etkinlik sitelerinde de böyledir (`site-editor-grants.sh`).
 - Bilinen sınır: inscribed'da `content:write` tenant geneli. `frontend-main`'de
   `cms:access` alan lider ana sitenin bütün sayfa bloklarını da düzenleyebilir. Fatih
   yalnız koleksiyona yazma yeteneğini getirene kadar kabul edildi. Hangi takımı
   düzenleyeceğini `teams` koleksiyonunun `ClaimDerived` kuralı sınırlar.
-- Yeni takım açılınca `LIDERLER` ve `KOORDINATORLER` gruplarına iki sitede de
-  `cms:access` verilir.
+- Yeni bir en üst takım (`/UYELER/<alan>/<ekip>`) açılınca `LIDERLER` ve
+  `KOORDINATORLER` gruplarına iki sitede de `cms:access` verilir. Alt ekiplerin
+  (`/UYELER/<alan>/<ekip>/<alt ekip>` ve daha derin) Leader gruplarına, takım ya da alan
+  gruplarının kendisine `cms:access` verilmez (ADR-0065'in 2026-10-12 eki). Site editörlüğü
+  (`content:write`, `cms:access` dahil) taşıyan grup ve altı ekip yetki devrinde yalnız
+  Privileged'ca yönetilir. Alt ekip Leader grubuna verilseydi üst ekibin Leader'ı oraya üye
+  ekleyerek site geneli yazmayı dağıtabilirdi. Bu kural inscribed'a koleksiyon ya da kayıt bazında
+  yazma gelene kadar geçerlidir.
 
 ### Geçiş gecesi: `--post-cutover`
 
@@ -1646,11 +1653,14 @@ yazar, ikinci koşu hiçbir şey yazmaz; kcadm prompt'u ya da `--kcadm-config`):
 3. `config/site-editor-grants.sh [--site …]... [--team SITE=/YOL]...`: `cms:access` Privileged gruplara
    (`ADMIN`, `YK`, `DK`; `/<AD>` ve `/UYELER/<AD>` hangisi varsa) ve sitenin iki takımının doğrudan
    `LIDERLER`/`KOORDINATORLER` alt gruplarına: sahip lab takımı ve etkinliğin organizasyon takımı
-   (karar 2026-10-03, CONTEXT.md "Site editor"); `client:admin` yalnız `ADMIN` gruplarına. Takımlar:
+   (karar 2026-10-03, CONTEXT.md "Site editor"); `client:admin` `ADMIN` ve `YK` gruplarına (Yusuf, 2026-10-12;
+   `DK`'ya verilmez, `DK`'da varsa `WARNING`). Takımlar:
    ARTLAB → `/UYELER/ARGE/AIRLAB` + `/UYELER/ORGANIZASYON/ARTLAB`, YıldızJam → `/UYELER/ARGE/GAMELAB`
    + `/UYELER/ORGANIZASYON/YILDIZJAM`, SkyDays → `/UYELER/ARGE/SKYSEC` + `/UYELER/ORGANIZASYON/SKYDAYS`.
    Realm'de olmayan bir takım ya da `LIDERLER`/`KOORDINATORLER`'i olmayan bir takım `WARNING`'dir; öbür
-   yetkiler yine verilir. `--team` bir siteye bir takım daha ekler. Kişiye, `/UYELER`'e ya da bir
+   yetkiler yine verilir. `--team` bir siteye bir en üst takım (`/UYELER/<alan>/<ekip>`) daha ekler;
+   daha derin (alt ekip) ya da daha sığ bir yol girişten önce `refusing --team …` ile 2 döner
+   (ADR-0065'in 2026-10-12 eki). Kişiye, `/UYELER`'e ya da bir
    varsayılan grubu kapsayan gruba rol verilmez (`PROBLEM`). Hiçbir şey geri alınmaz: beklenmeyen bir
    sahip `WARNING`'dir. İstemci ya da rolleri yoksa site `MISSING` ile atlanır, çıkış 1.
 
@@ -1679,7 +1689,7 @@ köken `https://sandbox.yildizskylab.com` (sitenin kodu `sandbox.` ve `sandbox-`
 `NEXTAUTH_URL`'yi sandbox sayar ve arama motorlarına kapatır), redirect birebir
 `https://sandbox.yildizskylab.com/api/auth/callback/keycloak`. Rolleri `inscribed-cms-roles.sh --client
 frontend-main` kurar (servis hesabı yalnız `content:read` + `schema:sync`); editörleri yalnız
-Privileged gruplardır (takım yok; `--team main=/YOL` eklenebilir), `client:admin` yalnız `ADMIN`'e.
+Privileged gruplardır (takım yok; `--team main=/YOL` eklenebilir), `client:admin` `ADMIN` ve `YK`'ya.
 Harness bunu da dener: production reddi, istemcinin biçimi, ADMIN üyesinin token'ında `cms:access` +
 `client:admin`, düz üyede CMS rolü olmadığı, servis hesabının salt okuma kaldığı, ikinci koşunun
 yazmadığı. Operatör: `ops/wizards/site-cms-setup-wizard.sh --site main --sandbox`.

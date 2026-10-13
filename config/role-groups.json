@@ -1,0 +1,98 @@
+{
+  "root": "ROLLER",
+  "root_display_name_tr": "Rol grupları",
+  "root_description_tr": "Uygulama rolü grupları (Microsoft Entra'nın uygulama rolü güvenlik grupları). Kökün kendisi rol taşımaz; her yaprak tek bir uygulamanın rollerini taşır. Üyelik yalnız SKY LAB yönetim panelinden.",
+  "groups": [
+    {
+      "name": "FORMS-ACCESS",
+      "client": "forms",
+      "roles": ["skyforms:access"],
+      "display_name_tr": "Forms: yönetim paneli erişimi",
+      "description_tr": "SkyForms yönetim paneline girer, kendi formlarını yönetir (skyforms:access). Ekip liderleri bu rolü Leader grubundan alır."
+    },
+    {
+      "name": "FORMS-ALL",
+      "client": "forms",
+      "roles": ["skyforms:*"],
+      "display_name_tr": "Forms: süper yönetici",
+      "description_tr": "SkyForms'ta her formu ve her yönetim ucunu kullanır (skyforms:*)."
+    },
+    {
+      "name": "PLACE-ADMIN",
+      "client": "place",
+      "roles": ["place:admin"],
+      "display_name_tr": "Yıldız Place: yönetici",
+      "description_tr": "Yıldız Place'te yönetici oturumu açar (place:admin, ADR 0060)."
+    },
+    {
+      "name": "PLACE-MODERATOR",
+      "client": "place",
+      "roles": ["place:moderator"],
+      "display_name_tr": "Yıldız Place: moderatör",
+      "description_tr": "Yıldız Place'te moderatör oturumu açar (place:moderator, ADR 0060)."
+    },
+    {
+      "name": "SKYMAIL-ACCESS",
+      "client": "skymail",
+      "roles": ["skymail:access"],
+      "display_name_tr": "SkyMail: erişim",
+      "description_tr": "SkyMail'e girer (skymail:access); diğer SkyMail rolleri bunun üstüne eklenir."
+    },
+    {
+      "name": "SKYMAIL-TEMPLATES-READ",
+      "client": "skymail",
+      "roles": ["skymail:templates:read"],
+      "display_name_tr": "SkyMail: şablonları görür",
+      "description_tr": "SkyMail şablonlarını görür (skymail:templates:read)."
+    },
+    {
+      "name": "SKYMAIL-TEMPLATES-WRITE",
+      "client": "skymail",
+      "roles": ["skymail:templates:write"],
+      "display_name_tr": "SkyMail: şablon yazar",
+      "description_tr": "SkyMail şablonlarını oluşturur ve değiştirir (skymail:templates:write)."
+    },
+    {
+      "name": "SKYMAIL-LISTS-READ",
+      "client": "skymail",
+      "roles": ["skymail:lists:read"],
+      "display_name_tr": "SkyMail: listeleri görür",
+      "description_tr": "SkyMail posta listelerini ve alıcılarını görür (skymail:lists:read)."
+    },
+    {
+      "name": "SKYMAIL-LISTS-WRITE",
+      "client": "skymail",
+      "roles": ["skymail:lists:write"],
+      "display_name_tr": "SkyMail: liste yazar",
+      "description_tr": "SkyMail posta listelerini oluşturur, değiştirir, alıcı ekler ve çıkarır (skymail:lists:write)."
+    },
+    {
+      "name": "SKYMAIL-MAILS-READ",
+      "client": "skymail",
+      "roles": ["skymail:mails:read"],
+      "display_name_tr": "SkyMail: gönderimleri görür",
+      "description_tr": "SkyMail gönderimlerini görür (skymail:mails:read)."
+    },
+    {
+      "name": "SKYMAIL-MAILS-WRITE",
+      "client": "skymail",
+      "roles": ["skymail:mails:write"],
+      "display_name_tr": "SkyMail: gönderim yapar",
+      "description_tr": "SkyMail'den Mail onayı olmadan gönderim yapar (skymail:mails:write)."
+    },
+    {
+      "name": "SKYMAIL-MAILS-APPROVE",
+      "client": "skymail",
+      "roles": ["skymail:mails:approve"],
+      "display_name_tr": "SkyMail: gönderim onaylar",
+      "description_tr": "Mail onayı isteklerini onaylar ya da reddeder (skymail:mails:approve, ADR-0031)."
+    },
+    {
+      "name": "CF-ZERO-TRUST-ACCESS",
+      "client": "cloudflare-zero-trust",
+      "roles": ["cloudflare:zero-trust:access"],
+      "display_name_tr": "Cloudflare Zero Trust: erişim",
+      "description_tr": "Cloudflare Access ile korunan kulüp araçlarına girer (cloudflare:zero-trust:access)."
+    }
+  ]
+}

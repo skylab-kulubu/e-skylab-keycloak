@@ -897,9 +897,21 @@ aynı commit'i ve aynı imaj kimliğini söylediğini doğrular, sonra fiziksel 
 (`keycloak-production` ortamının değişkenleri) koşar ve grupların yüklediği tarball'ın kendisini
 paketler; `keycloak-publish` önceki gibi onu doğrulayıp yayımlar. Düşen grup tek başına yeniden
 koşturulabilir (`gh run rerun <run> --failed`): `keycloak-build` yeniden koşmaz, yeniden koşan
-grup aynı tarball'ı yükler. Artifact'lerin ömrü 1 gün; sonrasında grup yeniden denemesi
-indirme adımında düşer ve bütün koşu yeniden başlatılmalıdır. Bir makbuz ancak bu koşunun
-derlediği imaj kimliğini ve tarball SHA-256'sını birebir söylüyorsa kabul edilir.
+grup aynı tarball'ı yükler. Bir makbuz ancak bu koşunun derlediği imaj kimliğini ve tarball
+SHA-256'sını birebir söylüyorsa kabul edilir; `keycloak-publish` de tarball'ı `keycloak-build`'in
+çıktılarına karşı yeniden doğrular. `keycloak-package` Touch ID kapısından, `keycloak-publish`
+GHCR girişinden hemen önce yayının hâlâ güncel `production` commit'ini gösterdiğini
+(`git ls-remote`) yeniden denetler: yeniden koşturulan eski bir yayın `:production`'ı ezemez.
+Yayınlar tek tek koşar (`concurrency: keycloak-release`, koşan iptal edilmez).
+
+Artifact'lerin ömrü 3 gün. **Touch ID kanıtı 3 günden uzun sürerse** koşu yeniden
+denenemez (indirme adımı düşer); yayın koşusu baştan başlatılır (production'a aynı ağaçla yeni
+bir commit).
+
+Tek Keycloak'ta bütün aşamaların sırayla koşusu (`INTEGRATION_GROUP=all`) artık ne CI'da ne
+yayında var; `.github/workflows/integration-all.yml` onu haftada bir (pazartesi 03:17 UTC, main)
+ve elle (`gh workflow run integration-all.yml`) koşar. Yalnız test eder: secret, ortam, kayıt
+defteri ya da dağıtım yok.
 
 Yalnız yerel imaj derlemesi için üretim sözleşmesini devralmayan bağımsız
 Compose tanımını kullanın:

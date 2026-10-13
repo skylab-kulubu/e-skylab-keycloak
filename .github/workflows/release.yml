@@ -7,6 +7,12 @@ on:
     tags:
       - 'v*'
 
+# One release at a time; a queued run waits instead of cancelling the one in progress. Each run
+# still checks before its gate and before publishing that it points at current production.
+concurrency:
+  group: keycloak-release
+  cancel-in-progress: false
+
 jobs:
   theme:
     runs-on: ubuntu-latest
@@ -168,7 +174,9 @@ jobs:
           name: keycloak-test-candidate-${{ github.sha }}
           path: ${{ runner.temp }}/keycloak-test-candidate
           if-no-files-found: error
-          retention-days: 1
+          # Three days: long enough for the physical WebAuthn evidence and a re-run of a failed
+          # job (README); a later re-run must start the whole run again.
+          retention-days: 3
           # The tarball is gzip already.
           compression-level: 0
 
@@ -258,7 +266,9 @@ jobs:
           name: keycloak-tested-${{ github.sha }}-${{ matrix.group }}
           path: ${{ runner.temp }}/keycloak-tested
           if-no-files-found: error
-          retention-days: 1
+          # Three days: long enough for the physical WebAuthn evidence and a re-run of a failed
+          # job (README); a later re-run must start the whole run again.
+          retention-days: 3
 
   # Runs only when every integration group passed (needs). It loads the same tarball, requires a
   # receipt from every group of the harness naming exactly that image, then the physical WebAuthn
@@ -316,6 +326,14 @@ jobs:
           done
           test "$(find "$receipt_dir" -type f | wc -l | tr -d ' ')" = "${#group_list[@]}"
 
+      - name: Require the release to still point at current production
+        run: |
+          production_commit=$(git ls-remote --exit-code origin refs/heads/production | cut -f1)
+          if [[ "$production_commit" != "$GITHUB_SHA" ]]; then
+            echo "production moved to $production_commit; this run of $GITHUB_SHA must not continue." >&2
+            exit 1
+          fi
+
       - name: Require physical WebAuthn rollout evidence for this commit
         run: bash tests/check-physical-webauthn-release.sh
 
@@ -358,15 +376,21 @@ jobs:
           name: keycloak-candidate-${{ github.sha }}
           path: ${{ runner.temp }}/keycloak-candidate
           if-no-files-found: error
-          retention-days: 1
+          # Three days: long enough for the physical WebAuthn evidence and a re-run of a failed
+          # job (README); a later re-run must start the whole run again.
+          retention-days: 3
 
+  # Re-runs of a failed publish (gh run rerun --failed) run only this job, so it checks again that
+  # the release still points at current production and binds the bytes to keycloak-build's outputs.
   keycloak-publish:
-    needs: keycloak-package
+    needs: [keycloak-build, keycloak-package]
     runs-on: ubuntu-latest
     permissions: { contents: read, packages: write }
     env:
       KEYCLOAK_TEST_IMAGE: e-skylab-keycloak-candidate:${{ github.sha }}
       PUBLISH_IMAGE: ghcr.io/skylab-kulubu/e-skylab-keycloak
+      IMAGE_ID: ${{ needs.keycloak-build.outputs.image-id }}
+      IMAGE_SHA256: ${{ needs.keycloak-build.outputs.image-sha256 }}
     steps:
       - uses: actions/checkout@v7
 
@@ -387,8 +411,13 @@ jobs:
             cd "$CANDIDATE_DIR"
             sha256sum --check SHA256SUMS
           )
+          # The same bytes keycloak-build built and every integration group tested.
+          [[ $IMAGE_SHA256 =~ ^[0-9a-f]{64}$ && $IMAGE_ID =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf '%s  %s\n' "$IMAGE_SHA256" "$CANDIDATE_DIR/candidate-image.tar.gz" | sha256sum --check --strict
+          test "$(cat "$CANDIDATE_DIR/image-id")" = "$IMAGE_ID"
           gzip -dc "$CANDIDATE_DIR/candidate-image.tar.gz" | docker load
           test "$(docker image inspect --format '{{.Id}}' "$KEYCLOAK_TEST_IMAGE")" = "$(cat "$CANDIDATE_DIR/image-id")"
+          test "$(docker image inspect --format '{{.Id}}' "$KEYCLOAK_TEST_IMAGE")" = "$IMAGE_ID"
 
           provider_dir="$RUNNER_TEMP/keycloak-providers"
           mkdir -p "$provider_dir"
@@ -401,6 +430,14 @@ jobs:
             bash tests/check-theme-contract.sh
 
       - uses: docker/setup-buildx-action@v4
+
+      - name: Require the release to still point at current production
+        run: |
+          production_commit=$(git ls-remote --exit-code origin refs/heads/production | cut -f1)
+          if [[ "$production_commit" != "$GITHUB_SHA" ]]; then
+            echo "production moved to $production_commit; this run of $GITHUB_SHA must not publish." >&2
+            exit 1
+          fi
 
       - name: Login to GHCR
         uses: docker/login-action@v4

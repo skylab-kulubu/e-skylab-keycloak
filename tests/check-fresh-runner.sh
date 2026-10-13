@@ -98,6 +98,14 @@ def assert_order(workflow, job_name)
   end
 end
 
+# A step that checks the tarball's SHA-256 against keycloak-build's output (sha256sum --check
+# --strict on "$IMAGE_SHA256") and the loaded image ID against it (= "$IMAGE_ID").
+def binds_to_build_outputs?(run)
+  lines = run.lines
+  lines.any? { |line| line.include?('"$IMAGE_SHA256"') && line.include?("sha256sum --check --strict") } &&
+    lines.any? { |line| line.include?("docker image inspect") && line.include?('= "$IMAGE_ID"') }
+end
+
 def assert_release_boundary(workflow)
   document = YAML.load_file(workflow, aliases: true)
   triggers = document[true] || document["on"]
@@ -123,11 +131,35 @@ def assert_release_boundary(workflow)
   unless publish_job.fetch("permissions", {}).fetch("packages", nil) == "write"
     abort "#{workflow} keycloak-publish must own the package-write permission"
   end
-  unless publish_job.fetch("needs", nil) == "keycloak-package"
-    abort "#{workflow} keycloak-publish must depend on the tested and physically approved package job"
+  unless Array(publish_job.fetch("needs", nil)).sort == ["keycloak-build", "keycloak-package"]
+    abort "#{workflow} keycloak-publish must depend on the build and the tested and physically approved package job"
   end
-  unless Array(package_job.fetch("needs", nil)).sort == ["keycloak-build", "keycloak-integration"] &&
-      !package_job.key?("if")
+  unless publish_job.fetch("env", {}).fetch("IMAGE_ID", nil) == "${{ needs.keycloak-build.outputs.image-id }}" &&
+      publish_job.fetch("env", {}).fetch("IMAGE_SHA256", nil) == "${{ needs.keycloak-build.outputs.image-sha256 }}"
+    abort "#{workflow} keycloak-publish must bind the candidate to keycloak-build's image ID and SHA-256"
+  end
+  concurrency = document.fetch("concurrency", nil)
+  unless concurrency == { "group" => "keycloak-release", "cancel-in-progress" => false }
+    abort "#{workflow} must run one release at a time without cancelling the one in progress"
+  end
+
+  # A failed test, gate or check must stop the release: no job or step of the release path may
+  # carry on after a failure, and package and publish run only on success.
+  ["keycloak-build", "keycloak-integration", "keycloak-package", "keycloak-publish"].each do |name|
+    job = jobs.fetch(name)
+    if job.key?("continue-on-error") || job.fetch("steps").any? { |step| step.key?("continue-on-error") }
+      abort "#{workflow} #{name} must not continue on error"
+    end
+    unless !job.key?("if") || job["if"].to_s.gsub(/\s|\$\{\{|\}\}/, "") == "success()"
+      abort "#{workflow} #{name} may run only when every job it needs succeeded (if: #{job["if"]})"
+    end
+    job.fetch("steps").each do |step|
+      if step.fetch("if", "").to_s =~ /always\(|cancelled\(|failure\(/
+        abort "#{workflow} #{name} step #{step.fetch("name", step["uses"])} must not run after a failure"
+      end
+    end
+  end
+  unless Array(package_job.fetch("needs", nil)).sort == ["keycloak-build", "keycloak-integration"]
     abort "#{workflow} keycloak-package must run only when the build and every integration group passed"
   end
   unless package_job.fetch("environment", nil) == "keycloak-production"
@@ -149,17 +181,15 @@ def assert_release_boundary(workflow)
     end
   end
   packaging = package_steps.fetch(package_index).fetch("run", "")
-  for required_check in ["sha256sum --check", "$IMAGE_SHA256", "$IMAGE_ID", 'cp "$tested"']
-    unless packaging.include?(required_check)
-      abort "#{workflow} packaging must package the verified tested tarball (missing #{required_check})"
-    end
+  unless binds_to_build_outputs?(packaging) && packaging.include?('cp "$tested"')
+    abort "#{workflow} packaging must package the tarball verified against keycloak-build's outputs"
   end
   if package_steps.any? { |step| step["uses"] == "docker/build-push-action@v7" }
     abort "#{workflow} keycloak-package must load the tested artifact, not rebuild it"
   end
 
   upload = package_steps.fetch(upload_index).fetch("with")
-  unless upload["name"] == "keycloak-candidate-${{ github.sha }}" && upload["retention-days"] == 1
+  unless upload["name"] == "keycloak-candidate-${{ github.sha }}" && upload["retention-days"] == 3
     abort "#{workflow} must bind the short-lived candidate artifact to the release commit"
   end
 
@@ -193,6 +223,9 @@ def assert_release_boundary(workflow)
       abort "#{workflow} publish verification is missing #{required_check}"
     end
   end
+  unless binds_to_build_outputs?(verification)
+    abort "#{workflow} publish verification must check the tarball and image against keycloak-build's outputs"
+  end
   if publish_steps.any? { |step| step["uses"] == "docker/build-push-action@v7" }
     abort "#{workflow} keycloak-publish must load the tested artifact, not rebuild it"
   end
@@ -202,6 +235,17 @@ def assert_release_boundary(workflow)
   end&.fetch("run", "")
   unless source_guard&.include?("origin/production") && !source_guard.include?("origin/main")
     abort "#{workflow} must bind branch and version releases to current production"
+  end
+  # Re-runs of package or publish do not re-run keycloak-build: both check production again,
+  # package before the physical WebAuthn gate, publish before it can log in to the registry.
+  [[package_steps, gate_index, "keycloak-package", "the physical WebAuthn gate"],
+   [publish_steps, login_index, "keycloak-publish", "the registry login"]].each do |steps, before_index, name, before|
+    guard_index = steps.index { |step| step.fetch("name", "") == "Require the release to still point at current production" }
+    guard = guard_index && steps.fetch(guard_index).fetch("run", "")
+    unless guard && guard_index < before_index && guard.include?("git ls-remote --exit-code origin refs/heads/production") &&
+        guard.include?('"$GITHUB_SHA"') && !guard.include?("main")
+      abort "#{workflow} #{name} must check that the release still points at current production before #{before}"
+    end
   end
 
   publication = publish_steps.fetch(publish_index).fetch("run", "")
@@ -289,7 +333,7 @@ def assert_release_candidate_flow(workflow)
     abort "#{workflow} keycloak-build must leave the harness to keycloak-integration"
   end
   upload = build_steps.fetch(upload_index).fetch("with")
-  unless upload["name"] == sha_artifact && upload["retention-days"] == 1
+  unless upload["name"] == sha_artifact && upload["retention-days"] == 3
     abort "#{workflow} must bind the short-lived test candidate artifact to the release commit"
   end
   outputs = build_job.fetch("outputs", {})
@@ -325,8 +369,8 @@ def assert_release_candidate_flow(workflow)
     abort "#{workflow} keycloak-integration must run static checks, verify and load the candidate, test it, then record it"
   end
   verification = steps.fetch(verify_index).fetch("run", "")
-  for required_check in ["sha256sum --check", "$IMAGE_SHA256", "docker load", "$IMAGE_ID"]
-    abort "#{workflow} keycloak-integration verification is missing #{required_check}" unless verification.include?(required_check)
+  unless binds_to_build_outputs?(verification) && verification.include?("docker load")
+    abort "#{workflow} keycloak-integration must load the candidate verified against keycloak-build's outputs"
   end
   if steps.any? { |step| step["uses"] == "docker/build-push-action@v7" }
     abort "#{workflow} keycloak-integration must load the built candidate, not rebuild it"
@@ -335,8 +379,30 @@ def assert_release_candidate_flow(workflow)
     abort "#{workflow} keycloak-integration must not override the job's tested candidate in the integration step"
   end
   receipt = steps.fetch(receipt_index).fetch("with")
-  unless receipt["name"] == "keycloak-tested-${{ github.sha }}-${{ matrix.group }}" && receipt["retention-days"] == 1
+  unless receipt["name"] == "keycloak-tested-${{ github.sha }}-${{ matrix.group }}" && receipt["retention-days"] == 3
     abort "#{workflow} every group's receipt must be bound to the release commit and its group"
+  end
+end
+
+# integration-all.yml runs the whole harness (INTEGRATION_GROUP=all) weekly and by hand; it only tests.
+def assert_integration_all(workflow)
+  document = YAML.load_file(workflow, aliases: true)
+  triggers = document[true] || document["on"]
+  unless triggers.keys.sort == ["schedule", "workflow_dispatch"]
+    abort "#{workflow} must run only on its schedule and by hand"
+  end
+  unless document.fetch("permissions", nil) == { "contents" => "read" }
+    abort "#{workflow} must read the repository only"
+  end
+  jobs = document.fetch("jobs")
+  abort "#{workflow} must have the single job integration-all" unless jobs.keys == ["integration-all"]
+  job = jobs.fetch("integration-all")
+  unless job.fetch("env").fetch("INTEGRATION_GROUP") == "all" && !job.key?("permissions") && !job.key?("environment")
+    abort "#{workflow} integration-all must run every stage, without its own permissions or an environment"
+  end
+  text = File.read(workflow, encoding: "UTF-8")
+  if text.include?("secrets.") || text.include?("docker/login-action") || text =~ /push:\s*true/
+    abort "#{workflow} must not read secrets, log in to a registry or push"
   end
 end
 
@@ -345,6 +411,8 @@ assert_order(File.join(root, ".github/workflows/ci.yml"), "integration-group")
 assert_integration_groups(File.join(root, ".github/workflows/ci.yml"), File.join(root, "tests/run-integration.sh"))
 assert_release_candidate_flow(File.join(root, ".github/workflows/release.yml"))
 assert_release_boundary(File.join(root, ".github/workflows/release.yml"))
+assert_order(File.join(root, ".github/workflows/integration-all.yml"), "integration-all")
+assert_integration_all(File.join(root, ".github/workflows/integration-all.yml"))
 RUBY
 
 printf 'Fresh-runner portability, explicit candidate wiring and workflow order checks passed.\n'

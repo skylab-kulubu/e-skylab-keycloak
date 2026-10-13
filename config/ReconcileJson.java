@@ -71,10 +71,16 @@ import java.util.TreeMap;
  *   config-value NAME VALUE     stdin is one authenticator config ({id, alias, config}); prints it
  *                               with config.NAME = VALUE and exits 3 when that changes it, prints
  *                               nothing and exits 0 when config.NAME is already VALUE.
+ *   same-shape OTHER.json       stdin and OTHER are the flat execution lists of two authentication
+ *                               flows; exits 0 when both have the same shape (the same executions in
+ *                               the same order, each with the same level, index, requirement,
+ *                               provider and sub-flow-or-step kind; ids, names, descriptions,
+ *                               priorities and authenticator configs are not compared) and 4 with
+ *                               the first difference on stderr otherwise.
  *
  * Exit status 0 means "printed successfully", 3 means "changed" (user-profile and config-value),
- * 4 "refused" (password-form and first-broker-login) and 1 an invalid input. Nothing here prints
- * secrets: all inputs are configuration documents.
+ * 4 "refused" (password-form, first-broker-login and same-shape) and 1 an invalid input. Nothing
+ * here prints secrets: all inputs are configuration documents.
  */
 public final class ReconcileJson {
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -104,6 +110,7 @@ public final class ReconcileJson {
             case "password-form" -> System.exit(passwordForm(args, readStdin(), out));
             case "first-broker-login" -> System.exit(firstBrokerLogin(args, readStdin(), out));
             case "config-value" -> System.exit(configValue(args, readStdin(), out));
+            case "same-shape" -> System.exit(sameShape(requireFile(args), readStdin()));
             default -> usage();
         }
     }
@@ -114,7 +121,7 @@ public final class ReconcileJson {
                 + "  |  ReconcileJson field NAME  |  ReconcileJson role-attribute NAME"
                 + "  |  ReconcileJson realm-attribute NAME VALUE"
                 + "  |  ReconcileJson password-form FROM TO  |  ReconcileJson first-broker-login STEP"
-                + "  |  ReconcileJson config-value NAME VALUE");
+                + "  |  ReconcileJson config-value NAME VALUE  |  ReconcileJson same-shape OTHER");
         System.exit(1);
     }
 
@@ -538,6 +545,30 @@ public final class ReconcileJson {
                     + verification.path("priority").asInt() + "\t" + verification.path("requirement").asText());
         }
         return 0;
+    }
+
+    // ------------------------------------------------------------------ same-shape
+
+    private static int sameShape(JsonNode other, JsonNode executions) {
+        if (!other.isArray() || !executions.isArray()) {
+            usage();
+        }
+        int count = Math.max(other.size(), executions.size());
+        for (int i = 0; i < count; i++) {
+            String want = i < other.size() ? shapeOf(other.get(i)) : "nothing";
+            String have = i < executions.size() ? shapeOf(executions.get(i)) : "nothing";
+            if (!want.equals(have)) {
+                return refuse("execution " + (i + 1) + " is " + have + ", not " + want);
+            }
+        }
+        return 0;
+    }
+
+    private static String shapeOf(JsonNode execution) {
+        boolean subFlow = execution.path("authenticationFlow").asBoolean(false);
+        return (subFlow ? "sub-flow" : "step " + execution.path("providerId").asText("?"))
+                + " (level " + execution.path("level").asInt() + ", index " + execution.path("index").asInt()
+                + ", " + execution.path("requirement").asText("?") + ")";
     }
 
     // ------------------------------------------------------------------ config-value

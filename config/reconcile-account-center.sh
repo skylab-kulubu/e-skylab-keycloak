@@ -50,10 +50,17 @@ RESET_CHOOSE_USER=${KEYCLOAK_RESET_CHOOSE_USER:-$SKY_RESET_CHOOSE_USER}
 # in shape, so a full reconciliation never turns the feature on or off. An identity provider with its own first login flow override ignores the realm
 # binding; the reconciler identity cannot read identity providers, so an operator session
 # (KEYCLOAK_RECONCILE_ONLY=first-broker-login) makes OBS follow the realm binding once.
+# Production's OBS has its own override, YTU_IDP_LEGACY_FIRST_BROKER_FLOWS: an Admin Console
+# duplicate of the built-in flow (first named "first broker login kopyasi", then renamed), made by
+# hand before 2026-09-21. With on, the operator session removes it too, but only while that flow has
+# the built-in flow's shape (see reconcile_ytu_idp_first_login_flow); the flow itself stays, and
+# off writes the override back from the note on OBS (YTU_IDP_PREVIOUS_FLOW_SETTING).
 FIRST_BROKER_FLOW_BUILT_IN='first broker login'
 FIRST_BROKER_FLOW_COPY_ALIAS='sky first broker login'
 YTU_FIRST_LOGIN_STEP=sky-ytu-first-login
 YTU_IDP_ALIAS=OBS
+YTU_IDP_LEGACY_FIRST_BROKER_FLOWS=('first broker login for obs' 'first broker login kopyasi')
+YTU_IDP_PREVIOUS_FLOW_SETTING=skyFirstLoginFlowBeforeYtuStep
 REVIEW_PROFILE_SETTING=update.profile.on.first.login
 YTU_FIRST_LOGIN=${KEYCLOAK_YTU_FIRST_LOGIN:-keep}
 # eskylab-login-ux 21: once, at the end of a first YTÜ login that opened an account with the School
@@ -794,15 +801,27 @@ bind_first_broker_login_flow() {
   log "realm first broker login flow binding: updated ($from -> $to)"
 }
 
-# OBS follows the realm's first broker login flow binding when it has no override of its own. Its
-# override is cleared when it names one of the two flows above (with KEYCLOAK_YTU_FIRST_LOGIN=on),
-# and with off when it names the copy, so the rollback reaches OBS too; any other override is
-# reported and kept. Sync mode FORCE is reported loudly: the SKY LAB step then leaves an address
-# another account already has unwritten (Keycloak would copy it onto the account being linked). The reconciler identity cannot read identity providers
-# (no identity provider permissions, by design), so a reconcile run only says so; an operator
-# session (KEYCLOAK_RECONCILE_ONLY=first-broker-login) does the check.
+# OBS follows the realm's first broker login flow binding when it has no override of its own.
+# With KEYCLOAK_YTU_FIRST_LOGIN=on its override is cleared when it names
+#   - one of the two flows above, or
+#   - one of YTU_IDP_LEGACY_FIRST_BROKER_FLOWS (production's hand-made duplicate of the built-in
+#     flow), and only when that flow has the built-in flow's shape: the same executions in the same
+#     order, levels, indexes and requirements (ReconcileJson same-shape; ids, names, priorities and
+#     config values are not compared, so its review profile "on" does not count). OBS then gets
+#     what the copy adds and nothing it had is lost. A flow of another shape is refused with a
+#     WARNING and nothing on OBS changes (exit status 0: the realm binding is already done and
+#     harmless; the operator reads the warning). The cleared alias is noted on OBS itself, in its
+#     config YTU_IDP_PREVIOUS_FLOW_SETTING, in the same update; the flow is kept, unused.
+# With off the override is written back from that note (when the flow still exists) and the note
+# emptied, so the rollback gives back exactly the pre-on state; an override naming the copy is
+# cleared as before. The note, not a fixed name, decides: off restores only what on removed, never
+# an override someone removed by hand. Any other override is reported and kept. Sync mode FORCE is
+# reported loudly: the SKY LAB step then leaves an address another account already has unwritten
+# (Keycloak would copy it onto the account being linked). The reconciler identity cannot read
+# identity providers (no identity provider permissions, by design), so a reconcile run only says
+# so; an operator session (KEYCLOAK_RECONCILE_ONLY=first-broker-login) does the check.
 reconcile_ytu_idp_first_login_flow() {
-  local idp_file stderr_file override
+  local idp_file stderr_file override previous
   idp_file=$(mktemp "$WORK_DIR/idp.XXXXXX")
   stderr_file=$(mktemp "$WORK_DIR/idp-stderr.XXXXXX")
   if ! kcadm get "identity-provider/instances/$YTU_IDP_ALIAS" -r "$TARGET_REALM" >"$idp_file" 2>"$stderr_file"; then
@@ -821,21 +840,86 @@ reconcile_ytu_idp_first_login_flow() {
     warn "identity provider $YTU_IDP_ALIAS syncs with FORCE: a first YTÜ login whose School e-mail or username another account already has opens the review profile page instead of linking that account; turn the step off (KEYCLOAK_YTU_FIRST_LOGIN=off) before keeping OBS on FORCE"
   fi
   override=$(json_tool field firstBrokerLoginFlowAlias <"$idp_file")
-  if [[ -z $override ]]; then
+  previous=$(json_tool field config <"$idp_file" | json_tool field "$YTU_IDP_PREVIOUS_FLOW_SETTING")
+  if [[ $YTU_FIRST_LOGIN == off && ( -z $override || $override == "$FIRST_BROKER_FLOW_COPY_ALIAS" ) && -n $previous ]]; then
+    restore_ytu_idp_first_login_flow "$previous"
+  elif [[ -z $override ]]; then
     log "identity provider $YTU_IDP_ALIAS first login flow: unchanged (follows the realm binding)"
   elif [[ ( $YTU_FIRST_LOGIN == on && ( $override == "$FIRST_BROKER_FLOW_BUILT_IN" || $override == "$FIRST_BROKER_FLOW_COPY_ALIAS" ) ) \
     || ( $YTU_FIRST_LOGIN == off && $override == "$FIRST_BROKER_FLOW_COPY_ALIAS" ) ]]; then
-    kcadm update "identity-provider/instances/$YTU_IDP_ALIAS" -r "$TARGET_REALM" -s 'firstBrokerLoginFlowAlias=' >/dev/null
-    override=$(kcadm_json "identity-provider/instances/$YTU_IDP_ALIAS" -r "$TARGET_REALM" | json_tool field firstBrokerLoginFlowAlias)
-    if [[ -n $override ]]; then
-      printf 'Identity provider %s still overrides the first login flow (%s); inspect it in the Admin Console\n' \
-        "$YTU_IDP_ALIAS" "$override" >&2
-      return 1
-    fi
+    set_ytu_idp_first_login_flow ''
     log "identity provider $YTU_IDP_ALIAS first login flow: updated (its override is removed; it follows the realm binding)"
+  elif is_ytu_idp_legacy_flow "$override"; then
+    if [[ $YTU_FIRST_LOGIN == on ]]; then
+      remove_ytu_idp_legacy_flow "$override"
+    else
+      log "identity provider $YTU_IDP_ALIAS first login flow: unchanged (keeps its own first login flow '$override', as before KEYCLOAK_YTU_FIRST_LOGIN=on)"
+    fi
   else
     warn "identity provider $YTU_IDP_ALIAS keeps its own first login flow '$override' and ignores the realm binding"
   fi
+}
+
+is_ytu_idp_legacy_flow() {
+  local candidate
+  for candidate in "${YTU_IDP_LEGACY_FIRST_BROKER_FLOWS[@]}"; do
+    [[ $1 == "$candidate" ]] && return 0
+  done
+  return 1
+}
+
+# set_ytu_idp_first_login_flow OVERRIDE [NOTE]: one update of OBS, its override and (when given)
+# the note YTU_IDP_PREVIOUS_FLOW_SETTING, read back. Without NOTE the note is left as it is.
+set_ytu_idp_first_login_flow() {
+  local want_override=$1 idp_file override previous
+  local arguments=(-s "firstBrokerLoginFlowAlias=$want_override")
+  if [[ $# == 2 ]]; then
+    arguments+=(-s "config.$YTU_IDP_PREVIOUS_FLOW_SETTING=$2")
+  fi
+  kcadm update "identity-provider/instances/$YTU_IDP_ALIAS" -r "$TARGET_REALM" "${arguments[@]}" >/dev/null
+  idp_file=$(mktemp "$WORK_DIR/idp-after.XXXXXX")
+  kcadm_json "identity-provider/instances/$YTU_IDP_ALIAS" -r "$TARGET_REALM" >"$idp_file"
+  override=$(json_tool field firstBrokerLoginFlowAlias <"$idp_file")
+  previous=$(json_tool field config <"$idp_file" | json_tool field "$YTU_IDP_PREVIOUS_FLOW_SETTING")
+  if [[ $override != "$want_override" || ( $# == 2 && $previous != "$2" ) ]]; then
+    printf "Identity provider %s overrides the first login flow with '%s' (note: '%s') after the update, not '%s'; inspect it in the Admin Console\n" \
+      "$YTU_IDP_ALIAS" "$override" "$previous" "$want_override" >&2
+    return 1
+  fi
+}
+
+# on: OBS's override names a legacy duplicate of the built-in flow. Cleared (and noted) only while
+# that flow has the built-in flow's shape.
+remove_ytu_idp_legacy_flow() {
+  local legacy=$1 legacy_file built_in_file difference_file bound
+  legacy_file=$(mktemp "$WORK_DIR/legacy-flow.XXXXXX")
+  built_in_file=$(mktemp "$WORK_DIR/built-in-flow.XXXXXX")
+  difference_file=$(mktemp "$WORK_DIR/flow-shape.XXXXXX")
+  kcadm_json "authentication/flows/$(flow_alias_path "$legacy")/executions" -r "$TARGET_REALM" >"$legacy_file"
+  kcadm_json "authentication/flows/$(flow_alias_path "$FIRST_BROKER_FLOW_BUILT_IN")/executions" -r "$TARGET_REALM" >"$built_in_file"
+  if ! json_tool same-shape "$built_in_file" <"$legacy_file" 2>"$difference_file"; then
+    warn "identity provider $YTU_IDP_ALIAS: first login flow binding refused (its override '$legacy' is not shaped like the built-in '$FIRST_BROKER_FLOW_BUILT_IN': $(head -n 1 "$difference_file"); OBS keeps it and ignores the realm binding; nothing on OBS was changed; inspect the flow in the Admin Console)"
+    return 0
+  fi
+  set_ytu_idp_first_login_flow '' "$legacy"
+  bound=$(kcadm_json "realms/$TARGET_REALM" --fields firstBrokerLoginFlow | json_tool field firstBrokerLoginFlow)
+  log "identity provider $YTU_IDP_ALIAS: first login flow binding removed (follows realm binding '$bound'; previous '$legacy' kept, unused)"
+}
+
+# off: OBS's override goes back to the alias the on run noted, while that flow still exists.
+restore_ytu_idp_first_login_flow() {
+  local previous=$1 flow_id
+  if flow_id=$(optional_lookup flow_id_by_alias "$previous"); then
+    :
+  else
+    return $?
+  fi
+  if [[ -z $flow_id ]]; then
+    warn "identity provider $YTU_IDP_ALIAS: first login flow binding not restored (the flow '$previous' it had before KEYCLOAK_YTU_FIRST_LOGIN=on is absent; OBS follows the realm binding)"
+    return 0
+  fi
+  set_ytu_idp_first_login_flow "$previous" ''
+  log "identity provider $YTU_IDP_ALIAS: first login flow binding restored ('$previous', as before KEYCLOAK_YTU_FIRST_LOGIN=on)"
 }
 
 # eskylab-login-ux 21: the realm's required action sky-personal-email-offer (see

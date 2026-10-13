@@ -72,6 +72,8 @@ describe("Web handoff failure page", () => {
       expect(links).toEqual(["#sl-handoff-failed-main", "https://skyl.app/kvkk-metni"]);
       expect(container.querySelector('[data-skylab-logo-animation="draw"]')).not.toBeNull();
       expect(container.querySelector("footer.sl-legacy-footer")).toHaveAttribute("role", "contentinfo");
+      // The developer credit stays, as plain text: this page offers as little to click as possible.
+      expect(container.querySelector("span.sl-legacy-credit")).toHaveTextContent("Developed by Yusuf Açmacı");
       unmount();
     }
   });

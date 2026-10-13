@@ -119,11 +119,22 @@ describe("the e-SKY LAB landing page", () => {
   it("links only to the allowed addresses and never to the Admin Console", () => {
     const { container } = render(<WelcomePage />);
 
-    for (const link of container.querySelectorAll("a")) {
+    for (const link of container.querySelectorAll("a:not(.sl-legacy-credit)")) {
       expect(allowedLinks, link.outerHTML).toContain(link.getAttribute("href"));
       expect(link.getAttribute("target")).toBeNull();
     }
     expect(container.innerHTML).not.toMatch(/\/admin\/|realms\/master|skyl\.app/);
+  });
+
+  it("links the developer credit to Yusuf Açmacı's LinkedIn in a new tab", () => {
+    render(<WelcomePage />);
+
+    const credit = screen.getByRole("contentinfo").querySelector(".sl-legacy-credit");
+    expect(credit?.tagName).toBe("A");
+    expect(screen.getByRole("link", { name: "Developed by Yusuf Açmacı" })).toBe(credit);
+    expect(credit).toHaveAttribute("href", "https://www.linkedin.com/in/yusuf-acmaci/");
+    expect(credit).toHaveAttribute("target", "_blank");
+    expect(credit).toHaveAttribute("rel", "noopener noreferrer");
   });
 
   it("gives every in-page link a target on the page", () => {

@@ -204,6 +204,15 @@ uuid_by() {
   done
 }
 
+# id_of LINES NAME: the id of the "id,name" line whose name is NAME (the image has no awk).
+id_of() {
+  local id name
+  while IFS=, read -r id name; do
+    if [[ $name == "$2" ]]; then printf '%s\n' "$id"; fi
+  done <<<"$1"
+  return 0
+}
+
 # group_id PATH: the id of the group at exactly this path (empty when absent).
 group_id() {
   [[ $1 =~ ^(/[A-Za-z0-9_.-]+)+$ ]] || { printf 'refusing the group path %s\n' "$1" >&2; exit 2; }
@@ -347,7 +356,7 @@ for leaf in "${LEAVES[@]}"; do
   role_lines=$(csv "clients/$uuid/roles" id,name -q first=0 -q max=10000)
   bodies=()
   for role in $roles; do
-    role_id=$(awk -F, -v r="$role" '$2 == r { print $1 }' <<<"$role_lines")
+    role_id=$(id_of "$role_lines" "$role")
     if [[ -z $role_id ]]; then
       warning "$path: the role $client/$role does not exist in realm $TARGET_REALM; skipped (not created)"
       continue 2
@@ -409,7 +418,7 @@ for leaf in "${LEAVES[@]}"; do
 done
 
 for name in "${!existing[@]}"; do
-  [[ " ${managed[*]} " == *" $name "* ]] || warning "/$ROOT/$name is not in $(basename "$CONFIG_FILE"); left as it is"
+  [[ " ${managed[*]} " == *" $name "* ]] || warning "/$ROOT/$name is not in ${CONFIG_FILE##*/}; left as it is"
 done
 
 # --- the audit (read only, counts and group paths only) --------------------------------------------

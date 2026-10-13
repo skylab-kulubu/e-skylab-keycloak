@@ -37,6 +37,7 @@ export default function HandoffFailed(props: HandoffFailedProps) {
   return (
     <LegacyFrame
       {...getLegacyChromeProps(i18n, { kvkk: "action", languageMenu: false })}
+      creditLinked={false}
       mainId="sl-handoff-failed-main"
       titleId="sl-handoff-failed-title"
       title={sentence}

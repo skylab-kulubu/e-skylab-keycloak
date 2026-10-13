@@ -524,6 +524,20 @@ a:hover {
   font-size: 0.75rem;
 }
 
+/* The credit is a link (LinkedIn) but keeps its quiet look; it underlines on hover like SkyMail's. */
+.sl-legacy-footer a.sl-legacy-credit {
+  width: fit-content;
+  margin-inline: auto;
+  color: var(--sl-legacy-subtle);
+  font-weight: inherit;
+  text-decoration: none;
+}
+
+.sl-legacy-footer a.sl-legacy-credit:hover {
+  color: var(--sl-legacy-muted);
+  text-decoration: underline;
+}
+
 .sl-legacy-languages {
   margin-top: 0.75rem;
 }

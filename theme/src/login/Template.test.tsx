@@ -61,6 +61,12 @@ describe("every Keycloak page renders inside the login page chrome", () => {
     expect(footer).toHaveAttribute("role", "contentinfo");
     expect(footer?.querySelector('a[href="https://skyl.app/kvkk-metni"]')).toHaveTextContent("KVKK Metni");
     expect(footer).toHaveTextContent("e-skylab by WEBLAB");
+    // Linked to LinkedIn, except on the Web handoff failure page, which offers as little to click as possible.
+    const creditSelector =
+      pageId === "sky-handoff-failed.ftl"
+        ? "span.sl-legacy-credit"
+        : 'a.sl-legacy-credit[href="https://www.linkedin.com/in/yusuf-acmaci/"]';
+    expect(footer?.querySelector(creditSelector)).toHaveTextContent("Developed by Yusuf Açmacı");
     if (pagesWithoutLanguageMenu.includes(pageId)) {
       expect(footer?.querySelector("nav.sl-legacy-languages")).toBeNull();
     } else {

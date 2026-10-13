@@ -71,6 +71,8 @@ while IFS= read -r link; do
       'href="https://admin.yildizskylab.com/"' | 'href="https://mail.yildizskylab.com/"' | \
       'href="https://place.yildizskylab.com/"' | 'href="https://yildizskylab.com/"' | \
       'href="https://yildizskylab.com/kvkk-metni.pdf"' | 'href="#'*'"') ;;
+    # The developer credit, the one link that opens a new tab (LegacyFrame's footer has it too).
+    'href="https://www.linkedin.com/in/yusuf-acmaci/"') ;;
     *) fail "index.ftl links to an address outside the allowlist: $link" ;;
   esac
 done <<<"$links"

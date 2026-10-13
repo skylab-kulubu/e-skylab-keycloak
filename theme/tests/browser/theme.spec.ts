@@ -9,6 +9,16 @@ test("login uses semantic landmarks and preserves remember-me for passkeys", asy
   await expect(page.getByRole("button", { name: "YTÜ Öğrencisi Değilim" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Erişim anahtarı ile giriş yap" })).toBeVisible();
   await expect(page.getByRole("contentinfo")).toContainText("e-skylab by WEBLAB");
+  await expect(page.getByRole("contentinfo").getByRole("link", { name: "Developed by Yusuf Açmacı" })).toHaveAttribute(
+    "href",
+    "https://www.linkedin.com/in/yusuf-acmaci/"
+  );
+  // The credit stays the quiet line it was before it became a link: not bold, no underline until hover.
+  const credit = page.locator(".sl-legacy-credit");
+  await expect(credit).toHaveCSS("font-weight", "400");
+  await expect(credit).toHaveCSS("text-decoration-line", "none");
+  await credit.hover();
+  await expect(credit).toHaveCSS("text-decoration-line", "underline");
 
   const logo = page.locator('[data-skylab-logo-animation="draw"]');
   await expect(logo).toBeVisible();
@@ -161,6 +171,7 @@ test("Web handoff failure page shows one sentence per reason in light and dark, 
       await expect(page.locator("form, input, button, select, textarea")).toHaveCount(0);
       await expect(page.getByRole("navigation", { name: "Dil seçimi" })).toHaveCount(0);
       await expect(page.locator("a")).toHaveCount(2);
+      await expect(page.getByRole("contentinfo")).toContainText("Developed by Yusuf Açmacı");
       await expect(page.getByRole("contentinfo").getByRole("link", { name: "KVKK Metni" })).toBeVisible();
       await expect(page).toHaveTitle(`${sentence.replace(/\.$/, "")} · SKY LAB`);
     }

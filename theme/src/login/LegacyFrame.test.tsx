@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import LegacyFrame from "./LegacyFrame";
 
@@ -13,18 +13,31 @@ const chrome = {
 
 describe("LegacyFrame SKY LAB identity", () => {
   it("links the developer credit to Yusuf Açmacı's LinkedIn in a new tab", () => {
-    render(
+    const { container } = render(
       <LegacyFrame {...chrome} title="Giriş yap">
         <p>İçerik</p>
       </LegacyFrame>
     );
 
-    const credit = screen.getByRole("contentinfo").querySelector(".sl-legacy-credit");
+    const credit = container.querySelector("footer .sl-legacy-credit");
     expect(credit?.tagName).toBe("A");
-    expect(screen.getByRole("link", { name: "Developed by Yusuf Açmacı" })).toBe(credit);
+    expect(within(container).getByRole("link", { name: "Developed by Yusuf Açmacı" })).toBe(credit);
     expect(credit).toHaveAttribute("href", "https://www.linkedin.com/in/yusuf-acmaci/");
     expect(credit).toHaveAttribute("target", "_blank");
     expect(credit).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
+  it("keeps the developer credit as plain text when the page asks for no link", () => {
+    const { container } = render(
+      <LegacyFrame {...chrome} creditLinked={false} title="Bağlantı geçersiz.">
+        {null}
+      </LegacyFrame>
+    );
+
+    const credit = container.querySelector("footer .sl-legacy-credit");
+    expect(credit?.tagName).toBe("SPAN");
+    expect(credit).toHaveTextContent("Developed by Yusuf Açmacı");
+    expect(container.querySelector("footer a.sl-legacy-credit")).toBeNull();
   });
 
   it("renders the Forms-style vector drawing instead of a static logo image", () => {

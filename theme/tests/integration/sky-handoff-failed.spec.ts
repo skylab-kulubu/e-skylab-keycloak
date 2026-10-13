@@ -51,11 +51,7 @@ for (const colorScheme of ["light", "dark"] as const) {
         await expect(page.locator('[data-skylab-logo-animation="draw"] path')).toHaveCount(19);
         await expect(page.locator("form, input, button, select, textarea")).toHaveCount(0);
         const links = await page.locator("a").evaluateAll(anchors => anchors.map(anchor => anchor.getAttribute("href")));
-        expect(links, reason).toEqual([
-          "#sl-handoff-failed-main",
-          "https://skyl.app/kvkk-metni",
-          "https://www.linkedin.com/in/yusuf-acmaci/"
-        ]);
+        expect(links, reason).toEqual(["#sl-handoff-failed-main", "https://skyl.app/kvkk-metni"]);
         await expect(page).toHaveTitle(`${sentence.replace(/\.$/, "")} · SKY LAB`);
         expect(await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme)).toBe("dark");
         // skylcn-ui's dark --sidebar (#0a0a0a) through --sl-legacy-bg, whatever the phone's scheme

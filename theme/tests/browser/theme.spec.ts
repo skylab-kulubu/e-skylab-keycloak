@@ -170,7 +170,8 @@ test("Web handoff failure page shows one sentence per reason in light and dark, 
       await expect(page.locator(".sl-legacy-intro p")).toHaveText("Uygulamaya dönüp tekrar dene.");
       await expect(page.locator("form, input, button, select, textarea")).toHaveCount(0);
       await expect(page.getByRole("navigation", { name: "Dil seçimi" })).toHaveCount(0);
-      await expect(page.locator("a")).toHaveCount(3);
+      await expect(page.locator("a")).toHaveCount(2);
+      await expect(page.getByRole("contentinfo")).toContainText("Developed by Yusuf Açmacı");
       await expect(page.getByRole("contentinfo").getByRole("link", { name: "KVKK Metni" })).toBeVisible();
       await expect(page).toHaveTitle(`${sentence.replace(/\.$/, "")} · SKY LAB`);
     }

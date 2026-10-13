@@ -787,6 +787,25 @@ edit_first_broker_login_flow() {
     printf "Flow '%s' is not in place after the edits; inspect it in the Admin Console\n" "$flow_alias" >&2
     return 1
   fi
+  check_first_broker_login_copy_shape "$flow_alias" "$live_file"
+}
+
+# Apart from the step and the disabled link verification, the copy must stay the built-in flow
+# (eskylab-login-ux 22, review F2): every first YTÜ login runs it, and an execution added by hand
+# (idp-auto-link, idp-detect-existing-broker-user, idp-confirm-override-link, …) would change who can
+# link which account. A difference is reported loudly (the release wizards treat it as a failure)
+# and nothing is changed: removing someone's execution is a decision, not a repair. A Keycloak
+# upgrade that changes the built-in flow is reported the same way (the copy does not follow it).
+check_first_broker_login_copy_shape() {
+  local flow_alias=$1 live_file=$2 built_in_file difference_file
+  built_in_file=$(mktemp "$WORK_DIR/built-in-flow.XXXXXX")
+  difference_file=$(mktemp "$WORK_DIR/copy-shape.XXXXXX")
+  kcadm_json "authentication/flows/$(flow_alias_path "$FIRST_BROKER_FLOW_BUILT_IN")/executions" -r "$TARGET_REALM" >"$built_in_file"
+  if json_tool same-shape "$built_in_file" "$YTU_FIRST_LOGIN_STEP" <"$live_file" 2>"$difference_file"; then
+    log "shape of flow '$flow_alias': unchanged (the built-in '$FIRST_BROKER_FLOW_BUILT_IN' plus the SKY LAB edits)"
+  else
+    warn "flow '$flow_alias' is not shaped like the built-in '$FIRST_BROKER_FLOW_BUILT_IN' apart from the SKY LAB edits: $(head -n 1 "$difference_file"); nothing was changed; inspect it in the Admin Console"
+  fi
 }
 
 bind_first_broker_login_flow() {
@@ -812,9 +831,10 @@ bind_first_broker_login_flow() {
 #     WARNING and nothing on OBS changes (exit status 0: the realm binding is already done and
 #     harmless; the operator reads the warning). The cleared alias is noted on OBS itself, in its
 #     config YTU_IDP_PREVIOUS_FLOW_SETTING, in the same update; the flow is kept, unused.
-# With off the override is written back from that note (when the flow still exists) and the note
-# emptied, so the rollback gives back exactly the pre-on state; an override naming the copy is
-# cleared as before. The note, not a fixed name, decides: off restores only what on removed, never
+# With off the override is written back from that note and the note emptied, so the rollback gives
+# back exactly the pre-on state, but only while the note names one of YTU_IDP_LEGACY_FIRST_BROKER_FLOWS
+# and that flow still exists with the built-in flow's shape (otherwise a WARNING, and OBS follows the
+# built-in binding); an override naming the copy is cleared as before. The note, not a fixed name, decides: off restores only what on removed, never
 # an override someone removed by hand. Any other override is reported and kept. Sync mode FORCE is
 # reported loudly: the SKY LAB step then leaves an address another account already has unwritten
 # (Keycloak would copy it onto the account being linked). The reconciler identity cannot read
@@ -842,7 +862,7 @@ reconcile_ytu_idp_first_login_flow() {
   override=$(json_tool field firstBrokerLoginFlowAlias <"$idp_file")
   previous=$(json_tool field config <"$idp_file" | json_tool field "$YTU_IDP_PREVIOUS_FLOW_SETTING")
   if [[ $YTU_FIRST_LOGIN == off && ( -z $override || $override == "$FIRST_BROKER_FLOW_COPY_ALIAS" ) && -n $previous ]]; then
-    restore_ytu_idp_first_login_flow "$previous"
+    restore_ytu_idp_first_login_flow "$previous" "$override"
   elif [[ -z $override ]]; then
     log "identity provider $YTU_IDP_ALIAS first login flow: unchanged (follows the realm binding)"
   elif [[ ( $YTU_FIRST_LOGIN == on && ( $override == "$FIRST_BROKER_FLOW_BUILT_IN" || $override == "$FIRST_BROKER_FLOW_COPY_ALIAS" ) ) \
@@ -906,16 +926,40 @@ remove_ytu_idp_legacy_flow() {
   log "identity provider $YTU_IDP_ALIAS: first login flow binding removed (follows realm binding '$bound'; previous '$legacy' kept, unused)"
 }
 
-# off: OBS's override goes back to the alias the on run noted, while that flow still exists.
+# off: OBS's override goes back to the alias the on run noted, but only while that alias is one of
+# YTU_IDP_LEGACY_FIRST_BROKER_FLOWS, the flow still exists and it still has the built-in flow's shape
+# (review F1: the note and the unused flow can be edited after on). Otherwise nothing is written
+# back: a WARNING, OBS follows the realm binding (the built-in flow after off; an override naming
+# the copy is cleared first) and the note stays for the operator to read.
 restore_ytu_idp_first_login_flow() {
-  local previous=$1 flow_id
-  if flow_id=$(optional_lookup flow_id_by_alias "$previous"); then
-    :
+  local previous=$1 override=$2 flow_id legacy_file built_in_file difference_file why='' bound
+  if ! is_ytu_idp_legacy_flow "$previous"; then
+    why="its note names '$previous', not one of the known earlier flows"
   else
-    return $?
+    if flow_id=$(optional_lookup flow_id_by_alias "$previous"); then
+      :
+    else
+      return $?
+    fi
+    if [[ -z $flow_id ]]; then
+      why="the flow '$previous' it had before KEYCLOAK_YTU_FIRST_LOGIN=on is absent"
+    else
+      legacy_file=$(mktemp "$WORK_DIR/legacy-flow.XXXXXX")
+      built_in_file=$(mktemp "$WORK_DIR/built-in-flow.XXXXXX")
+      difference_file=$(mktemp "$WORK_DIR/flow-shape.XXXXXX")
+      kcadm_json "authentication/flows/$(flow_alias_path "$previous")/executions" -r "$TARGET_REALM" >"$legacy_file"
+      kcadm_json "authentication/flows/$(flow_alias_path "$FIRST_BROKER_FLOW_BUILT_IN")/executions" -r "$TARGET_REALM" >"$built_in_file"
+      if ! json_tool same-shape "$built_in_file" <"$legacy_file" 2>"$difference_file"; then
+        why="the flow '$previous' is not shaped like the built-in '$FIRST_BROKER_FLOW_BUILT_IN' any more: $(head -n 1 "$difference_file")"
+      fi
+    fi
   fi
-  if [[ -z $flow_id ]]; then
-    warn "identity provider $YTU_IDP_ALIAS: first login flow binding not restored (the flow '$previous' it had before KEYCLOAK_YTU_FIRST_LOGIN=on is absent; OBS follows the realm binding)"
+  if [[ -n $why ]]; then
+    if [[ $override == "$FIRST_BROKER_FLOW_COPY_ALIAS" ]]; then
+      set_ytu_idp_first_login_flow ''
+    fi
+    bound=$(kcadm_json "realms/$TARGET_REALM" --fields firstBrokerLoginFlow | json_tool field firstBrokerLoginFlow)
+    warn "identity provider $YTU_IDP_ALIAS: first login flow binding not restored ($why; OBS follows the realm binding '$bound'; inspect it in the Admin Console)"
     return 0
   fi
   set_ytu_idp_first_login_flow "$previous" ''

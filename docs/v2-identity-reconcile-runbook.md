@@ -2214,6 +2214,15 @@ değilse, adım iki kez ya da yanlış yerdeyse durdurur.
 - `[reconcile] realm first broker login flow binding: updated (first broker login -> sky first broker login)`
 - `[reconcile] identity provider OBS first login flow: ...` (aşağıda)
 
+Her koşuda kopyanın kendisi de denetlenir (#96 incelemesi F2). Adım ve DISABLED bağlantıyla
+doğrulama dışında kopya yerleşik akışla aynı biçimde olmalı (`ReconcileJson same-shape … sky-ytu-first-login`):
+`[reconcile] shape of flow 'sky first broker login': unchanged (the built-in 'first broker login' plus the SKY LAB edits)`.
+Elle eklenmiş bir adım (ör. `idp-auto-link`, `idp-detect-existing-broker-user`) ya da değişmiş bir
+gereklilik şu uyarıyla bildirilir:
+`[reconcile] WARNING: flow 'sky first broker login' is not shaped like the built-in 'first broker login' apart from the SKY LAB edits: …; nothing was changed`.
+Uzlaştırıcı kopyayı değiştirmez, wizard ✗ sayar. Bir Keycloak yükseltmesi yerleşik akışı
+değiştirirse aynı uyarı çıkar.
+
 İkinci koşuda hepsi `unchanged`; bayraksız (`keep`) koşuda bağlama satırı
 `unchanged (sky first broker login; KEYCLOAK_YTU_FIRST_LOGIN=on or off changes it)`. Öncelik
 Keycloak 26'nın yerleşik akışında 10'dur (adım 9). Kopya yerleşik akışı dondurur: Keycloak
@@ -2252,7 +2261,21 @@ Bir yönetici oturumuyla koşulan adım OBS'yi okur (`keep` OBS'ye hiç bakmaz):
 - `off`, OBS'de not varsa (geçersiz kılma boş ya da kopyayı gösteriyorsa): geçersiz kılma nottaki
   akışa geri yazılır, not boşaltılır:
   `identity provider OBS: first login flow binding restored ('first broker login for obs', as before KEYCLOAK_YTU_FIRST_LOGIN=on)`.
-  Nottaki akış silinmişse `WARNING: … not restored (the flow … is absent; OBS follows the realm binding)`.
+  Yalnız şu üç koşul birlikte tutarsa yazılır (#96 incelemesi F1; not ve kullanılmayan akış `on`'dan
+  sonra değiştirilebilir):
+  - nottaki ad bilinen eski adlardan biri;
+  - akış hâlâ var;
+  - akış hâlâ yerleşikle aynı biçimde.
+
+  Değilse hiçbir şey geri yazılmaz. Kopyayı gösteren geçersiz kılma boşaltılır, OBS realm bağlamasını
+  (yerleşik akış) izler, not okunmak için kalır:
+  `WARNING: identity provider OBS: first login flow binding not restored (<neden>; OBS follows the realm binding 'first broker login'; inspect it in the Admin Console)`.
+  Nedenler:
+  - `its note names '…', not one of the known earlier flows`
+  - `the flow '…' it had before KEYCLOAK_YTU_FIRST_LOGIN=on is absent`
+  - `the flow '…' is not shaped like the built-in 'first broker login' any more: …`
+
+  Wizard bunu ✗ sayar; durum zararsızdır (10-13 öncesinden tek fark review profile `missing`).
   İkinci `off`: `identity provider OBS first login flow: unchanged (keeps its own first login flow 'first broker login for obs', as before KEYCLOAK_YTU_FIRST_LOGIN=on)`.
 - `off`, not yoksa: kopyayı gösteren geçersiz kılma kaldırılır (önceki satır), yoksa dokunulmaz.
 - Başka bir akışı gösteren geçersiz kılmaya hiç dokunulmaz:
@@ -2350,7 +2373,9 @@ dönüş, `keep`'in kapalı bırakması, yeniden açma ve başka akışa bağlı
 girişlerle (curl, Keycloak'ın kendi sayfaları) denenir. Sonra üretimdeki OBS kurulur: yerleşik
 akışın `first broker login for obs` adlı kopyası (review profile `on`) OBS'ye bağlanır. Realm
 kopyaya bağlıyken adımın OBS'de çalışmadığı (2026-10-13 hatası), `keep`'in OBS'ye dokunmadığı,
-fazladan `idp-auto-link` eklenmiş kopyanın uyarıyla reddedildiği (OBS değişmez), biçimi aynı
+fazladan `idp-auto-link` eklenmiş ya da bir gerekliliği değişmiş kopyanın uyarıyla reddedildiği
+(OBS değişmez), kopyaya eklenen adımın `keep`'te uyarıyla bildirildiği (dokunulmaz), `off`'un
+sonradan değiştirilmiş eski akışı ya da kopyayı gösteren notu geri yazmadığı, biçimi aynı
 kopyada `on`'un geçersiz kılmayı kaldırıp not ettiği (adım çalışır, kopya ve config'i değişmez),
 `off`'un geri yazıp notu boşalttığı (profil sayfası yine çıkar) ve ikinci koşuların bir şey
 değiştirmediği görülür. Birim testi: `SkyYtuFirstLoginTest`

@@ -7,7 +7,8 @@
 #   skycloud  skycloud:access  (Yusuf 2026-10-13: SkyCloud is used and stays; optional: a realm
 #                               without the client skycloud skips it with a WARNING)
 # The composite's other three Forms roles (skyforms:form:manage, response:manage, feedback:manage)
-# are not mapped: nothing reads them (forms-backend, forms-frontend), Fatih confirms (ticket 15).
+# are not mapped: nothing reads them (forms-backend, forms-frontend), pending Fatih's confirmation
+# (ticket 15).
 # A Leader group that holds no <TEAM>_LEADER realm role today gets the roles newly: the run says so in
 # a "NEW SEAT" line with the member count (never a name).
 # The groups: LIDERLER and KOORDINATORLER, the direct subgroups of every top team

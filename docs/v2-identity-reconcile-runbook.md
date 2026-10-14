@@ -1941,6 +1941,8 @@ kapsamlar, rol kapsamı, servis hesabı ve rolleri, varsayılan rol, rollerin ku
 grupları), sonra yazar. Bir okuma Keycloak'ın "yok" cevabı dışında başarısız olursa (`… could not be
 read in realm …; nothing was granted`) koşu hiçbir şey vermeden ve işaretlemeden hata verir; boş
 cevap "yok" sayılmaz. Eksik rolün oluşturulması (zararsız, hiçbir şey vermez) okumalardan önce gelir.
+İstisna: eksik varsayılan `roles` kapsamı okuma sırasında eklenir (§20.1); sonraki bir okuma düşerse
+kapsam eklenmiş kalır (zararsız, idempotent).
 
 Operatör adımı (Keycloak konteynerinde; kullanıcı adını `read` sorar, parola kcadm'ın kendi
 prompt'una girilir, config dosyası sonda silinir). Önce sandbox, sonra production; önce kuru koşu:
@@ -2723,9 +2725,11 @@ gönderim için `skymail:mails:send` yeter; geniş rolü kaldırmak ayrı bir ka
 (`forms`, `skymail-backend`, `core`) bu kapsam yoksa adım onu ekler (istemci ayarı, `manage-clients`:
 uzlaştırıcı kimliği de yapar): `default client scope roles of <istemci>: added …`, kuru koşuda `would
 add the default client scope roles to client …`. Realm'de `roles` kapsamı hiç yoksa yalnız uyarır.
-Production'da önce `service-roles` kuru koşusu yapılır ve `default client scope roles of
-skymail-backend: verified` (ya da `would add …`) satırına bakılır; bu, SkyMail'in kitle çağrısını
-açan yayından önce yapılır.
+Ekleme okuma döngüsünün içinde yapılır ve tam uzlaştırmada da kuru koşusuz çalışır. Yayından sonraki otomatik tam uzlaştırma operatör kuru koşusundan önce koştuğu için,
+eksik kapsamı o ekler. Bu yüzden önizleme, o tam uzlaştırmanın çıktısıdır: `default client scope
+roles of <istemci>: verified` ya da `added …` satırlarına (`forms`, `skymail-backend`, `core`) bakılır.
+Sonraki `service-roles` kuru koşusu yalnız `verified` gösterir. Ekleme idempotenttir ve yalnız bu üç
+servis istemcisine dokunur. Bu kontrol, SkyMail'in kitle çağrısını açan yayından önce yapılır.
 
 **Sıra.** `audience:read` core #242'nin ucunu açar; uç rol yokken 403 `audience_role_missing` döner
 (zararsız). Rolün Keycloak'ta oluşması ve `skymail-backend`'e verilmesi SkyMail'in kitle çağrısını
@@ -2829,7 +2833,10 @@ kez geçer, tek istemci taşır (`ReconcileJson role-groups` dosyayı okurken re
 çıkar) ve realm'deki hiçbir en üst ekibin (`/UYELER/<alan>/<ekip>`) ya da onun hemen altındaki alt
 ekibin (Leader grupları hariç) kodunu alt dize olarak içermez (içerirse o yaprak `PROBLEM` ile
 atlanır). Yeni rol grubu: `role-groups.json`'a bir nesne eklenir, PR
-açılır, yayından sonra betik önce kuru, sonra `--apply` koşulur.
+açılır, yayından sonra betik önce kuru, sonra `--apply` koşulur. Kuru koşuda `PROBLEM … team code`
+görülürse (ör. `AI` gibi kısa bir alt ekip kodu `SKYMAIL-*` yapraklarının adında geçer) `--apply`
+koşulmadan önce ekip ya da yaprak adı ad kuralına göre değiştirilir; değiştirilmezse o yaprak atlanır,
+öbürleri uygulanır ve betik 1 ile çıkar.
 
 **Denetim (`--audit`, salt okur).** Her client ve realm rolünün doğrudan sahiplerini okur (rol başına
 iki okuma; production'da dakikalar sürer) ve yalnız sayı ile grup yolu basar, **kişi adı basmaz**:

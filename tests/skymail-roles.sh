@@ -7,8 +7,11 @@
 # content of single system mails). The reconciler creates it on every run and only warns while it is
 # unseeded; the operator's core-roles step grants it once to the Privileged groups and marks it, the
 # same way as core's resource roles. The fixture realm has /ADMIN and /UYELER/YK, no DK.
+# skymail:announcements:send (duyuru-haber D4) is seeded the same way but to ADMIN and YK only: DK
+# reads and does not write; the stage proves it with a /DK group made for the run.
 
 SR_ROLE=skymail:system-mails:read
+SR_SEND_ROLE=skymail:announcements:send
 SR_PRIVILEGED=(/ADMIN /UYELER/YK)
 
 # The skymail roles a group holds directly, sorted JSON array.
@@ -17,10 +20,10 @@ sr_group_roles() {
     | jq -c '[.[].name] | sort'
 }
 
-# The value of the seed attribute of SR_ROLE ("" when absent).
+# The value of the seed attribute of a role ("" when absent); $1 defaults to SR_ROLE.
 sr_seed_mark() {
   kcadm get "clients/$(lca_client_uuid skymail)/roles" -r "$V2_REALM" -q briefRepresentation=false -c \
-    | jq -r --arg r "$SR_ROLE" --arg a "$CR_ATTRIBUTE" '.[] | select(.name == $r) | ((.attributes // {})[$a][0] // "")'
+    | jq -r --arg r "${1:-$SR_ROLE}" --arg a "$CR_ATTRIBUTE" '.[] | select(.name == $r) | ((.attributes // {})[$a][0] // "")'
 }
 
 # The effective skymail roles of a person (groups included), sorted JSON array.
@@ -36,17 +39,19 @@ sr_effective_roles() {
 stage_skymail_roles_after_first_reconciliation() {
   CURRENT_STAGE='skymail Privileged roles: created by the first reconciliation, not granted'
   local log="$TEST_STATE_DIR/reconcile-first.log" roles path
-  grep -Fq "[reconcile] Privileged roles of skymail (1): created ($SR_ROLE)" "$log" \
-    || fail "the first reconciliation did not create $SR_ROLE"
-  grep -Fq "[reconcile] WARNING: skymail roles not yet granted to the Privileged groups: $SR_ROLE" "$log" \
-    || fail 'the first reconciliation did not report the unseeded skymail role'
+  grep -Fq "[reconcile] Privileged roles of skymail (2): created ($SR_ROLE, $SR_SEND_ROLE)" "$log" \
+    || fail "the first reconciliation did not create $SR_ROLE and $SR_SEND_ROLE"
+  grep -Fq "[reconcile] WARNING: skymail roles not yet granted to the Privileged groups: $SR_ROLE $SR_SEND_ROLE" "$log" \
+    || fail 'the first reconciliation did not report the unseeded skymail roles'
   roles=$(kcadm get "clients/$(lca_client_uuid skymail)/roles" -r "$V2_REALM" -c)
   json_assert "$roles" '[.[] | select(.name == $r) | .description] == ["Tekil sistem postalarının (doğrulama, bildirim) içeriğini görür (skymail-backend #61)"]' \
     "$SR_ROLE was not created with its description" --arg r "$SR_ROLE"
-  [[ -z $(sr_seed_mark) ]] || fail "the reconciler identity marked $SR_ROLE as seeded"
+  json_assert "$roles" '[.[] | select(.name == $r) | .description | startswith("Duyuru ve haberi Mail onayı olmadan gönderir")] == [true]' \
+    "$SR_SEND_ROLE was not created with its description" --arg r "$SR_SEND_ROLE"
+  [[ -z $(sr_seed_mark) && -z $(sr_seed_mark "$SR_SEND_ROLE") ]] || fail 'the reconciler identity marked a skymail role as seeded'
   for path in "${SR_PRIVILEGED[@]}"; do
-    json_assert "$(sr_group_roles "$path")" 'index($r) == null' \
-      "the reconciler identity granted $SR_ROLE to $path" --arg r "$SR_ROLE"
+    json_assert "$(sr_group_roles "$path")" 'index($r) == null and index($s) == null' \
+      "the reconciler identity granted a skymail Privileged role to $path" --arg r "$SR_ROLE" --arg s "$SR_SEND_ROLE"
   done
 }
 
@@ -58,15 +63,18 @@ stage_skymail_roles_seeded_by_operator() {
   skymail_uuid=$(lca_client_uuid skymail)
   [[ $(sr_seed_mark) =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\ /ADMIN,/UYELER/YK$ ]] \
     || fail "$SR_ROLE lacks its seed mark after the operator step (got: $(sr_seed_mark))"
+  [[ $(sr_seed_mark "$SR_SEND_ROLE") =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\ /ADMIN,/UYELER/YK$ ]] \
+    || fail "$SR_SEND_ROLE lacks its seed mark after the operator step (got: $(sr_seed_mark "$SR_SEND_ROLE"))"
   for path in "${SR_PRIVILEGED[@]}"; do
-    json_assert "$(sr_group_roles "$path")" 'index($r) != null' "$path did not get $SR_ROLE" --arg r "$SR_ROLE"
+    json_assert "$(sr_group_roles "$path")" 'index($r) != null and index($s) != null' "$path did not get $SR_ROLE and $SR_SEND_ROLE" \
+      --arg r "$SR_ROLE" --arg s "$SR_SEND_ROLE"
   done
-  # The YK member holds it through the group (next to skymail:access granted directly); a person
+  # The YK member holds them through the group (next to skymail:access granted directly); a person
   # outside the Privileged groups does not.
-  json_assert "$(sr_effective_roles "$AP_USER")" '. == (["skymail:access", $r] | sort)' \
-    "the YK member's effective skymail roles are wrong" --arg r "$SR_ROLE"
-  json_assert "$(sr_effective_roles "$LCA_USER")" 'index($r) == null' \
-    "a person outside the Privileged groups got $SR_ROLE" --arg r "$SR_ROLE"
+  json_assert "$(sr_effective_roles "$AP_USER")" '. == (["skymail:access", $r, $s] | sort)' \
+    "the YK member's effective skymail roles are wrong" --arg r "$SR_ROLE" --arg s "$SR_SEND_ROLE"
+  json_assert "$(sr_effective_roles "$LCA_USER")" 'index($r) == null and index($s) == null' \
+    "a person outside the Privileged groups got a skymail Privileged role" --arg r "$SR_ROLE" --arg s "$SR_SEND_ROLE"
 
   CURRENT_STAGE='skymail Privileged roles: the admin panel owns the mapping after seeding'
   yk_id=$(cr_group_id /UYELER/YK)
@@ -88,6 +96,18 @@ stage_skymail_roles_seeded_by_operator() {
   grep -Fq '[reconcile] WARNING: no Privileged group DK (neither /DK nor /UYELER/DK) in realm '"$V2_REALM"'; it gets none of the skymail Privileged roles' <<<"$output" \
     || { printf '%s\n' "$output" >&2; fail 'reseeding skymail did not report the missing DK group'; }
   json_assert "$(sr_group_roles /UYELER/YK)" 'index($r) != null' "/UYELER/YK did not get $SR_ROLE back" --arg r "$SR_ROLE"
+
+  CURRENT_STAGE='skymail Privileged roles: announcements:send never goes to DK'
+  local dk_id
+  kcadm create groups -r "$V2_REALM" -s name=DK >/dev/null
+  dk_id=$(cr_group_id /DK)
+  kcadm update "clients/$skymail_uuid/roles/$SR_SEND_ROLE" -r "$V2_REALM" -s 'attributes={}' >/dev/null
+  output=$(cr_operator_reconcile) || { printf '%s\n' "$output" >&2; fail 'the operator step failed'; }
+  grep -Fq "[reconcile] skymail role $SR_SEND_ROLE: seeded once to /ADMIN,/UYELER/YK (granted to: none (every group already held it))" <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail "the unmarked $SR_SEND_ROLE was not seeded to ADMIN and YK only"; }
+  ! grep -Fq 'WARNING: no Privileged group' <<<"$output" || { printf '%s\n' "$output" >&2; fail 'reseeding announcements:send looked for DK'; }
+  json_assert "$(sr_group_roles /DK)" 'length == 0' "/DK got a skymail role"
+  kcadm delete "groups/$dk_id" -r "$V2_REALM" >/dev/null
 }
 
 # Part of v2_state_snapshot: the skymail roles with their marks and the Privileged groups' mappings.

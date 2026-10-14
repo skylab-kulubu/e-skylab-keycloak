@@ -591,6 +591,29 @@ class EmailCodeAuthenticatorTest {
     }
 
     // CONTEXT "Login code": it works only in the sign-in session (browser and tab) that asked for it.
+    // Security review M1: the code is keyed to the sign-in session's handle, not to the person, so
+    // two sessions that ask for the same person each have their own code.
+    @Test
+    void twoSessionsOfOnePersonCannotUseEachOthersCode() {
+        UserModel ada = person("ada", "ada", "ada@example.com");
+        Browser second = new Browser("root-2", "198.51.100.2");
+        browser.send("ada");
+        String firstCode = mail.last().code();
+        second.send("ada@example.com");
+        String secondCode = mail.last().code();
+
+        second.verify(firstCode);
+        assertEquals("wrong_code", second.error());
+        browser.verify(secondCode);
+        assertEquals("wrong_code", browser.error());
+
+        browser.verify(firstCode);
+        second.verify(secondCode);
+        assertTrue(browser.succeeded && second.succeeded, "each session's own code still works");
+        assertEquals(ada, browser.signedIn);
+        assertEquals(ada, second.signedIn);
+    }
+
     @Test
     void theCodeDoesNotWorkInAnotherBrowser() {
         person("ada", "ada", "ada@example.com");

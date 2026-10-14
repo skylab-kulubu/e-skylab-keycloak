@@ -53,6 +53,22 @@ class LoginCodesTest {
                 "the store must not hold the code itself");
     }
 
+    // Security review M18/M19: the stored record is a format (a store that outlives a release would
+    // hand the new code the old records); a change to a key or a note name must be deliberate.
+    @Test
+    void theStoredRecordKeepsItsKeyNotesAndHashFormat() throws Exception {
+        String code = codes.issue("handle-a", "user-a", "ada@example.com");
+
+        assertEquals("sky-email-code:handle-a", LoginCodes.key("handle-a"));
+        Map<String, String> stored = store.get("sky-email-code:handle-a");
+        assertEquals(java.util.Set.of("userId", "address", "salt", "codeHash", "expiresAt", "attemptsLeft"), stored.keySet());
+        assertEquals("user-a", stored.get("userId"));
+        assertEquals("ada@example.com", stored.get("address"));
+        assertEquals("5", stored.get("attemptsLeft"));
+        assertEquals(Integer.toString(Time.currentTime() + LoginCodes.TTL_SECONDS), stored.get("expiresAt"));
+        assertEquals(hashOf(stored.get("salt"), code), stored.get("codeHash"));
+    }
+
     @Test
     void theRightCodeSignsInThePersonItWasIssuedForOnce() {
         String code = codes.issue("handle-a", "user-a", "ada@example.com");
@@ -193,6 +209,20 @@ class LoginCodesTest {
         assertEquals(Outcome.none(), codes.spendTry("handle-b"));
     }
 
+    // Not even a code that happens to be the one typed most often wins a spent try: nothing is compared.
+    @Test
+    void aSpentTryComparesNothingEvenWhenTheCodeIsAllZeros() throws Exception {
+        codes.issue("handle-a", "user-a", "ada@example.com");
+        String key = LoginCodes.key("handle-a");
+        Map<String, String> stored = new java.util.HashMap<>(store.get(key));
+        stored.put("codeHash", hashOf(stored.get("salt"), "00000000"));
+        store.put(key, LoginCodes.TTL_SECONDS, stored);
+
+        assertEquals(Outcome.wrongCode("user-a", LoginCodes.MAX_ATTEMPTS - 1), codes.spendTry("handle-a"));
+        assertEquals(Outcome.confirmed(new Pending("user-a", "ada@example.com")), codes.confirm("handle-a", "00000000"),
+                "the code itself is still the one stored");
+    }
+
     @Test
     void aSpentTryDoesNotExtendTheDeadline() {
         String code = codes.issue("handle-a", "user-a", "ada@example.com");
@@ -263,6 +293,12 @@ class LoginCodesTest {
             pool.shutdownNow();
         }
         assertEquals(1, winners.get(), "exactly one confirmation may win");
+    }
+
+    /** SHA-256 of "salt:code" in hex, as the store writes it (SingleUseCodes). */
+    private static String hashOf(String salt, String code) throws Exception {
+        return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                .digest((salt + ":" + code).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
     }
 
     /** An eight-digit code that is certainly not {@code code}. */

@@ -159,22 +159,32 @@ class OtpAfterCodeTest {
     @Test
     void anotherConditionNextToUserConfiguredIsRefused() {
         // Conditions are ANDed: a role condition would let everyone without the role skip the OTP.
-        flows.get(OTP_FLOW).add(execution("role", OTP_FLOW, 15, Requirement.REQUIRED,
-                ConditionalRoleAuthenticatorFactory.PROVIDER_ID));
-        assertFalse(asked());
+        for (int priority : new int[] {5, 15}) {
+            flows.get(OTP_FLOW).removeIf(model -> model.getId().equals("role"));
+            flows.get(OTP_FLOW).add(execution("role", OTP_FLOW, priority, Requirement.REQUIRED,
+                    ConditionalRoleAuthenticatorFactory.PROVIDER_ID));
+            assertFalse(asked(), "a role condition at priority " + priority);
+        }
     }
 
     @Test
     void anotherRequiredStepNextToTheOtpFormIsRefused() {
         // User configured would then need both: a person with OTP alone skips the subflow.
-        flows.get(OTP_FLOW).add(execution("webauthn", OTP_FLOW, 30, Requirement.REQUIRED, "webauthn-authenticator"));
-        assertFalse(asked());
+        for (int priority : new int[] {15, 30}) {
+            flows.get(OTP_FLOW).removeIf(model -> model.getId().equals("webauthn"));
+            flows.get(OTP_FLOW).add(execution("webauthn", OTP_FLOW, priority, Requirement.REQUIRED,
+                    "webauthn-authenticator"));
+            assertFalse(asked(), "a WebAuthn step at priority " + priority);
+        }
     }
 
     @Test
     void anUnknownProviderInTheOtpSubflowIsRefused() {
-        flows.get(OTP_FLOW).add(execution("unknown", OTP_FLOW, 30, Requirement.CONDITIONAL, "nobody-knows"));
-        assertFalse(asked());
+        for (int priority : new int[] {15, 30}) {
+            flows.get(OTP_FLOW).removeIf(model -> model.getId().equals("unknown"));
+            flows.get(OTP_FLOW).add(execution("unknown", OTP_FLOW, priority, Requirement.CONDITIONAL, "nobody-knows"));
+            assertFalse(asked(), "an unknown step at priority " + priority);
+        }
     }
 
     @Test

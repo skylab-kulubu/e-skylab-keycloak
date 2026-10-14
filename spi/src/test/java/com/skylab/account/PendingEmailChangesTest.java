@@ -46,6 +46,28 @@ class PendingEmailChangesTest {
                 "the store must not hold the code itself");
     }
 
+    // Security review M18/M19: Account center's code and the first-login offer's code keep their
+    // key spaces, note names and hash format (pinned since the move to SingleUseCodes).
+    @Test
+    void theStoredRecordsKeepTheirKeysNotesAndHashFormat() throws Exception {
+        String code = pending.issue("user-a", "ada@example.com", true);
+        PendingEmailChanges offers = PendingEmailChanges.forLoginSessions(store);
+        String offerCode = offers.issue("session-a", "ada@example.org", false);
+
+        assertEquals("sky-account:email-change:user-a", PendingEmailChanges.key("user-a"));
+        assertEquals("sky-account:login-email-offer:session-a", offers.keyOf("session-a"));
+        Map<String, String> stored = store.get("sky-account:email-change:user-a");
+        assertEquals(java.util.Set.of("address", "makePrimary", "salt", "codeHash", "expiresAt", "attemptsLeft"),
+                stored.keySet());
+        assertEquals("ada@example.com", stored.get("address"));
+        assertEquals("true", stored.get("makePrimary"));
+        assertEquals("5", stored.get("attemptsLeft"));
+        assertEquals(hashOf(stored.get("salt"), code), stored.get("codeHash"));
+        Map<String, String> offer = store.get("sky-account:login-email-offer:session-a");
+        assertEquals("false", offer.get("makePrimary"));
+        assertEquals(hashOf(offer.get("salt"), offerCode), offer.get("codeHash"));
+    }
+
     @Test
     void theRightCodeConfirmsTheChangeOnce() {
         String code = pending.issue("user-a", "ada@example.com", true);
@@ -225,6 +247,12 @@ class PendingEmailChangesTest {
     /** A six-digit code that is certainly not {@code code}. */
     private static String other(String code) {
         return code.equals("000000") ? "000001" : "000000";
+    }
+
+    /** SHA-256 of "salt:code" in hex, as the store writes it (SingleUseCodes). */
+    private static String hashOf(String salt, String code) throws Exception {
+        return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                .digest((salt + ":" + code).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
     }
 
     /** Honours put/remove exactly like Infinispan: remove hands the entry to one caller. */

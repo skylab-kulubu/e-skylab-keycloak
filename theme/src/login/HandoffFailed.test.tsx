@@ -69,7 +69,7 @@ describe("Web handoff failure page", () => {
       expect(container.querySelector("form, input, button")).toBeNull();
       expect(container.querySelector("nav.sl-legacy-languages")).toBeNull();
       const links = [...container.querySelectorAll("a")].map(link => link.getAttribute("href"));
-      expect(links).toEqual(["#sl-handoff-failed-main", "https://skyl.app/kvkk-metni"]);
+      expect(links).toEqual(["#sl-handoff-failed-main", "https://yildizskylab.com/kvkk-metni.pdf"]);
       expect(container.querySelector('[data-skylab-logo-animation="draw"]')).not.toBeNull();
       expect(container.querySelector("footer.sl-legacy-footer")).toHaveAttribute("role", "contentinfo");
       // The developer credit stays, as plain text: this page offers as little to click as possible.

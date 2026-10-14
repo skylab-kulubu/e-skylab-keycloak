@@ -85,7 +85,7 @@ test.describe("visual baselines", () => {
       test("login-password-view", async ({ page }) => {
         await page.goto("/?page=login.ftl");
         await stabilise(page, "login.ftl");
-        await page.getByRole("button", { name: "YTÜ Öğrencisi Değilim" }).click();
+        await page.getByRole("button", { name: "E-postayla devam et" }).click();
         await expect(page.locator("#kc-login")).toBeVisible();
         await expect(page).toHaveScreenshot(`login-password-view-${viewportName}.png`, screenshotOptions);
       });

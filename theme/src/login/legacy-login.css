@@ -951,6 +951,97 @@ textarea.sl-legacy-input {
   font-weight: 500;
 }
 
+/* "Microsoft ile" under "YTÜ hesabınla devam et". */
+.sl-legacy-choice__hint {
+  display: block;
+  color: var(--sl-legacy-muted);
+  font-size: 0.75rem;
+  font-weight: 400;
+}
+
+/* The trust copy under the sign-in choices, the school password help and the
+   no-account note of the password form (eskylab-login-ux 05). */
+.sl-legacy-trust,
+.sl-legacy-school-help,
+.sl-legacy-no-account {
+  color: var(--sl-legacy-muted);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+.sl-legacy-trust {
+  margin-top: 1rem;
+}
+
+.sl-legacy-trust p,
+.sl-legacy-school-help p,
+.sl-legacy-no-account p {
+  margin: 0;
+}
+
+.sl-legacy-trust details p,
+.sl-legacy-school-help p + p,
+.sl-legacy-no-account p + p {
+  margin-top: 0.375rem;
+}
+
+.sl-legacy-trust details {
+  margin-top: 0.375rem;
+}
+
+.sl-legacy-trust summary,
+.sl-legacy-school-help summary {
+  width: fit-content;
+  min-height: 1.5rem;
+  color: var(--sl-legacy-link);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.sl-legacy-trust ul {
+  margin: 0.375rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.sl-legacy-school-help {
+  margin-top: 0.5rem;
+}
+
+.sl-legacy-school-help summary {
+  margin: 0 auto;
+  font-size: 0.875rem;
+}
+
+.sl-legacy-school-help[open] summary {
+  margin-bottom: 0.375rem;
+}
+
+.sl-legacy-trust a,
+.sl-legacy-school-help a,
+.sl-legacy-no-account a {
+  color: var(--sl-legacy-link);
+  font-weight: 500;
+}
+
+.sl-legacy-no-account {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--sl-legacy-surface-raised);
+}
+
+.sl-legacy-no-account .sl-legacy-no-account__title {
+  color: var(--sl-legacy-text);
+  font-weight: 600;
+}
+
+.sl-legacy-domain {
+  margin: 1.25rem 0 0;
+  color: var(--sl-legacy-muted);
+  font-size: 0.75rem;
+  text-align: center;
+}
+
 .sl-legacy-remember input {
   width: 1rem;
   height: 1rem;

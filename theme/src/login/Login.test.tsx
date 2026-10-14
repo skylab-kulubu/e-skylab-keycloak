@@ -4,6 +4,7 @@ import { getDevKcContextForPage } from "../devKcContext";
 import type { KcContext } from "./KcContext";
 import KcPage from "./KcPage";
 import type { ThemedPageId } from "./pageIds";
+import { KVKK_URL } from "../welcome/WelcomePage";
 
 async function renderPage(pageId: ThemedPageId, state: string | null = null) {
   const kcContext = getDevKcContextForPage(pageId, "tr", state);
@@ -62,7 +63,7 @@ describe("login page: page-wide messages", () => {
   it("keeps the message on screen after switching to the password form", async () => {
     const view = await renderPage("login.ftl", "reset-email-sent");
 
-    fireEvent.click(view.getByRole("button", { name: "YTÜ Öğrencisi Değilim" }));
+    fireEvent.click(view.getByRole("button", { name: "E-postayla devam et" }));
 
     expect(view.container.querySelector("#kc-form-login")).not.toBeNull();
     expect(view.container.querySelectorAll(".sl-legacy-alert")).toHaveLength(1);
@@ -125,7 +126,7 @@ describe("login page: forgot password link", () => {
 
   it("sits directly below the password field in the password form, before the submit button", async () => {
     const view = await renderPage("login.ftl");
-    fireEvent.click(view.getByRole("button", { name: "YTÜ Öğrencisi Değilim" }));
+    fireEvent.click(view.getByRole("button", { name: "E-postayla devam et" }));
 
     const form = view.container.querySelector("#kc-form-login") as HTMLElement;
     const links = within(form).getAllByRole("link", { name: "Parolanı mı unuttun?" });
@@ -157,7 +158,7 @@ describe("login page: forgot password link", () => {
 
   it("stays reachable with conditional passkey sign-in on the username field", async () => {
     const view = await renderPage("login.ftl");
-    fireEvent.click(view.getByRole("button", { name: "YTÜ Öğrencisi Değilim" }));
+    fireEvent.click(view.getByRole("button", { name: "E-postayla devam et" }));
 
     expect(view.container.querySelector("#username")).toHaveAttribute("autocomplete", "username webauthn");
     expect(view.getByRole("link", { name: "Parolanı mı unuttun?" })).toHaveAttribute("href", resetUrl);
@@ -170,7 +171,7 @@ describe("login page: forgot password link", () => {
     await waitFor(() => expect(view.container.querySelector(".sl-legacy-choices")).not.toBeNull());
 
     expect(view.queryByRole("link", { name: "Parolanı mı unuttun?" })).toBeNull();
-    fireEvent.click(view.getByRole("button", { name: "YTÜ Öğrencisi Değilim" }));
+    fireEvent.click(view.getByRole("button", { name: "E-postayla devam et" }));
     expect(view.queryByRole("link", { name: "Parolanı mı unuttun?" })).toBeNull();
   });
 });
@@ -246,5 +247,139 @@ describe("every other page: the message sits at the top of the card", () => {
 
     const error = await renderPage("error.ftl");
     expect(error.container.querySelector("#kc-error-message")).toHaveTextContent("Giriş isteği geçersiz");
+  });
+});
+
+describe("login page: sign-in choices and trust copy (eskylab-login-ux 05)", () => {
+  beforeAll(() => {
+    window.history.replaceState(null, "", "/?viewMode=docs");
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("names the two ways in by what the person has, not by who they are", async () => {
+    const view = await renderPage("login.ftl");
+
+    const microsoft = view.getByRole("link", { name: "YTÜ hesabınla devam et Microsoft ile" });
+    expect(microsoft).toHaveAttribute("href", loginContext().social?.providers?.[0]?.loginUrl);
+    expect(view.getByRole("button", { name: "E-postayla devam et" })).toBeInTheDocument();
+    expect(view.container).not.toHaveTextContent("Öğrencisi");
+  });
+
+  it("does not assume an account in the description", async () => {
+    const { container } = await renderPage("login.ftl");
+
+    expect(container.querySelector(".sl-legacy-intro p")).toHaveTextContent(
+      "YTÜ öğrencisiysen okul hesabınla gir. SKY LAB hesabın varsa e-posta adresin ve parolanla da girebilirsin."
+    );
+  });
+
+  it("says under the choices that the school password stays with Microsoft and what is taken", async () => {
+    const view = await renderPage("login.ftl");
+
+    const trust = view.container.querySelector(".sl-legacy-trust") as HTMLElement;
+    expect(trust).not.toBeNull();
+    expect(view.container.querySelector(".sl-legacy-choices")?.compareDocumentPosition(trust)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    );
+    expect(trust).toHaveTextContent(
+      "Okul şifreni yalnız Microsoft'un sayfasına yazarsın; SKY LAB onu hiçbir zaman görmez. YTÜ hesabından yalnız adını, okul e-postanı ve bölümünü alırız; postalarına ve dosyalarına erişmeyiz."
+    );
+
+    const details = within(trust).getByText("Neleri alıyoruz?").closest("details") as HTMLDetailsElement;
+    expect(details).not.toBeNull();
+    expect(details.open).toBe(false);
+    const taken = within(details).getAllByRole("listitem").map(item => item.textContent);
+    expect(taken).toEqual([
+      "Microsoft hesabının değişmez kimlik numarası (hesabını tanımak için)",
+      "Adın ve soyadın",
+      "Okul e-posta adresin",
+      "Bölümün"
+    ]);
+    expect(details).toHaveTextContent(
+      "Almadıklarımız: okul şifren (Microsoft'un sayfasına yazarsın, bize hiç gelmez), postaların, dosyaların (OneDrive), takvimin, kişilerin ve Teams."
+    );
+  });
+
+  it("helps someone who does not know the school password, in a new tab", async () => {
+    const view = await renderPage("login.ftl");
+
+    const details = view.getByText("Okul şifreni bilmiyor musun?").closest("details") as HTMLElement;
+    expect(details).not.toBeNull();
+    const reset = within(details).getByRole("link", { name: "Okul şifreni Microsoft'ta sıfırla" });
+    expect(reset).toHaveAttribute("href", "https://passwordreset.microsoftonline.com/");
+    expect(details).toHaveTextContent("Olmazsa YTÜ BİDB'ye başvur: teknikdestek.yildiz.edu.tr");
+    const support = within(details).getByRole("link", { name: "teknikdestek.yildiz.edu.tr" });
+    expect(support).toHaveAttribute("href", "https://teknikdestek.yildiz.edu.tr/");
+    for (const link of [reset, support]) {
+      expect(link).toHaveAttribute("target", "_blank");
+      expect(link).toHaveAttribute("rel", "noreferrer");
+    }
+    expect(details).toHaveTextContent("SKY LAB parolan varsa E-postayla devam et'i seç.");
+  });
+
+  it("names the sign-in address on both screens", async () => {
+    const view = await renderPage("login.ftl");
+    const notice = "Giriş adresi her zaman e.yildizskylab.com'dur.";
+
+    expect(view.getByText(notice)).toBeInTheDocument();
+    fireEvent.click(view.getByRole("button", { name: "E-postayla devam et" }));
+    expect(view.getByText(notice)).toBeInTheDocument();
+  });
+
+  it("points to the KVKK notice itself and says it can be read, not that it was accepted", async () => {
+    const { container } = await renderPage("login.ftl");
+
+    const footer = container.querySelector("footer.sl-legacy-footer p") as HTMLElement;
+    expect(footer).toHaveTextContent("Kişisel verilerinin nasıl işlendiğini KVKK Aydınlatma Metni'nde okuyabilirsin.");
+    expect(within(footer).getByRole("link", { name: "KVKK Aydınlatma Metni" })).toHaveAttribute("href", KVKK_URL);
+  });
+});
+
+describe("login page: no account yet (password form)", () => {
+  beforeAll(() => {
+    window.history.replaceState(null, "", "/?viewMode=docs");
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("tells honestly that accounts outside YTÜ are opened by the club and how to ask for one", async () => {
+    const view = await renderPage("login.ftl");
+    expect(view.container.querySelector(".sl-legacy-no-account")).toBeNull();
+
+    fireEvent.click(view.getByRole("button", { name: "E-postayla devam et" }));
+
+    const help = view.container.querySelector(".sl-legacy-no-account") as HTMLElement;
+    expect(help).not.toBeNull();
+    // After the form: the sign-in fields and the submit button come first.
+    expect(view.container.querySelector("#kc-login")?.compareDocumentPosition(help)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(within(help).getByText("Hesabın yok mu?")).toBeInTheDocument();
+    expect(help).toHaveTextContent(
+      "YTÜ öğrencisiysen geri dön ve YTÜ hesabınla devam et; SKY LAB hesabın ilk girişinde açılır."
+    );
+    expect(help).toHaveTextContent(
+      "YTÜ dışından bugün kendin hesap açamazsın; hesabı kulüp yöneticileri açar. Hesap istemek için bize yaz: info@yildizskylab.com"
+    );
+    expect(within(help).getByRole("link", { name: "info@yildizskylab.com" })).toHaveAttribute(
+      "href",
+      "mailto:info@yildizskylab.com"
+    );
+  });
+
+  it("never links Keycloak's built-in registration, even if the realm offered it (ADR-0063)", async () => {
+    const kcContext = loginContext();
+    kcContext.realm.registrationAllowed = true;
+    kcContext.url.registrationUrl = "/realms/e-skylab/login-actions/registration";
+    const view = render(<KcPage kcContext={kcContext} />);
+    await waitFor(() => expect(view.container.querySelector(".sl-legacy-choices")).not.toBeNull());
+
+    fireEvent.click(view.getByRole("button", { name: "E-postayla devam et" }));
+    const hrefs = Array.from(view.container.querySelectorAll("a")).map(link => link.getAttribute("href") ?? "");
+    expect(hrefs.filter(href => href.includes("registration"))).toEqual([]);
+    expect(view.queryByText("Kayıt ol")).toBeNull();
   });
 });

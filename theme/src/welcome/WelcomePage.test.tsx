@@ -83,10 +83,10 @@ describe("the e-SKY LAB landing page", () => {
 
     const steps = within(screen.getByRole("list", { name: "Giriş yolları" })).getAllByRole("listitem");
     expect(steps).toHaveLength(3);
-    // The labels are the login page's (theme/src/login/i18n.ts: microsoft, notYtuStudent, passkeyChoice).
-    expect(steps[0]).toHaveTextContent("YTÜ Öğrencisiyim");
+    // The labels are the login page's (theme/src/login/i18n.ts: microsoft, continueWithEmail, passkeyChoice).
+    expect(steps[0]).toHaveTextContent("YTÜ hesabınla devam et");
     expect(steps[0]).toHaveTextContent("Microsoft");
-    expect(steps[1]).toHaveTextContent("YTÜ Öğrencisi Değilim");
+    expect(steps[1]).toHaveTextContent("E-postayla devam et");
     expect(steps[1]).toHaveTextContent("Parolanı mı unuttun?");
     expect(steps[2]).toHaveTextContent("Erişim anahtarı ile giriş yap");
     // Self-registration (ADR-0063) is not live yet; the page does not promise it.

@@ -66,7 +66,7 @@ describe("LegacyFrame SKY LAB identity", () => {
 
     const footer = container.querySelector("footer.sl-legacy-footer");
     expect(footer).toHaveAttribute("role", "contentinfo");
-    expect(footer?.querySelector('a[href="https://skyl.app/kvkk-metni"]')).toHaveTextContent("KVKK metnini");
+    expect(footer?.querySelector('a[href="https://yildizskylab.com/kvkk-metni.pdf"]')).toHaveTextContent("KVKK metnini");
     expect(footer).toHaveTextContent("e-skylab by WEBLAB");
     expect(container.querySelector(".sl-legacy-shell")).toHaveAttribute("data-sl-translations", "loading");
     expect(container.querySelector(".sl-legacy-intro p")).toBeNull();

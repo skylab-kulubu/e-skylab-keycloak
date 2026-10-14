@@ -566,20 +566,39 @@ for path in "${roots[@]}"; do
     problem "$path holds no forms/$FORMS_READ: taking Forms' roles away first would leave DK without Forms; run the core-roles step first (KEYCLOAK_RECONCILE_ONLY=core-roles, runbook §28); nothing was changed"
   fi
 
-  # Write roles that still reach the root through a composite role or a parent group.
+  # Write roles that still reach the root through a composite role or a parent group. Keycloak's
+  # composite answer for a group expands its composites but leaves its parents out: each parent
+  # (/UYELER for /UYELER/DK) is read too, and what a parent gives stays after this step even when the
+  # root holds it directly as well.
+  sources=("$gid")
+  ancestor=${path%/*}
+  while [[ -n $ancestor ]]; do
+    ancestor_id=$(group_id "$ancestor")
+    if [[ -n $ancestor_id ]]; then sources+=("$ancestor_id"); fi
+    ancestor=${ancestor%/*}
+  done
+  declare -A reached=()
   for client in core skymail place forms; do
     [[ $client != forms || $FORMS == remove ]] || continue
     lookup_client "$client"
     uuid=$CLIENT_UUID
     [[ -n $uuid ]] || continue
-    effective=$(read_or_stop "the effective $client roles of $path" csv "groups/$gid/role-mappings/clients/$uuid/composite" name)
-    while IFS= read -r role; do
-      [[ -n $role && -z ${holds[$client|$role]:-} ]] || continue
-      if listed WRITE_ROLES "$client" "$role" || { [[ $FORMS == remove ]] && listed FORMS_ROLES "$client" "$role"; }; then
-        warning "$path still gets $client/$role through a composite role or a parent group; this step takes direct mappings only (remove it where it comes from)"
-      fi
-    done <<<"$effective"
+    for source in "${sources[@]}"; do
+      effective=$(read_or_stop "the effective $client roles of $path" csv "groups/$source/role-mappings/clients/$uuid/composite" name)
+      while IFS= read -r role; do
+        [[ -n $role ]] || continue
+        [[ $source != "$gid" || -z ${holds[$client|$role]:-} ]] || continue
+        if listed WRITE_ROLES "$client" "$role" || { [[ $FORMS == remove ]] && listed FORMS_ROLES "$client" "$role"; }; then
+          reached[$client/$role]=1
+        fi
+      done <<<"$effective"
+    done
   done
+  while IFS= read -r role; do
+    [[ -n $role ]] || continue
+    warning "$path still gets $role through a composite role or a parent group; this step takes direct mappings only (remove it where it comes from)"
+  done < <(printf '%s\n' "${!reached[@]}" | sort)
+  unset reached
 
   # Subgroups of the root (at any depth) that hold a write role directly: core refuses a role there
   # from the panel (PlacementPrivilegedSubgroup), the Admin Console does not. Reported, not taken away.

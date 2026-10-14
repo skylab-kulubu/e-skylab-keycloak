@@ -624,7 +624,7 @@ stage_reset_verifies_otp() {
   # Brute force: once the wrong codes reach the realm's failureFactor, the person is locked and
   # even the right code is refused; the password stays as it is.
   local failure_factor attempt mails
-  failure_factor=$(kcadm get "realms/$V2_REALM" --fields failureFactor -c | jq -r '.failureFactor')
+  failure_factor=$(kcadm get "realms/$V2_REALM" --fields failureFactor | jq -r '.failureFactor')
   [[ $failure_factor =~ ^[1-9][0-9]*$ ]] || fail "reset OTP step: the realm has no failureFactor ($failure_factor)"
   kcadm delete "attack-detection/brute-force/users/$person" -r "$V2_REALM" >/dev/null
   password_before=$(kcadm get "users/$person/credentials" -r "$V2_REALM" -c | jq -c '[.[] | select(.type == "password") | {id, createdDate}]')

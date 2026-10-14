@@ -2008,8 +2008,8 @@ reconcile_role_scope() {
 # the roles and warn about unseeded ones; an operator seeds them by running this step alone with
 # their own kcadm session (KEYCLOAK_RECONCILE_ONLY=core-roles, runbook §19).
 # DK reads and does not write (grup-yonetimi GY1, ticket 08; core-backend #244): the write roles go
-# to ADMIN and YK only, DK gets global:read (Entra's Global Reader) and audit:read (Reports Reader,
-# with ADMIN and YK). The write roles DK got before this change are marked as seeded, so no run takes
+# to ADMIN and YK only, DK gets global:read (Entra's Global Reader), audit:read (Reports Reader, with
+# ADMIN and YK) and keeps url:access (its own short links, with ADMIN and YK). The write roles DK got before this change are marked as seeded, so no run takes
 # them away: config/dk-read-only.sh does that once (runbook §28).
 CORE_CLIENT_ID=${KEYCLOAK_CORE_CLIENT_ID:-core}
 CORE_ROLE_SEED_ATTRIBUTE=skylab.seeded-group-mappings
@@ -2037,10 +2037,12 @@ CORE_ROLE_DEFINITIONS=(
 )
 # name|Privileged groups (space separated names): a role seeded to other groups than
 # CORE_PRIVILEGED_NAMES. global:read is DK's alone (core takes it for a reader only); audit:read is
-# read by ADMIN, YK and DK (grup-yonetimi GY1 replaced S11's "not DK").
+# read by ADMIN, YK and DK (grup-yonetimi GY1 replaced S11's "not DK"); url:access is the holder's own
+# short links, an app role DK keeps (Yusuf, 2026-10-14, Y1).
 CORE_ROLE_SEED_GROUPS=(
   'global:read|DK'
   'audit:read|ADMIN YK DK'
+  'url:access|ADMIN YK DK'
 )
 # new|old: a role that renames another one is seeded once where the old one is held, not to the
 # Privileged groups, so that the rename moves nobody's rights (core reads both names as one while

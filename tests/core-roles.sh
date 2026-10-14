@@ -10,8 +10,9 @@
 # carries them (inherited by subgroup members too), nobody else's does, and later runs never undo
 # what the admin panel changed. The fixture realm has /ADMIN and /UYELER/YK, no DK; the operator
 # stage makes /UYELER/DK for its runs and removes it at its end (grup-yonetimi 08: DK reads and does
-# not write): the write roles go to ADMIN and YK, global:read to DK alone, audit:read to all three, and
-# forms/skyforms:read-all (Forms' Privileged role, the same operator step) to DK alone.
+# not write): the write roles go to ADMIN and YK, global:read to DK alone, audit:read and url:access
+# (the holder's own short links, Y1) to all three, and forms/skyforms:read-all (Forms' Privileged
+# role, the same operator step) to DK alone.
 # competition:manage renames competitor:manage (ADR-0068): it is seeded once wherever the old role is
 # held (groups, users, composite roles, role scopes of clients and client scopes), not to the
 # Privileged groups.
@@ -20,8 +21,9 @@ CR_ATTRIBUTE=skylab.seeded-group-mappings
 # The contract table of sky_lab_genel .scratch/admin-token-authz/spec.md: the write roles, seeded to
 # ADMIN and YK.
 CR_ROLES=(event:manage season:manage ticket:manage ticket:validate competitor:manage media:manage
-  media:private:read certificate:manage users:manage groups:manage github:activity:read url:moderator
-  url:access)
+  media:private:read certificate:manage users:manage groups:manage github:activity:read url:moderator)
+# The holder's own short links: seeded to ADMIN, YK and DK (Y1).
+CR_OWN_ROLE=url:access
 # DK's read roles (grup-yonetimi 08): global:read to DK alone, audit:read to ADMIN, YK and DK.
 CR_READER_ROLE=global:read
 CR_AUDIT_ROLE=audit:read
@@ -41,12 +43,17 @@ CR_RENAME_SCOPE=core-roles-rename-scope-fixture
 
 # Every core resource role: the write ones, the renamed one and DK's two read roles.
 cr_roles_json() {
-  printf '%s\n' "${CR_ROLES[@]}" "$CR_RENAMED" "$CR_READER_ROLE" "$CR_AUDIT_ROLE" | jq -R . | jq -s -c 'sort'
+  printf '%s\n' "${CR_ROLES[@]}" "$CR_RENAMED" "$CR_READER_ROLE" "$CR_AUDIT_ROLE" "$CR_OWN_ROLE" | jq -R . | jq -s -c 'sort'
 }
 
-# What ADMIN and YK hold once seeded: the write roles, the renamed one and audit:read.
+# What ADMIN and YK hold once seeded: the write roles, the renamed one, audit:read and url:access.
 cr_privileged_roles_json() {
-  printf '%s\n' "${CR_ROLES[@]}" "$CR_RENAMED" "$CR_AUDIT_ROLE" | jq -R . | jq -s -c 'sort'
+  printf '%s\n' "${CR_ROLES[@]}" "$CR_RENAMED" "$CR_AUDIT_ROLE" "$CR_OWN_ROLE" | jq -R . | jq -s -c 'sort'
+}
+
+# What DK holds once seeded: global:read, audit:read and url:access.
+cr_dk_roles_json() {
+  printf '%s\n' "$CR_READER_ROLE" "$CR_AUDIT_ROLE" "$CR_OWN_ROLE" | jq -R . | jq -s -c 'sort'
 }
 
 cr_group_id() {
@@ -183,8 +190,10 @@ stage_core_roles_seeded_by_operator() {
     grep -Fq "[reconcile] core role $role: seeded once to /ADMIN,/UYELER/YK (granted to: /ADMIN, /UYELER/YK)" <<<"$output" \
       || { printf '%s\n' "$output" >&2; fail "the operator step did not seed $role to ADMIN and YK alone"; }
   done
-  grep -Fq "[reconcile] core role $CR_AUDIT_ROLE: seeded once to /ADMIN,/UYELER/YK,$CR_DK (granted to: /ADMIN, /UYELER/YK, $CR_DK)" <<<"$output" \
-    || { printf '%s\n' "$output" >&2; fail "the operator step did not seed $CR_AUDIT_ROLE to ADMIN, YK and DK"; }
+  for role in "$CR_AUDIT_ROLE" "$CR_OWN_ROLE"; do
+    grep -Fq "[reconcile] core role $role: seeded once to /ADMIN,/UYELER/YK,$CR_DK (granted to: /ADMIN, /UYELER/YK, $CR_DK)" <<<"$output" \
+      || { printf '%s\n' "$output" >&2; fail "the operator step did not seed $role to ADMIN, YK and DK"; }
+  done
   grep -Fq "[reconcile] core role $CR_READER_ROLE: seeded once to $CR_DK (granted to: $CR_DK)" <<<"$output" \
     || { printf '%s\n' "$output" >&2; fail "the operator step did not seed $CR_READER_ROLE to DK alone"; }
   grep -Fq "[reconcile] forms role skyforms:read-all: seeded once to $CR_DK (granted to: $CR_DK)" <<<"$output" \
@@ -193,16 +202,18 @@ stage_core_roles_seeded_by_operator() {
   seeded_pattern='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z /ADMIN,/UYELER/YK$'
   json_assert "$marks" '[.[$write[]]] | all(test($p))' 'a seeded write role lacks its mark' \
     --argjson write "$(printf '%s\n' "${CR_ROLES[@]}" | jq -R . | jq -s -c .)" --arg p "$seeded_pattern"
-  json_assert "$marks" '(.[$audit] | test("Z /ADMIN,/UYELER/YK,/UYELER/DK$")) and (.[$reader] | test("Z /UYELER/DK$"))' \
-    "$CR_AUDIT_ROLE or $CR_READER_ROLE lacks its mark" --arg audit "$CR_AUDIT_ROLE" --arg reader "$CR_READER_ROLE"
+  json_assert "$marks" '(.[$audit] | test("Z /ADMIN,/UYELER/YK,/UYELER/DK$")) and (.[$own] | test("Z /ADMIN,/UYELER/YK,/UYELER/DK$"))
+    and (.[$reader] | test("Z /UYELER/DK$"))' \
+    "$CR_AUDIT_ROLE, $CR_OWN_ROLE or $CR_READER_ROLE lacks its mark" --arg audit "$CR_AUDIT_ROLE" --arg reader "$CR_READER_ROLE" \
+    --arg own "$CR_OWN_ROLE"
   json_assert "$marks" '.["url:create"] == "" and .["certificate:issue"] == ""' 'a role outside the list was marked'
   cr_assert_renamed_follows_old "$output"
   for path in "${CR_PRIVILEGED[@]}"; do
     json_assert "$(cr_group_roles "$path")" '. == $want' "$path does not hold exactly the write roles and $CR_AUDIT_ROLE" \
       --argjson want "$(cr_privileged_roles_json)"
   done
-  json_assert "$(cr_group_roles "$CR_DK")" '. == ([$a, $r] | sort)' "$CR_DK does not hold exactly $CR_AUDIT_ROLE and $CR_READER_ROLE" \
-    --arg a "$CR_AUDIT_ROLE" --arg r "$CR_READER_ROLE"
+  json_assert "$(cr_group_roles "$CR_DK")" '. == $want' "$CR_DK does not hold exactly $CR_AUDIT_ROLE, $CR_READER_ROLE and $CR_OWN_ROLE" \
+    --argjson want "$(cr_dk_roles_json)"
   json_assert "$(kcadm get "groups/$(cr_group_id "$CR_DK")/role-mappings/clients/$(lca_client_uuid forms)" -r "$V2_REALM" -c | jq -c '[.[].name]')" \
     '. == ["skyforms:read-all"]' "$CR_DK does not hold exactly forms/skyforms:read-all"
 
@@ -224,11 +235,11 @@ stage_core_roles_seeded_by_operator() {
     'a member of a YK subgroup did not inherit the core resource roles' --argjson want "$(cr_privileged_roles_json)"
   kcadm delete "users/$user_id/groups/$sub_id" -r "$V2_REALM" >/dev/null
   kcadm delete "groups/$sub_id" -r "$V2_REALM" >/dev/null
-  # A DK member: the two read roles, no write role.
+  # A DK member: the two read roles and their own short links, no write role.
   kcadm update "users/$user_id/groups/$(cr_group_id "$CR_DK")" -r "$V2_REALM" -n -b '{}' >/dev/null
   cr_panel_login "$LCA_USER" "$LCA_PASSWORD"
-  json_assert "$CR_SEEN" '. == ([$a, $r] | sort)' "a DK member's panel token carries other core roles than $CR_AUDIT_ROLE and $CR_READER_ROLE" \
-    --arg a "$CR_AUDIT_ROLE" --arg r "$CR_READER_ROLE"
+  json_assert "$CR_SEEN" '. == $want' "a DK member's panel token carries other core roles than $CR_AUDIT_ROLE, $CR_READER_ROLE and $CR_OWN_ROLE" \
+    --argjson want "$(cr_dk_roles_json)"
   kcadm delete "users/$user_id/groups/$(cr_group_id "$CR_DK")" -r "$V2_REALM" >/dev/null
 
   CURRENT_STAGE='core resource roles: the admin panel owns the mappings after seeding'

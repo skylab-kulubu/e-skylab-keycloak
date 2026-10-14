@@ -1863,7 +1863,9 @@ grubundaki (ör. `/UYELER/YK/…`) kişi rolleri miras alır.
 **DK salt okur (grup-yonetimi 08, 2026-10-14).** Yazma rolleri artık yalnız `ADMIN` ve `YK`'ya
 tohumlanır (`CORE_PRIVILEGED_NAMES=(ADMIN YK)`). Listeye iki okuma rolü eklendi, kendi grup kümeleriyle
 (`CORE_ROLE_SEED_GROUPS`): `global:read` yalnız `DK`'ya (Entra Global Reader), `audit:read` `ADMIN`,
-`YK` ve `DK`'ya (ekip denetim kaydı, ekip-yetki-devri 09). Operatör koşusu her küme için ayrı tohumlar,
+`YK` ve `DK`'ya (ekip denetim kaydı, ekip-yetki-devri 09). `url:access` (kişinin kendi kısa linkleri,
+uygulama rolü) da üçüne tohumlanır: DK onu tutar (Yusuf, Y1); production'da zaten işaretli, yalnız yeni
+bir realm'i etkiler. Operatör koşusu her küme için ayrı tohumlar,
 önce yazma rollerinin kümesini. DK'nın daha önce aldığı yazma rolleri işaretli olduğu için bu adım onları
 kaldırmaz; bir kez kaldırma `config/dk-read-only.sh`'tır (§28).
 
@@ -1941,13 +1943,13 @@ oluşturur, hiçbirini gruba vermez, işaretlemez ve operatör adımını söyle
 panelinin kapsamı yeni rolleri içerir. Operatör adımı: Privileged bir varsayılan grup varken
 reddeder ve yazmaz; varsayılan grupların ya da `/UYELER/YK`'nın okunması (enjekte edilmiş bir
 kcadm hatasıyla, `tests/kcadm-core-roles-failure.sh`) başarısız olunca da reddeder ve yazmaz; sonra
-yazma rollerini yalnız `/ADMIN` ve `/UYELER/YK`'ya, `audit:read`'i bu ikisine ve aşama için açılan
-`/UYELER/DK`'ya, `global:read`'i yalnız `/UYELER/DK`'ya verir, eksik Privileged grup bildirmez,
-her rolü işaretler (listede olmayan `url:create`'e dokunmaz); DK üyesinin `admin` token'ında core
-rolü olarak yalnız `audit:read` ve `global:read` vardır. `/UYELER/DK` aşamanın sonunda silinir. Gerçek authorization code girişinde
-YK üyesinin `admin` token'ında roller var; grupsuz kişide yok; YK'nın bir alt grubuna eklenen kişide
-miras yoluyla var. Panelden kaldırılmış bir eşleme ikinci koşuda geri gelmez, panelden eklenmiş
-bir eşleme silinmez; işareti kaldırılan rol (listeye yeni eklenmiş gibi) üçüncü koşuda yalnız eksik
+yazma rollerini yalnız `/ADMIN` ve `/UYELER/YK`'ya, `audit:read`'i ve `url:access`'i bu ikisine ve
+aşama için açılan `/UYELER/DK`'ya, `global:read`'i yalnız `/UYELER/DK`'ya verir, eksik Privileged grup
+bildirmez, her rolü işaretler (listede olmayan `url:create`'e dokunmaz); DK üyesinin `admin`
+token'ında core rolü olarak yalnız `audit:read`, `global:read` ve `url:access` vardır.
+`/UYELER/DK` aşamanın sonunda silinir. Gerçek authorization code girişinde YK üyesinin `admin`
+token'ında roller var; grupsuz kişide yok; YK'nın bir alt grubuna eklenen kişide miras yoluyla var.
+Panelden kaldırılmış bir eşleme ikinci koşuda geri gelmez, panelden eklenmiş bir eşleme silinmez; işareti kaldırılan rol (listeye yeni eklenmiş gibi) üçüncü koşuda yalnız eksik
 gruba verilir. Değişiklik üretmeyen tam koşu rolleri, işaretleri ve grupların eşlemelerini de
 karşılaştırır.
 
@@ -3094,7 +3096,8 @@ Entra'dan sapma: Global Reader herkese ayrı ayrı atanabilir, bizde yalnız DK 
 | --- | --- | --- |
 | `core` `global:read` | DK | `core-roles` adımı, bir kez (§19; `CORE_ROLE_SEED_GROUPS`) |
 | `core` `audit:read` | ADMIN, YK, DK | `core-roles` adımı, bir kez (ekip-yetki-devri 09; S11'in "DK görmez"i GY1 ile düştü) |
-| `forms` `skyforms:read-all` | DK | `core-roles` adımı, bir kez (`FORMS_PRIVILEGED_ROLE_DEFINITIONS`); forms-backend henüz okumuyor, zararsız |
+| `forms` `skyforms:read-all` | DK | `core-roles` adımı, bir kez (`FORMS_PRIVILEGED_ROLE_DEFINITIONS`); forms-backend henüz okumuyor, zararsız (Yusuf, Y4: şimdi eşlenir) |
+| `core` `url:access` (uygulama rolü: kendi kısa linkleri) | ADMIN, YK, DK | production'da zaten eşli ve işaretli; yeni realm'de `core-roles` adımı (Y1: DK'da kalır) |
 | `skymail` `skymail:system-mails:read` | ADMIN, YK, DK | §25 (değişmedi) |
 | etkinlik sitelerinin `content:read` | DK | `site-editor-grants.sh` (§18), `cms:access` yerine |
 
@@ -3116,41 +3119,55 @@ rollerinin ADMIN, YK ve DK'ya tohumlandığı günden kalan yazma rollerini bu y
 eder; normal uzlaştırma onları kaldırmaz. Ayrı betik (kuru koşu varsayılan, `--apply` yazar) her DK
 kökünün (`/DK`, `/UYELER/DK`; hangisi varsa) doğrudan eşlemelerini okur ve sınıflar:
 
-- **Yazma (kalkar):** core'un sözleşme tablosundaki 14 rolü (`event:manage`, `season:manage`,
+- **Yazma (kalkar):** core'un sözleşme tablosundaki 13 rolü: `event:manage`, `season:manage`,
   `ticket:manage`, `ticket:validate`, `competitor:manage`, `competition:manage`, `media:manage`,
   `media:private:read`, `certificate:manage`, `users:manage`, `groups:manage`, `github:activity:read`,
-  `url:moderator`, `url:access`; core `docs/authz-roles.md`: "12 yazma rolü, `url:moderator` ve
-  `url:access`"; `media:private:read` ve `github:activity:read`'in okumasını `global:read` karşılar),
-  her istemcide `cms:access`, `content:write`, `client:admin` (istemcide `content:read` varsa ve kök
-  taşımıyorsa onların yerine `content:read` verilir; `frontend-main`/`frontend-arge`'da elle verilmiş
-  olanlar da böylece okumaya döner), SkyMail'in gönderme/yazma rolleri ve Place'in rolleri.
-- **Forms (şimdilik kalır):** `skyforms:*` ve öbür Forms rolleri. forms-backend `skyforms:read-all`'u
-  okumadan kaldırılırsa DK Forms'u okuyamaz; Fatih'in teyidi bekleniyor. `--forms` bunları da yazma
-  sayar; kökte `forms/skyforms:read-all` yoksa `PROBLEM`.
+  `url:moderator` (core `docs/authz-roles.md`'nin 12 yazma rolü ve `url:moderator`). `media:private:read`
+  ve `github:activity:read` yalnız okur, ama DK bu okumaları `groups` kipinde kökünden, `both`/`roles`
+  kipinde `global:read`'den alır; ayrı rol gerekmez, okuma kaybı yoktur (Y2, Y3). Ayrıca her istemcide
+  `cms:access`, `content:write`, `client:admin` (istemcide `content:read` varsa ve kök taşımıyorsa
+  onların yerine `content:read` verilir; `frontend-main`/`frontend-arge`'da elle verilmiş olanlar da
+  böylece okumaya döner), SkyMail'in gönderme/yazma rolleri ve Place'in rolleri.
+- **Uygulama rolü (kalır):** kişinin kendisine bağlı core uygulama rolleri (core `role_classes.go`
+  `AppRoles`): `url:access` (ve `url:create`/`get`/`update`/`delete`): DK üyesi kendi kısa linklerini
+  oluşturur ve yönetir; bu yönetim değildir (Yusuf, Y1; Entra'da Global Reader kişinin kendi uygulama
+  erişimini almaz). Forms'un koltuğu ve ekranları `skyforms:access`, `skyforms:form:manage`,
+  `skyforms:response:manage`, `skyforms:feedback:manage` da kalır: formlara yalnız iş birlikçiler
+  üzerinden erişilir, Fatih DK'nın `/admin` girişi için `skyforms:access`'i seçebilir (Y5).
+- **Forms yöneticisi (şimdilik kalır):** `skyforms:*` ve `skyforms:feedback:*` (core `AdminRoles` ile
+  aynı). forms-backend `skyforms:read-all`'u okumadan kaldırılırsa DK Forms'u okuyamaz; Fatih'in teyidi
+  bekleniyor. `--forms` yalnız bu ikisini yazma sayar; kökte `forms/skyforms:read-all` yoksa `PROBLEM`.
 - **Okuma (kalır):** `global:read`, `audit:read`, `users:read`, SkyMail'in okuma rolleri
   (`system-mails:read` dahil), her istemcinin `content:read`'i, `skyforms:read-all`.
-- **Diğer:** başka her client rolü ve her realm rolü (ör. Java döneminin `DK`'sı; rol-temizligi F3
-  kaldırır) `WARNING` olur ve kalır.
+- **Diğer:** başka her client rolü ve her realm rolü (ör. Java döneminin `DK`'sı, gruba eşliyse;
+  rol-temizligi F3 kaldırır) `WARNING` olur ve kalır.
 
-Bir yazma rolü köke bir kompozit rolden ya da üst gruptan hâlâ geliyorsa `WARNING` yazılır (betik
-yalnız doğrudan eşlemeyi kaldırır). Her kök için `…: write roles held: none` ya da kalan yazma
-rollerinin listesi basılır; kabul ölçütündeki "`--check` çıktısı DK'da yazma rolü kalmadığını
-gösterir" bu satırdır.
+Bir yazma rolü köke bir kompozit rolden ya da üst gruptan (ör. `/UYELER`) hâlâ geliyorsa, ya da DK
+kökünün bir alt grubu (her derinlikte) bir yazma rolünü doğrudan taşıyorsa `WARNING` yazılır: betik
+yalnız köklerin doğrudan eşlemesini kaldırır. Alt gruptaki eşlemeyi SKY LAB yönetim paneli zaten
+koymaz (core `PlacementPrivilegedSubgroup`); Admin Console'dan kaldırılır. Her kök için `…: write
+roles held: none` ya da kalan yazma rollerinin listesi basılır; kabul ölçütündeki "`--check` çıktısı
+DK'da yazma rolü kalmadığını gösterir" bu satırdır.
 
 Kilitler (hiçbir şey yazılmaz, çıkış 1): core rolü kaybedecek kök `core/global:read` ve
 `core/audit:read` taşımıyorsa (önce `core-roles` koşulur), `--forms`'ta `forms/skyforms:read-all`
 taşımıyorsa, bir varsayılan grup bir DK kökünün kendisi ya da altıysa, bir okuma "grup yok" dışında
 bir nedenle düşerse.
 
-**Yedek ve geri alma.** `--apply` her şeyden önce yedeği yazar (`--backup-file`, varsayılan
-konteynerde `/tmp/dk-read-only-<realm>-<UTC zaman>.tsv`; var olan dosyanın üstüne yazmaz): kaldırılan
-her eşleme için `yol<TAB>istemci<TAB>rol` satırı; yerine verilen `content:read` yorum satırıdır. Sonra
-`content:read`'i verir, sonra yazma rollerini kaldırır. İkinci koşu hiçbir şey değiştirmez ve yedek
+**Yedek ve geri alma.** `--apply` yedeğin yolunu ilk satırında yazar (`backup=…`; `--backup-file`,
+verilmezse konteynerde `/tmp/dk-read-only-<realm>-<UTC zaman>.tsv`), hiçbir şeyi değiştirmeden önce
+yedeği yazar (izin 0600; var olan dosyanın üstüne yazmaz) ve hemen `backup: … (N mapping(s) to take
+away; …)` der: kaldırılacak her eşleme için `yol<TAB>istemci<TAB>rol` satırı; yerine verilen
+`content:read` yorum satırıdır. Sonra `content:read`'i verir, sonra yazma rollerini kaldırır. Bir
+yazma yarıda düşerse betik 1 ile durur ve yedeği adlandırır; `--restore` alınmış olanı geri verir
+(olanı atlar), betik yeniden koşulunca işi bitirir. İkinci koşu hiçbir şey değiştirmez ve yedek
 yazmaz. `--restore <yedek>` (kuru koşu varsayılan, `--apply` yazar) yedekteki eşlemeleri geri verir;
 `content:read` kalır. Yedekte bir DK kökü dışında yol, `realm-management` ya da bu betiğin
 kaldırmadığı bir rol varsa dosya geçersizdir (çıkış 2, giriş yapılmadan). Yedek kişisel veri
 taşımaz (grup yolu ve rol adı). Keycloak tarafını geri almak core'da DK'ya yazma açmaz: core'da geri
 dönüş `AUTHZ_PRIVILEGED_READER_ROOTS=none`'dır (core `docs/authz-roles.md`); ikisi birlikte yapılır.
+Kaldırma Keycloak'a doğrudan yapılır: core'un denetim kaydına ve yetki postasına girmez, yalnız
+Keycloak admin olaylarında (30 gün) görünür; kalıcı iz yedek dosyası ve hub notudur.
 
 ### Operatör sırası (önce sandbox, sonra production)
 
@@ -3160,15 +3177,17 @@ aynı Keycloak konteynerindedir.
 1. Bu değişikliği taşıyan Keycloak sürümü yayımlanır (Touch ID kapısı). Tam uzlaştırma
    `global:read`, `audit:read` ve `skyforms:read-all`'u oluşturur, admin panelinin kapsamına koyar ve
    `WARNING: core roles not yet granted …: global:read audit:read` ile `WARNING: forms roles not yet
-   granted …: skyforms:read-all` yazar.
+   granted …: skyforms:read-all` yazar; ayrıca `client roles of core (16 resource roles)` ve
+   `Privileged roles of forms (1): created (skyforms:read-all)`. Yayın wizard'ı bunları beklemelidir.
 2. Operatör `core-roles` adımını koşar (§19'daki komut, önce `KEYCLOAK_REALM=e-skylab-sandbox`, sonra
    `e-skylab`); ardından `admin-panel-client` adımı. Beklenen: `core role global:read: seeded once to
    /UYELER/DK`, `core role audit:read: seeded once to /ADMIN,/UYELER/YK,/UYELER/DK`, `forms role
    skyforms:read-all: seeded once to /UYELER/DK`. Yazma rolleri işaretli olduğu için yeniden
    tohumlanmaz.
-3. sky_lab_genel'deki `ops/wizards/site-cms-setup-wizard.sh`'ın `SHA_SITE_GRANTS`'ı bu sürümün
-   `site-editor-grants.sh`'ına güncellenir; etkinlik siteleri için betik yeniden koşulduğunda DK
-   `content:read` alır (yalnız ekler; DK'nın `cms:access`'ini 4. adım kaldırır).
+3. sky_lab_genel'deki `ops/wizards/site-cms-setup-wizard.sh`'ın `SHA_SITE_GRANTS`'ı bu değişikliğin
+   `site-editor-grants.sh`'ına **birleştirmeyle aynı anda** güncellenir: wizard betiği `origin/main`'den
+   okur ve özetini denetler. Etkinlik siteleri için betik yeniden koşulduğunda DK `content:read` alır
+   (yalnız ekler; DK'nın `cms:access`'ini 4. adım kaldırır).
 4. `dk-read-only.sh` kuru koşu → çıktı Yusuf'a → **Yusuf onayı** → `--apply` → yedek konteynerden
    sunucuya alınır → kuru koşu `check: 0 change(s) pending` ve `write roles held: none` der. Konteynerde
    (`docker exec -it "$(docker ps -q -f name=sky-lab-production-keycloak | head -n 1)" bash`):
@@ -3185,56 +3204,75 @@ aynı Keycloak konteynerindedir.
    ```
 
    Production'da aynı üç komut `KEYCLOAK_REALM=e-skylab` ve `--backup-file
-   /tmp/dk-read-only-e-skylab.tsv` ile. Konteynerden çıktıktan sonra yedek sunucuya alınır (konteyner
-   yeniden başlarsa `/tmp` gider):
+   /tmp/dk-read-only-e-skylab.tsv` ile. Her `--apply`'dan sonra (sandbox, production, sonra `--forms`)
+   yedek konteynerden çıkınca sunucuya **yeni, zaman damgalı bir ada** alınır; var olan dosyanın üstüne
+   yazılmaz (konteyner yeniden başlarsa `/tmp` gider, ikinci bir kopyalama eski yedeği boşaltmasın).
+   Sunucuda, `YEDEK` konteynerdeki dosyanın adı:
 
    ```bash
-   docker exec "$(docker ps -q -f name=sky-lab-production-keycloak | head -n 1)" cat /tmp/dk-read-only-e-skylab.tsv > ~/dk-read-only-e-skylab.tsv
+   YEDEK=dk-read-only-e-skylab.tsv
+   kc=$(docker ps -q -f name=sky-lab-production-keycloak | head -n 1)
+   dest="$HOME/${YEDEK%.tsv}-$(date -u +%Y%m%dT%H%M%SZ).tsv"
+   test ! -e "$dest" && docker cp "$kc:/tmp/$YEDEK" "$dest" && test -s "$dest" && ls -l "$dest"
    ```
 
-   Production kuru koşusunda beklenen: `/UYELER/DK` için 14 core rolünün `would take … away` satırı,
+   Sandbox için `YEDEK=dk-read-only-e-skylab-sandbox.tsv`, `--forms` için
+   `YEDEK=dk-read-only-forms-e-skylab.tsv`. Son satır dosyayı göstermezse (kopyalanmadı ya da boş)
+   konteynerdeki yedek silinmeden önce sebep bulunur.
+
+   Production kuru koşusunda beklenen: `/UYELER/DK` için 13 core rolünün `would take … away` satırı,
    DK'nın elinde ne varsa site istemcilerinin `cms:access`'i ve yerine `content:read`, `read roles
    kept: core/audit:read, core/global:read, forms/skyforms:read-all, skymail/skymail:system-mails:read`,
-   `NOTE: … Forms roles kept … forms/skyforms:*` (DK'da varsa) ve realm rolü `DK` için `WARNING`.
-   Başka bir `WARNING` (beklenmeyen rol) Yusuf'a ayrıca gösterilir.
-5. Yayından önce DK üyelerine haber verilir: "yazma yetkiniz kalkıyor, okuma ve denetim kaydı geliyor"
-   (kimin vereceğini Yusuf söyler; core tarafı zaten yayında olduğu için Keycloak adımı onlar için
-   görünür bir değişiklik getirmez, token'ları yalnız küçülür).
+   `app roles kept (…): core/url:access` (DK'da varsa Forms koltuğu da), `NOTE: … Forms roles kept …
+   forms/skyforms:*` (DK'da varsa); realm rolü `DK` gruba eşliyse onun için `WARNING`. Başka bir
+   `WARNING` (beklenmeyen rol, alt grup ya da üst gruptan gelen yazma) Yusuf'a ayrıca gösterilir.
+5. DK üyelerine bilgilendirme mesajı **gönderilmez** (Yusuf, 2026-10-13: "mesajsız çıkar"). core
+   tarafı zaten yayında olduğu için Keycloak adımı onlar için görünür bir değişiklik getirmez; token'ları
+   yalnız küçülür, kendi kısa linkleri (`url:access`) kalır.
 6. **Forms (sonra):** Fatih `skyforms:read-all`'u okuyan forms-backend'i yayınlayınca aynı sıra
    `--forms` ile: kuru koşu → onay → `--forms --apply --backup-file /tmp/dk-read-only-forms-e-skylab.tsv`
-   → kuru koşu. O zamana kadar DK `skyforms:*`'ı taşır (Forms'ta okur ve yazar; Forms core'un okuyucu
+   → yedek dışarı → kuru koşu. Yalnız `skyforms:*` ve `skyforms:feedback:*` kalkar; koltuk ve ekran
+   rolleri kalır. O zamana kadar DK `skyforms:*`'ı taşır (Forms'ta okur ve yazar; Forms core'un okuyucu
    kuralını bilmez).
 
-Geri alma. Yedek gerekirse sunucudan konteynere geri konur (sunucuda):
+Geri alma. Yedek gerekirse sunucudan konteynere geri konur (sunucuda; konteynerdeki dosya konteynerin
+kullanıcısına ait olur, var olanın üstüne yazılmaz). `GERI` sunucudaki zaman damgalı dosyanın adı:
 
 ```bash
-docker exec -i "$(docker ps -q -f name=sky-lab-production-keycloak | head -n 1)" sh -c 'cat > /tmp/dk-read-only-e-skylab.tsv' < ~/dk-read-only-e-skylab.tsv
+GERI=dk-read-only-e-skylab-20261015T090000Z.tsv
+docker exec -i "$(docker ps -q -f name=sky-lab-production-keycloak | head -n 1)" sh -c 'set -C; cat > /tmp/dk-read-only-restore.tsv' < "$HOME/$GERI"
 ```
 
 Sonra konteynerde, kcadm girişinden sonra (önce kuru):
 
 ```bash
-KEYCLOAK_REALM=e-skylab /opt/keycloak/config/dk-read-only.sh --kcadm-config /tmp/kcadm-operator.config --restore /tmp/dk-read-only-e-skylab.tsv
-KEYCLOAK_REALM=e-skylab /opt/keycloak/config/dk-read-only.sh --kcadm-config /tmp/kcadm-operator.config --restore /tmp/dk-read-only-e-skylab.tsv --apply
+KEYCLOAK_REALM=e-skylab /opt/keycloak/config/dk-read-only.sh --kcadm-config /tmp/kcadm-operator.config --restore /tmp/dk-read-only-restore.tsv
+KEYCLOAK_REALM=e-skylab /opt/keycloak/config/dk-read-only.sh --kcadm-config /tmp/kcadm-operator.config --restore /tmp/dk-read-only-restore.tsv --apply
 ```
 
 Okuma rollerinin eşlemeleri admin panelinden ya da Admin Console'dan kaldırılabilir; işaretli
 oldukları için uzlaştırıcı geri koymaz.
 
 **Harness.** `tests/dk-read-only.sh` (CI işi `dk-read-only`, stok Keycloak, dev modu): production'ın
-bu değişiklikten önceki biçimini kurar (14 yazma rolü ADMIN, YK ve DK'da işaretli, SkyMail'in iki
-rolü, etkinlik sitesinde `cms:access`, DK'da `skyforms:*` ve realm rolü `DK`); `core-roles`'dan önce
-betik `PROBLEM` verir ve yazmaz; `core-roles` okuma rollerini bir kez doğru köklere tohumlar, yazma
-rollerine dokunmaz; kuru koşu 15 kaldırma + 1 `content:read` planlar ve yazmaz (admin olayı yok);
-`--apply` yedeği yazar, yalnız onları kaldırır, ADMIN ve YK değişmez; DK üyesinin token'ında core
-`[audit:read, global:read]`, site `[content:read]`, SkyMail `[system-mails:read]`, Forms `[skyforms:*,
-skyforms:read-all]`; YK üyesininki yalnız `audit:read` kazanır; sonraki kuru koşu `write roles held:
-none` ve 0 değişiklik, ikinci `--apply` yazmaz; `--restore` kuru koşar, `--apply` ile 15 eşlemeyi geri
-verir, ikinci kez yazmaz; `--forms` `skyforms:read-all` yokken `PROBLEM`, varken `skyforms:*`'ı da
-kaldırır; kompozit yazma rolü ve realm rolü `WARNING`; DK altında varsayılan grup ve düşen okumalar
-(enjekte) 1 ile durur, yazmaz; sandbox'ta DK yoksa iş yok; yabancı yedek satırları ve seçenek
-çakışmaları girişten önce 2 ile reddedilir. Entegrasyon harness'ında (`tests/core-roles.sh`)
-`core-roles` adımı yazma rollerini yalnız `/ADMIN` ve `/UYELER/YK`'ya, `audit:read`'i üçüne,
-`global:read`'i ve `skyforms:read-all`'u yalnız aşama için açılan `/UYELER/DK`'ya verir; DK üyesinin
-panel token'ında core rolü olarak yalnız ikisi vardır. `tests/site-clients.sh`: DK `content:read` alır,
-`cms:access` almaz; DK üyesinin site token'ında yalnız `content:read` vardır ve editör kapısı kapalıdır.
+bu değişiklikten önceki biçimini kurar (core'un 14 rolü (13 yazma rolü ve `url:access`) ADMIN, YK ve DK'da işaretli, SkyMail'in iki
+rolü ve DK'da elle `skymail:mails:approve`, etkinlik sitesinde `cms:access`, DK'da `skyforms:*`, Forms
+koltuğu ve realm rolü `DK`, DK'nın alt grubu); `core-roles`'dan önce betik `PROBLEM` verir ve yazmaz;
+`core-roles` okuma rollerini bir kez doğru köklere tohumlar, yazma rollerine dokunmaz; kuru koşu 15
+kaldırma (13 core rolü, `cms:access`, `skymail:mails:approve`) + 1 `content:read` planlar, `url:access`
+ve koltuğu planlamaz, yazmaz (admin olayı yok); `--apply` yedeği ilk satırda adlandırır ve 0600 yazar,
+yalnız onları kaldırır, ADMIN ve YK değişmez; DK üyesinin token'ında core `[audit:read, global:read,
+url:access]`, site `[content:read]`, SkyMail `[system-mails:read]`, Forms `[skyforms:*, skyforms:access,
+skyforms:read-all]`; DK'nın alt grubundaki kişi aynısını miras alır; YK üyesininki yalnız `audit:read`
+kazanır; hem DK hem YK üyesi YK'nın yazma rollerini korur; sonraki kuru koşu `write roles held: none`
+ve 0 değişiklik, ikinci `--apply` yazmaz; `--restore` kuru koşar, `--apply` ile 15 eşlemeyi geri verir,
+ikinci kez yazmaz; `--forms` `skyforms:read-all` yokken `PROBLEM`, varken yalnız `skyforms:*`'ı kaldırır,
+koltuk kalır; kompozit yazma rolü, `/UYELER`'den gelen yazma rolü, alt gruptaki yazma rolü ve realm rolü
+`WARNING`; `/DK` kökü `/UYELER/DK`'nın yanında işlenir; DK altında varsayılan grup ve düşen okumalar
+(enjekte) 1 ile durur, yazmaz; düşen yazma (enjekte) 1 ile durur ve yedeği adlandırır, `--restore`
+alınmışı geri verir, sonraki koşu (varsayılan yedek adıyla) işi bitirir; sandbox'ta DK yoksa iş yok;
+yabancı yedek satırları (`url:access`, `skyforms:access` dahil) ve seçenek çakışmaları girişten önce 2
+ile reddedilir. Entegrasyon harness'ında (`tests/core-roles.sh`) `core-roles` adımı yazma rollerini
+yalnız `/ADMIN` ve `/UYELER/YK`'ya, `audit:read`'i üçüne, `global:read`'i ve `skyforms:read-all`'u
+yalnız aşama için açılan `/UYELER/DK`'ya verir; DK üyesinin panel token'ında core rolü olarak yalnız
+ikisi vardır. `tests/site-clients.sh`: DK `content:read` alır, `cms:access` almaz; DK üyesinin site
+token'ında yalnız `content:read` vardır ve editör kapısı kapalıdır.

@@ -589,12 +589,15 @@ aynı biçimde `forms` istemcisinde var edilir ve yalnız DK'ya bir kez verilir 
 
 DK salt okurdur (grup-yonetimi 08; Entra'nın Global Reader + Reports Reader'ı: `global:read` +
 `audit:read`). Uzlaştırıcı bir eşlemeyi hiç geri almadığı için DK'nın eskiden aldığı yazma rollerini
-(core'un 14 rolü, site istemcilerinin `cms:access`'i ve benzerleri) tek seferlik operatör betiği
-`config/dk-read-only.sh` kaldırır: kuru koşu varsayılan, `--apply` önce yedeği yazar, sonra site
-yazma rolünün yerine `content:read` verir ve yazma rollerini kaldırır; ikinci koşu 0 değişiklik;
-`--restore <yedek>` geri verir. Okuma rolleri yoksa (önce `core-roles`) ya da DK'nın altında
-varsayılan grup varsa yazmaz. Forms rolleri (`skyforms:*`) forms-backend `skyforms:read-all`'u
-okuyana kadar kalır; sonra `--forms` onları da kaldırır. Uzlaştırıcının adımı değildir; Yusuf'un
+(core'un 13 yazma rolü, site istemcilerinin `cms:access`'i ve benzerleri) tek seferlik operatör
+betiği `config/dk-read-only.sh` kaldırır: kuru koşu varsayılan, `--apply` yedeğin yolunu ilk satırda
+yazar, önce yedeği yazar, sonra site yazma rolünün yerine `content:read` verir ve yazma rollerini
+kaldırır; ikinci koşu 0 değişiklik; `--restore <yedek>` geri verir. Kişinin kendi uygulama rolleri
+(`url:access`: kendi kısa linkleri; Forms koltuğu `skyforms:access` ve ekran rolleri) kalır. Okuma
+rolleri yoksa (önce `core-roles`) ya da DK'nın altında varsayılan grup varsa yazmaz; DK'nın alt
+gruplarındaki ve üst gruptan gelen yazma rollerini yalnız bildirir. Forms'un yönetici rolleri
+(`skyforms:*`, `skyforms:feedback:*`) forms-backend `skyforms:read-all`'u okuyana kadar kalır; sonra
+`--forms` yalnız onları kaldırır. Uzlaştırıcının adımı değildir; Yusuf'un
 onayıyla, önce sandbox'ta koşulur (runbook §28). Harness `tests/dk-read-only.sh` tek başına çalışır.
 
 Uygulama rolü grupları `/ROLLER/<UYGULAMA>-<ROL>` (Entra'nın uygulama rolü güvenlik grupları;

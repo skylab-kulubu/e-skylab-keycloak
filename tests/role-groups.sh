@@ -452,6 +452,9 @@ expect_line "$applied" "WARNING: /ROLLER/CF-ZERO-TRUST-ACCESS: the client cloudf
 expect_line "$applied" "WARNING: /ROLLER/SKYCLOUD-ADMIN: the client skycloud does not exist in realm $SANDBOX" 'SKYCLOUD-ADMIN was not skipped'
 expect_line "$applied" 'applied 19 change(s), 6 warning(s), 0 problem(s)' 'the sandbox apply did not make the 9 leaves'
 ! group_exists "$SANDBOX" /ROLLER/PLACE-ADMIN || fail 'a leaf without its client was created'
+# A leaf whose role is missing (as SKYCLOUD-ADMIN would be if production's role were not named admin)
+# is only a WARNING: not created, nothing mapped, the run goes on.
+! group_exists "$SANDBOX" /ROLLER/FORMS-ALL || fail 'a leaf without its role was created'
 [[ $(group_roles "$SANDBOX" /ROLLER/FORMS-ACCESS) == '["forms/skyforms:access"]' ]] || fail 'the sandbox FORMS-ACCESS is wrong'
 printf '    sandbox: 9 leaves made, 6 skipped with a WARNING (exit 0)\n'
 

@@ -78,10 +78,21 @@ import java.util.TreeMap;
  *                               (^[A-Z][A-Z0-9-]{1,23}$), a name twice, a group without exactly one
  *                               client or without a role, a role twice, or a text with a tab, a
  *                               line break, a double quote or a backslash is refused (exit 1).
+ *   same-shape OTHER.json [STEP]
+ *                               stdin and OTHER are the flat execution lists of two authentication
+ *                               flows; exits 0 when both have the same shape (the same executions in
+ *                               the same order, each with the same level, index, requirement,
+ *                               provider and sub-flow-or-step kind; ids, names, descriptions,
+ *                               priorities and authenticator configs are not compared) and 4 with
+ *                               the first difference on stderr otherwise. With STEP, stdin is
+ *                               eskylab-login-ux 07's copy of OTHER: its STEP executions are left
+ *                               out, indexes are not compared (the added step shifts them; the
+ *                               order and levels still fix the tree) and neither are the
+ *                               requirements of idp-email-verification (the copy disables it).
  *
  * Exit status 0 means "printed successfully", 3 means "changed" (user-profile and config-value),
- * 4 "refused" (password-form and first-broker-login) and 1 an invalid input. Nothing here prints
- * secrets: all inputs are configuration documents.
+ * 4 "refused" (password-form, first-broker-login and same-shape) and 1 an invalid input. Nothing
+ * here prints secrets: all inputs are configuration documents.
  */
 public final class ReconcileJson {
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -112,6 +123,7 @@ public final class ReconcileJson {
             case "first-broker-login" -> System.exit(firstBrokerLogin(args, readStdin(), out));
             case "config-value" -> System.exit(configValue(args, readStdin(), out));
             case "role-groups" -> roleGroups(requireFile(args), out);
+            case "same-shape" -> System.exit(sameShape(args, readStdin()));
             default -> usage();
         }
     }
@@ -122,7 +134,8 @@ public final class ReconcileJson {
                 + "  |  ReconcileJson field NAME  |  ReconcileJson role-attribute NAME"
                 + "  |  ReconcileJson realm-attribute NAME VALUE"
                 + "  |  ReconcileJson password-form FROM TO  |  ReconcileJson first-broker-login STEP"
-                + "  |  ReconcileJson config-value NAME VALUE  |  ReconcileJson role-groups FILE");
+                + "  |  ReconcileJson config-value NAME VALUE  |  ReconcileJson same-shape OTHER [STEP]"
+                + "  |  ReconcileJson role-groups FILE");
         System.exit(1);
     }
 
@@ -616,6 +629,48 @@ public final class ReconcileJson {
                     + verification.path("priority").asInt() + "\t" + verification.path("requirement").asText());
         }
         return 0;
+    }
+
+    // ------------------------------------------------------------------ same-shape
+
+    private static int sameShape(String[] args, JsonNode stdin) throws IOException {
+        if (args.length != 2 && args.length != 3) {
+            usage();
+        }
+        JsonNode otherNode = MAPPER.readTree(Files.readString(Path.of(args[1]), StandardCharsets.UTF_8));
+        if (!otherNode.isArray() || !stdin.isArray()) {
+            usage();
+        }
+        String step = args.length == 3 ? args[2] : null;
+        List<JsonNode> other = new ArrayList<>();
+        otherNode.forEach(other::add);
+        List<JsonNode> executions = new ArrayList<>();
+        for (JsonNode node : stdin) {
+            if (step == null || !step.equals(node.path("providerId").asText(""))) {
+                executions.add(node);
+            }
+        }
+        boolean copy = step != null;
+        int count = Math.max(other.size(), executions.size());
+        for (int i = 0; i < count; i++) {
+            String want = i < other.size() ? shapeOf(other.get(i), copy) : "nothing";
+            String have = i < executions.size() ? shapeOf(executions.get(i), copy) : "nothing";
+            if (!want.equals(have)) {
+                return refuse("execution " + (i + 1) + " is " + have + ", not " + want);
+            }
+        }
+        return 0;
+    }
+
+    private static String shapeOf(JsonNode execution, boolean copy) {
+        boolean subFlow = execution.path("authenticationFlow").asBoolean(false);
+        String provider = execution.path("providerId").asText("?");
+        String requirement = copy && "idp-email-verification".equals(provider)
+                ? "any requirement" : execution.path("requirement").asText("?");
+        return (subFlow ? "sub-flow" : "step " + provider)
+                + " (level " + execution.path("level").asInt()
+                + (copy ? "" : ", index " + execution.path("index").asInt())
+                + ", " + requirement + ")";
     }
 
     // ------------------------------------------------------------------ config-value

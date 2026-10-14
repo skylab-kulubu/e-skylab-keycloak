@@ -13,6 +13,13 @@
 # SkyMail, addressed to the Primary e-mail and never to the typed one; the link it carries
 # resets the password; an unknown, ambiguous, unproven or disabled address gets the same page
 # and no mail.
+#
+# eskylab-login-ux 23: the same reconciliation puts auth-otp-form (the code of the registered
+# authenticator) in the place of Keycloak's reset-otp (set up a new authenticator) in the copy's
+# "Reset - Conditional OTP" subflow; KEYCLOAK_RESET_OTP_STEP=reset swaps it back. The stages prove
+# the swap, its interrupted and Admin Console variants, the rollback to exactly Keycloak's flow, and
+# on a real reset: a person with OTP is asked for the code, never for a new authenticator, and keeps
+# exactly the OTP credential they had; a person without OTP is not asked.
 
 # jq programs name their arguments ($person, $a) in single quotes on purpose.
 # shellcheck disable=SC2016
@@ -24,6 +31,10 @@ RBE_PASSWORD='k4b-reset-fixture-password'
 RBE_NEW_PASSWORD='k4b-after-reset-password'
 RBE_VERIFIED_AT='2026-09-21T14:13:20Z'
 RBE_TEMPLATE=keycloak.reset-password
+RBE_STOCK_OTP=reset-otp
+RBE_VERIFY_OTP=auth-otp-form
+# The raw OTP secret Keycloak stores; authenticator apps get its Base32 form.
+RBE_OTP_SECRET='k4b-otp-fixture-secret-0123456789'
 RBE_STATUS=''
 RBE_BODY=''
 RBE_COOKIES=''
@@ -32,13 +43,33 @@ rbe_flow() {
   kcadm get "authentication/flows/${1// /%20}/executions" -r "$V2_REALM" -c
 }
 
-# A flow's executions with the choose-user step made provider-neutral and the copy's own ids
-# and subflow names left out: equal for the built-in flow and its copy exactly when the step is
-# the only difference.
+# A flow's executions with the choose-user and OTP steps made provider-neutral and the copy's
+# own ids and subflow names left out: equal for the built-in flow and its copy exactly when the
+# two steps are the only difference.
 rbe_flow_shape() {
-  jq -S -c --arg sky "$RBE_SKY_STEP" --arg stock "$RBE_STOCK_STEP" '
-    [.[] | {providerId: (if (.providerId == $sky or .providerId == $stock) then "choose-user" else .providerId end),
+  jq -S -c --arg sky "$RBE_SKY_STEP" --arg stock "$RBE_STOCK_STEP" --arg otp "$RBE_STOCK_OTP" --arg verify "$RBE_VERIFY_OTP" '
+    [.[] | {providerId: (if (.providerId == $sky or .providerId == $stock) then "choose-user"
+        elif (.providerId == $otp or .providerId == $verify) then "otp-step" else .providerId end),
       requirement, level, index, priority, authenticationFlow}]'
+}
+
+# The same with every provider as it is: equal for the built-in flow and its copy exactly when
+# the copy holds Keycloak's steps.
+rbe_flow_exact_shape() {
+  jq -S -c '[.[] | {providerId, requirement, level, index, priority, authenticationFlow}]'
+}
+
+# "<reset-otp count> <auth-otp-form count> <requirements of both>" in FLOW.
+rbe_otp_census() {
+  rbe_flow "$1" | jq -r --arg otp "$RBE_STOCK_OTP" --arg verify "$RBE_VERIFY_OTP" '
+    "\([.[] | select(.providerId == $otp)] | length) \([.[] | select(.providerId == $verify)] | length) \([.[] | select(.providerId == $otp or .providerId == $verify) | .requirement] | join(","))"'
+}
+
+# The OTP step's line of a reconcile log must match the extended regular expression.
+rbe_expect_otp_line() {
+  local log_file=$1 pattern=$2 message=$3
+  grep -Eqx -- "\[reconcile\] OTP step of flow '$RBE_COPY': $pattern" "$log_file" \
+    || { cat "$log_file" >&2; fail "reset OTP step: $message"; }
 }
 
 rbe_bound_flow() {
@@ -73,6 +104,14 @@ stage_reset_choose_user_after_first_reconciliation() {
     'the first reconciliation did not report the swap'
   rbe_expect_line "$log_file" "[reconcile] realm reset credentials flow binding: updated ($RBE_BUILT_IN -> $RBE_COPY)" \
     'the first reconciliation did not report the binding'
+  # The OTP step: Keycloak's reset-otp in the built-in flow, auth-otp-form in its place in the copy.
+  local otp_priority
+  otp_priority=$(jq -r --arg otp "$RBE_STOCK_OTP" '[.[] | select(.providerId == $otp)] | if length == 1 then .[0].priority else "none" end' <<<"$built_in_before")
+  [[ $otp_priority =~ ^-?[0-9]+$ ]] || fail "the built-in '$RBE_BUILT_IN' flow does not hold exactly one $RBE_STOCK_OTP"
+  [[ $(rbe_otp_census "$RBE_COPY") == "0 1 REQUIRED" ]] \
+    || fail "reset OTP step: '$RBE_COPY' does not hold exactly one REQUIRED $RBE_VERIFY_OTP: $(rbe_otp_census "$RBE_COPY")"
+  rbe_expect_otp_line "$log_file" "updated \($RBE_STOCK_OTP -> $RBE_VERIFY_OTP in subflow '$RBE_COPY [^']+', priority $otp_priority, REQUIRED\)" \
+    'the first reconciliation did not report the swap'
 }
 
 # A run cut short after the copy: the realm is back on the built-in flow and the copy holds
@@ -87,6 +126,36 @@ stage_reset_choose_user_inject_drift() {
   kcadm delete "authentication/executions/$sky_id" -r "$V2_REALM" >/dev/null
   [[ $(rbe_bound_flow) == "$RBE_BUILT_IN" && $(rbe_step_census "$RBE_COPY") == "1 0 REQUIRED" ]] \
     || fail 'K4b: the reset credentials drift was not injected'
+  # The OTP step swap cut right after adding auth-otp-form, which Admin REST adds DISABLED:
+  # Keycloak's reset-otp REQUIRED and auth-otp-form DISABLED in the same place.
+  local flow verify_id priority subflow
+  flow=$(rbe_flow "$RBE_COPY")
+  verify_id=$(jq -r --arg verify "$RBE_VERIFY_OTP" '.[] | select(.providerId == $verify) | .id' <<<"$flow")
+  priority=$(jq -r --arg verify "$RBE_VERIFY_OTP" '.[] | select(.providerId == $verify) | .priority' <<<"$flow")
+  subflow=$(rbe_otp_subflow "$flow")
+  kcadm delete "authentication/executions/$verify_id" -r "$V2_REALM" >/dev/null
+  rbe_add_execution "$subflow" "$RBE_STOCK_OTP" "$priority" REQUIRED
+  rbe_add_execution "$subflow" "$RBE_VERIFY_OTP" "$priority" DISABLED
+  [[ $(rbe_otp_census "$RBE_COPY") == "1 1 REQUIRED,DISABLED" || $(rbe_otp_census "$RBE_COPY") == "1 1 DISABLED,REQUIRED" ]] \
+    || fail "reset OTP step: the interrupted swap was not injected: $(rbe_otp_census "$RBE_COPY")"
+}
+
+# The alias of the subflow that holds the OTP step in the flow (executions JSON): the nearest
+# subflow one level up before it.
+rbe_otp_subflow() {
+  jq -r --arg otp "$RBE_STOCK_OTP" --arg verify "$RBE_VERIFY_OTP" '
+    . as $all | (map(.providerId == $otp or .providerId == $verify) | index(true)) as $at
+    | [$all[:$at][] | select(.level == $all[$at].level - 1 and .authenticationFlow == true)] | last | .displayName' <<<"$1"
+}
+
+# Adds PROVIDER to SUBFLOW at PRIORITY with REQUIREMENT, the way the Admin Console does: Admin
+# REST adds it DISABLED, the requirement is set afterwards.
+rbe_add_execution() {
+  local subflow=$1 provider=$2 priority=$3 requirement=$4 id
+  id=$(kcadm create "authentication/flows/${subflow// /%20}/executions/execution" -r "$V2_REALM" -i \
+    -b "{\"provider\":\"$provider\",\"priority\":$priority}")
+  kcadm update "authentication/flows/${subflow// /%20}/executions" -r "$V2_REALM" -n \
+    -b "{\"id\":\"$id\",\"requirement\":\"$requirement\",\"priority\":$priority}" >/dev/null
 }
 
 stage_reset_choose_user_after_second_reconciliation() {
@@ -103,6 +172,10 @@ stage_reset_choose_user_after_second_reconciliation() {
     'the second reconciliation did not bind the realm to the copy again'
   [[ $(rbe_bound_flow) == "$RBE_COPY" && $(rbe_step_census "$RBE_COPY") == "0 1 REQUIRED" ]] \
     || fail 'K4b: the second reconciliation left the reset credentials flow unrepaired'
+  rbe_expect_otp_line "$log_file" "updated \(finished an interrupted swap: $RBE_VERIFY_OTP DISABLED -> REQUIRED, removed $RBE_STOCK_OTP\)" \
+    'the second reconciliation did not finish the interrupted swap'
+  [[ $(rbe_otp_census "$RBE_COPY") == "0 1 REQUIRED" ]] \
+    || fail "reset OTP step: the second reconciliation left $(rbe_otp_census "$RBE_COPY")"
 }
 
 stage_reset_choose_user_after_noop_reconciliation() {
@@ -111,6 +184,8 @@ stage_reset_choose_user_after_noop_reconciliation() {
     'the no-op reconciliation did not report the choose-user step unchanged'
   rbe_expect_line "$log_file" "[reconcile] realm reset credentials flow binding: unchanged ($RBE_COPY)" \
     'the no-op reconciliation did not report the binding unchanged'
+  rbe_expect_line "$log_file" "[reconcile] OTP step of flow '$RBE_COPY': unchanged ($RBE_VERIFY_OTP)" \
+    'the no-op reconciliation did not report the OTP step unchanged'
 }
 
 # One reset-password request with account-center, the way a browser makes it: the login page,
@@ -189,6 +264,14 @@ rbe_after_rollback() {
     'the rollback changed the realm binding'
   [[ $(rbe_step_census "$RBE_COPY") == "1 0 REQUIRED" && $(rbe_bound_flow) == "$RBE_COPY" ]] \
     || fail "K4b: the rollback left $(rbe_step_census "$RBE_COPY") bound to $(rbe_bound_flow)"
+  # KEYCLOAK_RESET_OTP_STEP=reset: Keycloak's reset-otp back, so the copy holds exactly the
+  # built-in flow's steps again.
+  rbe_expect_otp_line "$log_file" "updated \($RBE_VERIFY_OTP -> $RBE_STOCK_OTP in subflow '$RBE_COPY [^']+', priority -?[0-9]+, REQUIRED\)" \
+    'the rollback did not swap Keycloak'"'"'s step back'
+  [[ $(rbe_otp_census "$RBE_COPY") == "1 0 REQUIRED" ]] \
+    || fail "reset OTP step: the rollback left $(rbe_otp_census "$RBE_COPY")"
+  [[ $(rbe_flow "$RBE_COPY" | rbe_flow_exact_shape) == "$(rbe_flow "$RBE_BUILT_IN" | rbe_flow_exact_shape)" ]] \
+    || fail "reset OTP step: after both rollbacks '$RBE_COPY' differs from Keycloak's '$RBE_BUILT_IN'"
   # Keycloak's own step again: the Personal e-mail names nobody, the username still does.
   rbe_reset k4b-rollback-personal k4.personal@example.invalid "$client_secret"
   event=$(rbe_last_event RESET_PASSWORD_ERROR)
@@ -200,14 +283,107 @@ rbe_after_rollback() {
     'K4b: after the rollback the username no longer starts a reset' --arg person "$person"
 }
 
+# Before the forward run: the state the Admin Console emergency path of the runbook leaves
+# (an OTP Form added to the subflow after the other steps and set Required, Keycloak's Reset OTP
+# set Disabled). The forward run must keep the OTP Form and only remove the disabled step.
+rbe_before_forward() {
+  local flow stock_id priority subflow
+  flow=$(rbe_flow "$RBE_COPY")
+  stock_id=$(jq -r --arg otp "$RBE_STOCK_OTP" '.[] | select(.providerId == $otp) | .id' <<<"$flow")
+  priority=$(jq -r --arg otp "$RBE_STOCK_OTP" '.[] | select(.providerId == $otp) | .priority' <<<"$flow")
+  subflow=$(rbe_otp_subflow "$flow")
+  rbe_add_execution "$subflow" "$RBE_VERIFY_OTP" $((priority + 10)) REQUIRED
+  kcadm update "authentication/flows/${subflow// /%20}/executions" -r "$V2_REALM" -n \
+    -b "{\"id\":\"$stock_id\",\"requirement\":\"DISABLED\",\"priority\":$priority}" >/dev/null
+  [[ $(rbe_otp_census "$RBE_COPY") == "1 1 DISABLED,REQUIRED" ]] \
+    || fail "reset OTP step: the Admin Console state was not injected: $(rbe_otp_census "$RBE_COPY")"
+}
+
 rbe_after_forward() {
   local log_file=$1 client_secret=$2 person=$3 event
   rbe_expect_line "$log_file" "[reconcile] choose-user step of flow '$RBE_COPY': updated ($RBE_STOCK_STEP -> $RBE_SKY_STEP in subflow '$RBE_COPY', priority 10, REQUIRED)" \
     'the forward run did not swap the SKY LAB step back in'
+  rbe_expect_line "$log_file" "[reconcile] OTP step of flow '$RBE_COPY': updated (removed the DISABLED $RBE_STOCK_OTP next to the REQUIRED $RBE_VERIFY_OTP)" \
+    'the forward run did not take over the Admin Console change'
+  [[ $(rbe_otp_census "$RBE_COPY") == "0 1 REQUIRED" ]] \
+    || fail "reset OTP step: the forward run left $(rbe_otp_census "$RBE_COPY")"
   rbe_reset k4b-forward-personal K4.Personal@example.invalid "$client_secret"
   event=$(rbe_last_event SEND_RESET_PASSWORD)
   json_assert "$event" '.userId == $person and .details.username == "K4.Personal@example.invalid" and .details.email == "k4.school@std.example.edu.tr"' \
     'K4b: forward again, a Personal e-mail did not start a reset mailed to the Primary e-mail' --arg person "$person"
+}
+
+# ReconcileJson's password-form planner on crafted execution lists, in the running Keycloak's
+# JDK (no reconciler run): the OTP step states a reconciler run meets besides the ones the runs
+# above produce. Prints "<status> <plan>".
+rbe_plan() {
+  local from=$1 to=$2 executions=$3 output status
+  if output=$("${COMPOSE[@]}" exec -T keycloak bash -c 'jars=(/opt/keycloak/lib/lib/main/com.fasterxml.jackson.core.jackson-*.jar); IFS=:
+      java -cp "/tmp/rbe-reconcile-json:${jars[*]}" ReconcileJson password-form "$1" "$2"' _ "$from" "$to" <<<"$executions" 2>/dev/null); then
+    status=0
+  else
+    status=$?
+  fi
+  printf '%s %s\n' "$status" "$(tr '\t' ' ' <<<"$output")"
+}
+
+rbe_otp_planner_cases() {
+  local subflow='{"id":"sub","level":0,"index":3,"priority":40,"requirement":"CONDITIONAL","authenticationFlow":true,"flowId":"flow-otp","displayName":"otp","providerId":""}'
+  local condition='{"id":"cond","level":1,"index":0,"priority":10,"requirement":"REQUIRED","providerId":"conditional-user-configured"}'
+  local plan
+  "${COMPOSE[@]}" exec -T keycloak bash -c 'jars=(/opt/keycloak/lib/lib/main/com.fasterxml.jackson.core.jackson-*.jar); IFS=:; mkdir -p /tmp/rbe-reconcile-json
+    java -m jdk.compiler/com.sun.tools.javac.Main -d /tmp/rbe-reconcile-json -cp "${jars[*]}" /opt/keycloak/config/ReconcileJson.java' >/dev/null \
+    || fail 'reset OTP step: ReconcileJson did not compile in the Keycloak image'
+  # Keycloak's flow: swap in place.
+  plan=$(rbe_plan "$RBE_STOCK_OTP" "$RBE_VERIFY_OTP" "[$subflow,$condition,{\"id\":\"old\",\"level\":1,\"index\":1,\"priority\":20,\"requirement\":\"REQUIRED\",\"providerId\":\"$RBE_STOCK_OTP\"}]")
+  [[ $plan == '0 swap old flow-otp 20' ]] || fail "reset OTP step: planner on Keycloak's flow: $plan"
+  # A reset-otp with a config ("Remove one/all" chosen in the Admin Console): refused.
+  plan=$(rbe_plan "$RBE_STOCK_OTP" "$RBE_VERIFY_OTP" "[$subflow,$condition,{\"id\":\"old\",\"level\":1,\"index\":1,\"priority\":20,\"requirement\":\"REQUIRED\",\"authenticationConfig\":\"cfg\",\"providerId\":\"$RBE_STOCK_OTP\"}]")
+  [[ $plan == '4 ' ]] || fail "reset OTP step: planner accepted a reset-otp with a config: $plan"
+  # The Admin Console emergency path taken back: a DISABLED OTP Form after a REQUIRED reset-otp.
+  plan=$(rbe_plan "$RBE_STOCK_OTP" "$RBE_VERIFY_OTP" "[$subflow,$condition,{\"id\":\"old\",\"level\":1,\"index\":1,\"priority\":20,\"requirement\":\"REQUIRED\",\"providerId\":\"$RBE_STOCK_OTP\"},{\"id\":\"new\",\"level\":1,\"index\":2,\"priority\":30,\"requirement\":\"DISABLED\",\"providerId\":\"$RBE_VERIFY_OTP\"}]")
+  [[ $plan == '0 discard new' ]] || fail "reset OTP step: planner on a taken-back emergency path: $plan"
+  # Both DISABLED: nobody knows which one was meant; refused.
+  plan=$(rbe_plan "$RBE_STOCK_OTP" "$RBE_VERIFY_OTP" "[$subflow,$condition,{\"id\":\"old\",\"level\":1,\"index\":1,\"priority\":20,\"requirement\":\"DISABLED\",\"providerId\":\"$RBE_STOCK_OTP\"},{\"id\":\"new\",\"level\":1,\"index\":2,\"priority\":30,\"requirement\":\"DISABLED\",\"providerId\":\"$RBE_VERIFY_OTP\"}]")
+  [[ $plan == '4 ' ]] || fail "reset OTP step: planner accepted two DISABLED OTP steps: $plan"
+  # An interrupted swap whose reset-otp carries a config: refused like the swap.
+  plan=$(rbe_plan "$RBE_STOCK_OTP" "$RBE_VERIFY_OTP" "[$subflow,$condition,{\"id\":\"old\",\"level\":1,\"index\":1,\"priority\":20,\"requirement\":\"REQUIRED\",\"authenticationConfig\":\"cfg\",\"providerId\":\"$RBE_STOCK_OTP\"},{\"id\":\"new\",\"level\":1,\"index\":2,\"priority\":20,\"requirement\":\"DISABLED\",\"providerId\":\"$RBE_VERIFY_OTP\"}]")
+  [[ $plan == '4 ' ]] || fail "reset OTP step: planner resumed over a reset-otp with a config: $plan"
+
+  # otp-guard: the step runs only in a CONDITIONAL subflow on "user configured" alone.
+  local step="{\"id\":\"new\",\"level\":1,\"index\":1,\"priority\":20,\"requirement\":\"REQUIRED\",\"providerId\":\"$RBE_VERIFY_OTP\"}"
+  plan=$(rbe_guard "[$subflow,$condition,$step]")
+  [[ $plan == '0 ' ]] || fail "reset OTP step: otp-guard refused the intended flow: $plan"
+  plan=$(rbe_guard "[$subflow,$step]")
+  [[ $plan == "4 subflow 'otp' has the enabled conditions [], not exactly one REQUIRED conditional-user-configured" ]] \
+    || fail "reset OTP step: otp-guard accepted a subflow without its condition: $plan"
+  plan=$(rbe_guard "[${subflow/CONDITIONAL/REQUIRED},$condition,$step]")
+  [[ $plan == "4 subflow 'otp' is REQUIRED, not CONDITIONAL" ]] || fail "reset OTP step: otp-guard accepted a REQUIRED subflow: $plan"
+  plan=$(rbe_guard "[{\"id\":\"new\",\"level\":0,\"index\":0,\"priority\":20,\"requirement\":\"REQUIRED\",\"providerId\":\"$RBE_VERIFY_OTP\"}]")
+  [[ $plan == "4 $RBE_VERIFY_OTP is at the top level, outside a conditional subflow" ]] \
+    || fail "reset OTP step: otp-guard accepted a step outside a subflow: $plan"
+  # A REQUIRED WebAuthn step added beside it: user configured then needs both, a person with OTP
+  # alone skips the subflow. DISABLED or ALTERNATIVE beside a REQUIRED step changes nothing.
+  local webauthn='{"id":"wa","level":1,"index":2,"priority":30,"requirement":"REQUIRED","providerId":"webauthn-authenticator"}'
+  plan=$(rbe_guard "[$subflow,$condition,$step,$webauthn]")
+  [[ $plan == "4 subflow 'otp' also requires [webauthn-authenticator REQUIRED] besides $RBE_VERIFY_OTP, so a person with OTP alone skips it" ]] \
+    || fail "reset OTP step: otp-guard accepted a REQUIRED step beside it: $plan"
+  plan=$(rbe_guard "[$subflow,$condition,$step,${webauthn/REQUIRED/DISABLED}]")
+  [[ $plan == '0 ' ]] || fail "reset OTP step: otp-guard refused a DISABLED step beside it: $plan"
+  plan=$(rbe_guard "[$subflow,$condition,$step,${webauthn/REQUIRED/ALTERNATIVE}]")
+  [[ $plan == '0 ' ]] || fail "reset OTP step: otp-guard refused an ALTERNATIVE step beside it: $plan"
+}
+
+# ReconcileJson otp-guard on a crafted execution list; prints "<status> <reason>".
+rbe_guard() {
+  local output status
+  if output=$("${COMPOSE[@]}" exec -T keycloak bash -c 'jars=(/opt/keycloak/lib/lib/main/com.fasterxml.jackson.core.jackson-*.jar); IFS=:
+      java -cp "/tmp/rbe-reconcile-json:${jars[*]}" ReconcileJson otp-guard "$1"' _ "$RBE_VERIFY_OTP" <<<"$1" 2>/dev/null); then
+    status=0
+  else
+    status=$?
+  fi
+  printf '%s %s\n' "$status" "$output"
 }
 
 # An unknown flag value stops the run before anything is read.
@@ -218,6 +394,12 @@ rbe_bogus_flag() {
   fi
   rbe_expect_line "$log_file" "KEYCLOAK_RESET_CHOOSE_USER must be $RBE_SKY_STEP (default) or $RBE_STOCK_STEP (rollback), not bogus-step" \
     'the reconciler did not explain the refused KEYCLOAK_RESET_CHOOSE_USER'
+  log_file="$TEST_STATE_DIR/reconcile-reset-otp-step-bogus.log"
+  if lbe_run_reconciler "$log_file" -e KEYCLOAK_RESET_OTP_STEP=remove-all; then
+    fail 'the reconciler accepted an unknown KEYCLOAK_RESET_OTP_STEP'
+  fi
+  rbe_expect_line "$log_file" 'KEYCLOAK_RESET_OTP_STEP must be verify (default) or reset (rollback), not remove-all' \
+    'the reconciler did not explain the refused KEYCLOAK_RESET_OTP_STEP'
 }
 
 # The reset mails SkyMail received for this stage's people, oldest first, one JSON per line.
@@ -319,6 +501,9 @@ stage_reset_by_either_email() {
     "$link")
   action=$(rbe_context_url loginAction "$page")
   [[ -n $action ]] || fail 'K4b: the reset link did not lead to the new-password page'
+  # A has no OTP: the condition of the OTP subflow does not hold, no code is asked.
+  [[ $(rbe_page_id "$page") == login-update-password ]] \
+    || fail "reset OTP step: a person without OTP got $(rbe_page_id "$page") after the reset link, not the new-password page"
   status=$(curl --silent --show-error \
     --output /dev/null \
     --dump-header "$TEST_STATE_DIR/rbe-new-password.headers" \
@@ -341,4 +526,222 @@ stage_reset_by_either_email() {
     kcadm delete "users/$attempt" -r "$V2_REALM" >/dev/null
   done
   kcadm delete identity-provider/instances/OBS -r "$V2_REALM" >/dev/null
+}
+
+# The pageId of a login page's kcContext without its ".ftl" ("login-otp"; the page may carry it
+# either way), empty when there is none.
+rbe_page_id() {
+  grep -Eo '"?pageId"?[[:space:]]*[:=][[:space:]]*"[^"]+"' <<<"$1" | head -n 1 | sed -E 's/.*"([^"]+)"$/\1/; s/\.ftl$//' || true
+}
+
+# The Base32 form of a raw OTP secret, as an authenticator app gets it.
+rbe_base32() {
+  node -e '
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    let bits = 0, value = 0, out = "";
+    for (const byte of Buffer.from(process.argv[1], "utf8")) {
+      value = ((value << 8) | byte) & 0xffff;
+      bits += 8;
+      while (bits >= 5) { out += alphabet[(value >>> (bits - 5)) & 31]; bits -= 5; }
+    }
+    if (bits > 0) out += alphabet[(value << (5 - bits)) & 31];
+    console.log(out);' "$1"
+}
+
+# The credential ids of TYPE of a person, sorted, comma-separated.
+rbe_credential_ids() {
+  kcadm get "users/$1/credentials" -r "$V2_REALM" -c | jq -r --arg type "$2" '[.[] | select(.type == $type) | .id] | sort | join(",")'
+}
+
+# eskylab-login-ux 23, after stage_reset_by_either_email (the mails leave through SkyMail): a
+# person with an OTP authenticator resets the password with the mailed link and the code of
+# that authenticator; no page asks for a new authenticator and the OTP credential stays the same.
+stage_reset_verifies_otp() {
+  CURRENT_STAGE='reset password asks a person with OTP for the code, never for a new authenticator'
+  local client_secret=$1
+  local person otp_before password_before task link page action status location code
+  local recipient=k4b.g-otp@example.invalid
+  [[ $(rbe_otp_census "$RBE_COPY") == "0 1 REQUIRED" && $(rbe_bound_flow) == "$RBE_COPY" ]] \
+    || fail "reset OTP step: the realm does not run $RBE_VERIFY_OTP on the reset ($(rbe_otp_census "$RBE_COPY"), $(rbe_bound_flow))"
+  while IFS= read -r person; do
+    [[ -n $person ]] && kcadm delete "users/$person" -r "$V2_REALM" >/dev/null
+  done < <(kcadm get users -r "$V2_REALM" -c -q username=k4b-g -q exact=true | jq -r '.[].id')
+  person=$(jq -n --arg email "$recipient" --arg password "$RBE_PASSWORD" --arg secret "$RBE_OTP_SECRET" '{
+      username: "k4b-g", enabled: true, emailVerified: true, firstName: "K4", lastName: "Fixture", email: $email,
+      credentials: [
+        {type: "password", value: $password, temporary: false},
+        {type: "otp", userLabel: "k4b fixture authenticator",
+          secretData: ({value: $secret} | tojson),
+          credentialData: ({subType: "totp", digits: 6, counter: 0, period: 30, algorithm: "HmacSHA1"} | tojson)}]}' \
+    | kcadm create users -r "$V2_REALM" -i -f -)
+  otp_before=$(rbe_credential_ids "$person" otp)
+  password_before=$(kcadm get "users/$person/credentials" -r "$V2_REALM" -c | jq -c '[.[] | select(.type == "password") | {id, createdDate}]')
+  [[ $otp_before =~ ^[^,]+$ ]] || fail "reset OTP step: the fixture person does not hold exactly one OTP credential ($otp_before)"
+
+  rbe_reset k4b-otp k4b-g "$client_secret"
+  [[ $RBE_STATUS == 200 ]] || fail "reset OTP step: the reset request returned HTTP $RBE_STATUS"
+  task=$(sky_mail_await_record mail_task "$recipient") || fail "reset OTP step: SkyMail received no reset mail for the person with OTP"
+  link=$(jq -r '.body_variables.link' <<<"$task")
+  [[ $link == *"/login-actions/action-token"* ]] || fail 'reset OTP step: the reset mail carries no action link'
+
+  # The link asks for the code of the registered authenticator, not for a new one.
+  page=$(curl --fail --silent --show-error --location \
+    --cookie-jar "$RBE_COOKIES" --cookie "$RBE_COOKIES" "$link")
+  [[ $(rbe_page_id "$page") == login-otp ]] \
+    || fail "reset OTP step: the reset link led a person with OTP to $(rbe_page_id "$page"), not to the code page"
+  [[ $page != *'totpSecretQrCode'* && $page != *'totpSecretEncoded'* ]] \
+    || fail 'reset OTP step: the reset offered a new authenticator (QR) to a person with OTP'
+
+  # A wrong code keeps the person on the code page; the right one leads to the new password.
+  code=$(node "$SCRIPT_DIR/totp-code.mjs" "$(rbe_base32 "$RBE_OTP_SECRET")")
+  action=$(rbe_context_url loginAction "$page")
+  page=$(curl --silent --show-error --location \
+    --cookie-jar "$RBE_COOKIES" --cookie "$RBE_COOKIES" \
+    --data-urlencode "otp=$(( (${code:0:1} + 5) % 10 ))${code:1}" "$action")
+  [[ $(rbe_page_id "$page") == login-otp ]] \
+    || fail "reset OTP step: a wrong code led to $(rbe_page_id "$page")"
+  # The wrong code counts against the person, as on the sign-in page.
+  rbe_await_failures "$person" 1 || fail "reset OTP step: a wrong code did not count as one brute force failure ($(rbe_failures "$person"))"
+  code=$(node "$SCRIPT_DIR/totp-code.mjs" "$(rbe_base32 "$RBE_OTP_SECRET")")
+  action=$(rbe_context_url loginAction "$page")
+  page=$(curl --silent --show-error --location \
+    --cookie-jar "$RBE_COOKIES" --cookie "$RBE_COOKIES" \
+    --data-urlencode "otp=$code" "$action")
+  [[ $(rbe_page_id "$page") == login-update-password ]] \
+    || fail "reset OTP step: the right code led to $(rbe_page_id "$page"), not to the new-password page"
+  action=$(rbe_context_url loginAction "$page")
+  status=$(curl --silent --show-error \
+    --output /dev/null \
+    --dump-header "$TEST_STATE_DIR/rbe-otp-new-password.headers" \
+    --write-out '%{http_code}' \
+    --cookie-jar "$RBE_COOKIES" --cookie "$RBE_COOKIES" \
+    --data-urlencode "password-new=$RBE_NEW_PASSWORD" \
+    --data-urlencode "password-confirm=$RBE_NEW_PASSWORD" \
+    "$action")
+  location=$(awk 'tolower($1) == "location:" { sub(/^[^:]*:[[:space:]]*/, ""); sub(/\r$/, ""); print }' \
+    "$TEST_STATE_DIR/rbe-otp-new-password.headers")
+  [[ $status == 302 && $location == https://my.yildizskylab.com/api/auth/callback?* ]] \
+    || fail "reset OTP step: setting the new password did not finish the sign-in (HTTP $status)"
+
+  # The same OTP credential, nothing added or removed, no setup left for later; a new password.
+  [[ $(rbe_credential_ids "$person" otp) == "$otp_before" ]] \
+    || fail "reset OTP step: the OTP credentials changed from $otp_before to $(rbe_credential_ids "$person" otp)"
+  json_assert "$(kcadm get "users/$person" -r "$V2_REALM" -c)" '(.requiredActions // []) == []' \
+    'reset OTP step: the reset left a required action (a new authenticator) on the person'
+  [[ $(kcadm get "users/$person/credentials" -r "$V2_REALM" -c | jq -c '[.[] | select(.type == "password") | {id, createdDate}]') != "$password_before" ]] \
+    || fail 'reset OTP step: the password did not change'
+
+  # Brute force: once the wrong codes reach the realm's failureFactor, the person is locked and
+  # even the right code is refused; the password stays as it is.
+  local failure_factor attempt mails
+  failure_factor=$(kcadm get "realms/$V2_REALM" --fields failureFactor | jq -r '.failureFactor')
+  [[ $failure_factor =~ ^[1-9][0-9]*$ ]] || fail "reset OTP step: the realm has no failureFactor ($failure_factor)"
+  kcadm delete "attack-detection/brute-force/users/$person" -r "$V2_REALM" >/dev/null
+  password_before=$(kcadm get "users/$person/credentials" -r "$V2_REALM" -c | jq -c '[.[] | select(.type == "password") | {id, createdDate}]')
+  mails=$(rbe_mail_count "$recipient")
+  rbe_reset k4b-otp-locked k4b-g "$client_secret"
+  [[ $RBE_STATUS == 200 ]] || fail "reset OTP step: the second reset request returned HTTP $RBE_STATUS"
+  for attempt in $(seq 1 45); do
+    [[ $(rbe_mail_count "$recipient") -gt $mails ]] && break
+    sleep 1
+  done
+  [[ $(rbe_mail_count "$recipient") -gt $mails ]] || fail 'reset OTP step: SkyMail received no second reset mail'
+  link=$(rbe_mail_tasks_to "$recipient" | tail -n 1 | jq -r '.body_variables.link')
+  page=$(curl --fail --silent --show-error --location \
+    --cookie-jar "$RBE_COOKIES" --cookie "$RBE_COOKIES" "$link")
+  [[ $(rbe_page_id "$page") == login-otp ]] \
+    || fail "reset OTP step: the second reset link led to $(rbe_page_id "$page"), not to the code page"
+  # More than quickLoginCheckMilliSeconds apart: a quicker second failure locks the person at
+  # once (Keycloak's quick login check) and the failures after it are no longer counted.
+  for attempt in $(seq 1 "$failure_factor"); do
+    [[ $attempt == 1 ]] || sleep 1.2
+    code=$(node "$SCRIPT_DIR/totp-code.mjs" "$(rbe_base32 "$RBE_OTP_SECRET")")
+    action=$(rbe_context_url loginAction "$page")
+    [[ -n $action ]] || fail "reset OTP step: wrong code $attempt found no code form ($(rbe_page_id "$page"))"
+    page=$(curl --silent --show-error --location \
+      --cookie-jar "$RBE_COOKIES" --cookie "$RBE_COOKIES" \
+      --data-urlencode "otp=$(( (${code:0:1} + 5) % 10 ))${code:1}" "$action")
+  done
+  rbe_await_failures "$person" "$failure_factor" \
+    || fail "reset OTP step: $failure_factor wrong codes did not reach the brute force limit ($(rbe_failures "$person"))"
+  json_assert "$(kcadm get "attack-detection/brute-force/users/$person" -r "$V2_REALM" -c)" '.disabled == true' \
+    'reset OTP step: the person is not locked after failureFactor wrong codes'
+  # A code of the next time step: valid and never used, so only the lock can refuse it.
+  code=$(node "$SCRIPT_DIR/totp-code.mjs" "$(rbe_base32 "$RBE_OTP_SECRET")" 1)
+  action=$(rbe_context_url loginAction "$page")
+  if [[ -n $action ]]; then
+    page=$(curl --silent --show-error --location \
+      --cookie-jar "$RBE_COOKIES" --cookie "$RBE_COOKIES" \
+      --data-urlencode "otp=$code" "$action")
+  fi
+  [[ $(rbe_page_id "$page") != login-update-password ]] \
+    || fail 'reset OTP step: a locked person reached the new-password page with the right code'
+  [[ $(kcadm get "users/$person/credentials" -r "$V2_REALM" -c | jq -c '[.[] | select(.type == "password") | {id, createdDate}]') == "$password_before" ]] \
+    || fail 'reset OTP step: the password of a locked person changed'
+  kcadm delete "attack-detection/brute-force/users/$person" -r "$V2_REALM" >/dev/null
+  kcadm delete "users/$person" -r "$V2_REALM" >/dev/null
+}
+
+# The brute force failure count of a person (0 when Keycloak has no record).
+rbe_failures() {
+  kcadm get "attack-detection/brute-force/users/$1" -r "$V2_REALM" -c | jq -r '.numFailures // 0'
+}
+
+# Waits up to ten seconds for the failure count of a person to reach COUNT exactly.
+rbe_await_failures() {
+  local person=$1 count=$2 attempt
+  for attempt in $(seq 1 10); do
+    [[ $(rbe_failures "$person") == "$count" ]] && return 0
+    sleep 1
+  done
+  return 1
+}
+
+# The reset mails SkyMail received for one recipient, oldest first, one JSON per line.
+rbe_mail_tasks_to() {
+  sky_mail_fixture_records \
+    | jq -c --arg template "$RBE_TEMPLATE" --arg recipient "$1" \
+      'select(.event == "mail_task" and .template_key == $template and .recipient_email == $recipient)'
+}
+
+rbe_mail_count() {
+  rbe_mail_tasks_to "$1" | jq -s length
+}
+
+# ReconcileJson otp-guard: the OTP step must run for a person with OTP. A real run with the OTP
+# subflow DISABLED (the Admin Console change that turns the step off): a WARNING line in place of
+# "unchanged", every other step still runs, exit status 3 and no success line. Afterwards the
+# subflow is CONDITIONAL again.
+stage_reset_otp_guard() {
+  CURRENT_STAGE='reset OTP step guard: a DISABLED OTP subflow fails the reconciliation'
+  local flow subflow sub_id sub_priority log_file="$TEST_STATE_DIR/reconcile-reset-otp-guard.log" status
+  flow=$(rbe_flow "$RBE_COPY")
+  subflow=$(rbe_otp_subflow "$flow")
+  sub_id=$(jq -r --arg name "$subflow" '.[] | select(.authenticationFlow == true and .displayName == $name) | .id' <<<"$flow")
+  sub_priority=$(jq -r --arg name "$subflow" '.[] | select(.authenticationFlow == true and .displayName == $name) | .priority' <<<"$flow")
+  kcadm update "authentication/flows/${RBE_COPY// /%20}/executions" -r "$V2_REALM" -n \
+    -b "{\"id\":\"$sub_id\",\"requirement\":\"DISABLED\",\"priority\":$sub_priority}" >/dev/null
+  if lbe_run_reconciler "$log_file"; then
+    status=0
+  else
+    status=$?
+  fi
+  kcadm update "authentication/flows/${RBE_COPY// /%20}/executions" -r "$V2_REALM" -n \
+    -b "{\"id\":\"$sub_id\",\"requirement\":\"CONDITIONAL\",\"priority\":$sub_priority}" >/dev/null
+  [[ $status == 3 ]] || { cat "$log_file" >&2; fail "reset OTP step guard: the run ended with status $status, not 3"; }
+  rbe_expect_line "$log_file" "[reconcile] WARNING: OTP step of flow '$RBE_COPY': subflow '$subflow' is DISABLED; OTP is not verified on reset as intended" \
+    'the run did not warn about the DISABLED OTP subflow'
+  if grep -Fq "OTP step of flow '$RBE_COPY': unchanged" "$log_file"; then
+    cat "$log_file" >&2
+    fail 'reset OTP step guard: the run called a step that never runs unchanged'
+  fi
+  if grep -Fqx 'Account Center Keycloak configuration is reconciled.' "$log_file"; then
+    fail 'reset OTP step guard: the run reported success'
+  fi
+  rbe_expect_line "$log_file" "Account Center Keycloak configuration is reconciled except the reset OTP step (OTP step of flow '$RBE_COPY': subflow '$subflow' is DISABLED); fix the subflow in the Admin Console and run again" \
+    'the run did not end with the reset OTP step failure'
+  grep -Eq '^\[reconcile\] .*(admin panel token contract|no full scope, standard token exchange)' "$log_file" \
+    || { cat "$log_file" >&2; fail 'reset OTP step guard: the steps after the OTP step did not run'; }
+  [[ $(rbe_flow "$RBE_COPY" | jq -r --arg name "$subflow" '.[] | select(.displayName == $name) | .requirement') == CONDITIONAL ]] \
+    || fail 'reset OTP step guard: the OTP subflow was not restored'
 }

@@ -2191,6 +2191,9 @@ stage_v2_passkey_cleanup "$client_secret"
 stage_k5_system_mail_through_skymail
 # K4b after K5: its reset mails leave through SkyMail and the stage reads them there.
 stage_reset_by_either_email "$client_secret"
+# eskylab-login-ux 23: the reset asks a person with OTP for the code, never for a new authenticator.
+stage_reset_verifies_otp "$client_secret"
+stage_reset_otp_guard
 
 # The sky-account SPI contract runs against the same realm: bearer guard, Verified
 # YTÜ lock, brute force, sudo binding, password/TOTP/username flows and events.

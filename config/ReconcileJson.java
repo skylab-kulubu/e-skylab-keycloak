@@ -100,7 +100,8 @@ import java.util.TreeMap;
  *                               exits 0 when STEP (the reset OTP step) actually runs for a person
  *                               with OTP and only for them: exactly one REQUIRED STEP, inside a
  *                               CONDITIONAL subflow whose only enabled condition is one REQUIRED
- *                               conditional-user-configured, no enclosing subflow DISABLED.
+ *                               conditional-user-configured and no other REQUIRED or CONDITIONAL
+ *                               step, no enclosing subflow DISABLED.
  *                               Otherwise prints why on stdout and exits 4.
  *
  * Exit status 0 means "printed successfully", 3 means "changed" (user-profile and config-value),
@@ -667,18 +668,37 @@ public final class ReconcileJson {
         }
         // The direct children of the subflow: the executions after it one level down, up to the
         // next execution at its level or above.
+        // Keycloak's conditional-user-configured holds only when the person has every REQUIRED and
+        // CONDITIONAL non-condition sibling configured (the ALTERNATIVE ones count only when there
+        // is none). Any such sibling besides STEP (say a REQUIRED WebAuthn step added in the Admin
+        // Console) makes a person with OTP alone skip the subflow, and with it the code.
         List<String> conditions = new ArrayList<>();
+        List<String> others = new ArrayList<>();
         for (int i = parentAt + 1; i < list.size() && list.get(i).path("level").asInt() > parent.path("level").asInt(); i++) {
             JsonNode node = list.get(i);
             String provider = node.path("providerId").asText("");
-            if (node.path("level").asInt() == level && provider.startsWith("conditional-")
-                    && !"DISABLED".equals(node.path("requirement").asText())) {
-                conditions.add(provider + " " + node.path("requirement").asText());
+            String requirement = node.path("requirement").asText();
+            if (node.path("level").asInt() != level) {
+                continue;
+            }
+            if (provider.startsWith("conditional-")) {
+                if (!"DISABLED".equals(requirement)) {
+                    conditions.add(provider + " " + requirement);
+                }
+            } else if (i != at && ("REQUIRED".equals(requirement) || "CONDITIONAL".equals(requirement))) {
+                String name = node.path("authenticationFlow").asBoolean(false)
+                        ? "subflow '" + node.path("displayName").asText() + "'" : provider;
+                others.add(name + " " + requirement);
             }
         }
         if (!conditions.equals(List.of("conditional-user-configured REQUIRED"))) {
             out.println("subflow '" + parentName + "' has the enabled conditions " + conditions
                     + ", not exactly one REQUIRED conditional-user-configured");
+            return EXIT_REFUSED;
+        }
+        if (!others.isEmpty()) {
+            out.println("subflow '" + parentName + "' also requires " + others + " besides " + step
+                    + ", so a person with OTP alone skips it");
             return EXIT_REFUSED;
         }
         return 0;

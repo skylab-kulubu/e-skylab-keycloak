@@ -362,6 +362,16 @@ rbe_otp_planner_cases() {
   plan=$(rbe_guard "[{\"id\":\"new\",\"level\":0,\"index\":0,\"priority\":20,\"requirement\":\"REQUIRED\",\"providerId\":\"$RBE_VERIFY_OTP\"}]")
   [[ $plan == "4 $RBE_VERIFY_OTP is at the top level, outside a conditional subflow" ]] \
     || fail "reset OTP step: otp-guard accepted a step outside a subflow: $plan"
+  # A REQUIRED WebAuthn step added beside it: user configured then needs both, a person with OTP
+  # alone skips the subflow. DISABLED or ALTERNATIVE beside a REQUIRED step changes nothing.
+  local webauthn='{"id":"wa","level":1,"index":2,"priority":30,"requirement":"REQUIRED","providerId":"webauthn-authenticator"}'
+  plan=$(rbe_guard "[$subflow,$condition,$step,$webauthn]")
+  [[ $plan == "4 subflow 'otp' also requires [webauthn-authenticator REQUIRED] besides $RBE_VERIFY_OTP, so a person with OTP alone skips it" ]] \
+    || fail "reset OTP step: otp-guard accepted a REQUIRED step beside it: $plan"
+  plan=$(rbe_guard "[$subflow,$condition,$step,${webauthn/REQUIRED/DISABLED}]")
+  [[ $plan == '0 ' ]] || fail "reset OTP step: otp-guard refused a DISABLED step beside it: $plan"
+  plan=$(rbe_guard "[$subflow,$condition,$step,${webauthn/REQUIRED/ALTERNATIVE}]")
+  [[ $plan == '0 ' ]] || fail "reset OTP step: otp-guard refused an ALTERNATIVE step beside it: $plan"
 }
 
 # ReconcileJson otp-guard on a crafted execution list; prints "<status> <reason>".

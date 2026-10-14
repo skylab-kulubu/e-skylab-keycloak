@@ -697,7 +697,7 @@ reconcile_reset_choose_user() {
 # is Keycloak's own step (the rollback, reset). Runs after reconcile_reset_choose_user, so the
 # realm is already bound to its editable copy; swap_flow_execution makes the change. In verify,
 # ReconcileJson otp-guard then checks that the step actually runs (CONDITIONAL subflow on "user
-# configured", nothing above it DISABLED); if not, a WARNING line replaces the "unchanged" line
+# configured" with no other REQUIRED or CONDITIONAL step, nothing above it DISABLED); if not, a WARNING line replaces the "unchanged" line
 # and the run ends with exit status 3 after its other steps. A realm
 # still bound to Keycloak's built-in flow (only after a choose-user rollback on a realm that never
 # had the copy) runs reset-otp, which cannot be changed there: verify warns, reset has nothing to do.
@@ -740,7 +740,8 @@ reconcile_reset_otp_step() {
     return 0
   fi
   # A step in place proves nothing when its subflow never runs it (an Admin Console change):
-  # the subflow must be CONDITIONAL on "user configured" alone and no enclosing subflow DISABLED.
+  # the subflow must be CONDITIONAL on "user configured" alone, hold no other REQUIRED or CONDITIONAL
+  # step (user configured would then need it too) and no enclosing subflow be DISABLED.
   # Otherwise a person with OTP resets by e-mail alone, which the run must not call unchanged.
   if guard=$(kcadm_json "authentication/flows/$(flow_alias_path "$bound")/executions" -r "$TARGET_REALM" \
     | json_tool otp-guard "$to"); then

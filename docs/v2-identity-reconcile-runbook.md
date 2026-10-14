@@ -1667,17 +1667,19 @@ Keycloak'ın yerleşik akışı değiştirilemez; realm yerleşik akışa bağl�
 
 `verify`'de değişimden sonra `ReconcileJson otp-guard` adımın gerçekten çalıştığını denetler:
 tek REQUIRED `auth-otp-form`, CONDITIONAL bir alt akışta, alt akışın tek etkin koşulu REQUIRED
-`conditional-user-configured`, üstteki hiçbir alt akış DISABLED değil. Değilse (Admin Console'da alt
-akış DISABLED yapılmış, koşul silinmiş ya da adım alt akış dışına taşınmışsa OTP'li kişi yalnız
-e-postayla sıfırlar) `unchanged` satırı yazılmaz, yerine uyarı gelir; diğer adımlar koşar, koşu
+`conditional-user-configured`, alt akışta başka REQUIRED ya da CONDITIONAL adım yok, üstteki hiçbir alt
+akış DISABLED değil. Değilse (Admin Console'da alt akış DISABLED yapılmış, koşul silinmiş, adım alt
+akış dışına taşınmış ya da yanına REQUIRED bir adım, ör. WebAuthn, eklenmişse OTP'li kişi yalnız
+e-postayla sıfırlar; `user configured` yanındaki her REQUIRED adımın kişide kurulu olmasını ister) `unchanged` satırı yazılmaz, yerine uyarı gelir; diğer adımlar koşar, koşu
 başarı satırı yerine şu satırla **3** çıkış koduyla biter:
 
 - `[reconcile] WARNING: OTP step of flow 'sky reset credentials': subflow 'sky reset credentials Reset - Conditional OTP' is DISABLED; OTP is not verified on reset as intended`
 - `Account Center Keycloak configuration is reconciled except the reset OTP step (OTP step of flow 'sky reset credentials': subflow 'sky reset credentials Reset - Conditional OTP' is DISABLED); fix the subflow in the Admin Console and run again`
 
 (Nedenin metni duruma göre değişir: `subflow '…' is REQUIRED, not CONDITIONAL`, `subflow '…' has the
-enabled conditions […], not exactly one REQUIRED conditional-user-configured`, `auth-otp-form is at
-the top level, outside a conditional subflow`.) Admin Console'da alt akış CONDITIONAL'a, koşul
+enabled conditions […], not exactly one REQUIRED conditional-user-configured`, `subflow '…' also
+requires [webauthn-authenticator REQUIRED] besides auth-otp-form, so a person with OTP alone skips it`,
+`auth-otp-form is at the top level, outside a conditional subflow`.) Admin Console'da alt akış CONDITIONAL'a, koşul
 yerine konup koşu yinelenir. Yayın wizard'ı `WARNING: OTP step of flow` satırında ve 3 çıkışında
 durmalıdır. Realm yerleşik akışa bağlıysa `verify`'nin uyarısı:
 `[reconcile] WARNING: OTP step of flow 'reset credentials' was not changed: Keycloak's built-in flow cannot be edited and runs reset-otp; a run with the default KEYCLOAK_RESET_CHOOSE_USER binds the realm to 'sky reset credentials' first`
@@ -1743,7 +1745,7 @@ parola sayfasını açar. Yanlış kod brute force sayacını 1 yapar; ikinci s�
 yanlış koddan (aralarında quick login denetiminden uzun bekleme) sonra kişi kilitlidir, doğru kod
 reddedilir, parola değişmez. Alt akış DISABLED yapılınca gerçek koşu uyarı satırını yazar, `unchanged`
 demez, diğer adımları koşar ve 3 ile biter. Planlayıcı vakaları: `otp-guard` (koşulsuz, REQUIRED alt
-akış, üst düzey adım) ve config'li `reset-otp`'de `resume` reddi.
+akış, üst düzey adım, yanında REQUIRED WebAuthn; DISABLED ya da ALTERNATIVE WebAuthn geçer) ve config'li `reset-otp`'de `resume` reddi.
 
 ## 18. Etkinlik sitelerinin site istemcileri ve editör grupları (ADR-0056 eki)
 

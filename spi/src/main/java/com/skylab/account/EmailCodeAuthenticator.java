@@ -2,6 +2,7 @@ package com.skylab.account;
 
 import jakarta.ws.rs.core.MultivaluedMap;
 import jakarta.ws.rs.core.Response;
+import org.jboss.logging.Logger;
 import org.keycloak.WebAuthnConstants;
 import org.keycloak.authentication.AuthenticationFlowCallback;
 import org.keycloak.authentication.AuthenticationFlowContext;
@@ -18,6 +19,7 @@ import org.keycloak.forms.login.LoginFormsProvider;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
+import org.keycloak.models.credential.OTPCredentialModel;
 import org.keycloak.protocol.oidc.OIDCLoginProtocol;
 import org.keycloak.sessions.AuthenticationSessionModel;
 
@@ -47,6 +49,9 @@ import org.keycloak.sessions.AuthenticationSessionModel;
  * disabled person is not signed in by the right code. The code also stops working when the
  * person's codes would go elsewhere by now (the Primary e-mail changed in the ten minutes). Like
  * Keycloak's reset-password link, the right code marks the Primary e-mail it went to verified.
+ * A person with OTP is signed in by the code only while the flow still asks for the OTP after it
+ * ({@link OtpAfterCode}): an Admin Console change that drops that step makes the code refuse them
+ * at once (fail closed), not only stop the next reconciliation.
  *
  * <p>Sending is limited per sign-in session, per IP class, per address (a quarter of an hour and a
  * day) and overall per day ({@link RateLimiter}, spec §7.2). Past the session or IP class budget the
@@ -67,6 +72,8 @@ import org.keycloak.sessions.AuthenticationSessionModel;
  * (Keycloak's {@code authenticationExecution} selection), not this step's.
  */
 public final class EmailCodeAuthenticator implements AuthenticationFlowCallback {
+
+    private static final Logger LOG = Logger.getLogger(EmailCodeAuthenticator.class);
 
     public static final String PROVIDER_ID = "sky-email-code";
     /** The page: {@code theme-resources/templates/} of this extension, drawn by the SKY LAB theme. */
@@ -106,6 +113,8 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
     /** The event detail that says what happened: wrong_code, rate_limited, account_locked, … */
     static final String EVENT_DETAIL = "sky_email_code";
     static final String RATE_LIMITED_ERROR = "sky_email_code_rate_limited";
+    /** The event detail of a person with OTP refused because the flow would skip it. */
+    static final String OTP_UNGUARDED = "otp_unguarded";
 
     /** What a code is for, in the mail; only sign-in here. */
     static final String PURPOSE_LOGIN = "login";
@@ -135,7 +144,9 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
         TOO_MANY_TRIES("too_many_tries"),
         NO_ACCOUNT("no_account"),
         ACCOUNT_DISABLED("account_disabled"),
-        ACCOUNT_LOCKED("account_locked");
+        ACCOUNT_LOCKED("account_locked"),
+        /** The flow no longer asks a person with OTP for it after the code (security review K1). */
+        UNAVAILABLE("unavailable");
 
         final String value;
 
@@ -391,6 +402,16 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
         String destination = destination(session, realm, user);
         if (destination == null || !destination.equalsIgnoreCase(pending.address())) {
             expired(context, user);
+            return;
+        }
+        if (user.credentialManager().isConfiguredFor(OTPCredentialModel.TYPE)
+                && !OtpAfterCode.asked(session, realm, context.getExecution())) {
+            // No person, address or IP: the realm and what to do.
+            LOG.errorf("sky_email_code_otp_unguarded realm=%s: the e-mail code subflow no longer asks for OTP"
+                    + " after the code, so a person with OTP is refused; run the reconciler with"
+                    + " KEYCLOAK_EMAIL_CODE_LOGIN=on (or off)", realm.getName());
+            failure(context, user, OTP_UNGUARDED, Errors.INVALID_CONFIG);
+            context.challenge(identifierPage(context, identifier, Problem.UNAVAILABLE));
             return;
         }
         if (destination.equalsIgnoreCase(trimmed(user.getEmail())) && !user.isEmailVerified()) {

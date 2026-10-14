@@ -15,13 +15,16 @@ import org.keycloak.events.Details;
 import org.keycloak.events.EventBuilder;
 import org.keycloak.forms.login.LoginFormsProvider;
 import org.keycloak.http.HttpRequest;
+import org.keycloak.models.AuthenticationExecutionModel;
 import org.keycloak.models.FederatedIdentityModel;
 import org.keycloak.models.KeycloakContext;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.SingleUseObjectProvider;
+import org.keycloak.models.SubjectCredentialManager;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.UserProvider;
+import org.keycloak.models.credential.OTPCredentialModel;
 import org.keycloak.services.managers.BruteForceProtector;
 import org.keycloak.sessions.AuthenticationSessionModel;
 import org.keycloak.sessions.RootAuthenticationSessionModel;
@@ -71,6 +74,10 @@ class EmailCodeAuthenticatorTest {
     private final Map<String, UserModel> byId = new HashMap<>();
     private final Set<String> lockedOut = new HashSet<>();
     private final Set<String> linkedToYtu = new HashSet<>();
+    private final Set<String> withOtp = new HashSet<>();
+    /** The realm's flows by id; the code step runs in the shape the reconciler builds. */
+    private final Map<String, List<AuthenticationExecutionModel>> flows = new HashMap<>();
+    private final AuthenticationExecutionModel step = OtpAfterCodeTest.reconciledShape(flows);
 
     private EmailCodeAuthenticator authenticator = authenticator(500, null);
 
@@ -118,6 +125,7 @@ class EmailCodeAuthenticatorTest {
             when(context.getAuthenticationSession()).thenReturn(authSession);
             when(context.getEvent()).thenReturn(event);
             when(context.getProtector()).thenReturn(protector);
+            when(context.getExecution()).thenReturn(step);
             when(context.form()).thenAnswer(call -> {
                 page.clear();
                 return form;
@@ -224,6 +232,9 @@ class EmailCodeAuthenticatorTest {
         when(realm.isBruteForceProtected()).thenReturn(true);
         when(session.singleUseObjects()).thenReturn(store);
         when(session.users()).thenReturn(users);
+        OtpAfterCodeTest.knownAuthenticators(session);
+        when(realm.getAuthenticationExecutionsStream(anyString()))
+                .thenAnswer(call -> flows.getOrDefault(call.<String>getArgument(0), List.of()).stream());
         when(protector.isTemporarilyDisabled(eq(session), eq(realm), any()))
                 .thenAnswer(call -> lockedOut.contains(call.<UserModel>getArgument(2).getId()));
         when(users.getUserById(eq(realm), anyString())).thenAnswer(call -> byId.get(call.<String>getArgument(1)));
@@ -266,6 +277,10 @@ class EmailCodeAuthenticatorTest {
         when(user.isEmailVerified()).thenReturn(true);
         when(user.isEnabled()).thenReturn(true);
         when(user.getFirstAttribute(anyString())).thenAnswer(call -> values.get(call.<String>getArgument(0)));
+        SubjectCredentialManager credentials = mock(SubjectCredentialManager.class);
+        when(credentials.isConfiguredFor(anyString())).thenAnswer(call ->
+                OTPCredentialModel.TYPE.equals(call.getArgument(0)) && withOtp.contains(id));
+        when(user.credentialManager()).thenReturn(credentials);
         byId.put(id, user);
         return user;
     }
@@ -396,6 +411,55 @@ class EmailCodeAuthenticatorTest {
         browser.verify(code.substring(0, 3) + " " + code.substring(3));
 
         assertTrue(browser.succeeded);
+    }
+
+    @Test
+    void aPersonWithOtpGoesOnToItWhileTheFlowAsksForItAfterTheCode() {
+        UserModel fikret = person("fikret", "fikret", "fikret@example.com");
+        withOtp.add("fikret");
+        browser.send("fikret");
+
+        browser.verify(mail.last().code());
+
+        assertTrue(browser.succeeded, "Keycloak's conditional OTP comes next");
+        assertEquals(fikret, browser.signedIn);
+    }
+
+    // Security review K1: someone turns the OTP subflow off in the Admin Console; until the
+    // reconciler (or an operator) puts it back, the code signs in nobody with OTP.
+    @Test
+    void aPersonWithOtpIsRefusedWhenTheFlowNoLongerAsksForItAfterTheCode() {
+        UserModel fikret = person("fikret", "fikret", "fikret@example.com");
+        when(fikret.isEmailVerified()).thenReturn(false);
+        withOtp.add("fikret");
+        flows.get(OtpAfterCodeTest.CODE_FLOW).stream().filter(model -> model.getId().equals("otp")).findFirst()
+                .orElseThrow().setRequirement(AuthenticationExecutionModel.Requirement.DISABLED);
+        browser.send("fikret");
+
+        browser.verify(mail.last().code());
+
+        assertFalse(browser.succeeded);
+        assertNull(browser.signedIn);
+        assertEquals("identifier", browser.stage());
+        assertEquals("unavailable", browser.error());
+        assertEquals("otp_unguarded", browser.lastFailure().get("sky_email_code"));
+        assertNull(browser.notes.get(EmailCodeAuthenticator.HANDLE_NOTE), "the code is spent");
+        assertNull(browser.notes.get(EmailCodeAuthenticator.METHOD_NOTE));
+        verify(fikret, never()).setEmailVerified(anyBoolean());
+        verify(protector, never()).failedLogin(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void aPersonWithoutOtpLosesNothingWhenTheOtpSubflowIsOff() {
+        UserModel ada = person("ada", "ada", "ada@example.com");
+        flows.get(OtpAfterCodeTest.OTP_FLOW).forEach(model ->
+                model.setRequirement(AuthenticationExecutionModel.Requirement.DISABLED));
+        browser.send("ada");
+
+        browser.verify(mail.last().code());
+
+        assertTrue(browser.succeeded);
+        assertEquals(ada, browser.signedIn);
     }
 
     // The flow's last step may run in a later request (the TOTP page, the passkey offer); the

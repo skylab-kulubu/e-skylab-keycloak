@@ -3319,6 +3319,15 @@ browser plus passkey forms (ALTERNATIVE)
   doğrulanır (Keycloak'ın sıfırlama bağlantısı gibi; `VERIFY_EMAIL` eylemi kalkar), sonra koşullu OTP
   ve passkey önerisi gelir. Giriş olayının `username` ayrıntısı ve oturumun giriş adı, parola
   formundaki gibi yazılan tanımlayıcıdır.
+- Çalışma anı koruması (güvenlik incelemesi K1, `OtpAfterCode`): kişinin OTP'si varsa kod, ancak akış
+  koddan sonra OTP'yi hâlâ soruyorsa kabul edilir. Aranan biçim: kodun alt akışında, koddan sonra
+  CONDITIONAL bir alt akış; tek etkin koşulu REQUIRED `conditional-user-configured`, tek REQUIRED ya da
+  CONDITIONAL adımı REQUIRED `auth-otp-form` (sıfırlama akışındaki `otp-guard` kuralı). Admin
+  Console'da OTP alt akışı kapatılır, koşul ya da form değiştirilir ya da yanına başka bir koşul veya
+  REQUIRED adım eklenirse, bir sonraki yayını beklemeden OTP'li kişi doğru kodla da giremez: sayfa
+  `unavailable` ("E-postayla giriş şu an kullanılamıyor. Parolanla ya da passkey ile gir.") der, olay
+  `otp_unguarded`, sunucu günlüğünde `sky_email_code_otp_unguarded realm=…` ERROR satırı (kişi, adres,
+  IP yok). OTP'si olmayan kişi etkilenmez. Düzeltme: `KEYCLOAK_EMAIL_CODE_LOGIN=on` (ya da `off`).
 
 ### Kod, sınırlar ve olaylar
 
@@ -3358,9 +3367,9 @@ browser plus passkey forms (ALTERNATIVE)
   sayfa gösteren bir gerekli eylem çıkarsa `LOGIN` sonraki istekte yazılır ve ayrıntıyı taşımaz (kod
   girişinde nadir: doğrulanmamış birincil zaten doğrulanır). Her ret ayrı bir `LOGIN_ERROR`:
   `sky_method=email_code`, `sky_email_code` = `wrong_code`, `code_expired`, `rate_limited`,
-  `rate_limited_address`, `no_account`, `account_disabled`, `account_locked`; hata
+  `rate_limited_address`, `no_account`, `account_disabled`, `account_locked`, `otp_unguarded`; hata
   `invalid_code`, `expired_code`, `sky_email_code_rate_limited`, `user_not_found`, `user_disabled`,
-  `user_temporarily_disabled`. Bu olaylarda IP (`ipAddress`) ve yazılan tanımlayıcı (`username`) yoktur
+  `user_temporarily_disabled`, `invalid_config`. Bu olaylarda IP (`ipAddress`) ve yazılan tanımlayıcı (`username`) yoktur
   (spec §7.5): jboss-logging dinleyicisi olayları sunucu günlüğüne de yazar. Kodun gönderilmesi
   Keycloak olayı değildir; gönderim kaydı SkyMail'dedir (`keycloak.login-code`). Ölçüm (spec §11):
   `LOGIN` ve `details.sky_method == "email_code"`; reddedilenler `LOGIN_ERROR` ve
@@ -3395,7 +3404,23 @@ Satırlar:
 - `[reconcile] e-mail code sign-in of flow 'browser plus passkey': unchanged (subflow 'sky email code' ALTERNATIVE)` (ikinci `on`)
 - `[reconcile] e-mail code sign-in of flow 'browser plus passkey': updated (subflow 'sky email code' ALTERNATIVE -> DISABLED)` (`off`)
 - `[reconcile] e-mail code sign-in of flow 'browser plus passkey': unchanged (subflow 'sky email code' ALTERNATIVE; KEYCLOAK_EMAIL_CODE_LOGIN=on or off changes it)` (`keep`)
-- `[reconcile] WARNING: e-mail code sign-in of flow 'browser plus passkey' could not be planned (…); KEYCLOAK_EMAIL_CODE_LOGIN=on or off would stop here` (`keep`, planlanamayan akış: tam uzlaştırma durmaz; `on` ve `off` aynı durumda hiçbir şey yazmadan çıkış 1 ile durur)
+- `[reconcile] WARNING: e-mail code sign-in of flow 'browser plus passkey' could not be planned (…); KEYCLOAK_EMAIL_CODE_LOGIN=on or off would stop here` (`keep`, planlanamayan akış: diğer adımlar koşar; `on` ve `off` aynı durumda hiçbir şey yazmadan çıkış 1 ile durur). Akışta `sky-email-code` varsa koddan sonra OTP'ye kefil olunamaz: koşu aşağıdaki gibi 3 ile biter.
+
+OTP kayması (güvenlik incelemesi K1; §17.1'deki sıfırlama korumasının eşi): `keep`'te alt akış DISABLED
+değilken parçaları yerinde değilse (Admin Console'da `sky email code conditional otp` kapatılmış, koşul
+ya da form DISABLED yapılmış, bir parça silinmiş) ya da akış `sky-email-code`'u taşıyıp planlanamıyorsa
+uyarı yazılır; diğer adımlar koşar, koşu başarı satırı yerine **3** çıkış koduyla biter:
+
+- `[reconcile] WARNING: subflow 'sky email code' of flow 'browser plus passkey' runs without all its parts (sky-email-code REQUIRED, subflow 'sky email code conditional otp' DISABLED, conditional-user-configured REQUIRED, auth-otp-form REQUIRED, passkey-offer-authenticator REQUIRED); a person with TOTP may not be asked for it after the code; KEYCLOAK_EMAIL_CODE_LOGIN=on completes it, off turns it off`
+- tam uzlaştırmada: `Account Center Keycloak configuration is reconciled except the OTP after the e-mail code (subflow 'sky email code' of flow 'browser plus passkey' runs without all its parts); run again with KEYCLOAK_EMAIL_CODE_LOGIN=on (or off), or fix the subflow in the Admin Console`
+- operatör adımında (`KEYCLOAK_RECONCILE_ONLY=email-code-login`): `E-mail code sign-in is reconciled except the OTP after the code (…); run again with KEYCLOAK_EMAIL_CODE_LOGIN=on (or off), or fix the subflow in the Admin Console`
+
+Sıfırlama koruması da tetiklenmişse iki `reconciled except` satırı birlikte yazılır, çıkış yine 3'tür.
+Yayın wizard'ı `WARNING: subflow 'sky email code'`, `reconciled except the OTP after the e-mail code`
+satırlarında ve 3 çıkışında durmalıdır (bugünkü wizard yalnız sıfırlama satırını tanır; sonraki yayının
+wizard'ına eklenir). Bu arada SPI, OTP'li kişiyi kendiliğinden reddeder (yukarıda, çalışma anı
+koruması). Onarım: `KEYCLOAK_EMAIL_CODE_LOGIN=on` eksik parçayı ekler ve gereklilikleri düzeltir
+(`updated (subflow 'sky email code conditional otp' DISABLED -> CONDITIONAL)`); `off` alt akışı kapatır.
 
 Uzlaştırıcı kimliğinin `manage-realm` rolü yeter. Üretimin akış adları (`browser plus passkey forms`
 ve alt akışların öncelikleri) 2026-09-21 olgularından; ilk `on`'dan önce Admin Console'da bakılır.
@@ -3477,5 +3502,7 @@ yarıda ve dolunca gider, kodlar gitmeye devam eder; SkyMail reddedince kod SMTP
 bağlantısız, konuda kod yok) gelir ve çalışır, `config`/`token` geri düşüşü yoktur; TOTP'li kişiye koddan sonra TOTP; "Parolanla gir"
 parola formuna götürür; sunucu günlüğünde kod, adres ve istemci IP'si yok; `off` kapatır ve Keycloak
 adımı artık sunmaz; `on` kesilmiş alt akışı tamamlar; yanında REQUIRED yürütme olan akış yazılmadan
-reddedilir, `keep` aynı akışta yalnız uyarır. Süre dolumu, tek kullanım, oturum ve IP sınıfı bütçeleri, hesapsız girdinin kodu ve
+reddedilir, `keep` aynı akışta uyarır ve 3 ile çıkar; OTP alt akışı Admin Console'da kapatılınca `keep`
+uyarır ve 3 ile çıkar, TOTP'li kişi doğru kodla `unavailable` alır (`otp_unguarded` olayı ve günlük
+satırı), TOTP'siz kişi girer, `on` onarır ve TOTP yeniden sorulur. Süre dolumu, tek kullanım, oturum ve IP sınıfı bütçeleri, hesapsız girdinin kodu ve
 passkey yolu birim testindedir (`EmailCodeAuthenticatorTest`, `LoginCodesTest`, `RateLimiterTest`).

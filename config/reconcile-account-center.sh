@@ -107,6 +107,11 @@ STAY_SIGNED_IN=${KEYCLOAK_STAY_SIGNED_IN:-keep}
 # a full reconciliation never turns it on or off. Realm by realm (sandbox first), also as an operator
 # step (KEYCLOAK_RECONCILE_ONLY=email-code-login).
 EMAIL_CODE_LOGIN=${KEYCLOAK_EMAIL_CODE_LOGIN:-keep}
+# Set by reconcile_email_code_login (keep) when the subflow runs but may no longer ask a person with
+# TOTP for it after the code (an Admin Console change; security review K1). Like
+# RESET_OTP_UNGUARDED, every other step still runs, then the run ends with exit status 3. The SPI
+# step refuses such a person meanwhile (OtpAfterCode).
+EMAIL_CODE_UNGUARDED=''
 EMAIL_CODE_STEP=sky-email-code
 EMAIL_CODE_FLOW_ALIAS='sky email code'
 EMAIL_CODE_OTP_FLOW_ALIAS='sky email code conditional otp'
@@ -790,7 +795,7 @@ reconcile_reset_otp_step() {
 # run cut in between is finished by the next one. Every write is read back. The realm's own browser
 # flow binding is followed; a realm bound to Keycloak's built-in flow is refused (it cannot be edited).
 reconcile_email_code_login() {
-  local flow_alias built_in flow_id providers parent_alias subflow_path otp_path was
+  local flow_alias built_in flow_id providers parent_alias subflow_path otp_path was executions
   local changes=()
   flow_alias=$(kcadm_json "realms/$TARGET_REALM" --fields browserFlow | json_tool field browserFlow)
   if [[ -z $flow_alias ]]; then
@@ -812,10 +817,16 @@ reconcile_email_code_login() {
     log "e-mail code sign-in of flow '$flow_alias': unchanged (Keycloak's built-in flow)"
     return 0
   fi
-  # A full reconciliation (keep) never stops on a flow this step could not change: it says why.
+  # A full reconciliation (keep) never stops on a flow this step could not change: it says why, and
+  # when the flow holds the e-mail code step it cannot vouch for the OTP after the code either.
   if [[ $EMAIL_CODE_LOGIN == keep ]]; then
     if ! plan_email_code_flow "$flow_alias" 2>"$WORK_DIR/email-code-keep.err"; then
       warn "e-mail code sign-in of flow '$flow_alias' could not be planned ($(head -n 1 "$WORK_DIR/email-code-keep.err")); KEYCLOAK_EMAIL_CODE_LOGIN=on or off would stop here"
+      # Read whole first: grep -q stopping early would fail the pipe under pipefail.
+      executions=$(kcadm_json "authentication/flows/$(flow_alias_path "$flow_alias")/executions" -r "$TARGET_REALM")
+      if grep -Fq "\"$EMAIL_CODE_STEP\"" <<<"$executions"; then
+        EMAIL_CODE_UNGUARDED="flow '$flow_alias' holds $EMAIL_CODE_STEP but could not be planned"
+      fi
       return 0
     fi
   else
@@ -828,7 +839,8 @@ reconcile_email_code_login() {
       else
         log "e-mail code sign-in of flow '$flow_alias': unchanged (subflow '$EMAIL_CODE_FLOW_ALIAS' $ECF_SUBFLOW_REQ; KEYCLOAK_EMAIL_CODE_LOGIN=on or off changes it)"
         if [[ $ECF_SUBFLOW_REQ != DISABLED ]] && ! email_code_parts_in_place; then
-          warn "subflow '$EMAIL_CODE_FLOW_ALIAS' of flow '$flow_alias' runs without all its parts; KEYCLOAK_EMAIL_CODE_LOGIN=on completes it, off turns it off"
+          warn "subflow '$EMAIL_CODE_FLOW_ALIAS' of flow '$flow_alias' runs without all its parts ($(email_code_parts_summary)); a person with TOTP may not be asked for it after the code; KEYCLOAK_EMAIL_CODE_LOGIN=on completes it, off turns it off"
+          EMAIL_CODE_UNGUARDED="subflow '$EMAIL_CODE_FLOW_ALIAS' of flow '$flow_alias' runs without all its parts"
         fi
       fi
       return 0
@@ -963,6 +975,13 @@ plan_email_code_flow() {
 
 email_code_parts_present() {
   [[ $ECF_STEP != - && $ECF_OTP != - && $ECF_OFFER != - && $ECF_COND != - && $ECF_OTP_FORM != - ]]
+}
+
+# What each part of the subflow is now, for a warning: "sky-email-code REQUIRED, subflow '…' DISABLED, …".
+email_code_parts_summary() {
+  printf "%s %s, subflow '%s' %s, conditional-user-configured %s, auth-otp-form %s, %s %s" \
+    "$EMAIL_CODE_STEP" "${ECF_STEP_REQ/#-/missing}" "$EMAIL_CODE_OTP_FLOW_ALIAS" "${ECF_OTP_REQ/#-/missing}" \
+    "${ECF_COND_REQ/#-/missing}" "${ECF_OTP_FORM_REQ/#-/missing}" "$PASSKEY_OFFER_STEP" "${ECF_OFFER_REQ/#-/missing}"
 }
 
 email_code_parts_in_place() {
@@ -3303,6 +3322,11 @@ if [[ $RECONCILE_ONLY == first-broker-login ]]; then
 fi
 if [[ $RECONCILE_ONLY == email-code-login ]]; then
   reconcile_email_code_login
+  if [[ -n $EMAIL_CODE_UNGUARDED ]]; then
+    printf 'E-mail code sign-in is reconciled except the OTP after the code (%s); run again with KEYCLOAK_EMAIL_CODE_LOGIN=on (or off), or fix the subflow in the Admin Console\n' \
+      "$EMAIL_CODE_UNGUARDED" >&2
+    exit 3
+  fi
   printf 'E-mail code sign-in is reconciled.\n'
   exit 0
 fi
@@ -3366,6 +3390,12 @@ reconcile_admin_panel_client
 if [[ -n $RESET_OTP_UNGUARDED ]]; then
   printf 'Account Center Keycloak configuration is reconciled except the reset OTP step (%s); fix the subflow in the Admin Console and run again\n' \
     "$RESET_OTP_UNGUARDED" >&2
+fi
+if [[ -n $EMAIL_CODE_UNGUARDED ]]; then
+  printf 'Account Center Keycloak configuration is reconciled except the OTP after the e-mail code (%s); run again with KEYCLOAK_EMAIL_CODE_LOGIN=on (or off), or fix the subflow in the Admin Console\n' \
+    "$EMAIL_CODE_UNGUARDED" >&2
+fi
+if [[ -n $RESET_OTP_UNGUARDED || -n $EMAIL_CODE_UNGUARDED ]]; then
   exit 3
 fi
 printf 'Account Center Keycloak configuration is reconciled.\n'

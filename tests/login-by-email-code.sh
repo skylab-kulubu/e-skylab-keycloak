@@ -39,7 +39,9 @@
 #   - the fourth code to one address within a quarter hour is not mailed, the page is the same, a
 #     rate_limited_address event is written; the overall daily budget mails the operator at half
 #     and when used up (to the enabled members of /ADMIN), and sign-in codes still go;
-#   - a person with TOTP is asked for it after the code;
+#   - a person with TOTP is asked for it after the code; when the OTP subflow is turned off in the
+#     Admin Console, keep warns and exits 3, the right code refuses a person with TOTP (unavailable,
+#     an otp_unguarded event and log line) but still signs in a person without, and on repairs it;
 #   - when SkyMail refuses, the code still arrives through Keycloak's SMTP (the SPI's FreeMarker
 #     copy: the code on its own line, no link, no code in the subject) and signs the person in;
 #   - "Parolanla gir" (Keycloak's execution selection) reaches the password form, and a password
@@ -48,7 +50,7 @@
 #     address of the run and not the client's IP;
 #   - off makes the subflow DISABLED and Keycloak no longer offers it; on brings it back; a run cut
 #     in the middle is finished by the next; a REQUIRED execution next to the password flow is
-#     refused with nothing written;
+#     refused with nothing written (and keep, which cannot vouch for the OTP then, exits 3);
 #   - a realm bound to Keycloak's built-in browser flow (the sandbox may be): keep reports it, on is
 #     refused with nothing written; after runbook §29's copy and binding, an operator session's on
 #     adds the subflow next to the copy's forms and the login page offers the step.
@@ -767,6 +769,51 @@ login_events "$totp_person" | jq -e '.[0].details.sky_method == "email_code"' >/
 printf '    a person with TOTP types it after the code; the LOGIN event still says sky_method=email_code\n'
 
 # ---------------------------------------------------------------------------------------------------
+stage 'the OTP after the code turned off in the Admin Console'
+# Security review K1: the drift stops a release (exit 3) and, until it is repaired, the code itself
+# refuses a person with TOTP.
+set_requirement "$SUBFLOW" "$OTP_SUBFLOW" DISABLED
+output=$(reconcile "$SCOPED_CONFIG" 3)
+grep -Fq "WARNING: subflow '$SUBFLOW' of flow '$FLOW' runs without all its parts ($STEP REQUIRED, subflow '$OTP_SUBFLOW' DISABLED," <<<"$output" \
+  || { printf '%s\n' "$output" >&2; fail 'keep did not warn about the OTP subflow'; }
+expect_line "$output" "E-mail code sign-in is reconciled except the OTP after the code (subflow '$SUBFLOW' of flow '$FLOW' runs without all its parts); run again with KEYCLOAK_EMAIL_CODE_LOGIN=on (or off), or fix the subflow in the Admin Console" \
+  'keep did not stop on the drift'
+open_code_page fikret-drift
+before=$(code_count fikret@example.invalid)
+ask_code fikret
+code=$(await_code fikret@example.invalid "$before")
+CODES+=("$code")
+type_code "$code"
+[[ $LANDED != app ]] || fail 'a person with TOTP signed in by the code alone'
+on_form kc-otp-login-form && fail 'Keycloak asked for TOTP although the subflow is off'
+expect_error kc-email-code-identifier-form unavailable 'the right code of a person with TOTP while the OTP subflow is off'
+kcadm get events -r "$REALM" -q type=LOGIN_ERROR -q "user=$totp_person" \
+  | jq -e '.[0].details.sky_email_code == "otp_unguarded" and .[0].ipAddress == null' >/dev/null \
+  || fail 'no otp_unguarded event'
+docker logs "$CONTAINER" >"$STATE_DIR/server.log" 2>&1
+grep -Fq "sky_email_code_otp_unguarded realm=$REALM:" "$STATE_DIR/server.log" || fail 'the refusal left no log line'
+person gul gul@example.invalid >/dev/null
+open_code_page gul-drift
+ask_code gul
+code=$(await_code gul@example.invalid 0)
+CODES+=("$code")
+type_code "$code"
+finish
+[[ $LANDED == app ]] || fail "a person without TOTP lost the code login to the drift ($(page_summary))"
+output=$(reconcile "$SCOPED_CONFIG" 0 KEYCLOAK_EMAIL_CODE_LOGIN=on)
+expect_line "$output" "[reconcile] e-mail code sign-in of flow '$FLOW': updated (subflow '$OTP_SUBFLOW' DISABLED -> CONDITIONAL)" \
+  'on did not repair the OTP subflow'
+reconcile "$SCOPED_CONFIG" 0 >/dev/null
+open_code_page fikret-repaired
+before=$(code_count fikret@example.invalid)
+ask_code fikret
+code=$(await_code fikret@example.invalid "$before")
+CODES+=("$code")
+type_code "$code"
+on_form kc-otp-login-form || fail "after the repair a person with TOTP was not asked for it ($(page_summary))"
+printf '    OTP subflow off: keep warns and exits 3, the code refuses a person with TOTP (otp_unguarded), others sign in; on repairs it\n'
+
+# ---------------------------------------------------------------------------------------------------
 stage 'the password form stays one choice away'
 open_code_page to-password
 follow "$JAR" "$(form_action kc-email-code-identifier-form)" --data-urlencode "authenticationExecution=$PASSWORD_FORM_ID"
@@ -819,11 +866,13 @@ output=$(reconcile "$SCOPED_CONFIG" 1 KEYCLOAK_EMAIL_CODE_LOGIN=off)
 grep -Fq 'webauthn-authenticator-passwordless next to the password form'"'"'s subflow is REQUIRED: an ALTERNATIVE beside it would never run' <<<"$output" \
   || { printf '%s\n' "$output" >&2; fail 'a REQUIRED neighbour was not refused'; }
 [[ $(flow "$FLOW" | jq -S -c .) == "$flow_before" ]] || fail 'the refused run wrote something'
-output=$(reconcile "$SCOPED_CONFIG" 0)
+output=$(reconcile "$SCOPED_CONFIG" 3)
 grep -Fq "WARNING: e-mail code sign-in of flow '$FLOW' could not be planned (webauthn-authenticator-passwordless next to the password form's subflow is REQUIRED" <<<"$output" \
   || { printf '%s\n' "$output" >&2; fail 'keep did not report the flow it could not plan'; }
+expect_line "$output" "E-mail code sign-in is reconciled except the OTP after the code (flow '$FLOW' holds $STEP but could not be planned); run again with KEYCLOAK_EMAIL_CODE_LOGIN=on (or off), or fix the subflow in the Admin Console" \
+  'keep did not stop on a flow it cannot vouch for'
 set_requirement "$FORMS" webauthn-authenticator-passwordless ALTERNATIVE
-printf '    off turns it off (and Keycloak stops offering it); on finishes a cut subflow and turns it back on; a REQUIRED neighbour is refused (keep only warns)\n'
+printf '    off turns it off (and Keycloak stops offering it); on finishes a cut subflow and turns it back on; a REQUIRED neighbour is refused (keep warns and exits 3)\n'
 
 # ---------------------------------------------------------------------------------------------------
 stage "a realm bound to Keycloak's built-in browser flow"

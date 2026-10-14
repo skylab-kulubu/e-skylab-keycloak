@@ -2295,10 +2295,12 @@ core_rename_list() {
 # ticket 03, still works). KEYCLOAK_RECONCILE_CHECK=true makes the operator step a dry run: it reads
 # everything, prints "would ..." for each change and writes nothing. The operator step reads
 # everything first and writes only when every read succeeded; a failed read is never taken for
-# "absent". It then grants each role to each listed service account that lacks it, records on the
-# role (attribute CORE_SERVICE_ROLE_GRANT_ATTRIBUTE) when and to which service accounts, and reports,
-# never removes: another holder (a user, a group or the realm's default role) of a role meant for
-# service accounts only, and a core role a listed service account holds beyond this list (a NOTE).
+# "absent" (one exception: a missing default client scope roles is attached during the reads, by
+# the full run too; runbook §20.1). It then grants each role to each listed service account that
+# lacks it, records on the role (attribute CORE_SERVICE_ROLE_GRANT_ATTRIBUTE) when and to which
+# service accounts, and reports, never removes: another holder (a user, a group or the realm's
+# default role) of a role meant for service accounts only, and a core role a listed service account
+# holds beyond this list (a NOTE).
 # aud core is not added here: Keycloak's audience resolve mapper (default scope roles) puts core in
 # aud once resource_access.core is in the token; the step verifies that scope instead of adding a
 # second audience mapper.

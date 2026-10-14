@@ -359,6 +359,9 @@ expect_line "$output" '[reconcile] WARNING: service-account roles of core-erasur
   'the reconciler identity unexpectedly reads user role mappings'
 
 CURRENT_STAGE='reconciler fails on core-erasure drift; the script repairs it'
+# The state the repair must restore is the one the reconciler just verified: its first run with the
+# forms client also made Forms' Privileged role skyforms:read-all there (runbook §28).
+snapshot_before=$(state_snapshot)
 cms_resource=$(client_uuid skycms)
 cms_scope=$(scope_uuid account-erase-cms)
 kcadm update "clients/$client" -r "$REALM" -s fullScopeAllowed=true >/dev/null

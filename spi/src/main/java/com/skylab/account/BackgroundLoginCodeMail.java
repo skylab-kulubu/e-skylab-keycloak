@@ -11,6 +11,7 @@ import org.keycloak.email.EmailTemplateProvider;
 import org.keycloak.executors.ExecutorsProvider;
 import org.keycloak.http.FormPartValue;
 import org.keycloak.http.HttpRequest;
+import org.keycloak.models.GroupModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.KeycloakSessionFactory;
 import org.keycloak.models.RealmModel;
@@ -73,19 +74,60 @@ final class BackgroundLoginCodeMail implements LoginCodeMail {
         });
     }
 
+    /**
+     * The operator alarm goes to every enabled member of the alarm group (default {@code /ADMIN})
+     * who has an e-mail address, one SkyMail single mail each, with keycloak-mailer's own
+     * {@code skymail:mails:send}: SkyMail's own group send ({@code POST /v1/mail_tasks}) would need
+     * {@code skymail:mails:write}, which this service account does not have and does not get.
+     */
     @Override
     public void alarm(AuthenticationFlowContext context, String level, int dailyLimit) {
         String realmName = context.getRealm().getName();
         LOG.warnf("sky_email_code_budget level=%s daily_limit=%d realm=%s", level, dailyLimit, realmName);
-        String recipient = settings.alarmEmail();
-        if (recipient == null) {
+        String groupPath = settings.alarmGroup();
+        if (groupPath == null) {
             return;
         }
         boolean full = FULL.equals(level);
-        run(context, "sky_email_code_alarm_failed realm=" + realmName, (session, realm) ->
-                SkyMailNotice.sendLoginCodeAlarm(session, realm,
-                        full ? ALARM_FULL_SUBJECT_KEY : ALARM_HALF_SUBJECT_KEY,
-                        recipient, alarmSubject(full), alarmText(realmName, full, dailyLimit)));
+        run(context, "sky_email_code_alarm_failed realm=" + realmName, (session, realm) -> {
+            List<UserModel> recipients = alarmRecipients(session, realm, groupPath);
+            if (recipients.isEmpty()) {
+                LOG.warnf("sky_email_code_alarm_unsent reason=no_recipient realm=%s", realmName);
+                return;
+            }
+            int failed = 0;
+            for (UserModel recipient : recipients) {
+                try {
+                    SkyMailNotice.sendLoginCodeAlarm(session, realm,
+                            full ? ALARM_FULL_SUBJECT_KEY : ALARM_HALF_SUBJECT_KEY,
+                            recipient, alarmSubject(full), alarmText(realmName, full, dailyLimit));
+                } catch (Exception exception) {
+                    failed++;
+                    LOG.debug("sky-email-code alarm failure", exception);
+                }
+            }
+            if (failed > 0) {
+                LOG.errorf("sky_email_code_alarm_failed realm=%s failed=%d of=%d", realmName, failed, recipients.size());
+            }
+        });
+    }
+
+    /** At most this many members of the alarm group are mailed. */
+    static final int MAX_ALARM_RECIPIENTS = 50;
+
+    /**
+     * The enabled members of the group at {@code groupPath} that have an e-mail address, at most
+     * {@value #MAX_ALARM_RECIPIENTS}; none when the realm has no such group (the sandbox realm may not).
+     */
+    static List<UserModel> alarmRecipients(KeycloakSession session, RealmModel realm, String groupPath) {
+        GroupModel group = KeycloakModelUtils.findGroupByPath(session, realm, groupPath);
+        if (group == null) {
+            return List.of();
+        }
+        return session.users().getGroupMembersStream(realm, group, 0, MAX_ALARM_RECIPIENTS)
+                .filter(UserModel::isEnabled)
+                .filter(user -> user.getEmail() != null && !user.getEmail().isBlank())
+                .toList();
     }
 
     static String alarmSubject(boolean full) {

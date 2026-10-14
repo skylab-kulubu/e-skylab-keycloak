@@ -59,10 +59,11 @@ E-postayla girişin kodu (eskylab-login-ux 08) de genel `send(...)`'tan geçer v
 `EmailCodeAuthenticator.MAIL_TEMPLATE` sabitiyle eşlenir; `code`, `codeExpirationMinutes` ve
 `purpose` (`login`; ileride `signup`, `link`) taşır. Posta istekten sonra arka planda, kendi
 oturumunda gönderilir; oturuma isteğin adresi (URI) verilir, token uç noktası ondan türetildiği için
-SkyMail yolu arka planda da çalışır. Genel günlük sınırın operatör alarmı bir kişiye değil bir
-adrese gider: FreeMarker şablonu kullanıcı istediği için şablon sağlayıcısına uğramaz, SkyMail
-mesajı oturuma doğrudan yazılır (`SkyMailNotice`) ve SkyMail yoksa göndericiye verilen düz metin
-SMTP'den çıkar; SkyMail şablonu yarı ve dolu durumu `subjectKey`'den ayırır.
+SkyMail yolu arka planda da çalışır. Genel günlük sınırın operatör alarmı alarm grubunun (varsayılan `/ADMIN`) her üyesine ayrı bir
+tek posta olarak gider (`keycloak-mailer`'ın `skymail:mails:send` yetkisiyle; SkyMail'in grup
+gönderimi `skymail:mails:write` isterdi): metni kodda kurulduğu için şablon sağlayıcısına uğramaz,
+SkyMail mesajı oturuma doğrudan yazılır (`SkyMailNotice`) ve SkyMail yoksa göndericiye verilen düz
+metin SMTP'den çıkar; SkyMail şablonu yarı ve dolu durumu `subjectKey`'den ayırır.
 
 Hesap Merkezi'nin kişisel e-posta kodu (K3c) genel `send(...)` aşırı
 yüklemesinden geçer. Eşleme, sky-account'un postayı gönderdiği sabitin kendisini

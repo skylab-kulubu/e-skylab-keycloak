@@ -412,8 +412,8 @@ giremez. Doğru koddan sonra realm'in koşullu OTP'si gelir: TOTP'si olan kişiy
 (ADR-0063 S6). Gönderim sınırı: giriş oturumu başına saatte 5, IP sınıfı başına saatte 100, adres başına
 15 dakikada 3 ve günde 10, realm genelinde günde 500 (`SKY_EMAIL_CODE_DAILY_LIMIT`). Adres sınırını aşan
 istekte posta gitmez, ekran aynı kalır, daha önce gönderilmiş kod çalışmaya devam eder; genel sınır giriş
-kodunu durdurmaz, yarısında ve dolduğunda operatöre posta (`SKY_EMAIL_CODE_ALARM_EMAIL`; yoksa yalnız
-`sky_email_code_budget` log satırı) gider. Posta SkyMail'in `keycloak.login-code` şablonuyla (SkyMail
+kodunu durdurmaz, yarısında ve dolduğunda `/ADMIN` grubunun etkin ve adresi olan üyelerine posta
+(`SKY_EMAIL_CODE_ALARM_GROUP`, `off` ile yalnız `sky_email_code_budget` log satırı) gider. Posta SkyMail'in `keycloak.login-code` şablonuyla (SkyMail
 yoksa SPI'nın FreeMarker kopyası) çıkar: konuda kod yok, bağlantı yok. Olaylar: başarılı giriş
 Keycloak'ın `LOGIN` olayı, ayrıntısı `sky_method=email_code`; her ret `LOGIN_ERROR`, ayrıntısı
 `sky_email_code` (`wrong_code`, `rate_limited`, `rate_limited_address`, `account_locked`, …), IP'siz

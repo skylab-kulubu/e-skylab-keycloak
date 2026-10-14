@@ -5,6 +5,7 @@ import org.keycloak.email.EmailException;
 import org.keycloak.email.EmailSenderProvider;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
+import org.keycloak.models.UserModel;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -29,6 +30,7 @@ class SkyMailNoticeTest {
     private final KeycloakSession session = SkyMailEmailTemplateProviderTest.sessionWithAttributes(attributes);
     private final EmailSenderProvider sender = mock(EmailSenderProvider.class);
     private final RealmModel realm = SkyMailMessageTest.realm("e-skylab", "SKY LAB");
+    private final UserModel admin = SkyMailMessageTest.user("Ada", "Yönetici", "ada", "ops@example.org");
 
     // The sender takes the recorded message off the session while sending; it routes the alarm to
     // SkyMail's template, or falls back to SMTP with the plain text handed over here.
@@ -43,13 +45,13 @@ class SkyMailNoticeTest {
         }).when(sender).send(any(), anyString(), anyString(), anyString(), isNull());
 
         SkyMailNotice.sendLoginCodeAlarm(session, realm, "skyLoginCodeAlarmHalfSubject",
-                "ops@example.org", "konu", "metin");
+                admin, "konu", "metin");
 
         verify(sender).send(eq(Map.of("host", "smtp.example.invalid")), eq("ops@example.org"), eq("konu"), eq("metin"), isNull());
         assertEquals(SkyMailTemplates.LOGIN_CODE_ALARM, seen.get().templateKey());
         assertEquals("skyLoginCodeAlarmHalfSubject", seen.get().variables().get(SkyMailMessage.SUBJECT_KEY));
         assertEquals("SKY LAB", seen.get().variables().get(SkyMailMessage.REALM_DISPLAY_NAME));
-        assertEquals("", seen.get().recipientFullName());
+        assertEquals("Ada Yönetici", seen.get().recipientFullName());
         assertFalse(attributes.containsKey(SkyMailMessage.SESSION_ATTRIBUTE), "nothing is left for the next mail");
     }
 
@@ -59,7 +61,7 @@ class SkyMailNoticeTest {
         doThrow(new EmailException("down")).when(sender).send(any(), anyString(), anyString(), anyString(), isNull());
 
         assertThrows(EmailException.class, () -> SkyMailNotice.sendLoginCodeAlarm(session, realm,
-                "skyLoginCodeAlarmFullSubject", "ops@example.org", "konu", "metin"));
+                "skyLoginCodeAlarmFullSubject", admin, "konu", "metin"));
         assertFalse(attributes.containsKey(SkyMailMessage.SESSION_ATTRIBUTE));
     }
 }

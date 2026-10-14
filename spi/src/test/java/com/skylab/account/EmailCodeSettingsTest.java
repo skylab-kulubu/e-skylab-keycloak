@@ -15,24 +15,27 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class EmailCodeSettingsTest {
 
+    // Yusuf's decision (2026-10-15): the alarm goes to the administrators, the members of /ADMIN.
     @Test
-    void defaultsToFiveHundredCodesADayAndNoAlarmAddress() {
+    void defaultsToFiveHundredCodesADayAndTheAdminGroup() {
         EmailCodeSettings settings = EmailCodeSettings.from(null, Map.of());
 
         assertEquals(500, settings.dailyLimit());
-        assertNull(settings.alarmEmail());
+        assertEquals("/ADMIN", settings.alarmGroup());
         assertEquals(LoginIdentifiers.ytuIdpAlias(null), settings.ytuIdpAlias());
     }
 
     @Test
-    void readsTheLimitAndTheAlarmAddressFromTheEnvironment() {
+    void readsTheLimitAndTheAlarmGroupFromTheEnvironment() {
         EmailCodeSettings settings = EmailCodeSettings.from("YTU", Map.of(
                 EmailCodeSettings.DAILY_LIMIT_ENV, " 40 ",
-                EmailCodeSettings.ALARM_EMAIL_ENV, " ops@example.org "));
+                EmailCodeSettings.ALARM_GROUP_ENV, " /UYELER/YK "));
 
         assertEquals(40, settings.dailyLimit());
-        assertEquals("ops@example.org", settings.alarmEmail());
+        assertEquals("/UYELER/YK", settings.alarmGroup());
         assertEquals("YTU", settings.ytuIdpAlias());
+        assertNull(EmailCodeSettings.from(null, Map.of(EmailCodeSettings.ALARM_GROUP_ENV, "off")).alarmGroup(),
+                "off leaves the alarm a log line");
     }
 
     // A typo in an optional setting must not keep Keycloak from starting: the default stands.
@@ -41,8 +44,8 @@ class EmailCodeSettingsTest {
         for (String limit : List.of("many", "0", "-3", "100001", "5.5")) {
             assertEquals(500, EmailCodeSettings.from(null, Map.of(EmailCodeSettings.DAILY_LIMIT_ENV, limit)).dailyLimit(), limit);
         }
-        for (String address : List.of("ops", "ops@", "@example.org", "ops@a@b", "ops @example.org")) {
-            assertNull(EmailCodeSettings.from(null, Map.of(EmailCodeSettings.ALARM_EMAIL_ENV, address)).alarmEmail(), address);
+        for (String group : List.of("ADMIN", "//", "/ADMIN\n", "ops@example.org")) {
+            assertEquals("/ADMIN", EmailCodeSettings.from(null, Map.of(EmailCodeSettings.ALARM_GROUP_ENV, group)).alarmGroup(), group);
         }
     }
 

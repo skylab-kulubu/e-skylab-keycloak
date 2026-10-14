@@ -3345,9 +3345,14 @@ browser plus passkey forms (ALTERNATIVE)
   gerekçe: kulüp tanıtım gününde tek kampüs ağı). Adres bütçesi hesabı olmayan girdi için de yazılan
   adres üzerinden harcanır (ekran ve iş aynı kalsın diye).
 - Alarm: genel bütçenin ortadaki ve son dilimini alan istek, günde birer kez,
-  `sky_email_code_budget level=half|full daily_limit=… realm=…` WARN satırı yazar ve
-  `SKY_EMAIL_CODE_ALARM_EMAIL` ayarlıysa oraya posta atar (SkyMail `keycloak.login-code-alarm`; SkyMail
-  yoksa realm SMTP'si düz metinle). Postada kişi, adres ya da IP yoktur.
+  `sky_email_code_budget level=half|full daily_limit=… realm=…` WARN satırı yazar ve alarm grubunun
+  (`SKY_EMAIL_CODE_ALARM_GROUP`, varsayılan `/ADMIN`; Yusuf'un kararı 2026-10-15: "bana ya da adminlere")
+  etkin ve e-posta adresi olan her üyesine, en çok 50 kişiye, birer posta atar (SkyMail
+  `keycloak.login-code-alarm`; SkyMail yoksa realm SMTP'si düz metinle). Gönderim `keycloak-mailer`'ın
+  mevcut `skymail:mails:send` yetkisiyle kişi başına tek postadır: SkyMail'in kendi grup gönderimi
+  (`POST /v1/mail_tasks`) `skymail:mails:write` ister, servis hesabına bu yetki verilmedi. Grup realm'de
+  yoksa ya da üyesi yoksa yalnız log (`sky_email_code_alarm_unsent reason=no_recipient`). Postada kod
+  isteyen kişi, adres ya da IP yoktur.
 - Olaylar: başarılı giriş Keycloak'ın `LOGIN` olayı, ayrıntısı `sky_method=email_code` (alt akışın
   bittiği istekte, `onParentFlowSuccess`; TOTP ve passkey önerisi sayfası gelse de). Girişten sonra
   sayfa gösteren bir gerekli eylem çıkarsa `LOGIN` sonraki istekte yazılır ve ayrıntıyı taşımaz (kod
@@ -3366,8 +3371,8 @@ kcadm.sh get events -r e-skylab -q type=LOGIN -q max=10000 \
   | jq '[.[] | .details.sky_method // "password_or_other"] | group_by(.) | map({(.[0]): length}) | add'
 ```
 
-- Ortam (Keycloak, Dokploy'da): `SKY_EMAIL_CODE_ALARM_EMAIL` (alarm adresi; yoksa yalnız log),
-  `SKY_EMAIL_CODE_DAILY_LIMIT` (1-100000; yoksa 500). Bozuk değer bir kez
+- Ortam (Keycloak, Dokploy'da; ikisi de isteğe bağlı): `SKY_EMAIL_CODE_ALARM_GROUP` (grup yolu;
+  yoksa `/ADMIN`, `off` yalnız log), `SKY_EMAIL_CODE_DAILY_LIMIT` (1-100000; yoksa 500). Bozuk değer bir kez
   `sky_email_code_config reason=…` uyarısıyla varsayılana düşer, Keycloak yine açılır. Yalnız açılışta
   okunur.
 
@@ -3405,8 +3410,9 @@ ve alt akışların öncelikleri) 2026-09-21 olgularından; ilk `on`'dan önce A
 3. Tema PR'ı (ilk ekrandaki "E-postayla devam et" ve kod sayfaları) yayımlanır. O olmadan alt akış
    açılsa da SKY LAB temasında ona giden düğme yoktur.
 4. IP denetimi §23 1a'daki gibi (IP sınıfı bütçesi Keycloak'ın gördüğü IP kadar doğrudur).
-5. Dokploy → Keycloak → Environment: `SKY_EMAIL_CODE_ALARM_EMAIL` (operatör adresi; Yusuf karar
-   verir), gerekirse `SKY_EMAIL_CODE_DAILY_LIMIT`. Deploy.
+5. Ortam değişikliği gerekmez: alarm varsayılan olarak `/ADMIN` üyelerine gider. Başka bir grup ya da
+   yalnız log isteniyorsa Dokploy → Keycloak → Environment: `SKY_EMAIL_CODE_ALARM_GROUP` (grup yolu ya
+   da `off`), gerekirse `SKY_EMAIL_CODE_DAILY_LIMIT`; Deploy.
 6. Sandbox önce, §22'deki operatör oturumuyla (production sunucusunda):
 
    ```bash

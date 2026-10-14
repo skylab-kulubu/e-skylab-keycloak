@@ -21,7 +21,7 @@ import java.util.Map;
  *
  * <p>Settings: the YTÜ identity provider alias as the password form takes it (provider config
  * {@code --spi-authenticator-sky-email-code-ytu-idp-alias}, then {@code SKY_ACCOUNT_YTU_IDP_ALIAS},
- * then {@code OBS}); {@code SKY_EMAIL_CODE_DAILY_LIMIT} and {@code SKY_EMAIL_CODE_ALARM_EMAIL}
+ * then {@code OBS}); {@code SKY_EMAIL_CODE_DAILY_LIMIT} and {@code SKY_EMAIL_CODE_ALARM_GROUP}
  * ({@link EmailCodeSettings}).
  */
 public final class EmailCodeAuthenticatorFactory implements AuthenticationFlowCallbackFactory {

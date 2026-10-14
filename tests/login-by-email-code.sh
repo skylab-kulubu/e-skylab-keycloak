@@ -38,7 +38,7 @@
 #     brute-force protection is not signed in by the right code;
 #   - the fourth code to one address within a quarter hour is not mailed, the page is the same, a
 #     rate_limited_address event is written; the overall daily budget mails the operator at half
-#     and when used up, and sign-in codes still go;
+#     and when used up (to the enabled members of /ADMIN), and sign-in codes still go;
 #   - a person with TOTP is asked for it after the code;
 #   - when SkyMail refuses, the code still arrives through Keycloak's SMTP (the SPI's FreeMarker
 #     copy: the code on its own line, no link, no code in the subject) and signs the person in;
@@ -443,7 +443,7 @@ docker run --rm -d --name "$SKYMAIL_CONTAINER" --network "$NETWORK" --memory 128
 # No SKY_MAIL_TOKEN_URL: as in production, the token endpoint comes from the request's issuer.
 docker run --rm -d --name "$CONTAINER" --network "$NETWORK" --memory "$MEMORY" -p "127.0.0.1:$PORT:$PORT" \
   -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
-  -e SKY_EMAIL_CODE_DAILY_LIMIT="$DAILY_LIMIT" -e SKY_EMAIL_CODE_ALARM_EMAIL="$ALARM_TO" \
+  -e SKY_EMAIL_CODE_DAILY_LIMIT="$DAILY_LIMIT" \
   -e SKY_HARNESS=1 -e SKY_MAIL_ENABLED=true -e "SKY_MAIL_BASE_URL=http://$SKYMAIL_CONTAINER:8080" \
   -e SKY_MAIL_CLIENT_ID=keycloak-mailer -e "SKY_MAIL_CLIENT_SECRET=$MAILER_SECRET" -e SKY_MAIL_TIMEOUT_MILLISECONDS=3000 \
   -v "$SPI_JAR:/opt/keycloak/providers/e-skylab-spi.jar:ro" \
@@ -491,6 +491,16 @@ kcadm create clients -r "$REALM" -s clientId=keycloak-mailer -s publicClient=fal
   -s standardFlowEnabled=false -s directAccessGrantsEnabled=false -s "secret=$MAILER_SECRET" >/dev/null
 kcadm add-roles -r "$REALM" --uusername service-account-keycloak-mailer --cclientid skymail \
   --rolename skymail:access --rolename skymail:mails:send >/dev/null
+# The operator alarm goes to the members of /ADMIN (SKY_EMAIL_CODE_ALARM_GROUP's default): two who
+# get it, one disabled and one without an address who do not.
+admin_group=$(kcadm create groups -r "$REALM" -i -s name=ADMIN)
+for member in "ops $ALARM_TO true" "ops2 ops2@example.invalid true" "ops-off ops-off@example.invalid false" "ops-none - true"; do
+  read -r member_name member_email member_enabled <<<"$member"
+  member_arguments=(-s "username=$member_name" -s "enabled=$member_enabled" -s firstName=Kod -s lastName=Yönetici)
+  [[ $member_email == - ]] || member_arguments+=(-s "email=$member_email" -s emailVerified=true)
+  member_id=$(kcadm create users -r "$REALM" -i "${member_arguments[@]}")
+  kcadm update "users/$member_id/groups/$admin_group" -r "$REALM" -n >/dev/null
+done
 
 # Production's browser flow shape (runbook §15): forms -> password flow (SKY LAB password form,
 # conditional OTP, passkey offer) and passwordless WebAuthn, both ALTERNATIVE.
@@ -694,17 +704,22 @@ sleep 5
 (($(code_count eda@example.invalid) == 3)) || fail "the address got $(code_count eda@example.invalid) codes in a quarter hour, not 3"
 kcadm get events -r "$REALM" -q type=LOGIN_ERROR -q "user=$eda" \
   | jq -e 'any(.[]; .details.sky_email_code == "rate_limited_address")' >/dev/null || fail 'no event for the address budget'
-alarm_subjects() {
-  skymail_records | jq -s -c --arg to "$ALARM_TO" \
+alarm_subjects() { # alarm_subjects ADDRESS: the alarm mail tasks SkyMail got for the address, by subjectKey
+  skymail_records | jq -s -c --arg to "$1" \
     '[.[] | select(.event == "mail_task" and .template_key == "keycloak.login-code-alarm" and .recipient_email == $to)
       | .body_variables.subjectKey] | sort'
 }
 for _ in $(seq 1 30); do
-  [[ $(alarm_subjects) == '["skyLoginCodeAlarmFullSubject","skyLoginCodeAlarmHalfSubject"]' ]] && break
+  [[ $(alarm_subjects "$ALARM_TO") == '["skyLoginCodeAlarmFullSubject","skyLoginCodeAlarmHalfSubject"]' ]] && break
   sleep 1
 done
-[[ $(alarm_subjects) == '["skyLoginCodeAlarmFullSubject","skyLoginCodeAlarmHalfSubject"]' ]] \
-  || fail "the operator did not get the half and full alarms through SkyMail: $(alarm_subjects)"
+for address in "$ALARM_TO" ops2@example.invalid; do
+  [[ $(alarm_subjects "$address") == '["skyLoginCodeAlarmFullSubject","skyLoginCodeAlarmHalfSubject"]' ]] \
+    || fail "a member of /ADMIN did not get the half and full alarms through SkyMail: $(alarm_subjects "$address")"
+done
+[[ $(alarm_subjects ops-off@example.invalid) == '[]' ]] || fail 'a disabled member of /ADMIN got the alarm'
+(($(skymail_records | jq -s '[.[] | select(.event == "mail_task" and .template_key == "keycloak.login-code-alarm")] | length') == 4)) \
+  || fail 'the alarm went to someone outside the enabled members of /ADMIN'
 open_code_page after-limit
 before=$(code_count ada@example.invalid)
 ask_code ada

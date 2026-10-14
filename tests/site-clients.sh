@@ -23,9 +23,12 @@
 #     as a default scope and frontend-main is not written; a second run writes nothing;
 #   - inscribed-cms-roles.sh --client frontend-artlab makes cms:access and client:admin on the event
 #     site and gives the service account content:read + schema:sync only;
-#   - site-editor-grants.sh grants cms:access to /ADMIN, /UYELER/YK, /UYELER/DK and, by default, the
-#     Leader groups of the owning lab team and of the event's organization team, client:admin to
-#     /ADMIN and /UYELER/YK (never DK: a DK holder is a WARNING), nothing to a person; a --team adds a team; a missing organization team is a
+#   - site-editor-grants.sh grants cms:access to /ADMIN, /UYELER/YK and, by default, the Leader
+#     groups of the owning lab team and of the event's organization team, client:admin to /ADMIN
+#     and /UYELER/YK, content:read to /UYELER/DK (DK reads and does not write: a DK holding
+#     cms:access or client:admin is a WARNING that names config/dk-read-only.sh), nothing to a
+#     person; a DK member's token carries content:read only and the editor gate stays shut; a
+#     --team adds a team; a missing organization team is a
 #     WARNING; a --team that is no top team (/UYELER/<area>/<team>) is refused (exit 2) before a
 #     login; a holder outside the set is a WARNING and is not taken away; a second run writes
 #     nothing; a site without roles is reported (exit 1);
@@ -267,6 +270,7 @@ person airlead "$airlab_leaders"
 person gamelead "$gamelab_leaders"
 person orglead "$org_artlab_leaders"
 person member "$uyeler"
+person dkmember "$dk"
 # After the people: a default group joins only users made later.
 kcadm update "default-groups/$uyeler" -r "$REALM" -n -b '{}' >/dev/null
 # Keycloak's microprofile-jwt shape (realm roles into the claim groups), as a realm default scope.
@@ -367,7 +371,7 @@ expect_line "$again" 'check: 0 change(s) pending' 'the roles script disturbed si
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='editor grants'
 missing=$(run_expecting 1 site-editor-grants.sh "$REALM" --check --site skydays)
-expect_line "$missing" 'MISSING: frontend-skydays has no cms:access or client:admin role' 'missing roles not reported'
+expect_line "$missing" 'MISSING: frontend-skydays has no cms:access, client:admin or content:read role' 'missing roles not reported'
 event_before=$(newest_admin_event)
 sleep 1
 check=$(grants --check --site artlab) || { printf '%s\n' "$check" >&2; fail 'grants --check failed'; }
@@ -379,13 +383,17 @@ expect_line "$check" 'would grant frontend-artlab/cms:access to the group /UYELE
 expect_line "$check" 'would grant frontend-artlab/client:admin to the group /ADMIN' 'client:admin not planned'
 expect_line "$check" 'would grant frontend-artlab/client:admin to the group /UYELER/YK' 'client:admin not planned for YK'
 reject_line "$check" 'client:admin to the group /UYELER/DK' 'client:admin planned for DK'
+reject_line "$check" 'cms:access to the group /UYELER/DK' 'cms:access planned for DK'
+expect_line "$check" 'would grant frontend-artlab/content:read to the group /UYELER/DK' 'content:read not planned for DK'
 reject_line "$check" 'GAMELAB' 'another team planned'
 expect_line "$check" 'check: 8 change(s) pending, 0 warning(s), 0 problem(s)' 'unexpected grant plan'
 out=$(grants --apply --site artlab) || { printf '%s\n' "$out" >&2; fail 'grants --apply failed'; }
 expect_line "$out" 'applied 8 change(s)' 'grants not applied'
 holders=$(kcadm get "clients/$artlab/roles/cms:access/groups" -r "$REALM" | jq -c '[.[].path] | sort')
-[[ $holders == '["/ADMIN","/UYELER/ARGE/AIRLAB/KOORDINATORLER","/UYELER/ARGE/AIRLAB/LIDERLER","/UYELER/DK","/UYELER/ORGANIZASYON/ARTLAB/LIDERLER","/UYELER/YK"]' ]] \
+[[ $holders == '["/ADMIN","/UYELER/ARGE/AIRLAB/KOORDINATORLER","/UYELER/ARGE/AIRLAB/LIDERLER","/UYELER/ORGANIZASYON/ARTLAB/LIDERLER","/UYELER/YK"]' ]] \
   || fail "unexpected cms:access holders $holders"
+[[ $(kcadm get "clients/$artlab/roles/content:read/groups" -r "$REALM" | jq -c '[.[].path] | sort') == '["/UYELER/DK"]' ]] \
+  || fail 'content:read not exactly on /UYELER/DK'
 [[ $(kcadm get "clients/$artlab/roles/client:admin/groups" -r "$REALM" | jq -c '[.[].path] | sort') == '["/ADMIN","/UYELER/YK"]' ]] \
   || fail 'client:admin not exactly on /ADMIN and /UYELER/YK'
 [[ $(kcadm get "clients/$artlab/roles/cms:access/users" -r "$REALM" | jq 'length') == 0 ]] || fail 'a person got cms:access'
@@ -396,10 +404,17 @@ expect_line "$again" 'applied 0 change(s), 0 warning(s), 0 problem(s)' 'second g
 admin_role=$(kcadm get "clients/$artlab/roles/client:admin" -r "$REALM" | jq -c '[{id, name}]')
 kcadm create "groups/$dk/role-mappings/clients/$artlab" -r "$REALM" -b "$admin_role" >/dev/null
 again=$(grants --check --site artlab) || { printf '%s\n' "$again" >&2; fail 'grants with client:admin on DK failed'; }
-expect_line "$again" 'WARNING: frontend-artlab/client:admin is also held by the group /UYELER/DK (not taken away' 'client:admin on DK not reported'
+expect_line "$again" 'WARNING: frontend-artlab/client:admin is also held by the group /UYELER/DK (not taken away; DK reads and does not write: config/dk-read-only.sh takes it away once, runbook §28)' 'client:admin on DK not reported'
 expect_line "$again" 'check: 0 change(s) pending, 1 warning(s), 0 problem(s)' 'client:admin on DK changed the plan'
 kcadm delete "groups/$dk/role-mappings/clients/$artlab" -r "$REALM" -b "$admin_role" >/dev/null
-printf '    client:admin <- /ADMIN, /UYELER/YK; on DK a WARNING, not taken away\n'
+# The same for cms:access: DK held it before 2026-10-14; the grants keep it and name the one-time step.
+dk_editor_role=$(kcadm get "clients/$artlab/roles/cms:access" -r "$REALM" | jq -c '[{id, name}]')
+kcadm create "groups/$dk/role-mappings/clients/$artlab" -r "$REALM" -b "$dk_editor_role" >/dev/null
+again=$(grants --check --site artlab) || { printf '%s\n' "$again" >&2; fail 'grants with cms:access on DK failed'; }
+expect_line "$again" 'WARNING: frontend-artlab/cms:access is also held by the group /UYELER/DK (not taken away; DK reads and does not write: config/dk-read-only.sh takes it away once, runbook §28)' 'cms:access on DK not reported'
+expect_line "$again" 'check: 0 change(s) pending, 1 warning(s), 0 problem(s)' 'cms:access on DK changed the plan'
+kcadm delete "groups/$dk/role-mappings/clients/$artlab" -r "$REALM" -b "$dk_editor_role" >/dev/null
+printf '    client:admin <- /ADMIN, /UYELER/YK; content:read <- /UYELER/DK; cms:access or client:admin on DK a WARNING, not taken away\n'
 again=$(grants --check --site artlab --team artlab=/UYELER/ARGE/GAMELAB --team artlab=/UYELER/ORGANIZASYON/ARTLAB) \
   || { printf '%s\n' "$again" >&2; fail 'grants with --team failed'; }
 expect_line "$again" 'would grant frontend-artlab/cms:access to the group /UYELER/ARGE/GAMELAB/LIDERLER' '--team not planned'
@@ -438,6 +453,9 @@ access=$(jwt_payload "$(code_flow_response frontend-yildizjam gamelead | jq -r .
 json_assert "$access" "$EDITOR_GATE" 'the GAMELAB leader is no YıldızJam editor'
 access=$(jwt_payload "$(code_flow_response "$CLIENT" member | jq -r .access_token)")
 json_assert "$access" "(($CMS_ROLES) == []) and (($EDITOR_GATE) | not)" 'a plain member got a CMS role'
+access=$(jwt_payload "$(code_flow_response "$CLIENT" dkmember | jq -r .access_token)")
+json_assert "$access" "(($CMS_ROLES) == [\"content:read\"]) and (($EDITOR_GATE) | not)" 'a DK member is not a reader only'
+printf '    dkmember @ %s: roles=%s editor=%s (DK reads)\n' "$CLIENT" "$(jq -c "$CMS_ROLES" <<<"$access")" "$(jq -c "$EDITOR_GATE" <<<"$access")"
 location=$(curl -sS -o /dev/null -w '%{redirect_url}' -G "$BASE_URL/realms/$REALM/protocol/openid-connect/auth" \
   --data-urlencode "client_id=$CLIENT" --data-urlencode response_type=code --data-urlencode scope=openid \
   --data-urlencode "redirect_uri=$CALLBACK" --data-urlencode state=x)

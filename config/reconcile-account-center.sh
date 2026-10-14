@@ -1888,7 +1888,8 @@ reconcile_role_scope() {
 # SKY LAB admin panel. The list is the contract table in sky_lab_genel
 # .scratch/admin-token-authz/spec.md ("Sözleşme: core'un kaynak rolleri"); core (tickets 04/05)
 # checks exactly these names. Every run creates a missing role (manage-clients). Each role is
-# granted to the Privileged groups (ADMIN, YK, DK at /<NAME> and /UYELER/<NAME>, whichever exist)
+# granted to the Privileged groups of its set (CORE_PRIVILEGED_NAMES, or its line in
+# CORE_ROLE_SEED_GROUPS; each name at /<NAME> and /UYELER/<NAME>, whichever exist)
 # ONCE: the role attribute CORE_ROLE_SEED_ATTRIBUTE records when and to which groups, and a role
 # that carries it is never granted again, so a mapping changed or removed in the admin panel stays
 # that way. Nothing here ever removes a mapping or a role. A role added to the list later is seeded
@@ -1896,9 +1897,15 @@ reconcile_role_scope() {
 # reconciler identity deliberately lacks (ADR-0048's reason for manage-clients): its runs create
 # the roles and warn about unseeded ones; an operator seeds them by running this step alone with
 # their own kcadm session (KEYCLOAK_RECONCILE_ONLY=core-roles, runbook §19).
+# DK reads and does not write (grup-yonetimi GY1, ticket 08; core-backend #244): the write roles go
+# to ADMIN and YK only, DK gets global:read (Entra's Global Reader) and audit:read (Reports Reader,
+# with ADMIN and YK). The write roles DK got before this change are marked as seeded, so no run takes
+# them away: config/dk-read-only.sh does that once (runbook §28).
 CORE_CLIENT_ID=${KEYCLOAK_CORE_CLIENT_ID:-core}
 CORE_ROLE_SEED_ATTRIBUTE=skylab.seeded-group-mappings
-CORE_PRIVILEGED_NAMES=(ADMIN YK DK)
+# The Privileged groups the write roles (every role of CORE_ROLE_DEFINITIONS without a line in
+# CORE_ROLE_SEED_GROUPS) are seeded to.
+CORE_PRIVILEGED_NAMES=(ADMIN YK)
 # name|description (the description is written only when the role is created)
 CORE_ROLE_DEFINITIONS=(
   'event:manage|Her takımın etkinliklerini, etkinlik günlerini ve oturumlarını yönetir; kapı görevlisi atar (ADR-0059)'
@@ -1915,6 +1922,15 @@ CORE_ROLE_DEFINITIONS=(
   'github:activity:read|Kulübün GitHub etkinliğini (özel depolar dahil) görür (ADR-0059)'
   'url:moderator|Her kısa linki ve form bağlantısını görür ve yönetir'
   'url:access|Kısa link oluşturur, kendi linklerini görür ve yönetir'
+  'global:read|Privileged okumaların hepsini yapar, hiçbir şeyi değiştirmez (DK; Entra Global Reader, grup-yonetimi 08)'
+  'audit:read|Ekip denetim kaydını okur (ADMIN, YK ve DK; Entra Reports Reader, ekip-yetki-devri 09)'
+)
+# name|Privileged groups (space separated names): a role seeded to other groups than
+# CORE_PRIVILEGED_NAMES. global:read is DK's alone (core takes it for a reader only); audit:read is
+# read by ADMIN, YK and DK (grup-yonetimi GY1 replaced S11's "not DK").
+CORE_ROLE_SEED_GROUPS=(
+  'global:read|DK'
+  'audit:read|ADMIN YK DK'
 )
 # new|old: a role that renames another one is seeded once where the old one is held, not to the
 # Privileged groups, so that the rename moves nobody's rights (core reads both names as one while
@@ -1926,8 +1942,8 @@ CORE_ROLE_RENAMES=(
   'competition:manage|competitor:manage'
 )
 
-# The Privileged groups that exist, one "path<TAB>id" per line: of the names given (ADMIN, YK, DK),
-# all three when none is given. Only Keycloak's answer that the path does not exist counts as a
+# The Privileged groups that exist, one "path<TAB>id" per line: of the names given (ADMIN, YK, DK or
+# fewer), CORE_PRIVILEGED_NAMES when none is given. Only Keycloak's answer that the path does not exist counts as a
 # missing group; any other failed lookup (network, permission,
 # server error) fails the function, so the caller never seeds and marks a role without a group
 # that is in fact there.
@@ -2024,12 +2040,43 @@ reconcile_core_roles() {
       privileged+=("$name")
     fi
   done
-  if [[ ${#privileged[@]} -gt 0 ]]; then
-    seed_privileged_client_roles core "$core_uuid" "${CORE_PRIVILEGED_NAMES[*]}" "${privileged[@]}"
-  fi
+  # One call per set of Privileged groups (as SkyMail's roles), the write roles' set
+  # (CORE_PRIVILEGED_NAMES) first, then the others in the order of the list.
+  local group_names known set_names=() sets=("${CORE_PRIVILEGED_NAMES[*]}")
+  for name in ${privileged[@]+"${privileged[@]}"}; do
+    group_names=$(core_role_seed_names "$name")
+    for known in "${sets[@]}"; do
+      [[ $known != "$group_names" ]] || continue 2
+    done
+    sets+=("$group_names")
+  done
+  for group_names in "${sets[@]}"; do
+    set_names=()
+    for name in ${privileged[@]+"${privileged[@]}"}; do
+      if [[ $(core_role_seed_names "$name") == "$group_names" ]]; then
+        set_names+=("$name")
+      fi
+    done
+    if [[ ${#set_names[@]} -gt 0 ]]; then
+      seed_privileged_client_roles core "$core_uuid" "$group_names" "${set_names[@]}"
+    fi
+  done
   for name in ${renamed[@]+"${renamed[@]}"}; do
     core_role_seed_rename "$core_uuid" "$name" "$(core_role_rename_source "$name")"
   done
+}
+
+# The Privileged group names (space separated) a core role is seeded to: its line in
+# CORE_ROLE_SEED_GROUPS, else CORE_PRIVILEGED_NAMES.
+core_role_seed_names() {
+  local line
+  for line in "${CORE_ROLE_SEED_GROUPS[@]}"; do
+    if [[ ${line%%|*} == "$1" ]]; then
+      printf '%s\n' "${line#*|}"
+      return 0
+    fi
+  done
+  printf '%s\n' "${CORE_PRIVILEGED_NAMES[*]}"
 }
 
 # The old name of a renamed core role (CORE_ROLE_RENAMES), empty for any other role.
@@ -2043,9 +2090,9 @@ core_role_rename_source() {
 
 # seed_privileged_client_roles LABEL CLIENT_UUID GROUP_NAMES NAME...: grants each client role to the
 # Privileged groups named in GROUP_NAMES (space separated: ADMIN YK DK or fewer) once and marks it
-# (operator session). Nothing is written unless every check passes. LABEL (core, skymail) names the
-# roles in the messages ("<LABEL> role <name>: seeded once to ..."). core's resource roles (runbook
-# §19) and SkyMail's Privileged roles (§25) share it.
+# (operator session). Nothing is written unless every check passes. LABEL (core, skymail, forms)
+# names the roles in the messages ("<LABEL> role <name>: seeded once to ..."). core's resource roles
+# (runbook §19), SkyMail's Privileged roles (§25) and Forms' (§28) share it.
 seed_privileged_client_roles() {
   local label=$1 client_uuid=$2 group_names=$3
   shift 3
@@ -2636,36 +2683,57 @@ SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS=(
   'skymail:announcements:send|ADMIN YK|Duyuru ve haberi Mail onayı olmadan gönderir (duyuru-haber D4; yalnız ADMIN ve YK, DK yazmaz)'
 )
 
-reconcile_skymail_privileged_roles() {
-  local skymail_uuid roles_csv definition name description created='' seeds role_name role_seed_value seed
+# Forms' Privileged roles (runbook §28), the same way as SkyMail's (same list format):
+#   skyforms:read-all  DK: DK reads every form, its answers and workflows in Forms and writes nothing
+#                      (Yusuf, 2026-10-12 22:15; grup-yonetimi ticket 08, Entra's Global Reader). An
+#                      admin role (club-wide personal data). Nothing reads it yet: forms-backend opens
+#                      the reads to it and no write route (Fatih's; the role contract is in sky_lab_genel
+#                      notes/mesajlar-2026-10-02/ekler/fatih-forms-rol-temizligi-devir-notu.md §6).
+#                      Until then DK keeps the skyforms:* it holds (config/dk-read-only.sh --forms takes
+#                      it away once forms-backend reads this role).
+# forms is a service account client (Forms signs people in through skyforms); the admin panel's role
+# scope carries every forms role (ADMIN_PANEL_API_CLIENTS), this one too.
+FORMS_CLIENT_ID=forms
+FORMS_PRIVILEGED_ROLE_DEFINITIONS=(
+  'skyforms:read-all|DK|Her formu, cevaplarını ve iş akışlarını okur, hiçbir şeyi değiştirmez (DK; grup-yonetimi 08)'
+)
+
+# reconcile_privileged_app_roles CLIENT_ID LABEL OWNER DEFINITIONS SECTION: the Privileged roles of one
+# application client (DEFINITIONS names its list, "name|Privileged groups|description"). LABEL names
+# the roles in the messages ("<LABEL> roles not yet granted", "<LABEL> role <name>: seeded once"),
+# OWNER is the possessive in "skipped <OWNER> Privileged roles", SECTION the runbook section.
+reconcile_privileged_app_roles() {
+  local client_id=$1 label=$2 owner=$3 section=$5
+  local -n definitions=$4
+  local client_uuid roles_csv definition name description created='' seeds role_name role_seed_value seed
   local unseeded=()
-  if ! skymail_uuid=$(optional_lookup client_id_by_client_id "$SKYMAIL_CLIENT_ID"); then
+  if ! client_uuid=$(optional_lookup client_id_by_client_id "$client_id"); then
     return 2
   fi
-  if [[ -z $skymail_uuid ]]; then
-    warn "client $SKYMAIL_CLIENT_ID does not exist in realm $TARGET_REALM; skipped SkyMail's Privileged roles"
+  if [[ -z $client_uuid ]]; then
+    warn "client $client_id does not exist in realm $TARGET_REALM; skipped $owner Privileged roles"
     return 0
   fi
-  roles_csv=$(kcadm get "clients/$skymail_uuid/roles" -r "$TARGET_REALM" --fields name --format csv --noquotes \
+  roles_csv=$(kcadm get "clients/$client_uuid/roles" -r "$TARGET_REALM" --fields name --format csv --noquotes \
     | tr -d '\r')
-  for definition in "${SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS[@]}"; do
+  for definition in "${definitions[@]}"; do
     name=${definition%%|*}
     description=${definition##*|}
     if ! grep -Fxq -- "$name" <<<"$roles_csv"; then
-      kcadm_quiet create "clients/$skymail_uuid/roles" -r "$TARGET_REALM" \
+      kcadm_quiet create "clients/$client_uuid/roles" -r "$TARGET_REALM" \
         -s "name=$name" -s "description=$description"
       created="$created, $name"
     fi
   done
   if [[ -z $created ]]; then
-    log "Privileged roles of $SKYMAIL_CLIENT_ID (${#SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS[@]}): unchanged"
+    log "Privileged roles of $client_id (${#definitions[@]}): unchanged"
   else
-    log "Privileged roles of $SKYMAIL_CLIENT_ID (${#SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS[@]}): created (${created#, })"
+    log "Privileged roles of $client_id (${#definitions[@]}): created (${created#, })"
   fi
 
-  seeds=$(kcadm_json "clients/$skymail_uuid/roles" -r "$TARGET_REALM" -q briefRepresentation=false \
+  seeds=$(kcadm_json "clients/$client_uuid/roles" -r "$TARGET_REALM" -q briefRepresentation=false \
     | json_tool role-attribute "$CORE_ROLE_SEED_ATTRIBUTE")
-  for definition in "${SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS[@]}"; do
+  for definition in "${definitions[@]}"; do
     name=${definition%%|*}
     seed=''
     while IFS=$'\t' read -r role_name role_seed_value; do
@@ -2674,18 +2742,18 @@ reconcile_skymail_privileged_roles() {
     [[ -n $seed ]] || unseeded+=("$name")
   done
   if [[ ${#unseeded[@]} == 0 ]]; then
-    log "group mappings of the $SKYMAIL_CLIENT_ID Privileged roles: unchanged (each seeded once; the SKY LAB admin panel owns them)"
+    log "group mappings of the $client_id Privileged roles: unchanged (each seeded once; the SKY LAB admin panel owns them)"
     return 0
   fi
   if [[ -z $OPERATOR_KCADM_CONFIG ]]; then
-    warn "skymail roles not yet granted to the Privileged groups: ${unseeded[*]} (granting a role to a group needs user permissions the reconciler identity does not have); run this step alone with an operator session: KEYCLOAK_RECONCILE_ONLY=core-roles (runbook §25)"
+    warn "$label roles not yet granted to the Privileged groups: ${unseeded[*]} (granting a role to a group needs user permissions the reconciler identity does not have); run this step alone with an operator session: KEYCLOAK_RECONCILE_ONLY=core-roles (runbook $section)"
     return 0
   fi
 
   # Operator session: seed, with the same checks and mark as core's resource roles, one call per set
   # of Privileged groups (in the order of the list).
   local group_names known set_names=() sets=()
-  for definition in "${SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS[@]}"; do
+  for definition in "${definitions[@]}"; do
     group_names=${definition#*|}
     group_names=${group_names%%|*}
     for known in ${sets[@]+"${sets[@]}"}; do
@@ -2695,16 +2763,24 @@ reconcile_skymail_privileged_roles() {
   done
   for group_names in "${sets[@]}"; do
     set_names=()
-    for definition in "${SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS[@]}"; do
+    for definition in "${definitions[@]}"; do
       name=${definition%%|*}
       if [[ ${definition#*|} == "$group_names|"* && " ${unseeded[*]} " == *" $name "* ]]; then
         set_names+=("$name")
       fi
     done
     if [[ ${#set_names[@]} -gt 0 ]]; then
-      seed_privileged_client_roles skymail "$skymail_uuid" "$group_names" "${set_names[@]}"
+      seed_privileged_client_roles "$label" "$client_uuid" "$group_names" "${set_names[@]}"
     fi
   done
+}
+
+reconcile_skymail_privileged_roles() {
+  reconcile_privileged_app_roles "$SKYMAIL_CLIENT_ID" skymail "SkyMail's" SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS '§25'
+}
+
+reconcile_forms_privileged_roles() {
+  reconcile_privileged_app_roles "$FORMS_CLIENT_ID" forms "Forms'" FORMS_PRIVILEGED_ROLE_DEFINITIONS '§28'
 }
 
 # The keycloak-mailer service-account client (K5) is provisioned by the operator with
@@ -2873,8 +2949,9 @@ if [[ $RECONCILE_ONLY == login-clients ]]; then
 fi
 if [[ $RECONCILE_ONLY == core-roles ]]; then
   reconcile_core_roles
-  # SkyMail's Privileged roles have the same operator step (runbook §25).
+  # SkyMail's and Forms' Privileged roles have the same operator step (runbook §25, §28).
   reconcile_skymail_privileged_roles
+  reconcile_forms_privileged_roles
   printf 'Core resource roles are reconciled.\n'
   exit 0
 fi
@@ -2932,6 +3009,8 @@ verify_erasure_client
 # Before the admin panel's step, so that a core role created here enters its scope in this run.
 reconcile_core_roles
 reconcile_skymail_privileged_roles
+# Before the admin panel's step too: a forms role created here enters its scope in this run.
+reconcile_forms_privileged_roles
 # Also before the admin panel's step: a core service role created here enters its scope in this run.
 reconcile_core_service_roles
 # Last: a public admin panel client stops the run, and every other step is done by then; core and

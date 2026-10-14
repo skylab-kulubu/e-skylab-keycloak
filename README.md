@@ -544,8 +544,9 @@ dışındaki her realm'i girişten önce reddeder. Sunucuda sky_lab_genel'deki
 core'un kaynak rollerini (ADR-0059: `event:manage`, `ticket:manage`, `certificate:manage`,
 `users:manage` gibi 11 yeni rol, var olan `url:moderator`, `url:access` ve yarışma modülünün
 `competition:manage`'ı) uzlaştırıcı her koşuda
-`core` istemcisinde var eder ve admin panelinin adımından önce koşar. Roller Privileged gruplara
-(`ADMIN`, `YK`, `DK`; `/<AD>` ya da `/UYELER/<AD>`) **bir kez** verilir; rol özniteliği
+`core` istemcisinde var eder ve admin panelinin adımından önce koşar. Yazma rolleri Privileged
+gruplardan `ADMIN` ve `YK`'ya, DK'nın okuma rolü `global:read` yalnız `DK`'ya, denetim kaydının
+`audit:read`'i üçüne (`/<AD>` ya da `/UYELER/<AD>`) **bir kez** verilir; rol özniteliği
 `skylab.seeded-group-mappings` bunu kaydeder ve sonraki koşular SKY LAB admin panelinde değişen
 eşlemelere dokunmaz, hiçbir eşlemeyi silmez. Gruba rol vermek kullanıcı yetkisi istediği için bunu
 uzlaştırıcı kimliği değil operatör yapar: `KEYCLOAK_RECONCILE_KCADM_CONFIG` +
@@ -575,7 +576,19 @@ Aynı adım SkyMail'in servis hesabına (`skymail-backend`) core'un `audience:re
 haber ve duyuru kitlesi) ve core'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`,
 `skymail:lists:read`, `skymail:lists:write` rollerini verir; SkyMail'in rollerini oluşturmaz, eksikse
 uyarır; listelenen servis istemcisinde varsayılan `roles` kapsamı yoksa ekler (runbook §20.1). `skymail:announcements:send` (haber ve duyuruyu Mail onayı olmadan gönderme)
-`skymail:system-mails:read` gibi bir kez tohumlanır ama yalnız ADMIN ve YK'ya (runbook §25).
+`skymail:system-mails:read` gibi bir kez tohumlanır ama yalnız ADMIN ve YK'ya (runbook §25). Forms'un
+salt okur rolü `skyforms:read-all` (DK her formu ve cevabı okur, yazamaz; forms-backend henüz okumuyor)
+aynı biçimde `forms` istemcisinde var edilir ve yalnız DK'ya bir kez verilir (runbook §28).
+
+DK salt okurdur (grup-yonetimi 08; Entra'nın Global Reader + Reports Reader'ı: `global:read` +
+`audit:read`). Uzlaştırıcı bir eşlemeyi hiç geri almadığı için DK'nın eskiden aldığı yazma rollerini
+(core'un 14 rolü, site istemcilerinin `cms:access`'i ve benzerleri) tek seferlik operatör betiği
+`config/dk-read-only.sh` kaldırır: kuru koşu varsayılan, `--apply` önce yedeği yazar, sonra site
+yazma rolünün yerine `content:read` verir ve yazma rollerini kaldırır; ikinci koşu 0 değişiklik;
+`--restore <yedek>` geri verir. Okuma rolleri yoksa (önce `core-roles`) ya da DK'nın altında
+varsayılan grup varsa yazmaz. Forms rolleri (`skyforms:*`) forms-backend `skyforms:read-all`'u
+okuyana kadar kalır; sonra `--forms` onları da kaldırır. Uzlaştırıcının adımı değildir; Yusuf'un
+onayıyla, önce sandbox'ta koşulur (runbook §28). Harness `tests/dk-read-only.sh` tek başına çalışır.
 
 Uygulama rolü grupları `/ROLLER/<UYGULAMA>-<ROL>` (Entra'nın uygulama rolü güvenlik grupları;
 `config/role-groups.json`) ve en üst ekiplerin Leader gruplarına Forms koltuğu (`skyforms:access`) ile
@@ -599,9 +612,10 @@ yalnız raporlanır; tek istisna ana sitenin sandbox'ı: `--site main` yalnız `
 `frontend-main`'i aynı biçimde `https://sandbox.yildizskylab.com` için kurar (production'da reddedilir).
 Ardından `inscribed-cms-roles.sh --client frontend-<site>` rolleri kurar (servis
 hesabına yalnız `content:read` + `schema:sync`) ve `config/site-editor-grants.sh` `cms:access`'i
-Privileged gruplara, sahip lab takımının ve etkinliğin organizasyon takımının
+`ADMIN` ve `YK` gruplarına, sahip lab takımının ve etkinliğin organizasyon takımının
 (`/UYELER/ORGANIZASYON/<ETKİNLİK>`) `LIDERLER`/`KOORDINATORLER` gruplarına, `client:admin`'i
-yalnız `ADMIN`'e verir; kişiye vermez, hiçbir şeyi geri almaz. sky_lab_genel'deki
+`ADMIN` ve `YK`'ya, `content:read`'i `DK`'ya (DK okur, yazmaz) verir; kişiye vermez, hiçbir şeyi geri
+almaz. sky_lab_genel'deki
 `ops/wizards/site-cms-setup-wizard.sh` üçünü koşar, secret'ı OpenBao'ya taşır. Harness
 `tests/site-clients.sh` tek başına çalışır (runbook §18). `site-clients.sh --shared-scope`
 yalnız ortak `skycms-audience` kapsamını kurar ya da onarır, hiçbir site istemcisine dokunmaz

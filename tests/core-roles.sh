@@ -8,16 +8,24 @@
 # identity lacks, so its runs only warn about unseeded roles, and an operator seeds them once with
 # the step alone (KEYCLOAK_RECONCILE_ONLY=core-roles). After seeding, a Privileged person's token
 # carries them (inherited by subgroup members too), nobody else's does, and later runs never undo
-# what the admin panel changed. The fixture realm has /ADMIN and /UYELER/YK, no DK.
+# what the admin panel changed. The fixture realm has /ADMIN and /UYELER/YK, no DK; the operator
+# stage makes /UYELER/DK for its runs and removes it at its end (grup-yonetimi 08: DK reads and does
+# not write): the write roles go to ADMIN and YK, global:read to DK alone, audit:read to all three, and
+# forms/skyforms:read-all (Forms' Privileged role, the same operator step) to DK alone.
 # competition:manage renames competitor:manage (ADR-0068): it is seeded once wherever the old role is
 # held (groups, users, composite roles, role scopes of clients and client scopes), not to the
 # Privileged groups.
 
 CR_ATTRIBUTE=skylab.seeded-group-mappings
-# The contract table of sky_lab_genel .scratch/admin-token-authz/spec.md.
+# The contract table of sky_lab_genel .scratch/admin-token-authz/spec.md: the write roles, seeded to
+# ADMIN and YK.
 CR_ROLES=(event:manage season:manage ticket:manage ticket:validate competitor:manage media:manage
   media:private:read certificate:manage users:manage groups:manage github:activity:read url:moderator
   url:access)
+# DK's read roles (grup-yonetimi 08): global:read to DK alone, audit:read to ADMIN, YK and DK.
+CR_READER_ROLE=global:read
+CR_AUDIT_ROLE=audit:read
+CR_DK=/UYELER/DK
 CR_RENAMED=competition:manage
 CR_RENAMED_FROM=competitor:manage
 CR_PRIVILEGED=(/ADMIN /UYELER/YK)
@@ -31,9 +39,14 @@ CR_RENAME_USER=core-roles-rename-user-fixture
 CR_RENAME_COMPOSITE=core-roles-rename-composite-fixture
 CR_RENAME_SCOPE=core-roles-rename-scope-fixture
 
-# Every core resource role: the Privileged ones and the renamed one.
+# Every core resource role: the write ones, the renamed one and DK's two read roles.
 cr_roles_json() {
-  printf '%s\n' "${CR_ROLES[@]}" "$CR_RENAMED" | jq -R . | jq -s -c 'sort'
+  printf '%s\n' "${CR_ROLES[@]}" "$CR_RENAMED" "$CR_READER_ROLE" "$CR_AUDIT_ROLE" | jq -R . | jq -s -c 'sort'
+}
+
+# What ADMIN and YK hold once seeded: the write roles, the renamed one and audit:read.
+cr_privileged_roles_json() {
+  printf '%s\n' "${CR_ROLES[@]}" "$CR_RENAMED" "$CR_AUDIT_ROLE" | jq -R . | jq -s -c 'sort'
 }
 
 cr_group_id() {
@@ -91,11 +104,16 @@ cr_panel_login() {
 stage_core_roles_after_first_reconciliation() {
   CURRENT_STAGE='core resource roles: created by the first reconciliation, not granted'
   local log="$TEST_STATE_DIR/reconcile-first.log" roles marks path
-  grep -E '^\[reconcile\] client roles of core \(14 resource roles\): created \(' "$log" \
+  grep -E '^\[reconcile\] client roles of core \(16 resource roles\): created \(' "$log" \
     | grep -Fq 'event:manage' \
     || fail 'the first reconciliation did not create the core resource roles'
   grep -Fq '[reconcile] WARNING: core roles not yet granted to the Privileged groups: event:manage season:manage' "$log" \
     || fail 'the first reconciliation did not report the unseeded core roles'
+  grep -Fq "url:access $CR_READER_ROLE $CR_AUDIT_ROLE (granting a role to a group" "$log" \
+    || fail "the first reconciliation did not report $CR_READER_ROLE and $CR_AUDIT_ROLE as unseeded"
+  # Forms' Privileged role waits for the forms client (core-erasure-client.sh makes it later).
+  grep -Fq "[reconcile] WARNING: client forms does not exist in realm $V2_REALM; skipped Forms' Privileged roles" "$log" \
+    || fail 'the first reconciliation did not skip the missing forms client'
   grep -Fq "[reconcile] WARNING: core roles not yet carried over from their old names: $CR_RENAMED (from $CR_RENAMED_FROM)" "$log" \
     || fail "the first reconciliation did not report $CR_RENAMED as waiting for its old name"
   ! grep -E '^\[reconcile\] WARNING: core roles not yet granted to the Privileged groups: ' "$log" | grep -Fq "$CR_RENAMED" \
@@ -118,10 +136,9 @@ stage_core_roles_after_first_reconciliation() {
 # After the admin panel's stages, before the no-op reconciliation (which must then be quiet).
 stage_core_roles_seeded_by_operator() {
   CURRENT_STAGE='core resource roles: seeded once by the operator step'
-  local output marks path role want core_uuid yk_id sub_id user_id admin_sub_id refused
+  local output marks path role core_uuid yk_id sub_id user_id admin_sub_id refused
   local seeded_pattern
   core_uuid=$(lca_client_uuid core)
-  want=$(cr_roles_json)
 
   # Before seeding: the YK member's panel token has only the role granted to them directly.
   cr_panel_login "$AP_USER" "$AP_PASSWORD"
@@ -155,32 +172,46 @@ stage_core_roles_seeded_by_operator() {
   # Holders of the old role outside the Privileged groups: the renamed role must follow each of them
   # (core reads the two names as one; nobody gains or loses a right).
   cr_rename_fixtures_create
+  # DK as production has it (/UYELER/DK), for this stage's runs: it reads and does not write.
+  kcadm create "groups/$(cr_group_id /UYELER)/children" -r "$V2_REALM" -s name=DK >/dev/null
 
   output=$(cr_operator_reconcile) || { printf '%s\n' "$output" >&2; fail 'the operator step failed'; }
   grep -Fq 'Core resource roles are reconciled.' <<<"$output" || fail 'the operator step did not report completion'
-  grep -Fq '[reconcile] WARNING: no Privileged group DK (neither /DK nor /UYELER/DK)' <<<"$output" \
-    || { printf '%s\n' "$output" >&2; fail 'the operator step did not report the missing DK group'; }
+  ! grep -Fq 'WARNING: no Privileged group' <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'the operator step reported a missing Privileged group'; }
   for role in "${CR_ROLES[@]}"; do
     grep -Fq "[reconcile] core role $role: seeded once to /ADMIN,/UYELER/YK (granted to: /ADMIN, /UYELER/YK)" <<<"$output" \
-      || { printf '%s\n' "$output" >&2; fail "the operator step did not seed $role"; }
+      || { printf '%s\n' "$output" >&2; fail "the operator step did not seed $role to ADMIN and YK alone"; }
   done
+  grep -Fq "[reconcile] core role $CR_AUDIT_ROLE: seeded once to /ADMIN,/UYELER/YK,$CR_DK (granted to: /ADMIN, /UYELER/YK, $CR_DK)" <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail "the operator step did not seed $CR_AUDIT_ROLE to ADMIN, YK and DK"; }
+  grep -Fq "[reconcile] core role $CR_READER_ROLE: seeded once to $CR_DK (granted to: $CR_DK)" <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail "the operator step did not seed $CR_READER_ROLE to DK alone"; }
+  grep -Fq "[reconcile] forms role skyforms:read-all: seeded once to $CR_DK (granted to: $CR_DK)" <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'the operator step did not seed skyforms:read-all to DK alone'; }
   marks=$(cr_seed_marks)
   seeded_pattern='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z /ADMIN,/UYELER/YK$'
-  json_assert "$marks" '[.[$want[] | select(. != $renamed)]] | all(test($p))' 'a seeded role lacks its mark' \
-    --argjson want "$want" --arg p "$seeded_pattern" --arg renamed "$CR_RENAMED"
+  json_assert "$marks" '[.[$write[]]] | all(test($p))' 'a seeded write role lacks its mark' \
+    --argjson write "$(printf '%s\n' "${CR_ROLES[@]}" | jq -R . | jq -s -c .)" --arg p "$seeded_pattern"
+  json_assert "$marks" '(.[$audit] | test("Z /ADMIN,/UYELER/YK,/UYELER/DK$")) and (.[$reader] | test("Z /UYELER/DK$"))' \
+    "$CR_AUDIT_ROLE or $CR_READER_ROLE lacks its mark" --arg audit "$CR_AUDIT_ROLE" --arg reader "$CR_READER_ROLE"
   json_assert "$marks" '.["url:create"] == "" and .["certificate:issue"] == ""' 'a role outside the list was marked'
   cr_assert_renamed_follows_old "$output"
   for path in "${CR_PRIVILEGED[@]}"; do
-    json_assert "$(cr_group_roles "$path")" '. == $want' "$path does not hold exactly the core resource roles" \
-      --argjson want "$want"
+    json_assert "$(cr_group_roles "$path")" '. == $want' "$path does not hold exactly the write roles and $CR_AUDIT_ROLE" \
+      --argjson want "$(cr_privileged_roles_json)"
   done
+  json_assert "$(cr_group_roles "$CR_DK")" '. == ([$a, $r] | sort)' "$CR_DK does not hold exactly $CR_AUDIT_ROLE and $CR_READER_ROLE" \
+    --arg a "$CR_AUDIT_ROLE" --arg r "$CR_READER_ROLE"
+  json_assert "$(kcadm get "groups/$(cr_group_id "$CR_DK")/role-mappings/clients/$(lca_client_uuid forms)" -r "$V2_REALM" -c | jq -c '[.[].name]')" \
+    '. == ["skyforms:read-all"]' "$CR_DK does not hold exactly forms/skyforms:read-all"
 
   cr_rename_fixtures_delete
 
   CURRENT_STAGE='core resource roles: in the tokens of Privileged people only'
   cr_panel_login "$AP_USER" "$AP_PASSWORD"
   json_assert "$CR_SEEN" '. == (($want + ["url:create"]) | sort)' \
-    "the YK member's panel token lacks the seeded core roles" --argjson want "$want"
+    "the YK member's panel token lacks the seeded core roles" --argjson want "$(cr_privileged_roles_json)"
   # Not Privileged: nothing. In a subgroup of YK: inherited.
   cr_panel_login "$LCA_USER" "$LCA_PASSWORD"
   json_assert "$CR_SEEN" '. == []' \
@@ -190,9 +221,15 @@ stage_core_roles_seeded_by_operator() {
   kcadm update "users/$user_id/groups/$sub_id" -r "$V2_REALM" -n -b '{}' >/dev/null
   cr_panel_login "$LCA_USER" "$LCA_PASSWORD"
   json_assert "$CR_SEEN" '. == $want' \
-    'a member of a YK subgroup did not inherit the core resource roles' --argjson want "$want"
+    'a member of a YK subgroup did not inherit the core resource roles' --argjson want "$(cr_privileged_roles_json)"
   kcadm delete "users/$user_id/groups/$sub_id" -r "$V2_REALM" >/dev/null
   kcadm delete "groups/$sub_id" -r "$V2_REALM" >/dev/null
+  # A DK member: the two read roles, no write role.
+  kcadm update "users/$user_id/groups/$(cr_group_id "$CR_DK")" -r "$V2_REALM" -n -b '{}' >/dev/null
+  cr_panel_login "$LCA_USER" "$LCA_PASSWORD"
+  json_assert "$CR_SEEN" '. == ([$a, $r] | sort)' "a DK member's panel token carries other core roles than $CR_AUDIT_ROLE and $CR_READER_ROLE" \
+    --arg a "$CR_AUDIT_ROLE" --arg r "$CR_READER_ROLE"
+  kcadm delete "users/$user_id/groups/$(cr_group_id "$CR_DK")" -r "$V2_REALM" >/dev/null
 
   CURRENT_STAGE='core resource roles: the admin panel owns the mappings after seeding'
   # Removed in the panel: stays removed. Added in the panel: stays. Nothing is granted again.
@@ -248,11 +285,13 @@ stage_core_roles_seeded_by_operator() {
   json_assert "$(cr_group_roles /UYELER/YK)" 'index("event:manage") == null' \
     'seeding the renamed role restored a mapping removed after seeding'
 
-  # Leave the fixture as seeded for the stages after this one.
+  # Leave the fixture as seeded for the stages after this one; /UYELER/DK goes (the later stages
+  # prove a missing DK group; the marks keep DK's roles from being seeded again).
   kcadm create "groups/$yk_id/role-mappings/clients/$core_uuid" -r "$V2_REALM" \
     -b "$(v2_role_body "$core_uuid" event:manage)" >/dev/null
   kcadm delete "groups/$admin_sub_id/role-mappings/clients/$core_uuid" -r "$V2_REALM" \
     -b "$(v2_role_body "$core_uuid" ticket:validate)" >/dev/null
+  kcadm delete "groups/$(cr_group_id "$CR_DK")" -r "$V2_REALM" >/dev/null
 }
 
 # Holders of the old role that are not Privileged groups: a group, a user, a realm composite role

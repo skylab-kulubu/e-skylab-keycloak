@@ -1294,18 +1294,21 @@ finish_group() {
 # The writes of the roles group's operator stages (stage_admin_panel_tokens,
 # stage_core_roles_seeded_by_operator, stage_core_service_roles_granted_by_operator), without their
 # contracts, for the groups that run later stages without them: the admin panel's forms role in its
-# scope, core's resource roles seeded to the Privileged groups, core's service roles granted to the
-# forms service account (service account only).
+# scope, core's resource roles seeded to the Privileged groups (with /UYELER/DK for the run, as the
+# core-roles stage has it, so that DK's read roles are seeded and marked too), core's service roles
+# granted to the forms service account (service account only).
 setup_operator_state() {
   CURRENT_STAGE='operator state of the roles group (group setup, no contract)'
-  local forms_uuid output
+  local forms_uuid output dk_id
   forms_uuid=$(lca_client_uuid forms)
   [[ -n $forms_uuid ]] || fail 'the core-erasure fixture did not leave the forms client'
   kcadm create "clients/$forms_uuid/roles" -r "$V2_REALM" -s "name=$AP_FORMS_ROLE" >/dev/null
   kcadm add-roles -r "$V2_REALM" --uusername "$AP_USER" --cclientid forms --rolename "$AP_FORMS_ROLE" >/dev/null
   output=$(ap_operator_reconcile "$AP_CLIENT" -e KEYCLOAK_RECONCILE_ONLY=admin-panel-client) \
     || { printf '%s\n' "$output" >&2; fail 'the admin panel step failed'; }
+  dk_id=$(kcadm create "groups/$(cr_group_id /UYELER)/children" -r "$V2_REALM" -s name=DK -i)
   output=$(cr_operator_reconcile) || { printf '%s\n' "$output" >&2; fail 'the core roles operator step failed'; }
+  kcadm delete "groups/$dk_id" -r "$V2_REALM" >/dev/null
   output=$(csr_operator) || { printf '%s\n' "$output" >&2; fail 'the service-roles operator step failed'; }
 }
 

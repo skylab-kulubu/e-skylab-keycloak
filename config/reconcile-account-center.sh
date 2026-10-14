@@ -475,9 +475,9 @@ optional_lookup() {
 # needed a client-specific copy of it (account-center-browser, with the sky-native-handoff
 # subflow) bound to the client; the Web handoff (ADR-0048) does not. An older deployment is
 # brought back here: the client's browser binding is removed, then that flow is deleted
-# together with its subflows. Both steps are no-ops once done. Keycloak does not refuse to
-# delete a flow that something still points to, so a realm flow binding or another client
-# that still uses it stops the run instead.
+# together with its subflows. Both steps are no-ops once done. Keycloak 26.7.4 refuses to
+# delete a flow that something still points to, but only with "unknown_error"; a realm flow
+# binding or another client that still uses it stops the run first and is named.
 retire_account_center_browser_flow() {
   local live_file overrides flow_id realm_bindings clients_json
   live_file=$(mktemp "$WORK_DIR/client-flow.XXXXXX")
@@ -500,14 +500,16 @@ retire_account_center_browser_flow() {
     log "authentication flow $LEGACY_FLOW_ALIAS: unchanged (absent)"
     return 0
   fi
-  realm_bindings=$(kcadm_json "realms/$TARGET_REALM" -c \
+  # No -c with --fields: kcadm then prints nothing and still exits 0. A map field needs (*), or
+  # kcadm returns it empty.
+  realm_bindings=$(kcadm_json "realms/$TARGET_REALM" \
     --fields browserFlow,registrationFlow,directGrantFlow,resetCredentialsFlow,clientAuthenticationFlow,dockerAuthenticationFlow,firstBrokerLoginFlow)
   if [[ $realm_bindings == *"\"$LEGACY_FLOW_ALIAS\""* ]]; then
     printf 'A realm flow binding still uses %s; bind the realm to its own flows before this flow can be retired\n' \
       "$LEGACY_FLOW_ALIAS" >&2
     return 1
   fi
-  clients_json=$(kcadm_json clients -r "$TARGET_REALM" --fields clientId,authenticationFlowBindingOverrides -c)
+  clients_json=$(kcadm_json clients -r "$TARGET_REALM" --fields 'clientId,authenticationFlowBindingOverrides(*)')
   if [[ $clients_json == *"$flow_id"* ]]; then
     printf 'Another client is still bound to %s; unbind it before this flow can be retired\n' \
       "$LEGACY_FLOW_ALIAS" >&2

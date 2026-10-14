@@ -1457,6 +1457,57 @@ stage_skymail_roles_after_first_reconciliation
 stage_core_service_roles_after_first_reconciliation
 stage_event_retention_after_first_reconciliation
 
+# Retiring account-center-browser deletes it, and Keycloak deletes a flow that something still
+# points to. The reconciler must stop instead while another client or a realm flow binding still
+# uses it, and leave the flow in place. The client case runs first: the realm check comes first in
+# the reconciler and would hide it. Both cases undo their writes, so the next stages find the realm
+# as the first reconciliation left it.
+stage_legacy_flow_still_bound_stops_retirement() {
+  CURRENT_STAGE='retiring account-center-browser stops while something is still bound to it'
+  local flow_uuid holder_uuid direct_grant_before log
+  kcadm create 'authentication/flows/browser%20plus%20passkey/copy' \
+    -r e-skylab-test -s 'newName=account-center-browser' >/dev/null
+  flow_uuid=$(kcadm get authentication/flows -r e-skylab-test -c \
+    | jq -r '.[] | select(.alias == "account-center-browser") | .id')
+  [[ -n $flow_uuid ]] || fail 'the still-bound legacy flow fixture was not created'
+
+  kcadm create clients -r e-skylab-test -s clientId=legacy-flow-holder -s publicClient=true \
+    -s "authenticationFlowBindingOverrides.browser=$flow_uuid" >/dev/null
+  holder_uuid=$(kcadm get clients -r e-skylab-test -q clientId=legacy-flow-holder -c \
+    | jq -r '.[] | select(.clientId == "legacy-flow-holder") | .id')
+  [[ -n $holder_uuid ]] || fail 'the client still bound to the legacy flow was not created'
+  log="$TEST_STATE_DIR/reconcile-legacy-flow-client-bound.log"
+  if "${COMPOSE[@]}" run --rm --no-deps keycloak-config >"$log" 2>&1; then
+    fail 'reconciliation succeeded although another client is still bound to account-center-browser'
+  fi
+  grep -Fq 'Another client is still bound to account-center-browser' "$log" \
+    || { cat "$log" >&2; fail 'reconciliation did not name the client still bound to account-center-browser'; }
+  ! grep -Fq 'compressed' "$log" || fail 'a kcadm read in the reconciler combined --fields with -c'
+  kcadm get "authentication/flows/$flow_uuid" -r e-skylab-test >/dev/null \
+    || fail 'reconciliation deleted account-center-browser although a client is still bound to it'
+  kcadm delete "clients/$holder_uuid" -r e-skylab-test >/dev/null
+
+  direct_grant_before=$(kcadm get realms/e-skylab-test -c | jq -r '.directGrantFlow')
+  kcadm update realms/e-skylab-test -s directGrantFlow=account-center-browser >/dev/null
+  log="$TEST_STATE_DIR/reconcile-legacy-flow-realm-bound.log"
+  if "${COMPOSE[@]}" run --rm --no-deps keycloak-config >"$log" 2>&1; then
+    fail 'reconciliation succeeded although a realm flow binding still uses account-center-browser'
+  fi
+  grep -Fq 'A realm flow binding still uses account-center-browser' "$log" \
+    || { cat "$log" >&2; fail 'reconciliation did not name the realm flow binding that still uses account-center-browser'; }
+  kcadm get "authentication/flows/$flow_uuid" -r e-skylab-test >/dev/null \
+    || fail 'reconciliation deleted account-center-browser although a realm binding still uses it'
+  kcadm update realms/e-skylab-test -s "directGrantFlow=$direct_grant_before" >/dev/null
+  json_assert "$(kcadm get realms/e-skylab-test -c)" '.directGrantFlow == $flow' \
+    'the realm direct grant flow binding was not restored' --arg flow "$direct_grant_before"
+
+  kcadm delete "authentication/flows/$flow_uuid" -r e-skylab-test >/dev/null
+  assert_account_center_uses_the_realm_browser_flow
+}
+if group_runs login; then
+  stage_legacy_flow_still_bound_stops_retirement
+fi
+
 # Inject drift before the second pass. Reconciliation must repair the existing
 # realm, flow, scope and allowlists rather than merely treating names as success.
 client_uuid=$(kcadm get clients -r e-skylab-test -c \

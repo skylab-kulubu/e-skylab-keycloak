@@ -1646,7 +1646,9 @@ sıfırlama akışında `reset-otp`'nin yerine aynı alt akışta, aynı önceli
 Koşul aynen kalır:
 
 - OTP'si olan kişi: e-postadaki bağlantı → kayıtlı doğrulayıcının kodu → yeni parola. OTP kaydı
-  aynı kalır, kurulum istenmez. Yanlış kod brute force sayacına girer (giriş formundaki gibi).
+  aynı kalır, kurulum istenmez. Yanlış kod brute force sayacına girer (giriş formundaki gibi);
+  `failureFactor`'a (10) ulaşınca kişi kilitlenir ve doğru kod da reddedilir. Sıfırlama bitince
+  kişi oturum açmış olur (Keycloak; Microsoft Entra'da kişi yeni parolayla ayrıca girer).
 - OTP'si olmayan kişi (yalnız parola ya da passkey): koşul tutmaz, kod sorulmaz; bağlantıdan
   doğrudan yeni parola.
 - `reset-password` parolayı akışta değil `UPDATE_PASSWORD` required action'ında değiştirir; OTP
@@ -1655,11 +1657,29 @@ Koşul aynen kalır:
 Admin REST, birden fazla gereklilik seçeneği sunan adımları (`auth-otp-form`, `reset-otp`)
 `DISABLED` ekler; değişim yeni adımı ekledikten sonra `REQUIRED` yapar, ardından eskisini siler.
 Bu iki yazım arasında kesilmiş bir koşuyu (aynı yerde REQUIRED `reset-otp` + DISABLED
-`auth-otp-form`) sonraki koşu tamamlar. Acil yolun bıraktığı hâli (DISABLED `reset-otp` yanında
+`auth-otp-form`) sonraki koşu tamamlar (`reset-otp`'de config varsa değişim gibi reddeder). Acil yolun bıraktığı hâli (DISABLED `reset-otp` yanında
 REQUIRED `auth-otp-form`, öncelik farklı olabilir) uzlaştırıcı devralır: yalnız DISABLED
 `reset-otp`'yi siler; geri alınmış acil yolun DISABLED `auth-otp-form`'unu silip değişimi yapar.
 Keycloak'ın yerleşik akışı değiştirilemez; realm yerleşik akışa bağlıysa
 (yalnız K4b geri dönüşü kopyası olmayan bir realm'de) koşu uyarı yazar ve geçer.
+
+`verify`'de değişimden sonra `ReconcileJson otp-guard` adımın gerçekten çalıştığını denetler:
+tek REQUIRED `auth-otp-form`, CONDITIONAL bir alt akışta, alt akışın tek etkin koşulu REQUIRED
+`conditional-user-configured`, üstteki hiçbir alt akış DISABLED değil. Değilse (Admin Console'da alt
+akış DISABLED yapılmış, koşul silinmiş ya da adım alt akış dışına taşınmışsa OTP'li kişi yalnız
+e-postayla sıfırlar) `unchanged` satırı yazılmaz, yerine uyarı gelir; diğer adımlar koşar, koşu
+başarı satırı yerine şu satırla **3** çıkış koduyla biter:
+
+- `[reconcile] WARNING: OTP step of flow 'sky reset credentials': subflow 'sky reset credentials Reset - Conditional OTP' is DISABLED; OTP is not verified on reset as intended`
+- `Account Center Keycloak configuration is reconciled except the reset OTP step (OTP step of flow 'sky reset credentials': subflow 'sky reset credentials Reset - Conditional OTP' is DISABLED); fix the subflow in the Admin Console and run again`
+
+(Nedenin metni duruma göre değişir: `subflow '…' is REQUIRED, not CONDITIONAL`, `subflow '…' has the
+enabled conditions […], not exactly one REQUIRED conditional-user-configured`, `auth-otp-form is at
+the top level, outside a conditional subflow`.) Admin Console'da alt akış CONDITIONAL'a, koşul
+yerine konup koşu yinelenir. Yayın wizard'ı `WARNING: OTP step of flow` satırında ve 3 çıkışında
+durmalıdır. Realm yerleşik akışa bağlıysa `verify`'nin uyarısı:
+`[reconcile] WARNING: OTP step of flow 'reset credentials' was not changed: Keycloak's built-in flow cannot be edited and runs reset-otp; a run with the default KEYCLOAK_RESET_CHOOSE_USER binds the realm to 'sky reset credentials' first`
+(çıkış 0; wizard bunu da durdurucu saymalıdır, çünkü `reset-otp` e-postayla yeni OTP kurdurur).
 
 Satırlar (realm `sky reset credentials`'a bağlı, ilk koşu):
 
@@ -1717,7 +1737,11 @@ sessiz); ileri koşu acil yolun hâlini devralır; geçersiz bayrak durdurulur. 
 sıfırlama: OTP'li kişide postadaki bağlantı kod sayfasını (`login-otp.ftl`) açar, QR kurulum
 sayfası gelmez; yanlış kod sayfada tutar, doğru kod yeni parola sayfasına götürür; sonunda OTP
 kaydı aynı (aynı kimlik), required action yok, parola yeni. OTP'siz kişide bağlantı doğrudan yeni
-parola sayfasını açar.
+parola sayfasını açar. Yanlış kod brute force sayacını 1 yapar; ikinci sıfırlamada `failureFactor`
+yanlış koddan (aralarında quick login denetiminden uzun bekleme) sonra kişi kilitlidir, doğru kod
+reddedilir, parola değişmez. Alt akış DISABLED yapılınca gerçek koşu uyarı satırını yazar, `unchanged`
+demez, diğer adımları koşar ve 3 ile biter. Planlayıcı vakaları: `otp-guard` (koşulsuz, REQUIRED alt
+akış, üst düzey adım) ve config'li `reset-otp`'de `resume` reddi.
 
 ## 18. Etkinlik sitelerinin site istemcileri ve editör grupları (ADR-0056 eki)
 

@@ -58,7 +58,8 @@ import java.util.TreeMap;
  *                               "finish<TAB>id" (an interrupted swap left both side by side:
  *                               delete id), "resume<TAB>id<TAB>toId<TAB>priority" (a swap cut
  *                               before TO, added DISABLED, was made REQUIRED: make toId REQUIRED
- *                               with that priority, then delete id) or "retire<TAB>id" (FROM is
+ *                               with that priority, then delete id; refused like swap when FROM
+ *                               carries an authenticator config) or "retire<TAB>id" (FROM is
  *                               DISABLED next to a REQUIRED TO in the same flow, as an Admin
  *                               Console change leaves it: delete id) or "discard<TAB>toId" (TO
  *                               is DISABLED elsewhere in the flow of a REQUIRED FROM: delete toId,
@@ -88,9 +89,15 @@ import java.util.TreeMap;
  *                               out, indexes are not compared (the added step shifts them; the
  *                               order and levels still fix the tree) and neither are the
  *                               requirements of idp-email-verification (the copy disables it).
+ *   otp-guard STEP              stdin is the flat execution list of a reset credentials flow;
+ *                               exits 0 when STEP (the reset OTP step) actually runs for a person
+ *                               with OTP and only for them: exactly one REQUIRED STEP, inside a
+ *                               CONDITIONAL subflow whose only enabled condition is one REQUIRED
+ *                               conditional-user-configured, no enclosing subflow DISABLED.
+ *                               Otherwise prints why on stdout and exits 4.
  *
  * Exit status 0 means "printed successfully", 3 means "changed" (user-profile and config-value),
- * 4 "refused" (password-form, first-broker-login and same-shape) and 1 an invalid input. Nothing
+ * 4 "refused" (password-form, first-broker-login, same-shape and otp-guard) and 1 an invalid input. Nothing
  * here prints secrets: all inputs are configuration documents.
  */
 public final class ReconcileJson {
@@ -122,6 +129,7 @@ public final class ReconcileJson {
             case "first-broker-login" -> System.exit(firstBrokerLogin(args, readStdin(), out));
             case "config-value" -> System.exit(configValue(args, readStdin(), out));
             case "same-shape" -> System.exit(sameShape(args, readStdin()));
+            case "otp-guard" -> System.exit(otpGuard(args, readStdin(), out));
             default -> usage();
         }
     }
@@ -132,7 +140,8 @@ public final class ReconcileJson {
                 + "  |  ReconcileJson field NAME  |  ReconcileJson role-attribute NAME"
                 + "  |  ReconcileJson realm-attribute NAME VALUE"
                 + "  |  ReconcileJson password-form FROM TO  |  ReconcileJson first-broker-login STEP"
-                + "  |  ReconcileJson config-value NAME VALUE  |  ReconcileJson same-shape OTHER [STEP]");
+                + "  |  ReconcileJson config-value NAME VALUE  |  ReconcileJson same-shape OTHER [STEP]"
+                + "  |  ReconcileJson otp-guard STEP");
         System.exit(1);
     }
 
@@ -496,6 +505,9 @@ public final class ReconcileJson {
             // requirement (auth-otp-form and reset-otp do), so a swap can also be cut before the
             // added one was made REQUIRED.
             if (samePlace && "REQUIRED".equals(old.requirement()) && "DISABLED".equals(added.requirement())) {
+                if (old.configured()) {
+                    return refuse(from + " carries an authenticator config");
+                }
                 out.println("resume\t" + old.id() + "\t" + added.id() + "\t" + old.priority());
                 return 0;
             }
@@ -513,6 +525,85 @@ public final class ReconcileJson {
         }
         return refuse("expected exactly one of " + from + " and " + to + ", found "
                 + fromList.size() + " " + from + " and " + toList.size() + " " + to);
+    }
+
+    // ------------------------------------------------------------------ otp-guard
+
+    private static int otpGuard(String[] args, JsonNode executions, PrintStream out) {
+        if (args.length != 2 || !executions.isArray()) {
+            usage();
+        }
+        String step = args[1];
+        List<JsonNode> list = new ArrayList<>();
+        executions.forEach(list::add);
+        int at = -1;
+        for (int i = 0; i < list.size(); i++) {
+            if (step.equals(list.get(i).path("providerId").asText(""))) {
+                if (at >= 0) {
+                    out.println("the flow holds more than one " + step);
+                    return EXIT_REFUSED;
+                }
+                at = i;
+            }
+        }
+        if (at < 0) {
+            out.println("the flow holds no " + step);
+            return EXIT_REFUSED;
+        }
+        JsonNode found = list.get(at);
+        if (!"REQUIRED".equals(found.path("requirement").asText())) {
+            out.println(step + " is " + found.path("requirement").asText() + ", not REQUIRED");
+            return EXIT_REFUSED;
+        }
+        int level = found.path("level").asInt();
+        if (level == 0) {
+            out.println(step + " is at the top level, outside a conditional subflow");
+            return EXIT_REFUSED;
+        }
+        // The enclosing subflows: for each level above STEP, the nearest subflow before it.
+        int parentAt = -1;
+        int wanted = level - 1;
+        for (int i = at - 1; i >= 0 && wanted >= 0; i--) {
+            JsonNode node = list.get(i);
+            if (node.path("level").asInt() == wanted && node.path("authenticationFlow").asBoolean(false)) {
+                if (parentAt < 0) {
+                    parentAt = i;
+                }
+                if ("DISABLED".equals(node.path("requirement").asText())) {
+                    out.println("subflow '" + node.path("displayName").asText() + "' is DISABLED");
+                    return EXIT_REFUSED;
+                }
+                wanted--;
+            }
+        }
+        if (parentAt < 0) {
+            out.println("the subflow that holds " + step + " could not be determined");
+            return EXIT_REFUSED;
+        }
+        JsonNode parent = list.get(parentAt);
+        String parentName = parent.path("displayName").asText();
+        if (!"CONDITIONAL".equals(parent.path("requirement").asText())) {
+            out.println("subflow '" + parentName + "' is " + parent.path("requirement").asText()
+                    + ", not CONDITIONAL");
+            return EXIT_REFUSED;
+        }
+        // The direct children of the subflow: the executions after it one level down, up to the
+        // next execution at its level or above.
+        List<String> conditions = new ArrayList<>();
+        for (int i = parentAt + 1; i < list.size() && list.get(i).path("level").asInt() > parent.path("level").asInt(); i++) {
+            JsonNode node = list.get(i);
+            String provider = node.path("providerId").asText("");
+            if (node.path("level").asInt() == level && provider.startsWith("conditional-")
+                    && !"DISABLED".equals(node.path("requirement").asText())) {
+                conditions.add(provider + " " + node.path("requirement").asText());
+            }
+        }
+        if (!conditions.equals(List.of("conditional-user-configured REQUIRED"))) {
+            out.println("subflow '" + parentName + "' has the enabled conditions " + conditions
+                    + ", not exactly one REQUIRED conditional-user-configured");
+            return EXIT_REFUSED;
+        }
+        return 0;
     }
 
     // ------------------------------------------------------------------ first-broker-login

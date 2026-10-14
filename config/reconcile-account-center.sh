@@ -47,6 +47,9 @@ RESET_CHOOSE_USER=${KEYCLOAK_RESET_CHOOSE_USER:-$SKY_RESET_CHOOSE_USER}
 STOCK_RESET_OTP_STEP=reset-otp
 VERIFY_RESET_OTP_STEP=auth-otp-form
 RESET_OTP_STEP=${KEYCLOAK_RESET_OTP_STEP:-verify}
+# Set by reconcile_reset_otp_step when the OTP step is in place but never runs; every other step
+# still runs, then the reconciliation ends with exit status 3 instead of reporting success.
+RESET_OTP_UNGUARDED=''
 # eskylab-login-ux 07 (ADR-0063 decision 5): a new account opened by a first YTÜ login starts with
 # the School e-mail as its verified Primary e-mail. The realm's first broker login flow moves to an
 # editable copy of Keycloak's built-in one (FIRST_BROKER_FLOW_COPY_ALIAS) that runs the SKY LAB step
@@ -676,11 +679,14 @@ reconcile_reset_choose_user() {
 # "Reset - Conditional OTP" subflow (its condition, user configured, stays): auth-otp-form asks a
 # person with OTP for the code of the registered authenticator (the default, verify), reset-otp
 # is Keycloak's own step (the rollback, reset). Runs after reconcile_reset_choose_user, so the
-# realm is already bound to its editable copy; swap_flow_execution makes the change. A realm
+# realm is already bound to its editable copy; swap_flow_execution makes the change. In verify,
+# ReconcileJson otp-guard then checks that the step actually runs (CONDITIONAL subflow on "user
+# configured", nothing above it DISABLED); if not, a WARNING line replaces the "unchanged" line
+# and the run ends with exit status 3 after its other steps. A realm
 # still bound to Keycloak's built-in flow (only after a choose-user rollback on a realm that never
 # had the copy) runs reset-otp, which cannot be changed there: verify warns, reset has nothing to do.
 reconcile_reset_otp_step() {
-  local from to bound flow_id built_in
+  local from to bound flow_id built_in swap_lines guard status
   if [[ $RESET_OTP_STEP == verify ]]; then
     from=$STOCK_RESET_OTP_STEP
     to=$VERIFY_RESET_OTP_STEP
@@ -711,7 +717,29 @@ reconcile_reset_otp_step() {
     fi
     return 0
   fi
-  swap_flow_execution "$bound" "$from" "$to" 'OTP step'
+  # The swap's lines are held back until the guard below has looked at the result.
+  swap_lines=$(swap_flow_execution "$bound" "$from" "$to" 'OTP step')
+  if [[ $RESET_OTP_STEP == reset ]]; then
+    printf '%s\n' "$swap_lines"
+    return 0
+  fi
+  # A step in place proves nothing when its subflow never runs it (an Admin Console change):
+  # the subflow must be CONDITIONAL on "user configured" alone and no enclosing subflow DISABLED.
+  # Otherwise a person with OTP resets by e-mail alone, which the run must not call unchanged.
+  if guard=$(kcadm_json "authentication/flows/$(flow_alias_path "$bound")/executions" -r "$TARGET_REALM" \
+    | json_tool otp-guard "$to"); then
+    printf '%s\n' "$swap_lines"
+    return 0
+  else
+    status=$?
+  fi
+  if [[ $status != 4 ]]; then
+    printf "Could not check the OTP step of flow '%s' (status %s)\n" "$bound" "$status" >&2
+    return 1
+  fi
+  grep -v ': unchanged (' <<<"$swap_lines" || true
+  warn "OTP step of flow '$bound': $guard; OTP is not verified on reset as intended"
+  RESET_OTP_UNGUARDED="OTP step of flow '$bound': $guard"
 }
 
 # eskylab-login-ux 07: the realm's first broker login flow. With KEYCLOAK_YTU_FIRST_LOGIN=on the
@@ -2921,4 +2949,9 @@ reconcile_core_service_roles
 # forms roles made by earlier steps are already in place to enter the panel's scope.
 reconcile_admin_panel_client
 
+if [[ -n $RESET_OTP_UNGUARDED ]]; then
+  printf 'Account Center Keycloak configuration is reconciled except the reset OTP step (%s); fix the subflow in the Admin Console and run again\n' \
+    "$RESET_OTP_UNGUARDED" >&2
+  exit 3
+fi
 printf 'Account Center Keycloak configuration is reconciled.\n'

@@ -2193,6 +2193,7 @@ stage_k5_system_mail_through_skymail
 stage_reset_by_either_email "$client_secret"
 # eskylab-login-ux 23: the reset asks a person with OTP for the code, never for a new authenticator.
 stage_reset_verifies_otp "$client_secret"
+stage_reset_otp_guard
 
 # The sky-account SPI contract runs against the same realm: bearer guard, Verified
 # YTÜ lock, brute force, sudo binding, password/TOTP/username flows and events.

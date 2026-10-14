@@ -268,15 +268,16 @@ describe("login page: sign-in choices and trust copy (eskylab-login-ux 05)", () 
     expect(view.container).not.toHaveTextContent("Öğrencisi");
   });
 
-  it("does not assume an account in the description", async () => {
+  it("keeps the description short and sends only people with a SKY LAB password to the e-mail way", async () => {
     const { container } = await renderPage("login.ftl");
 
-    expect(container.querySelector(".sl-legacy-intro p")).toHaveTextContent(
-      "YTÜ öğrencisiysen okul hesabınla gir. SKY LAB hesabın varsa e-posta adresin ve parolanla da girebilirsin."
+    // Accounts opened by a YTÜ sign-in or by an admin have no password, so "hesabın varsa" would be wrong.
+    expect(container.querySelector(".sl-legacy-intro p")?.textContent).toBe(
+      "YTÜ öğrencisiysen okul hesabınla, SKY LAB parolan varsa e-postanla gir."
     );
   });
 
-  it("says under the choices that the school password stays with Microsoft and what is taken", async () => {
+  it("says in one sentence under the choices that the school password stays with Microsoft", async () => {
     const view = await renderPage("login.ftl");
 
     const trust = view.container.querySelector(".sl-legacy-trust") as HTMLElement;
@@ -284,40 +285,30 @@ describe("login page: sign-in choices and trust copy (eskylab-login-ux 05)", () 
     expect(view.container.querySelector(".sl-legacy-choices")?.compareDocumentPosition(trust)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     );
-    expect(trust).toHaveTextContent(
-      "Okul şifreni yalnız Microsoft'un sayfasına yazarsın; SKY LAB onu hiçbir zaman görmez. YTÜ hesabından yalnız adını, okul e-postanı ve bölümünü alırız; postalarına ve dosyalarına erişmeyiz."
-    );
+    expect(trust.querySelector(":scope > p")?.textContent).toBe("Okul şifreni yalnız Microsoft'a yazarsın; SKY LAB görmez.");
 
     const details = within(trust).getByText("Neleri alıyoruz?").closest("details") as HTMLDetailsElement;
     expect(details).not.toBeNull();
     expect(details.open).toBe(false);
-    const taken = within(details).getAllByRole("listitem").map(item => item.textContent);
-    expect(taken).toEqual([
-      "Microsoft hesabının değişmez kimlik numarası (hesabını tanımak için)",
-      "Adın ve soyadın",
-      "Okul e-posta adresin",
-      "Bölümün"
-    ]);
-    expect(details).toHaveTextContent(
-      "Almadıklarımız: okul şifren (Microsoft'un sayfasına yazarsın, bize hiç gelmez), postaların, dosyaların (OneDrive), takvimin, kişilerin ve Teams."
+    expect(details.querySelector("p")?.textContent).toBe(
+      "Adın, okul e-postan, bölümün ve Microsoft kimlik numaran. Postalarına ve dosyalarına erişmeyiz."
     );
   });
 
-  it("helps someone who does not know the school password, in a new tab", async () => {
+  it("helps someone who does not know the school password in one line, in a new tab", async () => {
     const view = await renderPage("login.ftl");
 
     const details = view.getByText("Okul şifreni bilmiyor musun?").closest("details") as HTMLElement;
     expect(details).not.toBeNull();
-    const reset = within(details).getByRole("link", { name: "Okul şifreni Microsoft'ta sıfırla" });
+    expect(details.querySelector("p")?.textContent).toBe("Microsoft'ta sıfırla ya da BİDB'ye başvur.");
+    const reset = within(details).getByRole("link", { name: "Microsoft'ta sıfırla" });
     expect(reset).toHaveAttribute("href", "https://passwordreset.microsoftonline.com/");
-    expect(details).toHaveTextContent("Olmazsa YTÜ BİDB'ye başvur: teknikdestek.yildiz.edu.tr");
-    const support = within(details).getByRole("link", { name: "teknikdestek.yildiz.edu.tr" });
+    const support = within(details).getByRole("link", { name: "BİDB'ye başvur" });
     expect(support).toHaveAttribute("href", "https://teknikdestek.yildiz.edu.tr/");
     for (const link of [reset, support]) {
       expect(link).toHaveAttribute("target", "_blank");
-      expect(link).toHaveAttribute("rel", "noreferrer");
+      expect(link).toHaveAttribute("rel", "noopener noreferrer");
     }
-    expect(details).toHaveTextContent("SKY LAB parolan varsa E-postayla devam et'i seç.");
   });
 
   it("names the sign-in address on both screens", async () => {
@@ -347,7 +338,7 @@ describe("login page: no account yet (password form)", () => {
     cleanup();
   });
 
-  it("tells honestly that accounts outside YTÜ are opened by the club and how to ask for one", async () => {
+  it("sends a YTÜ student without an account straight to the YTÜ sign-in, and promises nothing else", async () => {
     const view = await renderPage("login.ftl");
     expect(view.container.querySelector(".sl-legacy-no-account")).toBeNull();
 
@@ -358,16 +349,14 @@ describe("login page: no account yet (password form)", () => {
     // After the form: the sign-in fields and the submit button come first.
     expect(view.container.querySelector("#kc-login")?.compareDocumentPosition(help)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(within(help).getByText("Hesabın yok mu?")).toBeInTheDocument();
-    expect(help).toHaveTextContent(
-      "YTÜ öğrencisiysen geri dön ve YTÜ hesabınla devam et; SKY LAB hesabın ilk girişinde açılır."
-    );
-    expect(help).toHaveTextContent(
-      "YTÜ dışından bugün kendin hesap açamazsın; hesabı kulüp yöneticileri açar. Hesap istemek için bize yaz: info@yildizskylab.com"
-    );
-    expect(within(help).getByRole("link", { name: "info@yildizskylab.com" })).toHaveAttribute(
+    expect(help.querySelectorAll("p")[1]?.textContent).toBe("YTÜ öğrencisiysen YTÜ hesabınla devam et.");
+    expect(within(help).getByRole("link", { name: "YTÜ hesabınla devam et" })).toHaveAttribute(
       "href",
-      "mailto:info@yildizskylab.com"
+      loginContext().social?.providers?.[0]?.loginUrl
     );
+    // No contact address or "ask the club" promise until self-registration (ticket 09) replaces this block.
+    expect(help).not.toHaveTextContent("@");
+    expect(help.querySelectorAll("a")).toHaveLength(1);
   });
 
   it("never links Keycloak's built-in registration, even if the realm offered it (ADR-0063)", async () => {
@@ -376,10 +365,16 @@ describe("login page: no account yet (password form)", () => {
     kcContext.url.registrationUrl = "/realms/e-skylab/login-actions/registration";
     const view = render(<KcPage kcContext={kcContext} />);
     await waitFor(() => expect(view.container.querySelector(".sl-legacy-choices")).not.toBeNull());
+    const registrationLinks = () =>
+      Array.from(view.container.querySelectorAll("a"))
+        .map(link => link.getAttribute("href") ?? "")
+        .filter(href => href.includes("registration"));
 
+    // Neither the choice screen nor the password form.
+    expect(registrationLinks()).toEqual([]);
+    expect(view.queryByText("Kayıt ol")).toBeNull();
     fireEvent.click(view.getByRole("button", { name: "E-postayla devam et" }));
-    const hrefs = Array.from(view.container.querySelectorAll("a")).map(link => link.getAttribute("href") ?? "");
-    expect(hrefs.filter(href => href.includes("registration"))).toEqual([]);
+    expect(registrationLinks()).toEqual([]);
     expect(view.queryByText("Kayıt ol")).toBeNull();
   });
 });

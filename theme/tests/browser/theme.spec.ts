@@ -54,7 +54,7 @@ test("keyboard navigation exposes the skip link and localized legacy copy", asyn
   await page.goto("/?page=login.ftl&lang=en");
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
   await expect(page.getByRole("heading", { name: "Welcome to SKY LAB!" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Continue with your YTÜ account with Microsoft" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Continue with your YTÜ account via Microsoft" })).toBeVisible();
   await expect(page.getByRole("contentinfo")).toContainText("e-skylab by WEBLAB");
 });
 

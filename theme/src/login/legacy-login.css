@@ -981,9 +981,8 @@ textarea.sl-legacy-input {
 }
 
 .sl-legacy-trust details p,
-.sl-legacy-school-help p + p,
 .sl-legacy-no-account p + p {
-  margin-top: 0.375rem;
+  margin-top: 0.25rem;
 }
 
 .sl-legacy-trust details {
@@ -999,13 +998,9 @@ textarea.sl-legacy-input {
   cursor: pointer;
 }
 
-.sl-legacy-trust ul {
-  margin: 0.375rem 0 0;
-  padding-left: 1.25rem;
-}
-
 .sl-legacy-school-help {
   margin-top: 0.5rem;
+  text-align: center;
 }
 
 .sl-legacy-school-help summary {
@@ -1038,7 +1033,7 @@ textarea.sl-legacy-input {
 .sl-legacy-domain {
   margin: 1.25rem 0 0;
   color: var(--sl-legacy-muted);
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   text-align: center;
 }
 

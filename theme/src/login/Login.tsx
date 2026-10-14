@@ -11,12 +11,9 @@ import { getLegacyChromeProps, useLegacyChrome } from "./legacyChrome";
 
 type LoginProps = PageProps<Extract<KcContext, { pageId: "login.ftl" }>, I18n>;
 
-/** The club's public contact address (yildizskylab.com footer, SkyMail mails). */
-const CLUB_CONTACT_EMAIL = "info@yildizskylab.com";
 /** YTÜ's self-service reset of the school (Microsoft) password, then BİDB's help desk. */
 const SCHOOL_PASSWORD_RESET_URL = "https://passwordreset.microsoftonline.com/";
-const SCHOOL_SUPPORT_HOST = "teknikdestek.yildiz.edu.tr";
-const SCHOOL_SUPPORT_URL = `https://${SCHOOL_SUPPORT_HOST}/`;
+const SCHOOL_SUPPORT_URL = "https://teknikdestek.yildiz.edu.tr/";
 
 export default function Login(props: LoginProps) {
   const { kcContext, i18n } = props;
@@ -102,14 +99,7 @@ export default function Login(props: LoginProps) {
                   <p>{msgStr("skylabTrust")}</p>
                   <details>
                     <summary>{msgStr("skylabTrustMore")}</summary>
-                    <ul>
-                      <li>{msgStr("skylabTrustTakenId")}</li>
-                      <li>{msgStr("skylabTrustTakenName")}</li>
-                      <li>{msgStr("skylabTrustTakenEmail")}</li>
-                      <li>{msgStr("skylabTrustTakenDepartment")}</li>
-                    </ul>
-                    <p>{msgStr("skylabTrustNotTaken")}</p>
-                    <p>{msgStr("skylabTrustConsent")}</p>
+                    <p>{msgStr("skylabTrustTaken")}</p>
                   </details>
                 </div>
 
@@ -135,16 +125,15 @@ export default function Login(props: LoginProps) {
                 <details className="sl-legacy-school-help">
                   <summary>{msgStr("skylabSchoolPasswordHelp")}</summary>
                   <p>
-                    <a href={SCHOOL_PASSWORD_RESET_URL} target="_blank" rel="noreferrer">
+                    <a href={SCHOOL_PASSWORD_RESET_URL} target="_blank" rel="noopener noreferrer">
                       {msgStr("skylabSchoolPasswordReset")}
+                    </a>{" "}
+                    {msgStr("skylabSchoolPasswordOr")}{" "}
+                    <a href={SCHOOL_SUPPORT_URL} target="_blank" rel="noopener noreferrer">
+                      {msgStr("skylabSchoolPasswordSupport")}
                     </a>
-                    .{" "}
-                    {msgStr("skylabSchoolPasswordSupport")}{" "}
-                    <a href={SCHOOL_SUPPORT_URL} target="_blank" rel="noreferrer">
-                      {SCHOOL_SUPPORT_HOST}
-                    </a>
+                    .
                   </p>
-                  <p>{msgStr("skylabSchoolPasswordOwnPassword")}</p>
                 </details>
               </>
             )}
@@ -274,17 +263,20 @@ export default function Login(props: LoginProps) {
 
                 {/*
                   No link to Keycloak's registration page, even if the realm allowed it: ADR-0063 keeps it
-                  closed and opens accounts by e-mail code only. When self-registration (eskylab-login-ux 09)
-                  is live, this block becomes "Hesabın yok mu? E-postayla hesap aç" into that same door.
+                  closed and opens accounts by e-mail code only. Until then a YTÜ student's account opens on
+                  the first YTÜ sign-in, so that is the only way offered here. When self-registration
+                  (eskylab-login-ux 09) is live, this block becomes "Hesabın yok mu? E-postayla hesap aç"
+                  into the "E-postayla devam et" door.
                 */}
-                <div className="sl-legacy-no-account">
-                  <p className="sl-legacy-no-account__title">{msgStr("noAccount")}</p>
-                  <p>{msgStr("skylabNoAccountYtu")}</p>
-                  <p>
-                    {msgStr("skylabNoAccountOthers")} {msgStr("skylabNoAccountContact")}{" "}
-                    <a href={`mailto:${CLUB_CONTACT_EMAIL}`}>{CLUB_CONTACT_EMAIL}</a>
-                  </p>
-                </div>
+                {microsoftProvider !== undefined && (
+                  <div className="sl-legacy-no-account">
+                    <p className="sl-legacy-no-account__title">{msgStr("noAccount")}</p>
+                    <p>
+                      {msgStr("skylabNoAccountYtu")}{" "}
+                      <a href={microsoftProvider.loginUrl}>{msgStr("skylabNoAccountYtuLink")}</a>.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 

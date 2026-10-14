@@ -18,7 +18,7 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
   tr: {
     // Login page and shared chrome
     skylabTitle: "SKY LAB'e Hoş Geldin!",
-    skylabDesc: "YTÜ öğrencisiysen okul hesabınla gir. SKY LAB hesabın varsa e-posta adresin ve parolanla da girebilirsin.",
+    skylabDesc: "YTÜ öğrencisiysen okul hesabınla, SKY LAB parolan varsa e-postanla gir.",
     microsoft: "YTÜ hesabınla devam et",
     microsoftHint: "Microsoft ile",
     // Opens today's password form; the e-mail code page once eskylab-login-ux 08 is live.
@@ -28,30 +28,20 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     kvkkLinkText: "KVKK Metni",
     kvkkNoticeLinkText: "KVKK Aydınlatma Metni",
     kvkkSuffix: "'nde okuyabilirsin.",
-    // Under the sign-in choices (eskylab-login-ux spec §6.1). The consent-screen sentence follows
-    // ticket 01 (Microsoft's own consent screen); adjust it when that test reports.
-    skylabTrust:
-      "Okul şifreni yalnız Microsoft'un sayfasına yazarsın; SKY LAB onu hiçbir zaman görmez. YTÜ hesabından yalnız adını, okul e-postanı ve bölümünü alırız; postalarına ve dosyalarına erişmeyiz.",
+    // Under the sign-in choices (eskylab-login-ux 05; kept short on purpose, the KVKK notice has the detail).
+    skylabTrust: "Okul şifreni yalnız Microsoft'a yazarsın; SKY LAB görmez.",
     skylabTrustMore: "Neleri alıyoruz?",
-    skylabTrustTakenId: "Microsoft hesabının değişmez kimlik numarası (hesabını tanımak için)",
-    skylabTrustTakenName: "Adın ve soyadın",
-    skylabTrustTakenEmail: "Okul e-posta adresin",
-    skylabTrustTakenDepartment: "Bölümün",
-    skylabTrustNotTaken:
-      "Almadıklarımız: okul şifren (Microsoft'un sayfasına yazarsın, bize hiç gelmez), postaların, dosyaların (OneDrive), takvimin, kişilerin ve Teams.",
-    skylabTrustConsent:
-      "İlk girişte Microsoft bir izin ekranı gösterebilir ve SKY LAB için profilini okuma izni ister; profilinden yalnız yukarıdakileri alırız.",
+    skylabTrustTaken: "Adın, okul e-postan, bölümün ve Microsoft kimlik numaran. Postalarına ve dosyalarına erişmeyiz.",
     skylabSchoolPasswordHelp: "Okul şifreni bilmiyor musun?",
-    skylabSchoolPasswordReset: "Okul şifreni Microsoft'ta sıfırla",
     // Keycloak's .properties bundles drop a value's leading spaces: spaces between a text and its link live in Login.tsx.
-    skylabSchoolPasswordSupport: "Olmazsa YTÜ BİDB'ye başvur:",
-    skylabSchoolPasswordOwnPassword: "SKY LAB parolan varsa E-postayla devam et'i seç.",
+    skylabSchoolPasswordReset: "Microsoft'ta sıfırla",
+    skylabSchoolPasswordOr: "ya da",
+    skylabSchoolPasswordSupport: "BİDB'ye başvur",
     skylabDomainNotice: "Giriş adresi her zaman e.yildizskylab.com'dur.",
-    // The password form for someone without an account. Self-registration is not live
+    // The password form for someone without an account. Self-registration is not live yet
     // (ADR-0063: by e-mail code only, never Keycloak's registration page); see Login.tsx.
-    skylabNoAccountYtu: "YTÜ öğrencisiysen geri dön ve YTÜ hesabınla devam et; SKY LAB hesabın ilk girişinde açılır.",
-    skylabNoAccountOthers: "YTÜ dışından bugün kendin hesap açamazsın; hesabı kulüp yöneticileri açar.",
-    skylabNoAccountContact: "Hesap istemek için bize yaz:",
+    skylabNoAccountYtu: "YTÜ öğrencisiysen",
+    skylabNoAccountYtuLink: "YTÜ hesabınla devam et",
     passkeyChoice: "Erişim anahtarı ile giriş yap",
     skipToContent: "İçeriğe geç",
     skylabInfoLabel: "Ek bilgi",
@@ -355,34 +345,25 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
   en: {
     // Login page and shared chrome
     skylabTitle: "Welcome to SKY LAB!",
-    skylabDesc: "If you're a YTÜ student, sign in with your school account. If you have a SKY LAB account, you can also use your email and password.",
+    skylabDesc: "Sign in with your YTÜ account, or with your email if you have a SKY LAB password.",
     microsoft: "Continue with your YTÜ account",
-    microsoftHint: "with Microsoft",
+    microsoftHint: "via Microsoft",
     continueWithEmail: "Continue with email",
     goBack: "Go back",
     kvkkPrefix: "Read how your personal data is processed in the ",
     kvkkLinkText: "KVKK Policy",
     kvkkNoticeLinkText: "KVKK Privacy Notice",
     kvkkSuffix: ".",
-    skylabTrust:
-      "You type your school password only on Microsoft's page; SKY LAB never sees it. From your YTÜ account we take only your name, school email and department; we don't access your mail or files.",
+    skylabTrust: "You type your school password only at Microsoft; SKY LAB never sees it.",
     skylabTrustMore: "What do we take?",
-    skylabTrustTakenId: "Your Microsoft account's permanent ID (to recognise your account)",
-    skylabTrustTakenName: "Your first and last name",
-    skylabTrustTakenEmail: "Your school email address",
-    skylabTrustTakenDepartment: "Your department",
-    skylabTrustNotTaken:
-      "We don't take: your school password (you type it on Microsoft's page, it never reaches us), your mail, your files (OneDrive), your calendar, your contacts or Teams.",
-    skylabTrustConsent:
-      "On your first sign-in Microsoft may show a consent screen asking to let SKY LAB read your profile; we take only the items above from it.",
+    skylabTrustTaken: "Your name, school email, department and Microsoft ID. We don't access your mail or files.",
     skylabSchoolPasswordHelp: "Don't know your school password?",
-    skylabSchoolPasswordReset: "Reset your school password at Microsoft",
-    skylabSchoolPasswordSupport: "If that fails, contact YTÜ's IT department:",
-    skylabSchoolPasswordOwnPassword: "If you have a SKY LAB password, choose Continue with email.",
+    skylabSchoolPasswordReset: "Reset it at Microsoft",
+    skylabSchoolPasswordOr: "or",
+    skylabSchoolPasswordSupport: "contact YTÜ IT",
     skylabDomainNotice: "The sign-in address is always e.yildizskylab.com.",
-    skylabNoAccountYtu: "If you're a YTÜ student, go back and continue with your YTÜ account; your SKY LAB account is created on your first sign-in.",
-    skylabNoAccountOthers: "Outside YTÜ you can't open an account yourself yet; club admins open accounts.",
-    skylabNoAccountContact: "To ask for one, write to us:",
+    skylabNoAccountYtu: "If you're a YTÜ student,",
+    skylabNoAccountYtuLink: "continue with your YTÜ account",
     passkeyChoice: "Sign in with a passkey",
     skipToContent: "Skip to content",
     skylabInfoLabel: "Additional information",

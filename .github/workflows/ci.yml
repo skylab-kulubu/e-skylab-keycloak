@@ -109,6 +109,19 @@ jobs:
       - name: Role groups and Leader application roles against a throwaway Keycloak
         run: bash tests/role-groups.sh
 
+  # DK reads and does not write (grup-yonetimi 08): the reconciler's core-roles step seeds DK's read
+  # roles, config/dk-read-only.sh takes DK's write roles away once (dry run, --apply with a backup,
+  # --restore, --forms), against the stock Keycloak image in dev mode with real password-grant
+  # tokens; needs no build of this repository's image.
+  dk-read-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: DK read-only roles against a throwaway Keycloak
+        run: bash tests/dk-read-only.sh
+
   # config/sandbox-admin-local-client.sh (the admin panel's local-development client admin-local,
   # sandbox realm only) against the stock Keycloak image in dev mode, with real authorization code
   # flows (PKCE) through admin-local and the panel's client; needs no build of this repository's image.

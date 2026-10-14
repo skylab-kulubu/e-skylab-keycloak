@@ -112,11 +112,14 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
     static final String IDENTIFIER_NOTE = "sky-email-code.identifier";
     /** When the last code was asked for (epoch seconds), for the resend wait. */
     static final String SENT_AT_NOTE = "sky-email-code.sent-at";
-    /** Set once the code signed the person in; {@link #onParentFlowSuccess} reads it. */
-    static final String METHOD_NOTE = "sky-email-code.method";
+    /**
+     * Set once the code signed the person in; {@link #onParentFlowSuccess} reads it, and so does
+     * {@code sky-stay-signed-in}, which asks a Login code sign-in whether to stay signed in.
+     */
+    public static final String METHOD_NOTE = "sky-email-code.method";
 
-    static final String METHOD_DETAIL = "sky_method";
-    static final String METHOD = "email_code";
+    public static final String METHOD_DETAIL = "sky_method";
+    public static final String METHOD = "email_code";
     /** The event detail that says what happened: wrong_code, rate_limited, account_locked, … */
     static final String EVENT_DETAIL = "sky_email_code";
     static final String RATE_LIMITED_ERROR = "sky_email_code_rate_limited";

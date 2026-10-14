@@ -38,6 +38,18 @@ RESET_FLOW_COPY_ALIAS='sky reset credentials'
 STOCK_RESET_CHOOSE_USER=reset-credentials-choose-user
 SKY_RESET_CHOOSE_USER=sky-reset-credentials-choose-user
 RESET_CHOOSE_USER=${KEYCLOAK_RESET_CHOOSE_USER:-$SKY_RESET_CHOOSE_USER}
+# A person with an OTP authenticator proves it on the reset: the realm's reset credentials flow
+# asks for the code of the registered authenticator (auth-otp-form, "verify") in the place of
+# Keycloak's reset-otp, which asks every such person to set up a new authenticator and keeps the
+# old one. The condition of the subflow (user configured) is Keycloak's: a person without OTP is
+# never asked. KEYCLOAK_RESET_OTP_STEP=reset puts Keycloak's step back (the rollback). Only an
+# editable flow (K4b's copy) changes; Keycloak's built-in flow is never touched.
+STOCK_RESET_OTP_STEP=reset-otp
+VERIFY_RESET_OTP_STEP=auth-otp-form
+RESET_OTP_STEP=${KEYCLOAK_RESET_OTP_STEP:-verify}
+# Set by reconcile_reset_otp_step when the OTP step is in place but never runs; every other step
+# still runs, then the reconciliation ends with exit status 3 instead of reporting success.
+RESET_OTP_UNGUARDED=''
 # eskylab-login-ux 07 (ADR-0063 decision 5): a new account opened by a first YTÜ login starts with
 # the School e-mail as its verified Primary e-mail. The realm's first broker login flow moves to an
 # editable copy of Keycloak's built-in one (FIRST_BROKER_FLOW_COPY_ALIAS) that runs the SKY LAB step
@@ -249,6 +261,13 @@ case $RESET_CHOOSE_USER in
   *)
     printf 'KEYCLOAK_RESET_CHOOSE_USER must be %s (default) or %s (rollback), not %s\n' \
       "$SKY_RESET_CHOOSE_USER" "$STOCK_RESET_CHOOSE_USER" "$RESET_CHOOSE_USER" >&2
+    exit 1
+    ;;
+esac
+case $RESET_OTP_STEP in
+  verify | reset) ;;
+  *)
+    printf 'KEYCLOAK_RESET_OTP_STEP must be verify (default) or reset (rollback), not %s\n' "$RESET_OTP_STEP" >&2
     exit 1
     ;;
 esac
@@ -510,19 +529,22 @@ flow_alias_path() {
 }
 
 # Puts authenticator TO in the place of authenticator FROM in FLOW_ALIAS and logs one line
-# "NOUN of flow 'FLOW_ALIAS': unchanged|updated (...)" (K4's password form, K4b's choose-user step).
-# Admin REST cannot change the provider of an execution, so the new one is added under the same
-# parent flow with the same priority (Keycloak orders executions by priority alone) and REQUIRED
-# (the only requirement either factory offers), then the old one is deleted. For that moment the
-# flow runs the step twice; there is never a moment without it. ReconcileJson (its password-form
-# planner, which names no provider of its own) refuses, and nothing is written, unless the flow
-# holds exactly one of the two, REQUIRED, without an authenticator config and with a priority none
-# of its siblings shares. A run cut between the two writes leaves both side by side, which the next
-# run finishes. The flow's other executions are never touched. Keycloak refuses any change to a
-# built-in flow, so FLOW_ALIAS must name an editable one.
+# "NOUN of flow 'FLOW_ALIAS': unchanged|updated (...)" (K4's password form, K4b's choose-user step,
+# the reset credentials OTP step). Admin REST cannot change the provider of an execution, so the
+# new one is added under the same parent flow with the same priority (Keycloak orders executions
+# by priority alone) and made REQUIRED (Admin REST adds it DISABLED when its factory offers more
+# than one requirement, as auth-otp-form and reset-otp do), then the old one is deleted. For that
+# moment the flow runs the step twice; there is never a moment without it. ReconcileJson (its
+# password-form planner, which names no provider of its own) refuses, and nothing is written,
+# unless the flow holds exactly one of the two, REQUIRED, without an authenticator config and with
+# a priority none of its siblings shares. A run cut between the writes leaves both side by side,
+# which the next run finishes; a DISABLED FROM next to a REQUIRED TO in the same flow (the state an
+# Admin Console change leaves) is removed, and so is a DISABLED TO elsewhere next to a REQUIRED
+# FROM (that change taken back) before the swap. The flow's other executions are never touched. Keycloak
+# refuses any change to a built-in flow, so FLOW_ALIAS must name an editable one.
 swap_flow_execution() {
   local flow_alias=$1 from=$2 to=$3 noun=$4
-  local flow_path live_file plan_file status action execution_id parent_id priority parent_alias parent_path
+  local flow_path live_file plan_file status action execution_id parent_id priority parent_alias parent_path added_id
   flow_path=$(flow_alias_path "$flow_alias")
   live_file=$(mktemp "$WORK_DIR/flow-execution.XXXXXX")
   plan_file=$(mktemp "$WORK_DIR/flow-execution-plan.XXXXXX")
@@ -539,6 +561,7 @@ swap_flow_execution() {
     printf "Could not plan the %s of flow '%s' (status %s)\n" "$noun" "$flow_alias" "$status" >&2
     return 1
   fi
+  # The third field is the parent flow id for swap and the id of TO for resume.
   IFS=$'\t' read -r action execution_id parent_id priority <"$plan_file"
   case $action in
     unchanged)
@@ -549,6 +572,22 @@ swap_flow_execution() {
       kcadm delete "authentication/executions/$execution_id" -r "$TARGET_REALM" >/dev/null
       log "$noun of flow '$flow_alias': updated (finished an interrupted swap: removed $from next to $to)"
       ;;
+    resume)
+      kcadm update "authentication/flows/$flow_path/executions" -r "$TARGET_REALM" -n \
+        -b "{\"id\":\"$parent_id\",\"requirement\":\"REQUIRED\",\"priority\":$priority}" >/dev/null
+      kcadm delete "authentication/executions/$execution_id" -r "$TARGET_REALM" >/dev/null
+      log "$noun of flow '$flow_alias': updated (finished an interrupted swap: $to DISABLED -> REQUIRED, removed $from)"
+      ;;
+    retire)
+      kcadm delete "authentication/executions/$execution_id" -r "$TARGET_REALM" >/dev/null
+      log "$noun of flow '$flow_alias': updated (removed the DISABLED $from next to the REQUIRED $to)"
+      ;;
+    discard)
+      kcadm delete "authentication/executions/$execution_id" -r "$TARGET_REALM" >/dev/null
+      log "$noun of flow '$flow_alias': updated (removed the DISABLED $to next to the REQUIRED $from)"
+      swap_flow_execution "$flow_alias" "$from" "$to" "$noun"
+      return
+      ;;
     swap)
       if [[ $parent_id == - ]]; then
         parent_alias=$flow_alias
@@ -556,8 +595,11 @@ swap_flow_execution() {
         parent_alias=$(kcadm_json "authentication/flows/$parent_id" -r "$TARGET_REALM" | json_tool field alias)
       fi
       parent_path=$(flow_alias_path "$parent_alias")
-      kcadm create "authentication/flows/$parent_path/executions/execution" -r "$TARGET_REALM" \
-        -b "{\"provider\":\"$to\",\"priority\":$priority}" >/dev/null
+      added_id=$(kcadm create "authentication/flows/$parent_path/executions/execution" -r "$TARGET_REALM" -i \
+        -b "{\"provider\":\"$to\",\"priority\":$priority}")
+      # A no-op when the factory already added it REQUIRED (its only requirement).
+      kcadm update "authentication/flows/$flow_path/executions" -r "$TARGET_REALM" -n \
+        -b "{\"id\":\"$added_id\",\"requirement\":\"REQUIRED\",\"priority\":$priority}" >/dev/null
       kcadm delete "authentication/executions/$execution_id" -r "$TARGET_REALM" >/dev/null
       log "$noun of flow '$flow_alias': updated ($from -> $to in subflow '$parent_alias', priority $priority, REQUIRED)"
       ;;
@@ -647,6 +689,74 @@ reconcile_reset_choose_user() {
     return 1
   fi
   log "realm reset credentials flow binding: updated ($bound -> $target)"
+}
+
+# eskylab-login-ux 23: in the realm's reset credentials flow, the OTP step of Keycloak's
+# "Reset - Conditional OTP" subflow (its condition, user configured, stays): auth-otp-form asks a
+# person with OTP for the code of the registered authenticator (the default, verify), reset-otp
+# is Keycloak's own step (the rollback, reset). Runs after reconcile_reset_choose_user, so the
+# realm is already bound to its editable copy; swap_flow_execution makes the change. In verify,
+# ReconcileJson otp-guard then checks that the step actually runs (CONDITIONAL subflow on "user
+# configured" with no other REQUIRED or CONDITIONAL step, nothing above it DISABLED); if not, a WARNING line replaces the "unchanged" line
+# and the run ends with exit status 3 after its other steps. A realm
+# still bound to Keycloak's built-in flow (only after a choose-user rollback on a realm that never
+# had the copy) runs reset-otp, which cannot be changed there: verify warns, reset has nothing to do.
+reconcile_reset_otp_step() {
+  local from to bound flow_id built_in swap_lines guard status
+  if [[ $RESET_OTP_STEP == verify ]]; then
+    from=$STOCK_RESET_OTP_STEP
+    to=$VERIFY_RESET_OTP_STEP
+  else
+    from=$VERIFY_RESET_OTP_STEP
+    to=$STOCK_RESET_OTP_STEP
+  fi
+  bound=$(kcadm_json "realms/$TARGET_REALM" --fields resetCredentialsFlow | json_tool field resetCredentialsFlow)
+  if [[ -z $bound ]]; then
+    printf 'The realm has no reset credentials flow binding; nothing was changed\n' >&2
+    return 1
+  fi
+  if flow_id=$(optional_lookup flow_id_by_alias "$bound"); then
+    :
+  else
+    return $?
+  fi
+  if [[ -z $flow_id ]]; then
+    printf "The realm's reset credentials flow '%s' does not exist; nothing was changed\n" "$bound" >&2
+    return 1
+  fi
+  built_in=$(kcadm_json "authentication/flows/$flow_id" -r "$TARGET_REALM" | json_tool field builtIn)
+  if [[ $built_in == true ]]; then
+    if [[ $RESET_OTP_STEP == verify ]]; then
+      warn "OTP step of flow '$bound' was not changed: Keycloak's built-in flow cannot be edited and runs $STOCK_RESET_OTP_STEP; a run with the default KEYCLOAK_RESET_CHOOSE_USER binds the realm to '$RESET_FLOW_COPY_ALIAS' first"
+    else
+      log "OTP step of flow '$bound': unchanged ($STOCK_RESET_OTP_STEP, Keycloak's built-in flow)"
+    fi
+    return 0
+  fi
+  # The swap's lines are held back until the guard below has looked at the result.
+  swap_lines=$(swap_flow_execution "$bound" "$from" "$to" 'OTP step')
+  if [[ $RESET_OTP_STEP == reset ]]; then
+    printf '%s\n' "$swap_lines"
+    return 0
+  fi
+  # A step in place proves nothing when its subflow never runs it (an Admin Console change):
+  # the subflow must be CONDITIONAL on "user configured" alone, hold no other REQUIRED or CONDITIONAL
+  # step (user configured would then need it too) and no enclosing subflow be DISABLED.
+  # Otherwise a person with OTP resets by e-mail alone, which the run must not call unchanged.
+  if guard=$(kcadm_json "authentication/flows/$(flow_alias_path "$bound")/executions" -r "$TARGET_REALM" \
+    | json_tool otp-guard "$to"); then
+    printf '%s\n' "$swap_lines"
+    return 0
+  else
+    status=$?
+  fi
+  if [[ $status != 4 ]]; then
+    printf "Could not check the OTP step of flow '%s' (status %s)\n" "$bound" "$status" >&2
+    return 1
+  fi
+  grep -v ': unchanged (' <<<"$swap_lines" || true
+  warn "OTP step of flow '$bound': $guard; OTP is not verified on reset as intended"
+  RESET_OTP_UNGUARDED="OTP step of flow '$bound': $guard"
 }
 
 # eskylab-login-ux 07: the realm's first broker login flow. With KEYCLOAK_YTU_FIRST_LOGIN=on the
@@ -2342,10 +2452,12 @@ core_rename_list() {
 # ticket 03, still works). KEYCLOAK_RECONCILE_CHECK=true makes the operator step a dry run: it reads
 # everything, prints "would ..." for each change and writes nothing. The operator step reads
 # everything first and writes only when every read succeeded; a failed read is never taken for
-# "absent". It then grants each role to each listed service account that lacks it, records on the
-# role (attribute CORE_SERVICE_ROLE_GRANT_ATTRIBUTE) when and to which service accounts, and reports,
-# never removes: another holder (a user, a group or the realm's default role) of a role meant for
-# service accounts only, and a core role a listed service account holds beyond this list (a NOTE).
+# "absent" (one exception: a missing default client scope roles is attached during the reads, by
+# the full run too; runbook §20.1). It then grants each role to each listed service account that
+# lacks it, records on the role (attribute CORE_SERVICE_ROLE_GRANT_ATTRIBUTE) when and to which
+# service accounts, and reports, never removes: another holder (a user, a group or the realm's
+# default role) of a role meant for service accounts only, and a core role a listed service account
+# holds beyond this list (a NOTE).
 # aud core is not added here: Keycloak's audience resolve mapper (default scope roles) puts core in
 # aud once resource_access.core is in the token; the step verifies that scope instead of adding a
 # second audience mapper.
@@ -2985,6 +3097,7 @@ retire_account_center_browser_flow
 # deleted just above; the realm browser flow is the only one left to swap.
 reconcile_password_form "$BROWSER_FLOW_ALIAS"
 reconcile_reset_choose_user
+reconcile_reset_otp_step
 reconcile_first_broker_login
 reconcile_personal_email_offer
 reconcile_stay_signed_in
@@ -3017,4 +3130,9 @@ reconcile_core_service_roles
 # forms roles made by earlier steps are already in place to enter the panel's scope.
 reconcile_admin_panel_client
 
+if [[ -n $RESET_OTP_UNGUARDED ]]; then
+  printf 'Account Center Keycloak configuration is reconciled except the reset OTP step (%s); fix the subflow in the Admin Console and run again\n' \
+    "$RESET_OTP_UNGUARDED" >&2
+  exit 3
+fi
 printf 'Account Center Keycloak configuration is reconciled.\n'

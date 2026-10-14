@@ -34,6 +34,7 @@ entegrasyon testi bunu doğrular.
 | `core-erasure` istemcisi (hesap silme, ADR-0051) | Uzlaştırıcı **yalnız doğrular** (`keycloak-mailer` gibi): istemci yoksa uyarı ve çalıştırılacak komut. Şunlardan biri sözleşmeden farklıysa koşu hata ile durur ve operatör komutunu yazar: bayraklar (gizli, yalnız service account, standard flow / direct grant / implicit kapalı, `fullScopeAllowed=false`), varsayılan kapsamlar (tam olarak `basic` ve `roles`; Keycloak'ın eklediği `service_account` hoş görülür), isteğe bağlı kapsamlar (tam olarak üç `account-erase-*`), doğrudan scope mapping (olmamalı), her erase kapsamının tek audience mapper'ı ve tek rolü, servis istemcilerinin (`skymail`, `skycms`, `forms`) varlığı. Service account rolleri uzlaştırıcı kimliğiyle okunamadığından uyarı olarak raporlanır. İstemciyi, kapsamları ve rolleri operatör `config/create-erasure-client.sh` ile kurar (§11). |
 | Parola formu (K4, §15) | Realm tarayıcı akışı `browser plus passkey`'deki `auth-username-password-form`'un yerine aynı alt akışta, aynı öncelik ve `REQUIRED` ile `sky-username-password-form` konur; akışın geri kalanına dokunulmaz. İki formdan tam olarak biri yoksa, form `REQUIRED` değilse ya da yanındaki bir yürütmeyle aynı önceliği paylaşıyorsa koşu hiçbir şey yazmadan durur. `KEYCLOAK_PASSWORD_FORM=auth-username-password-form` Keycloak'ın formunu geri koyar. |
 | Parola sıfırlamanın kişi seçme adımı (K4b, §17) | Realm'in `reset credentials` akışındaki `reset-credentials-choose-user`'ın yerine aynı öncelik ve `REQUIRED` ile `sky-reset-credentials-choose-user` konur. Keycloak'ın yerleşik akışı değiştirilemediği için realm yerleşik bir akışa bağlıysa akış bir kez `sky reset credentials` adıyla kopyalanır, adım kopyada değiştirilir, realm ancak ondan sonra kopyaya bağlanır. Durdurma kuralları parola formununkiyle aynıdır. `KEYCLOAK_RESET_CHOOSE_USER=reset-credentials-choose-user` Keycloak'ın adımını bağlı akışa geri koyar. |
+| Parola sıfırlamanın OTP adımı (eskylab-login-ux 23, §17.1) | Bağlı (düzenlenebilir) sıfırlama akışının "Reset - Conditional OTP" alt akışında `reset-otp`'nin yerine aynı öncelik ve `REQUIRED` ile `auth-otp-form` konur; koşul `conditional-user-configured` aynen kalır. Durdurma kuralları parola formununkiyle aynıdır; yarıda kalmış değişim ve Admin Console'un acil yolunun bıraktığı hâl (DISABLED `reset-otp` yanında REQUIRED `auth-otp-form`) tamamlanır. Keycloak'ın yerleşik akışına dokunulmaz. `KEYCLOAK_RESET_OTP_STEP=reset` Keycloak'ın adımını geri koyar. |
 | Kimlik korumaları: core sertifika rolleri, OBS `department mapper`, core'un `manage-clients` rolü | Uzlaştırıcı **dokunmaz**: kimliğinin kullanıcı ve kimlik sağlayıcısı yetkisi yoktur. Operatör `config/identity-guardrails.sh` ile uygular (§8). |
 | Forms'un Privileged rolü (§28) | `forms` istemcisinde `skyforms:read-all` (DK'nın Forms okuması; forms-backend henüz okumuyor) her koşuda var edilir; SkyMail'inkiler gibi yalnız `DK`'ya **bir kez** verilir (operatörün `core-roles` koşusu). |
 | SkyMail'in Privileged rolleri (§25) | `skymail` istemcisinde `skymail:system-mails:read` (ADMIN, YK, DK) ve `skymail:announcements:send` (yalnız ADMIN ve YK; duyuru-haber D4) her koşuda var edilir (yoksa açıklamasıyla oluşturulur). core'un kaynak rolleri gibi kendi Privileged gruplarına **bir kez** verilir ve `skylab.seeded-group-mappings` ile işaretlenir; tohumlamayı operatörün `KEYCLOAK_RECONCILE_ONLY=core-roles` koşusu yapar. Kişilerin diğer `skymail:*` rolleri `/ROLLER` rol gruplarına taşınır (§26). |
@@ -402,6 +403,10 @@ Parola sıfırlama adımının (K4b) geri dönüşü de imajdan **önce** yapıl
 1.14.0'dan da eskiye dönülecekse iki bayrak aynı koşuda verilir. Her imajda çalışan acil yol:
 Admin Console'dan realm'in Reset credentials flow bağlantısını yerleşik `reset credentials`'a
 geri almak (§17).
+
+Sıfırlamanın OTP adımının (§17.1) geri dönüşü imaja bağlı değildir: `auth-otp-form` ve
+`reset-otp` Keycloak'ın kendi adımlarıdır, her imajda vardır. `KEYCLOAK_RESET_OTP_STEP=reset`
+koşusu istendiği zaman yapılır.
 
 Group overage mapper'ı (`sky-group-overage-mapper`, SPI 1.16.0, ADR-0059) da imajdan **önce** geri
 alınır: 1.16.0'dan eski bir imaja dönmeden önce, onu kullanan her istemcide
@@ -1614,7 +1619,8 @@ uzlaştırıcı `KEYCLOAK_RESET_CHOOSE_USER=reset-credentials-choose-user` ile k
 bağlı realm'de hiçbir şey yazmaz).
 
 Harness: `tests/reset-by-either-email.sh` (`run-integration.sh` içinden). İlk uzlaştırmada
-yerleşik akış değişmez; kopya, yerleşik akıştan yalnız adımıyla ayrılır ve realm ona bağlanır.
+yerleşik akış değişmez; kopya, yerleşik akıştan yalnız adımıyla (ve §17.1'in OTP adımıyla) ayrılır
+ve realm ona bağlanır.
 Yarıda kalmış bir koşu (realm yerleşik akışa geri bağlı, kopyada Keycloak'ın adımı) ikinci
 uzlaştırmada aynı kopyayla tamamlanır; no-op koşu sessizdir. Geri dönüş ve yeniden ileri, K4'ün
 koşularıyla birlikte (`tests/login-by-either-email.sh`): geri dönüşte kişisel e-posta kimseyi
@@ -1625,6 +1631,122 @@ yollatır; kullanıcı adı Keycloak'ın yoluyla çalışır; bilinmeyen, iki ki
 kişisel, bağlantısız okul e-postası ve devre dışı hesap aynı sayfayı alır, posta gitmez ve olayları
 Keycloak'ınki gibidir; SkyMail tam olarak üç posta alır. Postadaki bağlantı, isteyen tarayıcıda
 yeni parolayı kurar ve kişi okul e-postası ile yeni parolasıyla girer; adresleri değişmez.
+
+### 17.1 Sıfırlamada kayıtlı OTP ile doğrulama (eskylab-login-ux 23)
+
+Keycloak'ın yerleşik `reset credentials` akışı (ve K4b'nin kopyası `sky reset credentials`) son
+adımda "Reset - Conditional OTP" alt akışını taşır: `Condition - user configured` +
+`Reset OTP` (`reset-otp`). OTP'si olan herkeste koşul tutar ve `reset-otp` çalışır: config yoksa
+(yerleşik akışta ve kopyada yok) mevcut OTP silinmez ama oturuma `CONFIGURE_TOTP` eklenir; kişi
+e-postadaki bağlantıdan sonra kayıtlı kodunu girmek yerine "Mobil kimlik doğrulayıcıyı kur" (QR)
+sayfasını görür, tamamlarsa iki OTP kaydı olur. Kayıtlı faktörle doğrulama hiç yapılmaz.
+
+Karar (Microsoft Entra SSPR ve Google hesap kurtarma modeli): sıfırlamada kişi önceden **kayıtlı**
+yöntemiyle doğrulanır; sıfırlama MFA yöntemini silmez, yenisini kurdurmaz. Uzlaştırıcının
+`reconcile_reset_otp_step`'i, `reconcile_reset_choose_user`'dan hemen sonra, realm'in bağlı
+sıfırlama akışında `reset-otp`'nin yerine aynı alt akışta, aynı öncelik ve `REQUIRED` ile
+`auth-otp-form`'u (Keycloak'ın "OTP Form"u) koyar (`swap_flow_execution`, aynı durdurma kuralları).
+Koşul aynen kalır:
+
+- OTP'si olan kişi: e-postadaki bağlantı → kayıtlı doğrulayıcının kodu → yeni parola. OTP kaydı
+  aynı kalır, kurulum istenmez. Yanlış kod brute force sayacına girer (giriş formundaki gibi);
+  `failureFactor`'a (10) ulaşınca kişi kilitlenir ve doğru kod da reddedilir. Sıfırlama bitince
+  kişi oturum açmış olur (Keycloak; Microsoft Entra'da kişi yeni parolayla ayrıca girer).
+- OTP'si olmayan kişi (yalnız parola ya da passkey): koşul tutmaz, kod sorulmaz; bağlantıdan
+  doğrudan yeni parola.
+- `reset-password` parolayı akışta değil `UPDATE_PASSWORD` required action'ında değiştirir; OTP
+  doğrulanmadan parola değişmez.
+
+Admin REST, birden fazla gereklilik seçeneği sunan adımları (`auth-otp-form`, `reset-otp`)
+`DISABLED` ekler; değişim yeni adımı ekledikten sonra `REQUIRED` yapar, ardından eskisini siler.
+Bu iki yazım arasında kesilmiş bir koşuyu (aynı yerde REQUIRED `reset-otp` + DISABLED
+`auth-otp-form`) sonraki koşu tamamlar (`reset-otp`'de config varsa değişim gibi reddeder). Acil yolun bıraktığı hâli (DISABLED `reset-otp` yanında
+REQUIRED `auth-otp-form`, öncelik farklı olabilir) uzlaştırıcı devralır: yalnız DISABLED
+`reset-otp`'yi siler; geri alınmış acil yolun DISABLED `auth-otp-form`'unu silip değişimi yapar.
+Keycloak'ın yerleşik akışı değiştirilemez; realm yerleşik akışa bağlıysa
+(yalnız K4b geri dönüşü kopyası olmayan bir realm'de) koşu uyarı yazar ve geçer.
+
+`verify`'de değişimden sonra `ReconcileJson otp-guard` adımın gerçekten çalıştığını denetler:
+tek REQUIRED `auth-otp-form`, CONDITIONAL bir alt akışta, alt akışın tek etkin koşulu REQUIRED
+`conditional-user-configured`, alt akışta başka REQUIRED ya da CONDITIONAL adım yok, üstteki hiçbir alt
+akış DISABLED değil. Değilse (Admin Console'da alt akış DISABLED yapılmış, koşul silinmiş, adım alt
+akış dışına taşınmış ya da yanına REQUIRED bir adım, ör. WebAuthn, eklenmişse OTP'li kişi yalnız
+e-postayla sıfırlar; `user configured` yanındaki her REQUIRED adımın kişide kurulu olmasını ister) `unchanged` satırı yazılmaz, yerine uyarı gelir; diğer adımlar koşar, koşu
+başarı satırı yerine şu satırla **3** çıkış koduyla biter:
+
+- `[reconcile] WARNING: OTP step of flow 'sky reset credentials': subflow 'sky reset credentials Reset - Conditional OTP' is DISABLED; OTP is not verified on reset as intended`
+- `Account Center Keycloak configuration is reconciled except the reset OTP step (OTP step of flow 'sky reset credentials': subflow 'sky reset credentials Reset - Conditional OTP' is DISABLED); fix the subflow in the Admin Console and run again`
+
+(Nedenin metni duruma göre değişir: `subflow '…' is REQUIRED, not CONDITIONAL`, `subflow '…' has the
+enabled conditions […], not exactly one REQUIRED conditional-user-configured`, `subflow '…' also
+requires [webauthn-authenticator REQUIRED] besides auth-otp-form, so a person with OTP alone skips it`,
+`auth-otp-form is at the top level, outside a conditional subflow`.) Admin Console'da alt akış CONDITIONAL'a, koşul
+yerine konup koşu yinelenir. Yayın wizard'ı `WARNING: OTP step of flow` satırında ve 3 çıkışında
+durmalıdır. Realm yerleşik akışa bağlıysa `verify`'nin uyarısı:
+`[reconcile] WARNING: OTP step of flow 'reset credentials' was not changed: Keycloak's built-in flow cannot be edited and runs reset-otp; a run with the default KEYCLOAK_RESET_CHOOSE_USER binds the realm to 'sky reset credentials' first`
+(çıkış 0; wizard bunu da durdurucu saymalıdır, çünkü `reset-otp` e-postayla yeni OTP kurdurur).
+
+Satırlar (realm `sky reset credentials`'a bağlı, ilk koşu):
+
+- `[reconcile] OTP step of flow 'sky reset credentials': updated (reset-otp -> auth-otp-form in subflow 'sky reset credentials Reset - Conditional OTP', priority 20, REQUIRED)`
+
+İkinci koşu:
+
+- `[reconcile] OTP step of flow 'sky reset credentials': unchanged (auth-otp-form)`
+
+Acil yol sonrası ilk koşu:
+`[reconcile] OTP step of flow 'sky reset credentials': updated (removed the DISABLED reset-otp next to the REQUIRED auth-otp-form)`.
+
+Öncelik Keycloak 26'nın yerleşik akışında 20'dir; değişim neyse onu korur. `reset-otp`'de
+authenticator config varsa (Admin Console'dan "Remove one/all" seçilmişse) koşu hiçbir şey
+yazmadan durur; o zaman önce config kaldırılır ya da koşu `KEYCLOAK_RESET_OTP_STEP=reset` ile
+yapılır (o yönde `reset-otp` zaten yerindeyse `unchanged` der). Üretimdeki hâli salt okur
+sky_lab_genel `ops/wizards/keycloak-reset-otp-facts.sh` gösterir.
+
+Geri dönüş bayrağı `KEYCLOAK_RESET_OTP_STEP` (varsayılan `verify`; `reset` Keycloak'ın
+`reset-otp`'sini aynı yere geri koyar, beklenen satır `OTP step of flow 'sky reset credentials':
+updated (auth-otp-form -> reset-otp …)`; başka değer koşuyu hiçbir şey okumadan durdurur). İkisi
+de Keycloak'ın adımıdır; geri dönüş imaj sırası gerektirmez (§7). Dikkat: sky_lab_genel'deki K4b
+wizard'ının `--rollback`'i realm'i yerleşik `reset credentials`'a bağlarsa yerleşik akıştaki
+`reset-otp` (değiştirilemez) geri gelir.
+
+**Acil yol (Admin Console, uzlaştırıcı gerekmez; yayın gelene kadar elle yapılmış fark olarak
+not edilir):**
+
+1. Admin Console → `e-skylab` realm'i → Authentication → `sky reset credentials`
+   ("Used by: Reset credentials flow" yazmalı).
+2. `… Reset - Conditional OTP` alt akışının satırındaki **+** → **Add step** → **OTP Form** → Add.
+3. Yeni **OTP Form** satırının Requirement'ı → **Required**.
+4. **Reset OTP** satırının Requirement'ı → **Disabled** (silmek yerine; geri dönüş tek tık).
+   `Condition - user configured` DISABLED adımları saymaz, yalnız OTP Form'a bakar.
+5. Dene: OTP'li bir test hesabıyla "Şifremi unuttum" → postadaki bağlantı → **kod sorulmalı**, QR
+   gelmemeli → yeni parola. OTP'siz hesapla kod sorulmadan yeni parola.
+6. Geri: Reset OTP → Required, OTP Form → Disabled (ya da sil).
+
+Bu düzeltmeyi taşıyan uzlaştırıcı sonraki yayında acil yolun hâlini bozmaz, devralır (yukarıdaki
+satır). Acil yol geri alınmışsa (Reset OTP Required, OTP Form Disabled) koşu önce DISABLED OTP
+Form'u siler (`updated (removed the DISABLED auth-otp-form next to the REQUIRED reset-otp)`),
+sonra değişimi yapar.
+
+Bilinen sapmalar (ayrı karar): (a) OTP'si olmayan ama passkey'i olan yöneticiler sıfırlamada
+ikinci doğrulama vermez (Microsoft yönetici rollerinden iki yöntem ister); istenirse passkey
+doğrulaması sonraki iş. (b) Hem parolasını hem OTP cihazını kaybeden kişi kendi başına
+sıfırlayamaz: yönetici Admin Console → Users → kişi → Credentials'tan OTP kaydını siler
+(Microsoft'ta da yardım masası yolu).
+
+Harness (`tests/reset-by-either-email.sh`): ilk uzlaştırma `reset-otp`'yi `auth-otp-form` ile
+değiştirir, kopya yerleşik akıştan yalnız iki adımla ayrılır; DISABLED eklenmiş `auth-otp-form`'da
+kesilmiş değişimi ikinci uzlaştırma tamamlar; no-op koşu `unchanged` der. K4'ün geri dönüş
+koşularında `KEYCLOAK_RESET_OTP_STEP=reset` kopyayı yerleşik akışın tam eşi yapar (ikinci koşu
+sessiz); ileri koşu acil yolun hâlini devralır; geçersiz bayrak durdurulur. K5'ten sonra gerçek
+sıfırlama: OTP'li kişide postadaki bağlantı kod sayfasını (`login-otp.ftl`) açar, QR kurulum
+sayfası gelmez; yanlış kod sayfada tutar, doğru kod yeni parola sayfasına götürür; sonunda OTP
+kaydı aynı (aynı kimlik), required action yok, parola yeni. OTP'siz kişide bağlantı doğrudan yeni
+parola sayfasını açar. Yanlış kod brute force sayacını 1 yapar; ikinci sıfırlamada `failureFactor`
+yanlış koddan (aralarında quick login denetiminden uzun bekleme) sonra kişi kilitlidir, doğru kod
+reddedilir, parola değişmez. Alt akış DISABLED yapılınca gerçek koşu uyarı satırını yazar, `unchanged`
+demez, diğer adımları koşar ve 3 ile biter. Planlayıcı vakaları: `otp-guard` (koşulsuz, REQUIRED alt
+akış, üst düzey adım, yanında REQUIRED WebAuthn; DISABLED ya da ALTERNATIVE WebAuthn geçer) ve config'li `reset-otp`'de `resume` reddi.
 
 ## 18. Etkinlik sitelerinin site istemcileri ve editör grupları (ADR-0056 eki)
 
@@ -1954,6 +2076,8 @@ kapsamlar, rol kapsamı, servis hesabı ve rolleri, varsayılan rol, rollerin ku
 grupları), sonra yazar. Bir okuma Keycloak'ın "yok" cevabı dışında başarısız olursa (`… could not be
 read in realm …; nothing was granted`) koşu hiçbir şey vermeden ve işaretlemeden hata verir; boş
 cevap "yok" sayılmaz. Eksik rolün oluşturulması (zararsız, hiçbir şey vermez) okumalardan önce gelir.
+İstisna: eksik varsayılan `roles` kapsamı okuma sırasında eklenir (§20.1); sonraki bir okuma düşerse
+kapsam eklenmiş kalır (zararsız, idempotent).
 
 Operatör adımı (Keycloak konteynerinde; kullanıcı adını `read` sorar, parola kcadm'ın kendi
 prompt'una girilir, config dosyası sonda silinir). Önce sandbox, sonra production; önce kuru koşu:
@@ -2736,9 +2860,11 @@ gönderim için `skymail:mails:send` yeter; geniş rolü kaldırmak ayrı bir ka
 (`forms`, `skymail-backend`, `core`) bu kapsam yoksa adım onu ekler (istemci ayarı, `manage-clients`:
 uzlaştırıcı kimliği de yapar): `default client scope roles of <istemci>: added …`, kuru koşuda `would
 add the default client scope roles to client …`. Realm'de `roles` kapsamı hiç yoksa yalnız uyarır.
-Production'da önce `service-roles` kuru koşusu yapılır ve `default client scope roles of
-skymail-backend: verified` (ya da `would add …`) satırına bakılır; bu, SkyMail'in kitle çağrısını
-açan yayından önce yapılır.
+Ekleme okuma döngüsünün içinde yapılır ve tam uzlaştırmada da kuru koşusuz çalışır. Yayından sonraki otomatik tam uzlaştırma operatör kuru koşusundan önce koştuğu için,
+eksik kapsamı o ekler. Bu yüzden önizleme, o tam uzlaştırmanın çıktısıdır: `default client scope
+roles of <istemci>: verified` ya da `added …` satırlarına (`forms`, `skymail-backend`, `core`) bakılır.
+Sonraki `service-roles` kuru koşusu yalnız `verified` gösterir. Ekleme idempotenttir ve yalnız bu üç
+servis istemcisine dokunur. Bu kontrol, SkyMail'in kitle çağrısını açan yayından önce yapılır.
 
 **Sıra.** `audience:read` core #242'nin ucunu açar; uç rol yokken 403 `audience_role_missing` döner
 (zararsız). Rolün Keycloak'ta oluşması ve `skymail-backend`'e verilmesi SkyMail'in kitle çağrısını
@@ -2842,7 +2968,10 @@ kez geçer, tek istemci taşır (`ReconcileJson role-groups` dosyayı okurken re
 çıkar) ve realm'deki hiçbir en üst ekibin (`/UYELER/<alan>/<ekip>`) ya da onun hemen altındaki alt
 ekibin (Leader grupları hariç) kodunu alt dize olarak içermez (içerirse o yaprak `PROBLEM` ile
 atlanır). Yeni rol grubu: `role-groups.json`'a bir nesne eklenir, PR
-açılır, yayından sonra betik önce kuru, sonra `--apply` koşulur.
+açılır, yayından sonra betik önce kuru, sonra `--apply` koşulur. Kuru koşuda `PROBLEM … team code`
+görülürse (ör. `AI` gibi kısa bir alt ekip kodu `SKYMAIL-*` yapraklarının adında geçer) `--apply`
+koşulmadan önce ekip ya da yaprak adı ad kuralına göre değiştirilir; değiştirilmezse o yaprak atlanır,
+öbürleri uygulanır ve betik 1 ile çıkar.
 
 **Denetim (`--audit`, salt okur).** Her client ve realm rolünün doğrudan sahiplerini okur (rol başına
 iki okuma; production'da dakikalar sürer) ve yalnız sayı ile grup yolu basar, **kişi adı basmaz**:

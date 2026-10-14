@@ -230,6 +230,12 @@ uzlaştırıcı onu bir kez `sky reset credentials` adıyla kopyalar, adımı ko
 realm'i kopyaya bağlar; `KEYCLOAK_RESET_CHOOSE_USER=reset-credentials-choose-user` Keycloak'ın
 adımını geri koyar. Ayrıntı ve geri dönüş sırası: runbook §17.
 
+OTP'li kişi parolayı sıfırlarken kayıtlı doğrulayıcısının kodunu girer (Microsoft SSPR ve
+Google gibi): uzlaştırıcı kopyanın "Reset - Conditional OTP" alt akışında Keycloak'ın `reset-otp`'si
+(yeni doğrulayıcı kurdurur) yerine `auth-otp-form`'u koyar; koşul (`conditional-user-configured`)
+aynen kalır, OTP'siz kişiye kod sorulmaz, OTP kaydı silinmez. `KEYCLOAK_RESET_OTP_STEP=reset`
+Keycloak'ın adımını geri koyar. Ayrıntı: runbook §17.1.
+
 User Profile (`config/account-center-user-profile.json`) canlı yapısını
 koruyarak uzlaştırılır: `firstName`, `lastName`, `email` kişi için salt
 okunur olur, `username` izinlerine dokunulmaz, `schoolEmail`, `personalEmail`
@@ -314,7 +320,9 @@ kopyaya çevirir. Bu yalnız açıkça istenince olur: `KEYCLOAK_YTU_FIRST_LOGIN
 yerleşik akışa geri bağlar; varsayılan `keep` bağlamayı olduğu gibi bırakır (tam uzlaştırma
 özelliği açıp kapatmaz, bağlı kopyayı yalnız onarır). Kendi ilk giriş akışı seçili olan bir IdP
 realm bağlamasını görmez; uzlaştırıcı kimliği IdP okuyamadığı için OBS'yi bir kez operatör oturumu
-(`KEYCLOAK_RECONCILE_ONLY=first-broker-login`) realm bağlamasına bırakır. Ayrıntı, üretim sırası ve geri dönüş: runbook §22. Harness
+(`KEYCLOAK_RECONCILE_ONLY=first-broker-login`) realm bağlamasına bırakır. Üretimdeki OBS'nin elle
+yapılmış `first broker login for obs` geçersiz kılması da yalnız biçimi yerleşik akışla aynıysa
+kaldırılır (adı OBS'ye not edilir, akış silinmez); `off` onu geri yazar (bilet 22). Ayrıntı, üretim sırası ve geri dönüş: runbook §22. Harness
 `tests/ytu-first-login.sh` tek başına çalışır (stok imaj, SPI jar'ı, taklit YTÜ kiracısı).
 
 Bilet 21'den sonra (SPI 1.18.0) aynı ilk girişin sonunda bir kez kişisel e-posta önerisi çıkar:
@@ -557,11 +565,12 @@ core'un servis rollerini (`media:attach`: ADR-0052, Forms'un core'a Media bağla
 yüklemesi; `ticket:forms`: Forms'un cevap bildirimi, core `docs/form-response-tickets.md`; `url:forms`:
 forma bağlı kısa linkler; `users:read`: kişi profili) uzlaştırıcı her koşuda `core` istemcisinde var
 eder; `forms`'un `fullScopeAllowed`'ı kapalıysa rolleri onun kapsam eşlemesine ekler ve `aud: core`'u
-veren varsayılan `roles` kapsamını yalnız doğrular (ikinci audience mapper eklenmez). Roller
+veren varsayılan `roles` kapsamını doğrular, yoksa ekler (ikinci audience mapper eklenmez). Roller
 `service-account-forms`'ta bulunur; servis hesabına rol vermek kullanıcı yetkisi istediği için bunu
 operatör yapar (`KEYCLOAK_RECONCILE_KCADM_CONFIG` + `KEYCLOAK_RECONCILE_ONLY=service-roles`; eski adı
 `media-attach` de çalışır). `KEYCLOAK_RECONCILE_CHECK=true` aynı adımı kuru koşar: yalnız eksikleri
-`would …` diye yazar, hiçbir şey yazmaz. Adım önce her şeyi okur, okuma hatasında hiçbir şey vermez,
+`would …` diye yazar, hiçbir şey yazmaz. Adım önce her şeyi okur, okuma hatasında hiçbir şey vermez
+(eksik varsayılan `roles` kapsamı hariç: onu okuma sırasında ve tam uzlaştırmada da ekler, runbook §20.1),
 verdikten sonra rolün `skylab.granted-service-accounts` özniteliğine kaydeder; `users:read` dışındaki
 rolleri taşıyan başka kullanıcı, grup ya da varsayılan rolü, servis hesabının listede olmayan core
 rollerini bildirir ve hiçbir şey silmez. `forms` yalnız servis hesabıdır (Forms kişileri `skyforms`
@@ -569,6 +578,20 @@ ile giriş yaptırır; core ürünü `client_id == azp`'den okur): uzlaştırıc
 `implicitFlowEnabled`, `directAccessGrantsEnabled`'in kapalı olduğunu doğrular, değilse uyarır;
 operatör adımı açık olanları kapatır (kuru koşuda `would set …`). `media:attach`'ın istemci listesi
 core'un `MEDIA_SERVICE_CLIENTS`'ıyla aynı tutulur (runbook §20).
+Aynı adım SkyMail'in servis hesabına (`skymail-backend`) core'un `audience:read` rolünü (core #242,
+haber ve duyuru kitlesi) ve core'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`,
+`skymail:lists:read`, `skymail:lists:write` rollerini verir; SkyMail'in rollerini oluşturmaz, eksikse
+uyarır; listelenen servis istemcisinde varsayılan `roles` kapsamı yoksa ekler (runbook §20.1). `skymail:announcements:send` (haber ve duyuruyu Mail onayı olmadan gönderme)
+`skymail:system-mails:read` gibi bir kez tohumlanır ama yalnız ADMIN ve YK'ya (runbook §25).
+
+Uygulama rolü grupları `/ROLLER/<UYGULAMA>-<ROL>` (Entra'nın uygulama rolü güvenlik grupları;
+`config/role-groups.json`) ve en üst ekiplerin Leader gruplarına Forms koltuğu (`skyforms:access`) ile
+`skycloud:access` iki operatör betiğiyle
+kurulur: `config/role-groups.sh` ve `config/leader-app-roles.sh` (kuru koşu varsayılan, `--apply`
+yazar, ikinci koşu 0 değişiklik; uzlaştırıcıda `KEYCLOAK_RECONCILE_ONLY=role-groups` ve
+`leader-app-roles`). Hiçbiri üye eklemez ya da bir şey almaz; `role-groups.sh --audit` doğrudan rol
+sahiplerini ve izinli yerler dışındaki grup eşlemelerini kişi adı basmadan sayar (runbook §26, §27).
+Harness `tests/role-groups.sh` tek başına çalışır.
 
 Etkinlik siteleri (ARTLAB, YıldızJam, SkyDays) da canlıdaki inscribed'ın tenant'larıdır (ADR-0056
 eki, 2026-10-03). Site istemcilerini (`frontend-artlab`, `frontend-yildizjam`, `frontend-skydays`)
@@ -873,8 +896,8 @@ docker build --platform linux/amd64 -t account-keycloak:test .
 KEYCLOAK_TEST_IMAGE=account-keycloak:test bash tests/run-integration.sh
 ```
 
-Harness tek koşuda bütün aşamaları sırayla koşar (varsayılan `INTEGRATION_GROUP=all`;
-`release.yml` böyle koşar). CI aynı betiği dört paralel işte koşar
+Harness tek koşuda bütün aşamaları sırayla koşar (varsayılan `INTEGRATION_GROUP=all`).
+CI aynı betiği dört paralel işte koşar
 (`integration (erasure|roles|login|spi)`, sonra hepsini bekleyen `integration`):
 her grup kendi Keycloak'ını açar, ortak realm önekini (bootstrap, ilk uzlaştırma,
 drift, ikinci uzlaştırma) koşar, sonra kendi aşamalarını. Önceki bir grubun
@@ -885,6 +908,33 @@ CI günlüğüne `[harness <grup> +12m34s] <aşama>` diye geçer. Tek grup yerel
 ```bash
 INTEGRATION_GROUP=login KEYCLOAK_TEST_IMAGE=account-keycloak:test bash tests/run-integration.sh
 ```
+
+`release.yml` de aynı grupları paralel koşar, ama imajı bir kez derler:
+`keycloak-build` aday imajı derleyip `docker save` ile kaydeder ve
+`keycloak-test-candidate-<commit>` artifact'i olarak yükler (SHA-256'sı ve imaj kimliği
+işin çıktısıdır); grup listesini `tests/run-integration.sh`'ın `INTEGRATION_GROUPS` satırından
+okur. `integration (<grup>)` işleri bu tarball'ı indirir, SHA-256'sını ve yüklenen imajın
+kimliğini doğrular, kendi grubunu koşar ve test ettiği imajın kimliğini bir makbuz artifact'ine
+yazar. `keycloak-package` yalnız bütün gruplar başarılıysa koşar: listedeki her grubun makbuzunun
+aynı commit'i ve aynı imaj kimliğini söylediğini doğrular, sonra fiziksel WebAuthn kapısını
+(`keycloak-production` ortamının değişkenleri) koşar ve grupların yüklediği tarball'ın kendisini
+paketler; `keycloak-publish` önceki gibi onu doğrulayıp yayımlar. Düşen grup tek başına yeniden
+koşturulabilir (`gh run rerun <run> --failed`): `keycloak-build` yeniden koşmaz, yeniden koşan
+grup aynı tarball'ı yükler. Bir makbuz ancak bu koşunun derlediği imaj kimliğini ve tarball
+SHA-256'sını birebir söylüyorsa kabul edilir; `keycloak-publish` de tarball'ı `keycloak-build`'in
+çıktılarına karşı yeniden doğrular. `keycloak-package` Touch ID kapısından, `keycloak-publish`
+GHCR girişinden hemen önce yayının hâlâ güncel `production` commit'ini gösterdiğini
+(`git ls-remote`) yeniden denetler: yeniden koşturulan eski bir yayın `:production`'ı ezemez.
+Yayınlar tek tek koşar (`concurrency: keycloak-release`, koşan iptal edilmez).
+
+Artifact'lerin ömrü 3 gün. **Touch ID kanıtı 3 günden uzun sürerse** koşu yeniden
+denenemez (indirme adımı düşer); yayın koşusu baştan başlatılır (production'a aynı ağaçla yeni
+bir commit).
+
+Tek Keycloak'ta bütün aşamaların sırayla koşusu (`INTEGRATION_GROUP=all`) artık ne CI'da ne
+yayında var; `.github/workflows/integration-all.yml` onu haftada bir (pazartesi 03:17 UTC, main)
+ve elle (`gh workflow run integration-all.yml`) koşar. Yalnız test eder: secret, ortam, kayıt
+defteri ya da dağıtım yok.
 
 Yalnız yerel imaj derlemesi için üretim sözleşmesini devralmayan bağımsız
 Compose tanımını kullanın:

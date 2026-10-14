@@ -1,0 +1,71 @@
+name: Integration (all stages)
+
+# tests/run-integration.sh with INTEGRATION_GROUP=all: every stage in sequence in one Keycloak, the
+# order the groups are split from. CI and the release run only the groups (ci.yml integration-group,
+# release.yml keycloak-integration), so this run is what still proves that the groups' setup
+# stand-ins (ERASURE_FIXTURE_ONLY, setup_operator_state) match the real stages and that one
+# long-lived realm survives every stage. Weekly on main and by hand; it only tests: no secrets, no
+# environment, no registry, no deployment.
+on:
+  schedule:
+    # Mondays 03:17 UTC.
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-all-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  integration-all:
+    runs-on: ubuntu-latest
+    # The whole harness in one job took 135 minutes in release run 38293603610 (2026-10-12).
+    timeout-minutes: 200
+    env:
+      KEYCLOAK_TEST_IMAGE: account-keycloak:all
+      INTEGRATION_GROUP: all
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Verify Keycloak and fixture image pins
+        run: |
+          bash tests/check-version-consistency.sh
+          bash tests/check-fresh-runner.sh
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.22.1
+          cache: npm
+          cache-dependency-path: theme/package-lock.json
+
+      # The harness's browser stages run Playwright from theme/.
+      - name: Install Chromium for the harness
+        working-directory: theme
+        timeout-minutes: 20
+        run: |
+          npm ci --ignore-scripts
+          # The runner's apt mirror can hang (CI run 37664358276): each attempt gets 5 minutes,
+          # three attempts.
+          for attempt in 1 2 3; do
+            timeout 300 npx playwright install --with-deps chromium && break
+            if [ "$attempt" = 3 ]; then exit 1; fi
+            echo "playwright install attempt $attempt failed or timed out; retrying" >&2
+          done
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build optimized Keycloak image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          platforms: linux/amd64
+          tags: ${{ env.KEYCLOAK_TEST_IMAGE }}
+          # Reads the layers CI's integration groups cache; writes none.
+          cache-from: type=gha
+
+      - name: Run every stage in one Keycloak
+        run: bash tests/run-integration.sh

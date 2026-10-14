@@ -97,6 +97,20 @@ PERSONAL_EMAIL_OFFER=${KEYCLOAK_PERSONAL_EMAIL_OFFER:-keep}
 STAY_SIGNED_IN_ACTION=sky-stay-signed-in
 STAY_SIGNED_IN_NAME='SKY LAB stay signed in (after a YTÜ login)'
 STAY_SIGNED_IN=${KEYCLOAK_STAY_SIGNED_IN:-keep}
+# eskylab-login-ux 08 (ADR-0063 decision 2, CONTEXT "Login code"): "E-postayla devam et". With
+# KEYCLOAK_EMAIL_CODE_LOGIN=on the realm's browser flow gets the ALTERNATIVE subflow
+# EMAIL_CODE_FLOW_ALIAS next to the password form's subflow: the SPI step sky-email-code (address or
+# username, then the code mailed to the Primary e-mail), Keycloak's conditional OTP (a person with TOTP
+# is asked for it after the code) and the passkey offer. The login theme offers it only while the
+# subflow is there. off makes the subflow DISABLED (the rollback; the password and passkey paths never
+# change; run it before going back to an image without the step). The default, keep, only reports, so
+# a full reconciliation never turns it on or off. Realm by realm (sandbox first), also as an operator
+# step (KEYCLOAK_RECONCILE_ONLY=email-code-login).
+EMAIL_CODE_LOGIN=${KEYCLOAK_EMAIL_CODE_LOGIN:-keep}
+EMAIL_CODE_STEP=sky-email-code
+EMAIL_CODE_FLOW_ALIAS='sky email code'
+EMAIL_CODE_OTP_FLOW_ALIAS='sky email code conditional otp'
+PASSKEY_OFFER_STEP=passkey-offer-authenticator
 SCOPE_NAME=account-center-account-api
 CORE_SCOPE_NAME=account-center-core-claims
 SKYAPP_CLIENT_ID=skyapp
@@ -160,11 +174,11 @@ EVENT_RETENTION_SETTINGS="{\"eventsEnabled\":true,\"eventsExpiration\":$EVENT_RE
 ADMIN_EVENTS_EXPIRATION_ATTRIBUTE=adminEventsExpiration
 ACCOUNT_ROLE_ALLOWLIST=(manage-account view-profile manage-account-links)
 case $RECONCILE_ONLY in
-  '' | admin-panel-client | login-clients | core-roles | service-roles | first-broker-login | role-groups | leader-app-roles) ;;
+  '' | admin-panel-client | login-clients | core-roles | service-roles | first-broker-login | email-code-login | role-groups | leader-app-roles) ;;
   # The step's name before core's service roles became a list (core-internal-auth ticket 03).
   media-attach) RECONCILE_ONLY=service-roles ;;
   *)
-    printf 'KEYCLOAK_RECONCILE_ONLY must be empty, admin-panel-client, login-clients, core-roles, service-roles, first-broker-login, role-groups or leader-app-roles, not %s\n' "$RECONCILE_ONLY" >&2
+    printf 'KEYCLOAK_RECONCILE_ONLY must be empty, admin-panel-client, login-clients, core-roles, service-roles, first-broker-login, email-code-login, role-groups or leader-app-roles, not %s\n' "$RECONCILE_ONLY" >&2
     exit 2
     ;;
 esac
@@ -289,6 +303,13 @@ case $STAY_SIGNED_IN in
   keep | on | off) ;;
   *)
     printf 'KEYCLOAK_STAY_SIGNED_IN must be keep (default), on or off (rollback), not %s\n' "$STAY_SIGNED_IN" >&2
+    exit 1
+    ;;
+esac
+case $EMAIL_CODE_LOGIN in
+  keep | on | off) ;;
+  *)
+    printf 'KEYCLOAK_EMAIL_CODE_LOGIN must be keep (default), on or off (rollback), not %s\n' "$EMAIL_CODE_LOGIN" >&2
     exit 1
     ;;
 esac
@@ -757,6 +778,210 @@ reconcile_reset_otp_step() {
   grep -v ': unchanged (' <<<"$swap_lines" || true
   warn "OTP step of flow '$bound': $guard; OTP is not verified on reset as intended"
   RESET_OTP_UNGUARDED="OTP step of flow '$bound': $guard"
+}
+
+# eskylab-login-ux 08: the e-mail code subflow of the realm's browser flow (see EMAIL_CODE_LOGIN
+# above). ReconcileJson email-code-flow plans it: the subflow belongs next to the password form's
+# subflow (in production 'browser plus passkey' forms: passwordless WebAuthn ALTERNATIVE, password flow
+# ALTERNATIVE), and is refused, with nothing written, when a REQUIRED or CONDITIONAL execution there
+# would keep an ALTERNATIVE from ever running, or when someone added an execution to the subflow by
+# hand. on adds what is missing (the subflow DISABLED first, then its parts, then their
+# requirements), and only then makes the subflow ALTERNATIVE, so it never runs without its steps; a
+# run cut in between is finished by the next one. Every write is read back. The realm's own browser
+# flow binding is followed; a realm bound to Keycloak's built-in flow is refused (it cannot be edited).
+reconcile_email_code_login() {
+  local flow_alias built_in flow_id providers parent_alias subflow_path otp_path was
+  local changes=()
+  flow_alias=$(kcadm_json "realms/$TARGET_REALM" --fields browserFlow | json_tool field browserFlow)
+  if [[ -z $flow_alias ]]; then
+    if [[ $EMAIL_CODE_LOGIN == keep ]]; then
+      warn "realm $TARGET_REALM has no browser flow binding; the e-mail code sign-in step has nothing to report"
+      return 0
+    fi
+    printf 'Realm %s has no browser flow binding\n' "$TARGET_REALM" >&2
+    return 1
+  fi
+  flow_id=$(flow_id_by_alias "$flow_alias")
+  built_in=$(kcadm_json "authentication/flows/$flow_id" -r "$TARGET_REALM" | json_tool field builtIn)
+  if [[ $built_in == true ]]; then
+    if [[ $EMAIL_CODE_LOGIN == on ]]; then
+      printf "Realm %s is bound to Keycloak's built-in browser flow '%s', which cannot be edited; nothing was changed\n" \
+        "$TARGET_REALM" "$flow_alias" >&2
+      return 1
+    fi
+    log "e-mail code sign-in of flow '$flow_alias': unchanged (Keycloak's built-in flow)"
+    return 0
+  fi
+  # A full reconciliation (keep) never stops on a flow this step could not change: it says why.
+  if [[ $EMAIL_CODE_LOGIN == keep ]]; then
+    if ! plan_email_code_flow "$flow_alias" 2>"$WORK_DIR/email-code-keep.err"; then
+      warn "e-mail code sign-in of flow '$flow_alias' could not be planned ($(head -n 1 "$WORK_DIR/email-code-keep.err")); KEYCLOAK_EMAIL_CODE_LOGIN=on or off would stop here"
+      return 0
+    fi
+  else
+    plan_email_code_flow "$flow_alias" || return 1
+  fi
+  case $EMAIL_CODE_LOGIN in
+    keep)
+      if [[ $ECF_SUBFLOW == - ]]; then
+        log "e-mail code sign-in of flow '$flow_alias': unchanged (no subflow; KEYCLOAK_EMAIL_CODE_LOGIN=on adds it)"
+      else
+        log "e-mail code sign-in of flow '$flow_alias': unchanged (subflow '$EMAIL_CODE_FLOW_ALIAS' $ECF_SUBFLOW_REQ; KEYCLOAK_EMAIL_CODE_LOGIN=on or off changes it)"
+        if [[ $ECF_SUBFLOW_REQ != DISABLED ]] && ! email_code_parts_in_place; then
+          warn "subflow '$EMAIL_CODE_FLOW_ALIAS' of flow '$flow_alias' runs without all its parts; KEYCLOAK_EMAIL_CODE_LOGIN=on completes it, off turns it off"
+        fi
+      fi
+      return 0
+      ;;
+    off)
+      if [[ $ECF_SUBFLOW == - ]]; then
+        log "e-mail code sign-in of flow '$flow_alias': unchanged (no subflow; KEYCLOAK_EMAIL_CODE_LOGIN=off)"
+      elif [[ $ECF_SUBFLOW_REQ == DISABLED ]]; then
+        log "e-mail code sign-in of flow '$flow_alias': unchanged (subflow '$EMAIL_CODE_FLOW_ALIAS' DISABLED)"
+      else
+        was=$ECF_SUBFLOW_REQ
+        set_email_code_requirement "$flow_alias" "$ECF_SUBFLOW" DISABLED "$ECF_SUBFLOW_PRIO"
+        plan_email_code_flow "$flow_alias" || return 1
+        if [[ $ECF_SUBFLOW_REQ != DISABLED ]]; then
+          printf "Subflow '%s' of flow '%s' is %s after the change, not DISABLED; inspect it in the Admin Console\n" \
+            "$EMAIL_CODE_FLOW_ALIAS" "$flow_alias" "$ECF_SUBFLOW_REQ" >&2
+          return 1
+        fi
+        log "e-mail code sign-in of flow '$flow_alias': updated (subflow '$EMAIL_CODE_FLOW_ALIAS' $was -> DISABLED)"
+      fi
+      return 0
+      ;;
+  esac
+  providers=$(kcadm get authentication/authenticator-providers -r "$TARGET_REALM" --fields id --format csv --noquotes)
+  if ! grep -Fxq "$EMAIL_CODE_STEP" <<<"$providers"; then
+    printf 'The image offers no %s authenticator (SPI 1.21.0 or later); nothing was changed\n' "$EMAIL_CODE_STEP" >&2
+    return 1
+  fi
+  if [[ $ECF_SUBFLOW == - ]]; then
+    if [[ $ECF_FORMS == - ]]; then
+      parent_alias=$flow_alias
+    else
+      parent_alias=$(kcadm_json "authentication/flows/$ECF_FORMS" -r "$TARGET_REALM" | json_tool field alias)
+    fi
+    kcadm create "authentication/flows/$(flow_alias_path "$parent_alias")/executions/flow" -r "$TARGET_REALM" -i \
+      -b "{\"alias\":\"$EMAIL_CODE_FLOW_ALIAS\",\"type\":\"basic-flow\",\"description\":\"SKY LAB: e-postaya gelen kodla giris (eskylab-login-ux 08)\",\"priority\":$ECF_NEXT}" >/dev/null
+    changes+=("added subflow '$EMAIL_CODE_FLOW_ALIAS' to '$parent_alias' at priority $ECF_NEXT")
+    plan_email_code_flow "$flow_alias" || return 1
+  fi
+  subflow_path=$(flow_alias_path "$EMAIL_CODE_FLOW_ALIAS")
+  if [[ $ECF_STEP == - ]]; then
+    kcadm create "authentication/flows/$subflow_path/executions/execution" -r "$TARGET_REALM" -i \
+      -b "{\"provider\":\"$EMAIL_CODE_STEP\",\"priority\":10}" >/dev/null
+    changes+=("added $EMAIL_CODE_STEP")
+  fi
+  if [[ $ECF_OTP == - ]]; then
+    kcadm create "authentication/flows/$subflow_path/executions/flow" -r "$TARGET_REALM" -i \
+      -b "{\"alias\":\"$EMAIL_CODE_OTP_FLOW_ALIAS\",\"type\":\"basic-flow\",\"description\":\"SKY LAB: koddan sonra TOTP (yalniz TOTP sahibine)\",\"priority\":20}" >/dev/null
+    changes+=("added subflow '$EMAIL_CODE_OTP_FLOW_ALIAS'")
+  fi
+  if [[ $ECF_OFFER == - ]]; then
+    kcadm create "authentication/flows/$subflow_path/executions/execution" -r "$TARGET_REALM" -i \
+      -b "{\"provider\":\"$PASSKEY_OFFER_STEP\",\"priority\":30}" >/dev/null
+    changes+=("added $PASSKEY_OFFER_STEP")
+  fi
+  otp_path=$(flow_alias_path "$EMAIL_CODE_OTP_FLOW_ALIAS")
+  if [[ $ECF_COND == - ]]; then
+    kcadm create "authentication/flows/$otp_path/executions/execution" -r "$TARGET_REALM" -i \
+      -b '{"provider":"conditional-user-configured","priority":10}' >/dev/null
+    changes+=("added conditional-user-configured")
+  fi
+  if [[ $ECF_OTP_FORM == - ]]; then
+    kcadm create "authentication/flows/$otp_path/executions/execution" -r "$TARGET_REALM" -i \
+      -b '{"provider":"auth-otp-form","priority":20}' >/dev/null
+    changes+=("added auth-otp-form")
+  fi
+  plan_email_code_flow "$flow_alias" || return 1
+  if ! email_code_parts_present; then
+    printf "Subflow '%s' of flow '%s' still lacks a part after the additions; inspect it in the Admin Console\n" \
+      "$EMAIL_CODE_FLOW_ALIAS" "$flow_alias" >&2
+    return 1
+  fi
+  # The parts first, the subflow last: it never runs without its steps.
+  set_email_code_requirement "$flow_alias" "$ECF_STEP" REQUIRED "$ECF_STEP_PRIO" "$ECF_STEP_REQ" "$EMAIL_CODE_STEP"
+  set_email_code_requirement "$flow_alias" "$ECF_COND" REQUIRED "$ECF_COND_PRIO" "$ECF_COND_REQ" conditional-user-configured
+  set_email_code_requirement "$flow_alias" "$ECF_OTP_FORM" REQUIRED "$ECF_OTP_FORM_PRIO" "$ECF_OTP_FORM_REQ" auth-otp-form
+  set_email_code_requirement "$flow_alias" "$ECF_OTP" CONDITIONAL "$ECF_OTP_PRIO" "$ECF_OTP_REQ" "subflow '$EMAIL_CODE_OTP_FLOW_ALIAS'"
+  set_email_code_requirement "$flow_alias" "$ECF_OFFER" REQUIRED "$ECF_OFFER_PRIO" "$ECF_OFFER_REQ" "$PASSKEY_OFFER_STEP"
+  set_email_code_requirement "$flow_alias" "$ECF_SUBFLOW" ALTERNATIVE "$ECF_SUBFLOW_PRIO" "$ECF_SUBFLOW_REQ" "subflow '$EMAIL_CODE_FLOW_ALIAS'"
+  plan_email_code_flow "$flow_alias" || return 1
+  if [[ $ECF_SUBFLOW_REQ != ALTERNATIVE ]] || ! email_code_parts_in_place; then
+    printf "Subflow '%s' of flow '%s' is not in place after the changes; inspect it in the Admin Console\n" \
+      "$EMAIL_CODE_FLOW_ALIAS" "$flow_alias" >&2
+    return 1
+  fi
+  if ((${#changes[@]} == 0)); then
+    log "e-mail code sign-in of flow '$flow_alias': unchanged (subflow '$EMAIL_CODE_FLOW_ALIAS' ALTERNATIVE)"
+  else
+    local joined
+    printf -v joined '%s; ' "${changes[@]}"
+    log "e-mail code sign-in of flow '$flow_alias': updated (${joined%; })"
+  fi
+}
+
+# Reads ReconcileJson email-code-flow's plan of FLOW_ALIAS into the ECF_* globals (one per line of
+# the plan; "-" for a part that is missing). Runs in the caller's shell, never inside $( ).
+plan_email_code_flow() {
+  local flow_alias=$1 live_file plan_file status kind a b c d
+  live_file=$(mktemp "$WORK_DIR/email-code.XXXXXX")
+  plan_file=$(mktemp "$WORK_DIR/email-code-plan.XXXXXX")
+  kcadm_json "authentication/flows/$(flow_alias_path "$flow_alias")/executions" -r "$TARGET_REALM" >"$live_file"
+  if json_tool email-code-flow "$EMAIL_CODE_STEP" "$EMAIL_CODE_FLOW_ALIAS" "$EMAIL_CODE_OTP_FLOW_ALIAS" \
+    "$PASSKEY_OFFER_STEP" "$SKY_PASSWORD_FORM" "$STOCK_PASSWORD_FORM" <"$live_file" >"$plan_file"; then
+    status=0
+  else
+    status=$?
+  fi
+  if [[ $status != 0 ]]; then
+    printf "E-mail code sign-in of flow '%s' was not changed (status %s): the step above explains why\n" \
+      "$flow_alias" "$status" >&2
+    return 1
+  fi
+  ECF_FORMS=- ECF_NEXT=-
+  ECF_SUBFLOW=- ECF_SUBFLOW_REQ=- ECF_SUBFLOW_PRIO=-
+  ECF_STEP=- ECF_STEP_REQ=- ECF_STEP_PRIO=-
+  ECF_OTP=- ECF_OTP_REQ=- ECF_OTP_PRIO=-
+  ECF_OFFER=- ECF_OFFER_REQ=- ECF_OFFER_PRIO=-
+  ECF_COND=- ECF_COND_REQ=- ECF_COND_PRIO=-
+  ECF_OTP_FORM=- ECF_OTP_FORM_REQ=- ECF_OTP_FORM_PRIO=-
+  while IFS=$'\t' read -r kind a b c d; do
+    case $kind in
+      forms) ECF_FORMS=$a ECF_NEXT=$b ;;
+      subflow) ECF_SUBFLOW=$a ECF_SUBFLOW_REQ=$c ECF_SUBFLOW_PRIO=$d ;;
+      step) ECF_STEP=$a ECF_STEP_REQ=$b ECF_STEP_PRIO=$c ;;
+      otp) ECF_OTP=$a ECF_OTP_REQ=$c ECF_OTP_PRIO=$d ;;
+      offer) ECF_OFFER=$a ECF_OFFER_REQ=$b ECF_OFFER_PRIO=$c ;;
+      otp-condition) ECF_COND=$a ECF_COND_REQ=$b ECF_COND_PRIO=$c ;;
+      otp-form) ECF_OTP_FORM=$a ECF_OTP_FORM_REQ=$b ECF_OTP_FORM_PRIO=$c ;;
+    esac
+  done <"$plan_file"
+}
+
+email_code_parts_present() {
+  [[ $ECF_STEP != - && $ECF_OTP != - && $ECF_OFFER != - && $ECF_COND != - && $ECF_OTP_FORM != - ]]
+}
+
+email_code_parts_in_place() {
+  email_code_parts_present \
+    && [[ $ECF_STEP_REQ == REQUIRED && $ECF_OTP_REQ == CONDITIONAL && $ECF_OFFER_REQ == REQUIRED \
+      && $ECF_COND_REQ == REQUIRED && $ECF_OTP_FORM_REQ == REQUIRED ]]
+}
+
+# set_email_code_requirement FLOW_ALIAS ID WANTED PRIORITY [CURRENT LABEL]: makes the execution ID
+# WANTED with its own priority (Admin REST would otherwise move it to priority 0) and, with CURRENT
+# and LABEL, notes the change in the caller's changes array when there is one.
+set_email_code_requirement() {
+  local flow_alias=$1 id=$2 wanted=$3 priority=$4 current=${5:-} label=${6:-}
+  [[ $current != "$wanted" ]] || return 0
+  kcadm update "authentication/flows/$(flow_alias_path "$flow_alias")/executions" -r "$TARGET_REALM" -n \
+    -b "{\"id\":\"$id\",\"requirement\":\"$wanted\",\"priority\":$priority}" >/dev/null
+  if [[ -n $label ]]; then
+    changes+=("$label $current -> $wanted")
+  fi
 }
 
 # eskylab-login-ux 07: the realm's first broker login flow. With KEYCLOAK_YTU_FIRST_LOGIN=on the
@@ -3076,6 +3301,11 @@ if [[ $RECONCILE_ONLY == first-broker-login ]]; then
   printf 'First broker login flow is reconciled.\n'
   exit 0
 fi
+if [[ $RECONCILE_ONLY == email-code-login ]]; then
+  reconcile_email_code_login
+  printf 'E-mail code sign-in is reconciled.\n'
+  exit 0
+fi
 if [[ $RECONCILE_ONLY == service-roles ]]; then
   reconcile_core_service_roles
   if [[ $RECONCILE_CHECK == true ]]; then
@@ -3098,6 +3328,7 @@ retire_account_center_browser_flow
 # account-center-browser, the other flow that held a username/password form, is retired and
 # deleted just above; the realm browser flow is the only one left to swap.
 reconcile_password_form "$BROWSER_FLOW_ALIAS"
+reconcile_email_code_login
 reconcile_reset_choose_user
 reconcile_reset_otp_step
 reconcile_first_broker_login

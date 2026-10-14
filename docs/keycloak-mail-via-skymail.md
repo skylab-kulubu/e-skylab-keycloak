@@ -44,6 +44,8 @@ postanın kapsamıdır, istekle birlikte atılır ve birim testinde sunucu
 | `sendEmailUpdateConfirmation` | `email-update-confirmation.ftl` | `keycloak.update-email` | `emailUpdateConfirmationSubject` |
 | `sendConfirmIdentityBrokerLink` | `identity-provider-link.ftl` | `keycloak.idp-link` | `identityProviderLinkSubject` |
 | `send(...)` | `sky-personal-email-confirm.ftl` (`EmailResource.TEMPLATE`) | `keycloak.personal-email-confirm` | çağıranın konu anahtarı (`skyPersonalEmailConfirmSubject`) |
+| `send(...)` | `sky-login-code.ftl` (`EmailCodeAuthenticator.MAIL_TEMPLATE`) | `keycloak.login-code` | `skyLoginCodeSubject` |
+| `SkyMailNotice.sendLoginCodeAlarm` (şablon sağlayıcısız, düz metin yedekli) | — | `keycloak.login-code-alarm` | `skyLoginCodeAlarmHalfSubject` / `skyLoginCodeAlarmFullSubject` |
 | `sendExecuteActions` | `executeActions.ftl` | `keycloak.generic` | `executeActionsSubject` |
 | `sendEvent`, `sendOrgInviteEmail`, `sendVerifiableCredentialOffer`, eşlenmemiş her `send(...)` | ilgili `.ftl` | `keycloak.generic` | Keycloak'ın konu anahtarı |
 | `sendSmtpTestEmail` | `email-test.ftl` | — (SkyMail'e gitmez) | — |
@@ -52,6 +54,15 @@ Eşlenmeyen bir posta sessizce kaybolmaz: `keycloak.generic` şablonuyla, gerçe
 Keycloak konu anahtarını `subjectKey` değişkeninde taşıyarak gider. SMTP test
 postası realm'in kendi SMTP ayarlarını kanıtlamak içindir; SkyMail'e hiç
 uğramaz, bekleyen bir kayıt varsa da temizlenir.
+
+E-postayla girişin kodu (eskylab-login-ux 08) de genel `send(...)`'tan geçer ve
+`EmailCodeAuthenticator.MAIL_TEMPLATE` sabitiyle eşlenir; `code`, `codeExpirationMinutes` ve
+`purpose` (`login`; ileride `signup`, `link`) taşır. Posta istekten sonra arka planda, kendi
+oturumunda gönderilir; oturuma isteğin adresi (URI) verilir, token uç noktası ondan türetildiği için
+SkyMail yolu arka planda da çalışır. Genel günlük sınırın operatör alarmı bir kişiye değil bir
+adrese gider: FreeMarker şablonu kullanıcı istediği için şablon sağlayıcısına uğramaz, SkyMail
+mesajı oturuma doğrudan yazılır (`SkyMailNotice`) ve SkyMail yoksa göndericiye verilen düz metin
+SMTP'den çıkar; SkyMail şablonu yarı ve dolu durumu `subjectKey`'den ayırır.
 
 Hesap Merkezi'nin kişisel e-posta kodu (K3c) genel `send(...)` aşırı
 yüklemesinden geçer. Eşleme, sky-account'un postayı gönderdiği sabitin kendisini
@@ -63,15 +74,16 @@ link değil 6 haneli bir kod taşır: `code` ve `codeExpirationMinutes`.
 ## Gövde değişkenleri
 
 SkyMail konuyu ve gövdeyi Go `text/template` ile üretir; eksik bir değişken
-`<no value>` basar. Bu yüzden her posta sekiz değişkeni **her zaman** taşır,
+`<no value>` basar. Bu yüzden her posta dokuz değişkeni **her zaman** taşır,
 Keycloak bilmiyorsa boş string olarak:
 
 | Değişken | Kaynağı |
 | --- | --- |
 | `link` | Keycloak'ın eylem bağlantısı (olmayan postalarda boş) |
 | `linkExpirationMinutes` | Bağlantının dakika cinsinden ömrü (ondalık metin, yoksa boş) |
-| `code` | Kişisel e-posta doğrulama kodu, 6 rakam (yalnız `keycloak.personal-email-confirm`; diğerlerinde boş) |
+| `code` | Kişisel e-posta ya da e-postayla giriş kodu, 6 rakam (yalnız `keycloak.personal-email-confirm` ve `keycloak.login-code`; diğerlerinde boş) |
 | `codeExpirationMinutes` | Kodun dakika cinsinden ömrü (`10`; kod taşımayan postalarda boş) |
+| `purpose` | Giriş kodunun amacı: `login` (ileride `signup`, `link`); yalnız `keycloak.login-code`, diğerlerinde boş |
 | `firstName` | `user.firstName` |
 | `username` | `user.username` |
 | `realmDisplayName` | Realm görünen adı, yoksa Keycloak'ın kuralıyla baş harfi büyütülmüş realm adı |
@@ -86,7 +98,7 @@ POST {SKY_MAIL_BASE_URL}/v1/mail_tasks/single
   "recipient_email": "...",
   "recipient_full_name": "...",
   "body_variables": {
-    "link": "...", "linkExpirationMinutes": "60", "code": "", "codeExpirationMinutes": "",
+    "link": "...", "linkExpirationMinutes": "60", "code": "", "codeExpirationMinutes": "", "purpose": "",
     "firstName": "...",
     "username": "...", "realmDisplayName": "...", "subjectKey": "emailVerificationSubject"
   }

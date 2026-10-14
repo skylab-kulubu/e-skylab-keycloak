@@ -75,6 +75,23 @@ import java.util.TreeMap;
  *                               review profile step, with STEP twice, below the top level or after
  *                               the review profile step, or without a free priority for it is
  *                               refused with exit status 4.
+ *   email-code-flow STEP SUBFLOW OTP_SUBFLOW OFFER FORM...
+ *                               stdin is the flat execution list of the realm's browser flow; plans
+ *                               eskylab-login-ux 08's ALTERNATIVE subflow SUBFLOW (STEP, then the
+ *                               CONDITIONAL subflow OTP_SUBFLOW with conditional-user-configured and
+ *                               auth-otp-form, then OFFER) next to the subflow of the password form
+ *                               (the one REQUIRED execution of a FORM provider). Prints
+ *                               "forms<TAB>flowId|-<TAB>priority" (the flow SUBFLOW belongs in, "-" for
+ *                               the top level, and the priority to add it with), then
+ *                               "subflow<TAB>id|-<TAB>flowId|-<TAB>requirement|-<TAB>priority|-" and, for
+ *                               each part SUBFLOW has or lacks, "step", "otp" (with its flowId after the
+ *                               id), "otp-condition", "otp-form" and "offer" lines of the same form
+ *                               ("-" for a part that is missing). Refused with exit status 4: a flow
+ *                               without exactly one REQUIRED password form, a password form at the top
+ *                               level or in a subflow that is not ALTERNATIVE, a REQUIRED or CONDITIONAL
+ *                               execution next to that subflow (an ALTERNATIVE beside it would never
+ *                               run), SUBFLOW or a part twice, STEP outside SUBFLOW, an execution in
+ *                               SUBFLOW or OTP_SUBFLOW that is none of its parts, or parts out of order.
  *   config-value NAME VALUE     stdin is one authenticator config ({id, alias, config}); prints it
  *                               with config.NAME = VALUE and exits 3 when that changes it, prints
  *                               nothing and exits 0 when config.NAME is already VALUE.
@@ -105,7 +122,8 @@ import java.util.TreeMap;
  *                               Otherwise prints why on stdout and exits 4.
  *
  * Exit status 0 means "printed successfully", 3 means "changed" (user-profile and config-value),
- * 4 "refused" (password-form, first-broker-login, same-shape and otp-guard) and 1 an invalid input. Nothing
+ * 4 "refused" (password-form, first-broker-login, email-code-flow, same-shape and otp-guard) and 1 an
+ * invalid input. Nothing
  * here prints secrets: all inputs are configuration documents.
  */
 public final class ReconcileJson {
@@ -135,6 +153,7 @@ public final class ReconcileJson {
             case "user-profile" -> System.exit(userProfile(requireFile(args), readStdin(), out));
             case "password-form" -> System.exit(passwordForm(args, readStdin(), out));
             case "first-broker-login" -> System.exit(firstBrokerLogin(args, readStdin(), out));
+            case "email-code-flow" -> System.exit(emailCodeFlow(args, readStdin(), out));
             case "config-value" -> System.exit(configValue(args, readStdin(), out));
             case "role-groups" -> roleGroups(requireFile(args), out);
             case "same-shape" -> System.exit(sameShape(args, readStdin()));
@@ -149,6 +168,7 @@ public final class ReconcileJson {
                 + "  |  ReconcileJson field NAME  |  ReconcileJson role-attribute NAME"
                 + "  |  ReconcileJson realm-attribute NAME VALUE"
                 + "  |  ReconcileJson password-form FROM TO  |  ReconcileJson first-broker-login STEP"
+                + "  |  ReconcileJson email-code-flow STEP SUBFLOW OTP_SUBFLOW OFFER FORM..."
                 + "  |  ReconcileJson config-value NAME VALUE  |  ReconcileJson same-shape OTHER [STEP]"
                 + "  |  ReconcileJson otp-guard STEP  |  ReconcileJson role-groups FILE");
         System.exit(1);
@@ -764,6 +784,156 @@ public final class ReconcileJson {
                     + verification.path("priority").asInt() + "\t" + verification.path("requirement").asText());
         }
         return 0;
+    }
+
+    // ------------------------------------------------------------------ email-code-flow
+
+    /** One execution of the flat list with the flow it sits in ("-" for the top level). */
+    private record Node(String id, String parent, int priority, String requirement, String provider,
+            boolean subFlow, String flowId, String alias) {
+
+        String describe() {
+            return subFlow ? "subflow '" + alias + "'" : provider;
+        }
+    }
+
+    private static int emailCodeFlow(String[] args, JsonNode executions, PrintStream out) {
+        if (args.length < 6 || !executions.isArray()) {
+            usage();
+        }
+        String step = args[1];
+        String subflowAlias = args[2];
+        String otpAlias = args[3];
+        String offer = args[4];
+        List<String> forms = List.of(args).subList(5, args.length);
+        List<Node> nodes = new ArrayList<>();
+        Map<Integer, String> flowAtLevel = new TreeMap<>();
+        for (JsonNode node : executions) {
+            int level = node.path("level").asInt();
+            String parent = level == 0 ? "-" : flowAtLevel.getOrDefault(level - 1, "?");
+            boolean subFlow = node.path("authenticationFlow").asBoolean(false);
+            if (subFlow) {
+                flowAtLevel.put(level, node.path("flowId").asText());
+            }
+            nodes.add(new Node(node.path("id").asText(), parent, node.path("priority").asInt(),
+                    node.path("requirement").asText(), node.path("providerId").asText(""), subFlow,
+                    node.path("flowId").asText(""), node.path("displayName").asText("")));
+        }
+
+        List<Node> passwordForms = nodes.stream()
+                .filter(node -> forms.contains(node.provider()) && "REQUIRED".equals(node.requirement())).toList();
+        if (passwordForms.size() != 1) {
+            return refuse("expected exactly one REQUIRED password form (" + String.join(", ", forms) + "), found "
+                    + passwordForms.size());
+        }
+        String passwordFlow = passwordForms.get(0).parent();
+        if ("-".equals(passwordFlow) || "?".equals(passwordFlow)) {
+            return refuse("the password form is not in a subflow, so there is no alternative to put the e-mail code next to");
+        }
+        Node passwordSubflow = nodes.stream().filter(node -> node.subFlow() && node.flowId().equals(passwordFlow))
+                .findFirst().orElse(null);
+        if (passwordSubflow == null || !"ALTERNATIVE".equals(passwordSubflow.requirement())) {
+            return refuse("the subflow of the password form is "
+                    + (passwordSubflow == null ? "unknown" : passwordSubflow.requirement()) + ", not ALTERNATIVE");
+        }
+        String target = passwordSubflow.parent();
+        List<Node> siblings = children(nodes, target);
+        List<Node> subflows = siblings.stream().filter(node -> node.subFlow() && node.alias().equals(subflowAlias)).toList();
+        if (subflows.size() > 1) {
+            return refuse("subflow '" + subflowAlias + "' is there " + subflows.size() + " times");
+        }
+        Node subflow = subflows.isEmpty() ? null : subflows.get(0);
+        for (Node sibling : siblings) {
+            if (sibling != subflow && !"ALTERNATIVE".equals(sibling.requirement()) && !"DISABLED".equals(sibling.requirement())) {
+                return refuse(sibling.describe() + " next to the password form's subflow is " + sibling.requirement()
+                        + ": an ALTERNATIVE beside it would never run");
+            }
+        }
+        for (Node node : nodes) {
+            if (step.equals(node.provider()) && (subflow == null || !node.parent().equals(subflow.flowId()))) {
+                return refuse(step + " is in the flow outside subflow '" + subflowAlias + "'");
+            }
+        }
+        int next = siblings.stream().mapToInt(Node::priority).max().orElse(0) + 10;
+        // Printed only once the whole plan stands, so a refusal prints nothing on stdout.
+        List<String> plan = new ArrayList<>();
+        plan.add("forms\t" + target + "\t" + next);
+        plan.add(line("subflow", subflow, true));
+        if (subflow == null) {
+            plan.forEach(out::println);
+            return 0;
+        }
+
+        Node stepNode = null;
+        Node otpNode = null;
+        Node offerNode = null;
+        List<Node> parts = children(nodes, subflow.flowId());
+        for (Node part : parts) {
+            if (!part.subFlow() && step.equals(part.provider()) && stepNode == null) {
+                stepNode = part;
+            } else if (part.subFlow() && otpAlias.equals(part.alias()) && otpNode == null) {
+                otpNode = part;
+            } else if (!part.subFlow() && offer.equals(part.provider()) && offerNode == null) {
+                offerNode = part;
+            } else {
+                return refuse("subflow '" + subflowAlias + "' holds " + part.describe()
+                        + ", which this reconciler does not put there; inspect it in the Admin Console");
+            }
+        }
+        if (!inOrder(stepNode, otpNode, offerNode)) {
+            return refuse("the parts of subflow '" + subflowAlias + "' are not in the order " + step + ", subflow '"
+                    + otpAlias + "', " + offer);
+        }
+        plan.add(line("step", stepNode, false));
+        plan.add(line("otp", otpNode, true));
+        plan.add(line("offer", offerNode, false));
+        Node condition = null;
+        Node otpForm = null;
+        if (otpNode != null) {
+            for (Node part : children(nodes, otpNode.flowId())) {
+                if (!part.subFlow() && "conditional-user-configured".equals(part.provider()) && condition == null) {
+                    condition = part;
+                } else if (!part.subFlow() && "auth-otp-form".equals(part.provider()) && otpForm == null) {
+                    otpForm = part;
+                } else {
+                    return refuse("subflow '" + otpAlias + "' holds " + part.describe()
+                            + ", which this reconciler does not put there; inspect it in the Admin Console");
+                }
+            }
+            if (!inOrder(condition, otpForm)) {
+                return refuse("subflow '" + otpAlias + "' does not ask the condition before the code");
+            }
+        }
+        plan.add(line("otp-condition", condition, false));
+        plan.add(line("otp-form", otpForm, false));
+        plan.forEach(out::println);
+        return 0;
+    }
+
+    private static List<Node> children(List<Node> nodes, String flow) {
+        return nodes.stream().filter(node -> node.parent().equals(flow)).toList();
+    }
+
+    /** Whether the parts that are there have rising priorities in the given order. */
+    private static boolean inOrder(Node... parts) {
+        int last = Integer.MIN_VALUE;
+        for (Node part : parts) {
+            if (part != null) {
+                if (part.priority() <= last) {
+                    return false;
+                }
+                last = part.priority();
+            }
+        }
+        return true;
+    }
+
+    private static String line(String kind, Node node, boolean withFlow) {
+        if (node == null) {
+            return kind + "\t-" + (withFlow ? "\t-" : "") + "\t-\t-";
+        }
+        return kind + "\t" + node.id() + (withFlow ? "\t" + node.flowId() : "") + "\t" + node.requirement()
+                + "\t" + node.priority();
     }
 
     // ------------------------------------------------------------------ same-shape

@@ -397,6 +397,33 @@ eklenmez. Harness
 OBS; Microsoft'a gidilmez, yalnız Keycloak'ın yönlendirmesi okunur); optimize imajda
 `run-integration.sh`'ın `login` grubu da aynı yönlendirmeye bakar.
 
+SPI 1.21.0'dan sonra "E-postayla devam et": herkes e-postasına gelen 6 haneli kodla girebilir
+(eskylab-login-ux bilet 08, ADR-0063 karar 2, CONTEXT "Login code"). Bunu SPI'daki `sky-email-code`
+(`com.skylab.account.EmailCodeAuthenticator`) yapar: kişi e-posta adresini ya da kullanıcı adını yazar,
+kod hesabın birincil e-postasına (birincili olmayan YTÜ hesabında okul adresine) gider, hangi
+tanımlayıcı yazılmış olursa olsun (parolalı girişin `LoginIdentifiers` kuralı). Adres sayfası her
+girdide aynıdır; hiçbir hesaba çıkmayan, iki kişiye çıkan ya da kapalı bir hesaba çıkan girdi de aynı
+kod sayfasını ve hiç postalanmayan bir kodu alır, posta istekten sonra arka planda gider (yanıt süresi
+aynı). Kod 6 hane, 10 dakika, 5 yanlışta ölür, tek kullanım, yalnız isteyen giriş oturumunda (tarayıcı
+ve sekme) çalışır, yalnız tuzlu özeti saklanır (`LoginCodes`, Hesap Merkezi'nin koduyla ortak
+`SingleUseCodes`); yeni kod eskisini geçersiz kılar, "yeniden gönder" 60 saniye sonra açılır. Yanlış kod
+Keycloak'ın kaba kuvvet sayacına kişinin hatası olarak yazılır; kilitli ya da kapalı kişi doğru kodla da
+giremez. Doğru koddan sonra realm'in koşullu OTP'si gelir: TOTP'si olan kişiye TOTP yine sorulur
+(ADR-0063 S6). Gönderim sınırı: giriş oturumu başına saatte 5, IP sınıfı başına saatte 100, adres başına
+15 dakikada 3 ve günde 10, realm genelinde günde 500 (`SKY_EMAIL_CODE_DAILY_LIMIT`). Adres sınırını aşan
+istekte posta gitmez, ekran aynı kalır, daha önce gönderilmiş kod çalışmaya devam eder; genel sınır giriş
+kodunu durdurmaz, yarısında ve dolduğunda operatöre posta (`SKY_EMAIL_CODE_ALARM_EMAIL`; yoksa yalnız
+`sky_email_code_budget` log satırı) gider. Posta SkyMail'in `keycloak.login-code` şablonuyla (SkyMail
+yoksa SPI'nın FreeMarker kopyası) çıkar: konuda kod yok, bağlantı yok. Olaylar: başarılı giriş
+Keycloak'ın `LOGIN` olayı, ayrıntısı `sky_method=email_code`; her ret `LOGIN_ERROR`, ayrıntısı
+`sky_email_code` (`wrong_code`, `rate_limited`, `rate_limited_address`, `account_locked`, …), IP'siz
+ve yazılan tanımlayıcı olmadan (olaylar jboss-logging ile sunucu günlüğüne de düşer). Uzlaştırıcı
+`KEYCLOAK_EMAIL_CODE_LOGIN=on` realm'in tarayıcı akışında parola alt akışının yanına ALTERNATIVE
+`sky email code` alt akışını kurar (`sky-email-code`, koşullu OTP, passkey önerisi), `off` onu
+DISABLED yapar (geri dönüş), varsayılan `keep` dokunmaz; operatör adımı
+`KEYCLOAK_RECONCILE_ONLY=email-code-login`. Ayrıntı, üretim sırası ve geri dönüş: runbook §29. Harness
+`tests/login-by-email-code.sh` tek başına çalışır (stok imaj, SPI jar'ı, SkyMail fixture'ı, Mailpit).
+
 Hesap silmede (ADR-0051) core, SkyMail, CMS ve Forms'a ayrı bir gizli service
 account istemcisinden, `core-erasure`'dan aldığı token'larla gider. Operatör
 istemciyi, üç isteğe bağlı `account-erase-*` kapsamını ve üç erase rolünü

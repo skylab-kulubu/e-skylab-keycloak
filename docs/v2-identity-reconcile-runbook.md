@@ -3347,12 +3347,15 @@ browser plus passkey forms (ALTERNATIVE)
   | --- | --- | --- |
   | Giriş oturumu | saatte 5 | sayfa `rate_limited` der |
   | IP sınıfı | saatte 100 | sayfa `rate_limited` der |
-  | Adres | 15 dakikada 3, günde 10 | posta gitmez, ekran aynı, gönderilmiş kod çalışmaya devam eder, olay yazılır |
+  | Adres | 15 dakikada 3, günde 10 | posta gitmez, ekran aynı, oturumun eski kodu yerini postalanmayan yeni koda bırakır (B3), olay yazılır |
   | Realm geneli | günde 500 (`SKY_EMAIL_CODE_DAILY_LIMIT`, UTC günü) | giriş kodu durmaz; yarısında ve dolduğunda operatör alarmı |
 
   Spec §7.2'nin önerisinden bir sapma: IP sınıfı saatte 20 değil 100'dür (§23'ün öneri bütçesiyle aynı
   gerekçe: kulüp tanıtım gününde tek kampüs ağı). Adres bütçesi hesabı olmayan girdi için de yazılan
-  adres üzerinden harcanır (ekran ve iş aynı kalsın diye).
+  adres üzerinden harcanır (ekran ve iş aynı kalsın diye). Bütçe dolunca gönderilmiş kodun çalışmaya
+  devam etmesi kolaylığı bilerek bırakıldı (güvenlik incelemesi B3): eski kod kalsaydı, bir yanlış
+  denemeden sonra gösterilen kalan hak (3 ya da 4), iki tanımlayıcının (ör. kullanıcı adı ve okul
+  adresi) aynı hesabın kod adresine çıkıp çıkmadığını söylerdi.
 - Alarm: genel bütçenin ortadaki ve son dilimini alan istek, günde birer kez,
   `sky_email_code_budget level=half|full daily_limit=… realm=…` WARN satırı yazar ve alarm grubunun
   (`SKY_EMAIL_CODE_ALARM_GROUP`, varsayılan `/ADMIN`; Yusuf'un kararı 2026-10-15: "bana ya da adminlere")

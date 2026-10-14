@@ -411,7 +411,8 @@ Keycloak'ın kaba kuvvet sayacına kişinin hatası olarak yazılır; kilitli ya
 giremez. Doğru koddan sonra realm'in koşullu OTP'si gelir: TOTP'si olan kişiye TOTP yine sorulur
 (ADR-0063 S6). Gönderim sınırı: giriş oturumu başına saatte 5, IP sınıfı başına saatte 100, adres başına
 15 dakikada 3 ve günde 10, realm genelinde günde 500 (`SKY_EMAIL_CODE_DAILY_LIMIT`). Adres sınırını aşan
-istekte posta gitmez, ekran aynı kalır, daha önce gönderilmiş kod çalışmaya devam eder; genel sınır giriş
+istekte posta gitmez, ekran aynı kalır, oturumun eski kodu da yerini postalanmayan yeni koda bırakır
+(güvenlik incelemesi B3: kalan deneme sayısı iki tanımlayıcının aynı hesaba çıktığını söylemesin); genel sınır giriş
 kodunu durdurmaz, yarısında ve dolduğunda `/ADMIN` grubunun etkin ve adresi olan üyelerine posta
 (`SKY_EMAIL_CODE_ALARM_GROUP`, `off` ile yalnız `sky_email_code_budget` log satırı) gider. Posta SkyMail'in `keycloak.login-code` şablonuyla (SkyMail
 yoksa SPI'nın FreeMarker kopyası) çıkar: konuda kod yok, bağlantı yok. Olaylar: başarılı giriş

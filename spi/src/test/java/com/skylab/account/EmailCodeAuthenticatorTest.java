@@ -799,7 +799,7 @@ class EmailCodeAuthenticatorTest {
     // Spec §7.2: past three codes a quarter of an hour one mailbox gets no more; the page stays
     // the same and the code already mailed keeps working.
     @Test
-    void theFourthCodeToOneAddressInAQuarterHourIsNotMailedAndTheThirdStillWorks() {
+    void theFourthCodeToOneAddressInAQuarterHourIsNotMailedAndReplacesTheThird() {
         person("ada", "ada", "ada@example.com");
         Time.setOffset(-(Time.currentTime() % (15 * 60)));
         for (int i = 0; i < RateLimiter.LOGIN_CODE_ADDRESS.maxAttempts(); i++) {
@@ -816,7 +816,59 @@ class EmailCodeAuthenticatorTest {
         assertEquals(mailedPage, browser.page, "the page must not tell that nothing was mailed");
         assertEquals("rate_limited_address", browser.lastFailure().get(EmailCodeAuthenticator.EVENT_DETAIL));
         browser.verify(third);
-        assertTrue(browser.succeeded, "the code already mailed must keep working");
+        assertFalse(browser.succeeded, "a new code replaces the old one, mailed or not (review B3)");
+        assertEquals("wrong_code", browser.error());
+        assertEquals("4", browser.shown(EmailCodeAuthenticator.ATTEMPTS_LEFT_ATTRIBUTE), "a fresh code's tries");
+    }
+
+    /**
+     * Security review B3: session S asks a code for one identifier and spends a try; two other
+     * sessions ask for another identifier; S asks again and spends a try. Had S kept its old code
+     * once the address budget was full, the tries left would say whether the two identifiers name
+     * one account (3) or not (4).
+     */
+    private String triesLeftAfterAnotherIdentifierSpentTheBudget(String first, String second) {
+        Time.setOffset(-(Time.currentTime() % (15 * 60)));
+        Browser asker = new Browser("root-s", "198.51.100.1");
+        asker.send(first);
+        asker.verify(other(""));
+        for (int i = 0; i < 2; i++) {
+            new Browser("root-o" + i, "198.51.100.2" + i).send(second);
+        }
+        Time.setOffset(Time.getOffset() + EmailCodeAuthenticator.RESEND_SECONDS);
+        asker.resend();
+        asker.verify(other(""));
+        assertEquals("wrong_code", asker.error());
+        return (String) asker.shown(EmailCodeAuthenticator.ATTEMPTS_LEFT_ATTRIBUTE);
+    }
+
+    @Test
+    void theTriesLeftDoNotTellThatTwoIdentifiersNameOneAccount() {
+        person("ada", "ada", "ada@example.com");
+        String oneAccount = triesLeftAfterAnotherIdentifierSpentTheBudget("ada@example.com", "ada");
+        store.clear();
+        String nobody = triesLeftAfterAnotherIdentifierSpentTheBudget("x@example.com", "y@example.com");
+
+        assertEquals(nobody, oneAccount);
+        assertEquals("4", oneAccount);
+    }
+
+    @Test
+    void anIdentifierThatNamesNobodySpendsTheAddressBudgetToo() {
+        Time.setOffset(-(Time.currentTime() % (15 * 60)));
+        List<Browser> browsers = new ArrayList<>();
+        for (int i = 0; i < 4; i++) {
+            Browser other = new Browser("root-" + i, "198.51.100." + i);
+            other.send("nobody@example.com");
+            browsers.add(other);
+        }
+
+        for (int i = 0; i < 3; i++) {
+            assertTrue(browsers.get(i).failureDetails.isEmpty(), "request " + (i + 1) + " is within the budget");
+        }
+        assertEquals("rate_limited_address", browsers.get(3).lastFailure().get(EmailCodeAuthenticator.EVENT_DETAIL),
+                "the same work and the same event as for an account");
+        assertTrue(mail.sent.isEmpty());
     }
 
     @Test
@@ -881,6 +933,10 @@ class EmailCodeAuthenticatorTest {
 
         List<String> keys() {
             return new ArrayList<>(entries.keySet());
+        }
+
+        void clear() {
+            entries.clear();
         }
 
         long claimedSlots() {

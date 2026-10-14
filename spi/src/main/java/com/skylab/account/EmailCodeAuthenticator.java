@@ -55,8 +55,9 @@ import org.keycloak.sessions.AuthenticationSessionModel;
  *
  * <p>Sending is limited per sign-in session, per IP class, per address (a quarter of an hour and a
  * day) and overall per day ({@link RateLimiter}, spec §7.2). Past the session or IP class budget the
- * page says so; past the address budget nothing is mailed, the page stays the same and a code
- * already mailed to the address keeps working. The overall budget never stops a sign-in code: it
+ * page says so; past the address budget nothing is mailed and the page stays the same, and the new
+ * code that is never mailed replaces the session's old one like any other (security review B3: a
+ * kept code's tries left would link two identifiers to one account). The overall budget never stops a sign-in code: it
  * alarms the operator at its half and when it is used up. Budget keys are keyed hashes
  * ({@link BudgetKeys}); the IP itself is written nowhere.
  *
@@ -252,8 +253,8 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
 
     /**
      * Whom the identifier names, where their codes go, the address budgets, then this session's new
-     * code: mailed to that address, or never mailed when there is nobody to mail it to. The page is
-     * the code page either way.
+     * code: mailed to that address, or never mailed when there is nobody to mail it to or the
+     * address budget is spent. The page is the code page either way.
      */
     private void issue(AuthenticationFlowContext context, String identifier) {
         KeycloakSession session = context.getSession();
@@ -267,22 +268,16 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
 
         // Charged for nobody too, under what was typed, so the work and the answer are the same.
         String budgetAddress = PersonalEmailProof.normalise(address != null ? address : identifier);
-        if (!claimAddressBudgets(context, budgetAddress)) {
+        boolean withinBudget = claimAddressBudgets(context, budgetAddress);
+        if (!withinBudget) {
             failure(context, user, "rate_limited_address", RATE_LIMITED_ERROR);
-            // A code already mailed to this identifier keeps working; anything else is replaced by
-            // a code for nobody, as for any other answer that mails nothing.
-            boolean sameIdentifier = identifier.equals(authSession.getAuthNote(IDENTIFIER_NOTE));
-            if (!sameIdentifier || codes.peek(previousHandle) == null) {
-                codes.discard(previousHandle);
-                authSession.setAuthNote(HANDLE_NOTE, newHandle(codes, "", ""));
-            }
-            remember(authSession, identifier);
-            context.challenge(codePage(context, null, null));
-            return;
         }
 
+        // A new code always replaces the old one, mailed or not: had a code already mailed kept
+        // working past the address budget, its tries left would tell whether two identifiers name
+        // one account (security review B3).
         codes.discard(previousHandle);
-        if (user != null && address != null) {
+        if (withinBudget && user != null && address != null) {
             String handle = handle();
             String code = codes.issue(handle, user.getId(), address);
             authSession.setAuthNote(HANDLE_NOTE, handle);

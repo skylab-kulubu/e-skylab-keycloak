@@ -6,37 +6,48 @@
 # volume, copies config/ into the container and runs the scripts there the way an operator does;
 # tokens are real password grants of a harness login client (full scope: every client's roles).
 #
-# Fixtures: realm e-skylab in production's shape before this change: core's 14 write roles of the
-# contract table seeded once (marked) to /ADMIN, /UYELER/YK and /UYELER/DK; SkyMail's two Privileged
-# roles seeded (system-mails:read to the three, announcements:send to ADMIN and YK); the event site
-# client frontend-artlab with cms:access (a composite of content:read and content:write) on the three
-# and client:admin on ADMIN and YK; forms with skyforms:* on /ADMIN and /UYELER/DK; the Java era's realm
-# role DK on /UYELER/DK; a YK person and a DK person. Realm e-skylab-sandbox has no DK group.
+# Fixtures: realm e-skylab in production's shape before this change: core's 14 roles of the contract
+# table (13 write roles and url:access) seeded once (marked) to /ADMIN, /UYELER/YK and /UYELER/DK;
+# SkyMail's two Privileged roles seeded (system-mails:read to the three, announcements:send to ADMIN
+# and YK) and skymail:mails:approve on DK by hand; the event site client frontend-artlab with
+# cms:access (a composite of content:read and content:write) on the three and client:admin on ADMIN and
+# YK; forms with skyforms:* on /ADMIN and /UYELER/DK and the Forms seat skyforms:access on DK; the Java
+# era's realm role DK on /UYELER/DK; a subgroup /UYELER/DK/ALT; a YK person, a DK person, a person in
+# DK and YK and a person in DK's subgroup. Realm e-skylab-sandbox has no DK group.
 #
 # What it proves:
 #   - every realm but e-skylab and e-skylab-sandbox is refused before a login (exit 2), and so are an
 #     unreadable backup, a backup line that is no DK write role mapping (another group, another
-#     client's role, realm-management) and --forms or --backup-file next to --restore;
+#     client's role, realm-management, url:access, skyforms:access) and --forms or --backup-file next
+#     to --restore;
 #   - before the core-roles step DK holds no core/global:read: the dry run names the step as a
 #     PROBLEM (exit 1) and nothing is written;
 #   - the reconciler's core-roles step (operator session) creates core/global:read and audit:read and
 #     forms/skyforms:read-all and seeds them once: global:read and skyforms:read-all to /UYELER/DK
 #     only, audit:read to /ADMIN, /UYELER/YK and /UYELER/DK; the write roles' marks keep them where
 #     they are; a second run seeds nothing;
-#   - dk-read-only.sh --check lists the 14 core roles and frontend-artlab/cms:access to take away,
-#     content:read to grant in its place, the kept read roles, skyforms:* kept for Forms and the realm
-#     role DK as a WARNING, and writes nothing (no admin event);
-#   - --apply writes the backup, takes exactly that away and grants content:read; ADMIN's and YK's
-#     mappings do not change; the DK person's token then carries core [audit:read, global:read],
-#     frontend-artlab [content:read], skymail [system-mails:read], forms [skyforms:*,
-#     skyforms:read-all]; the YK person's is unchanged; --check then says "write roles held: none"
-#     with 0 changes, and a second --apply writes nothing (no admin event, no backup);
+#   - dk-read-only.sh --check lists the 13 core write roles, frontend-artlab/cms:access and
+#     skymail:mails:approve to take away, content:read to grant in its place, the kept read roles, the
+#     kept app roles (url:access, skyforms:access: Yusuf's Y1 and Y5), skyforms:* kept for Forms and
+#     the realm role DK as a WARNING, and writes nothing (no admin event);
+#   - --apply names its backup in its first line, writes it (mode 0600) before any change, takes
+#     exactly that away and grants content:read; ADMIN's and YK's mappings do not change; the DK
+#     person's token then carries core [audit:read, global:read, url:access], frontend-artlab
+#     [content:read], skymail [system-mails:read], forms [skyforms:*, skyforms:access,
+#     skyforms:read-all]; the member of DK's subgroup carries the same core roles; the YK person's
+#     token only gains audit:read; the person in DK and YK keeps YK's write roles; --check then says
+#     "write roles held: none" with 0 changes, and a second --apply writes nothing (no admin event,
+#     no backup);
 #   - --restore BACKUP is a dry run by default and with --apply grants every mapping back (content:read
 #     stays); a second restore writes nothing;
-#   - --forms takes skyforms:* away too, only while DK holds skyforms:read-all (else a PROBLEM);
-#   - a write role DK still gets through a composite role is a WARNING; a default group under DK and a
-#     failed read (injected: the DK group, its role mappings) stop the run with exit 1 and write
-#     nothing; the sandbox realm without DK has nothing to do.
+#   - --forms takes skyforms:* away too (skyforms:access stays), only while DK holds
+#     skyforms:read-all (else a PROBLEM);
+#   - a write role DK still gets through a composite role or a parent group (/UYELER), and one a
+#     subgroup of DK holds directly, are WARNINGs; the /DK root is handled next to /UYELER/DK; a
+#     default group under DK and a failed read (injected: the DK group, its role mappings) stop the run
+#     with exit 1 and write nothing; a failed write (injected) stops it with exit 1, the backup named,
+#     and --restore puts back what was taken; without --backup-file the backup gets its default name;
+#     the sandbox realm without DK has nothing to do.
 # Requirements on the host: docker, curl, jq. DK_READ_ONLY_TEST_PORT (default 18097),
 # DK_READ_ONLY_TEST_CONTAINER (default dk-read-only-test-<pid>).
 # shellcheck disable=SC2016  # jq programs name jq variables
@@ -55,11 +66,17 @@ IN_CONTAINER_CONFIG=/tmp/config
 REALM=e-skylab
 SANDBOX=e-skylab-sandbox
 DK=/UYELER/DK
-# core's write roles of the contract table (core-backend docs/authz-roles.md: the 12 write roles,
-# url:moderator and url:access), as the core-roles step seeded them to ADMIN, YK and DK.
-CORE_WRITE_ROLES=(event:manage season:manage ticket:manage ticket:validate competitor:manage
+# core's roles of the contract table but global:read, as the core-roles step seeded them to ADMIN, YK
+# and DK.
+CORE_SEEDED_ROLES=(event:manage season:manage ticket:manage ticket:validate competitor:manage
   competition:manage media:manage media:private:read certificate:manage users:manage groups:manage
   github:activity:read url:moderator url:access)
+# Of them, the ones DK loses: all but url:access (the holder's own short links, Yusuf's Y1).
+CORE_REMOVED_ROLES=(event:manage season:manage ticket:manage ticket:validate competitor:manage
+  competition:manage media:manage media:private:read certificate:manage users:manage groups:manage
+  github:activity:read url:moderator)
+# DK's direct mappings once the step has run (the realm role DK stays: rol-temizligi F3).
+DK_AFTER='["core/audit:read","core/global:read","core/url:access","forms/skyforms:*","forms/skyforms:access","forms/skyforms:read-all","frontend-artlab/content:read","realm/DK","skymail/skymail:system-mails:read"]'
 OLD_MARK='2026-10-04T09:00:00Z /ADMIN,/UYELER/YK,/UYELER/DK'
 CURRENT_STAGE=startup
 
@@ -227,7 +244,7 @@ reject_line "$refused" 'realm=' 'the script went on in master'
 refused=$(run_expecting 2 "$REALM" --restore /tmp/no-such-backup.tsv)
 expect_line "$refused" 'is not readable' 'an unreadable backup was not refused'
 for line in '/ADMIN\tcore\tevent:manage' '/UYELER/DK\trealm-management\tmanage-users' '/UYELER/DK\tcore\tglobal:read' \
-  '/UYELER/DK\tcore' '/UYELER/DK/SUB\tcore\tevent:manage'; do
+  '/UYELER/DK\tcore' '/UYELER/DK/SUB\tcore\tevent:manage' '/UYELER/DK\tcore\turl:access' '/UYELER/DK\tforms\tskyforms:access'; do
   printf '# dk-read-only backup\n%b\n' "$line" | docker exec -i "$CONTAINER" sh -c 'cat > /tmp/bad-backup.tsv'
   refused=$(run_expecting 2 "$REALM" --restore /tmp/bad-backup.tsv --apply)
   expect_line "$refused" 'is not a dk-read-only backup' "the backup line $line was not refused"
@@ -250,10 +267,10 @@ for client in core forms frontend-artlab; do
     -s serviceAccountsEnabled=true >/dev/null
 done
 kcadm create clients -r "$REALM" -s clientId=skymail -s publicClient=true >/dev/null
-for role in "${CORE_WRITE_ROLES[@]}" url:create; do
+for role in "${CORE_SEEDED_ROLES[@]}" url:create; do
   kcadm create "clients/$(client_uuid "$REALM" core)/roles" -r "$REALM" -s "name=$role" >/dev/null
 done
-for role in skymail:access skymail:system-mails:read skymail:announcements:send; do
+for role in skymail:access skymail:system-mails:read skymail:announcements:send skymail:mails:approve; do
   kcadm create "clients/$(client_uuid "$REALM" skymail)/roles" -r "$REALM" -s "name=$role" >/dev/null
 done
 for role in 'skyforms:*' skyforms:access; do
@@ -270,9 +287,10 @@ create_group "$REALM" '' ADMIN
 create_group "$REALM" '' UYELER
 create_group "$REALM" /UYELER YK
 create_group "$REALM" /UYELER DK
+create_group "$REALM" "$DK" ALT
 create_group "$SANDBOX" '' ADMIN
 for path in /ADMIN /UYELER/YK "$DK"; do
-  grant "$path" core "${CORE_WRITE_ROLES[@]}"
+  grant "$path" core "${CORE_SEEDED_ROLES[@]}"
   grant "$path" skymail skymail:system-mails:read
   grant "$path" frontend-artlab cms:access
 done
@@ -281,13 +299,19 @@ for path in /ADMIN /UYELER/YK; do
   grant "$path" frontend-artlab client:admin
 done
 for path in /ADMIN "$DK"; do grant "$path" forms 'skyforms:*'; done
+grant "$DK" forms skyforms:access
+grant "$DK" skymail skymail:mails:approve
 kcadm create "groups/$(group_id "$REALM" "$DK")/role-mappings/realm" -r "$REALM" \
   -b "$(kcadm get roles/DK -r "$REALM" | jq -c '[{id, name}]')" >/dev/null
-for role in "${CORE_WRITE_ROLES[@]}"; do mark core "$role" "$OLD_MARK"; done
+for role in "${CORE_SEEDED_ROLES[@]}"; do mark core "$role" "$OLD_MARK"; done
 mark skymail skymail:system-mails:read "$OLD_MARK"
 mark skymail skymail:announcements:send '2026-10-13T09:00:00Z /ADMIN,/UYELER/YK'
 make_person yk-person /UYELER/YK
 make_person dk-person "$DK"
+make_person dk-sub-person "$DK/ALT"
+make_person dk-yk-person "$DK"
+kcadm update "users/$(kcadm get users -r "$REALM" -q username=dk-yk-person -q exact=true | jq -r '.[0].id')/groups/$(group_id "$REALM" /UYELER/YK)" \
+  -r "$REALM" -n -b '{}' >/dev/null
 yk_token_before=$(token_roles yk-person)
 
 # ---------------------------------------------------------------------------------------------------
@@ -332,45 +356,58 @@ printf '    core-roles: global:read and skyforms:read-all to DK, audit:read to A
 CURRENT_STAGE='dk-read-only.sh --check plans and writes nothing'
 before=$(events)
 checked=$(run_expecting 0 "$REALM")
-for role in "${CORE_WRITE_ROLES[@]}"; do
+for role in "${CORE_REMOVED_ROLES[@]}"; do
   expect_line "$checked" "would take core/$role away from $DK" "core/$role was not planned away"
 done
+reject_line "$checked" 'core/url:access away' 'url:access was planned away (Y1: DK keeps its own short links)'
+reject_line "$checked" 'forms/skyforms:access away' 'the Forms seat was planned away'
 expect_line "$checked" "would take frontend-artlab/cms:access away from $DK" 'the site editor role was not planned away'
+expect_line "$checked" "would take skymail/skymail:mails:approve away from $DK" 'the SkyMail approval role was not planned away'
+expect_line "$checked" "$DK: app roles kept (the holder's own, core's app roles): core/url:access, forms/skyforms:access" 'the app roles were not kept'
 expect_line "$checked" "would grant frontend-artlab/content:read to $DK (in place of cms:access)" 'content:read was not planned in its place'
 expect_line "$checked" "$DK: read roles kept: core/audit:read, core/global:read, forms/skyforms:read-all, skymail/skymail:system-mails:read" 'the read roles were not listed'
 expect_line "$checked" "NOTE: $DK: Forms roles kept until forms-backend reads forms/skyforms:read-all: forms/skyforms:*" 'the Forms roles were not kept'
 expect_line "$checked" "WARNING: $DK holds realm/DK, which this step does not sort; kept" 'the realm role was not a WARNING'
 expect_line "$checked" "$DK: write roles held: 15 (" 'the write roles were not counted'
 expect_line "$checked" 'check: 16 change(s) pending, 1 warning(s), 0 problem(s)' 'the dry run did not count 15 removals and 1 grant'
+reject_line "$checked" 'ALT' 'a subgroup without roles was reported'
 reject_line "$checked" '/ADMIN' 'the dry run planned something on ADMIN'
 reject_line "$checked" '/UYELER/YK' 'the dry run planned something on YK'
-for name in yk-person dk-person; do reject_line "$checked" "$name" 'a person was named'; done
+for name in yk-person dk-person dk-sub-person dk-yk-person; do reject_line "$checked" "$name" 'a person was named'; done
 [[ $(events) == "$before" ]] || fail 'the dry run wrote something'
 [[ $(group_roles "$DK") == "$dk_after_seed" ]] || fail 'the dry run changed DK'
-printf '    --check: 15 write roles away, content:read in place, reads and Forms kept, realm role a WARNING; nothing written\n'
+printf '    --check: 15 write roles away, content:read in place, reads, app roles and Forms kept, realm role a WARNING; nothing written\n'
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='dk-read-only.sh --apply'
 applied=$(run_expecting 0 "$REALM" --apply --backup-file /tmp/dk-backup.tsv)
+[[ $(head -n 1 <<<"$applied") == '[dk-read-only] realm=e-skylab mode=apply forms=keep backup=/tmp/dk-backup.tsv' ]] \
+  || fail "the first line does not name the backup: $(head -n 1 <<<"$applied")"
 expect_line "$applied" 'applied 16 change(s), 1 warning(s), 0 problem(s)' 'the apply did not make the planned changes'
-expect_line "$applied" 'backup: /tmp/dk-backup.tsv (15 mapping(s) taken away; put them back with --restore /tmp/dk-backup.tsv --apply)' 'the backup was not reported'
-[[ $(group_roles "$DK") == '["core/audit:read","core/global:read","forms/skyforms:*","forms/skyforms:read-all","frontend-artlab/content:read","realm/DK","skymail/skymail:system-mails:read"]' ]] \
-  || fail "DK does not hold exactly its read roles, Forms' kept role and the realm role: $(group_roles "$DK")"
+expect_line "$applied" 'backup: /tmp/dk-backup.tsv (15 mapping(s) to take away; put them back with --restore /tmp/dk-backup.tsv --apply)' 'the backup was not reported'
+[[ $(group_roles "$DK") == "$DK_AFTER" ]] \
+  || fail "DK does not hold exactly its read roles, its app roles, Forms' kept role and the realm role: $(group_roles "$DK")"
 [[ $(group_roles /ADMIN) == "$admin_after_seed" ]] || fail 'the apply changed ADMIN'
 [[ $(group_roles /UYELER/YK) == "$yk_after_seed" ]] || fail 'the apply changed YK'
 backup=$(docker exec "$CONTAINER" cat /tmp/dk-backup.tsv)
+[[ $(docker exec "$CONTAINER" stat -c %a /tmp/dk-backup.tsv) == 600 ]] || fail 'the backup is readable by others'
 [[ $(grep -vc '^#' <<<"$backup") == 15 ]] || fail "the backup does not hold the 15 mappings: $backup"
-for role in "${CORE_WRITE_ROLES[@]}"; do
+for role in "${CORE_REMOVED_ROLES[@]}"; do
   grep -Fxq "$DK"$'\t'core$'\t'"$role" <<<"$backup" || fail "the backup lacks core/$role"
 done
 grep -Fxq "$DK"$'\t'frontend-artlab$'\t'cms:access <<<"$backup" || fail 'the backup lacks frontend-artlab/cms:access'
+grep -Fxq "$DK"$'\t'skymail$'\t'skymail:mails:approve <<<"$backup" || fail 'the backup lacks skymail:mails:approve'
 dk_token=$(token_roles dk-person)
-[[ $dk_token == '{"core":["audit:read","global:read"],"forms":["skyforms:*","skyforms:read-all"],"frontend-artlab":["content:read"],"skymail":["skymail:system-mails:read"]}' ]] \
+[[ $dk_token == '{"core":["audit:read","global:read","url:access"],"forms":["skyforms:*","skyforms:access","skyforms:read-all"],"frontend-artlab":["content:read"],"skymail":["skymail:system-mails:read"]}' ]] \
   || fail "the DK person's token is not read-only: $dk_token"
+[[ $(token_roles dk-sub-person) == "$dk_token" ]] || fail "the member of DK's subgroup does not inherit exactly DK's roles: $(token_roles dk-sub-person)"
 yk_token=$(token_roles yk-person)
 jq -e --argjson before "$yk_token_before" '. == ($before | .core = ((.core + ["audit:read"]) | sort))' <<<"$yk_token" >/dev/null \
   || fail "the YK person's token changed beyond audit:read: $yk_token (before $yk_token_before)"
-printf '    --apply: DK token %s; YK unchanged but audit:read\n' "$dk_token"
+token_roles dk-yk-person | jq -e '(.core | index("event:manage") != null and index("groups:manage") != null and index("global:read") != null)
+  and (.["frontend-artlab"] | index("cms:access") != null)' >/dev/null \
+  || fail "the person in DK and YK lost YK's write roles: $(token_roles dk-yk-person)"
+printf '    --apply: DK token %s; DK subgroup the same; YK unchanged but audit:read; DK + YK keeps YK'"'"'s writes\n' "$dk_token"
 
 CURRENT_STAGE='dk-read-only.sh after the apply: nothing more'
 checked=$(run_expecting 0 "$REALM")
@@ -389,8 +426,7 @@ CURRENT_STAGE='--restore puts the mappings back'
 checked=$(run_expecting 0 "$REALM" --restore /tmp/dk-backup.tsv)
 expect_line "$checked" "would grant core/event:manage to $DK (restore)" 'the restore dry run did not plan a core role'
 expect_line "$checked" 'check: 15 change(s) pending, 0 warning(s), 0 problem(s)' 'the restore dry run did not plan 15 grants'
-[[ $(group_roles "$DK") == '["core/audit:read","core/global:read","forms/skyforms:*","forms/skyforms:read-all","frontend-artlab/content:read","realm/DK","skymail/skymail:system-mails:read"]' ]] \
-  || fail 'the restore dry run wrote something'
+[[ $(group_roles "$DK") == "$DK_AFTER" ]] || fail 'the restore dry run wrote something'
 restored=$(run_expecting 0 "$REALM" --restore /tmp/dk-backup.tsv --apply)
 expect_line "$restored" 'applied 15 change(s), 0 warning(s), 0 problem(s)' 'the restore did not grant the mappings back'
 jq -e --argjson before "$dk_after_seed" '. == (($before + ["frontend-artlab/content:read"]) | sort)' <<<"$(group_roles "$DK")" >/dev/null \
@@ -408,11 +444,11 @@ grant "$DK" forms skyforms:read-all
 applied=$(run_expecting 0 "$REALM" --apply --forms --backup-file /tmp/dk-backup-forms.tsv)
 expect_line "$applied" "take forms/skyforms:* away from $DK" 'skyforms:* was not taken away'
 expect_line "$applied" 'applied 16 change(s), 1 warning(s), 0 problem(s)' 'the apply with --forms did not take the 15 and skyforms:* away'
-[[ $(group_roles "$DK") == '["core/audit:read","core/global:read","forms/skyforms:read-all","frontend-artlab/content:read","realm/DK","skymail/skymail:system-mails:read"]' ]] \
-  || fail "DK does not hold its read roles alone after --forms: $(group_roles "$DK")"
+[[ $(group_roles "$DK") == '["core/audit:read","core/global:read","core/url:access","forms/skyforms:access","forms/skyforms:read-all","frontend-artlab/content:read","realm/DK","skymail/skymail:system-mails:read"]' ]] \
+  || fail "DK does not hold its read and app roles alone after --forms: $(group_roles "$DK")"
 docker exec "$CONTAINER" grep -Fxq "$DK"$'\t'forms$'\t''skyforms:*' /tmp/dk-backup-forms.tsv || fail 'the backup lacks skyforms:*'
-[[ $(token_roles dk-person | jq -c .forms) == '["skyforms:read-all"]' ]] || fail 'the DK token still carries a Forms write role'
-printf '    --forms: PROBLEM without skyforms:read-all; with it skyforms:* goes too\n'
+[[ $(token_roles dk-person | jq -c .forms) == '["skyforms:access","skyforms:read-all"]' ]] || fail 'the DK token still carries a Forms admin role, or lost the seat'
+printf '    --forms: PROBLEM without skyforms:read-all; with it skyforms:* goes, the seat skyforms:access stays\n'
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='a composite, a default group and failed reads'
@@ -445,9 +481,65 @@ DK_ENV=()
 [[ $(events) == "$before" ]] || fail 'a run wrote something after a failed read'
 docker exec "$CONTAINER" sh -c 'test ! -e /tmp/dk-backup-refused.tsv && test ! -e /tmp/dk-backup-failed-1.tsv && test ! -e /tmp/dk-backup-failed-2.tsv' \
   || fail 'a refused run wrote a backup'
-applied=$(run_expecting 0 "$REALM" --apply --backup-file /tmp/dk-backup-last.tsv)
-expect_line "$applied" 'applied 1 change(s), 1 warning(s), 0 problem(s)' 'the last write role was not taken away'
 printf '    a composite write role and the realm role are WARNINGs; a default group under DK and failed reads stop the run (exit 1)\n'
+
+# ---------------------------------------------------------------------------------------------------
+CURRENT_STAGE='a failed write stops the run; the backup puts back what was taken'
+# DK holds core/event:manage (above) and frontend-artlab/cms:access again; the cms:access delete fails.
+grant "$DK" frontend-artlab cms:access
+docker exec -i "$CONTAINER" sh -c 'cat > /tmp/kcadm-fail-write.sh && chmod 755 /tmp/kcadm-fail-write.sh' <<'EOF'
+#!/usr/bin/env bash
+if [[ ${1:-} == delete && -n ${KCADM_INJECT_FAIL:-} && " $* " == *"$KCADM_INJECT_FAIL"* ]]; then
+  printf 'Injected write failure\n' >&2
+  exit 42
+fi
+exec /opt/keycloak/bin/kcadm.sh "$@"
+EOF
+dk_before_cut=$(group_roles "$DK")
+DK_ENV=(-e KCADM_BIN=/tmp/kcadm-fail-write.sh -e "KCADM_INJECT_FAIL=role-mappings/clients/$artlab")
+cut=$(run_expecting 1 "$REALM" --apply --backup-file /tmp/dk-backup-cut.tsv)
+DK_ENV=()
+expect_line "$cut" 'backup=/tmp/dk-backup-cut.tsv' 'the cut run did not name its backup first'
+expect_line "$cut" 'a write failed in realm e-skylab; stopped. The backup /tmp/dk-backup-cut.tsv holds every planned removal' 'the cut run did not point at its backup'
+reject_line "$cut" 'applied' 'the cut run reported success'
+[[ $(group_roles "$DK" | jq 'index("frontend-artlab/cms:access") != null') == true ]] || fail 'the failed delete took cms:access away'
+restored=$(run_expecting 0 "$REALM" --restore /tmp/dk-backup-cut.tsv --apply)
+[[ $(group_roles "$DK") == "$dk_before_cut" ]] || fail "the restore after a cut run did not give back what was taken: $(group_roles "$DK")"
+applied=$(run_expecting 0 "$REALM" --apply)
+default_backup=$(sed -n 's/^\[dk-read-only\] realm=e-skylab mode=apply forms=keep backup=\(\/tmp\/dk-read-only-e-skylab-[0-9]\{8\}T[0-9]\{6\}Z\.tsv\)$/\1/p' <<<"$applied")
+[[ -n $default_backup ]] || { printf '%s\n' "$applied" >&2; fail 'without --backup-file the first line does not name the default backup'; }
+expect_line "$applied" "backup: $default_backup (2 mapping(s) to take away" 'the default backup was not written'
+expect_line "$applied" 'applied 2 change(s), 1 warning(s), 0 problem(s)' 'the run after the cut one did not finish the job'
+[[ $(docker exec "$CONTAINER" stat -c %a "$default_backup") == 600 ]] || fail 'the default backup is readable by others'
+[[ $(group_roles "$DK") == "$(jq -c '. - ["forms/skyforms:*"]' <<<"$DK_AFTER")" ]] || fail "DK is not read-only after the cut run was redone: $(group_roles "$DK")"
+printf '    a failed write: exit 1, backup named; --restore gives back what was taken; the next run (default backup name, 0600) finishes\n'
+
+# ---------------------------------------------------------------------------------------------------
+CURRENT_STAGE='a parent group, a subgroup and the /DK root'
+grant /UYELER core event:manage
+grant "$DK/ALT" core groups:manage
+checked=$(run_expecting 0 "$REALM")
+expect_line "$checked" "WARNING: $DK still gets core/event:manage through a composite role or a parent group" 'the write role from /UYELER was not reported'
+expect_line "$checked" "WARNING: $DK/ALT, a subgroup of $DK, holds core/groups:manage directly; not taken away" 'the subgroup'"'"'s write role was not reported'
+expect_line "$checked" 'check: 0 change(s) pending, 3 warning(s), 0 problem(s)' 'the parent and the subgroup changed the plan'
+ungrant /UYELER core event:manage
+ungrant "$DK/ALT" core groups:manage
+create_group "$REALM" '' DK
+grant /DK core event:manage url:access global:read audit:read
+before=$(events)
+checked=$(run_expecting 0 "$REALM")
+expect_line "$checked" "DK groups: /DK $DK" 'the two DK roots were not both read'
+expect_line "$checked" 'would take core/event:manage away from /DK' 'the /DK root was not planned'
+expect_line "$checked" 'check: 1 change(s) pending, 1 warning(s), 0 problem(s)' 'the /DK root planned more than its write role'
+[[ $(events) == "$before" ]] || fail 'the dry run with /DK wrote something'
+applied=$(run_expecting 0 "$REALM" --apply --backup-file /tmp/dk-backup-root.tsv)
+expect_line "$applied" 'applied 1 change(s), 1 warning(s), 0 problem(s)' 'the /DK root was not handled'
+expect_line "$applied" '/DK: write roles held: 1 (core/event:manage)' 'the /DK root was not counted'
+[[ $(group_roles /DK) == '["core/audit:read","core/global:read","core/url:access"]' ]] || fail "/DK does not hold its read and app roles alone: $(group_roles /DK)"
+checked=$(run_expecting 0 "$REALM")
+expect_line "$checked" '/DK: write roles held: none' 'the /DK root still holds a write role'
+kcadm delete "groups/$(group_id "$REALM" /DK)" -r "$REALM" >/dev/null
+printf '    a write role from /UYELER and one on DK'"'"'s subgroup are WARNINGs; /DK is handled next to /UYELER/DK\n'
 
 CURRENT_STAGE='the sandbox realm without DK'
 sandbox=$(run_expecting 0 "$SANDBOX" --apply)

@@ -14,19 +14,28 @@
 #
 # For each DK root (/DK and /UYELER/DK, whichever exist: core's AUTHZ_PRIVILEGED_READER_ROOTS) it reads
 # the root's direct role mappings and sorts each one:
-#   write  taken away by --apply (WRITE_ROLES): core's write roles of the contract table (the 12 write
-#          roles, url:moderator and url:access; core-backend docs/authz-roles.md), any client's
+#   write  taken away by --apply (WRITE_ROLES): core's 13 roles of the contract table but global:read
+#          and url:access (the 12 write roles and url:moderator; core-backend docs/authz-roles.md;
+#          media:private:read and github:activity:read only read, but DK reads them through its root in
+#          the groups mode and through global:read in the both and roles modes), any client's
 #          cms:access, content:write and client:admin (a Site client's editor and tenant roles: where the
 #          client has content:read and the root lacks it, content:read is granted in their place),
 #          SkyMail's sending and writing roles and Place's roles;
-#   forms  Forms' roles (FORMS_ROLES, skyforms:* among them): kept until forms-backend reads
-#          skyforms:read-all (Fatih); --forms takes them away as write roles then;
+#   forms  Forms' admin roles (FORMS_ROLES: skyforms:*, skyforms:feedback:*, as core's AdminRoles):
+#          kept until forms-backend reads skyforms:read-all (Fatih); --forms takes them away then;
 #   read   kept (READ_ROLES): core global:read, audit:read, users:read; SkyMail's reading roles;
 #          content:read of any client; forms skyforms:read-all;
+#   app    kept (APP_ROLES, core's app roles bound to the holder; Yusuf 2026-10-14, Y1 and Y5): core's
+#          own short link roles (url:access and url:create/get/update/delete: a DK member keeps their
+#          own links) and Forms' seat and screens (skyforms:access, form:manage, response:manage,
+#          feedback:manage: forms are opened only through their collaborators; Fatih may choose
+#          skyforms:access for DK's /admin entry);
 #   other  any other client role and every realm role: a WARNING, kept (the Java era's realm roles
 #          leave in rol-temizligi F3; anything else is decided in the SKY LAB admin panel).
-# A write role the root still gets through a composite role or a parent group is a WARNING (only
-# direct mappings are taken away). Each root ends with "write roles held: none" or their list.
+# A write role the root still gets through a composite role or a parent group, and a write role a
+# subgroup of the root holds directly (core refuses one there from the panel; the Admin Console does
+# not), are WARNINGs: only the roots' direct mappings are taken away. Each root ends with "write roles
+# held: none" or their list.
 #
 # Safety: a root that would lose a core role but holds no core/global:read and core/audit:read (or,
 # with --forms, a Forms role but no forms/skyforms:read-all) is a PROBLEM: DK would lose its reads in
@@ -34,10 +43,11 @@
 # A failed read (anything but Keycloak's "not found" for a group) stops the run with exit 1. On a
 # PROBLEM nothing is written.
 #
-# --apply writes the backup first (--backup-file, default /tmp/dk-read-only-<realm>-<UTC time>.tsv;
-# never overwritten): one "path<TAB>client<TAB>role" line per mapping taken away; then grants
-# content:read where planned, then takes the roles away. A second run changes nothing and writes no
-# backup. --restore FILE grants a backup's mappings back (a dry run without --apply; content:read
+# --apply names the backup file in its first line (--backup-file, default
+# /tmp/dk-read-only-<realm>-<UTC time>.tsv; never overwritten) and writes it before any change: one
+# "path<TAB>client<TAB>role" line per mapping taken away, and says so at once ("backup: …"), so that a
+# run cut halfway leaves its backup named on the screen; then it grants content:read where planned,
+# then takes the roles away. A second run changes nothing and writes no backup. --restore FILE grants a backup's mappings back (a dry run without --apply; content:read
 # stays); a line that is no DK write or Forms role mapping makes the file invalid (exit 2), before a
 # login.
 #
@@ -78,25 +88,30 @@ BACKUP_FILE=''
 # The Privileged names whose roots read and do not write (core's AUTHZ_PRIVILEGED_READER_ROOTS
 # default: /DK and /UYELER/DK).
 READER_NAMES=(DK)
-# The three lists are read through listed's nameref.
+# The lists are read through listed's nameref.
 # shellcheck disable=SC2034
 # client|role ("*": any client). core's are the contract table's (core-backend internal/authz/roles.go)
-# but global:read; the Site roles are inscribed's (ADR-0056); SkyMail's and Place's write or send.
+# but global:read and url:access; the Site roles are inscribed's (ADR-0056); SkyMail's and Place's
+# write or send.
 WRITE_ROLES=(
   'core|event:manage' 'core|season:manage' 'core|ticket:manage' 'core|ticket:validate'
   'core|competitor:manage' 'core|competition:manage' 'core|media:manage' 'core|media:private:read'
   'core|certificate:manage' 'core|users:manage' 'core|groups:manage' 'core|github:activity:read'
-  'core|url:moderator' 'core|url:access'
+  'core|url:moderator'
   '*|cms:access' '*|content:write' '*|client:admin'
   'skymail|skymail:announcements:send' 'skymail|skymail:templates:write' 'skymail|skymail:lists:write'
   'skymail|skymail:mails:write' 'skymail|skymail:mails:send' 'skymail|skymail:mails:approve'
   'place|place:admin' 'place|place:moderator'
 )
-# Forms' roles that open more than reading (forms-backend; rol-temizligi 15): kept until --forms.
+# Forms' admin roles (core-backend role_classes.go AdminRoles): kept until --forms.
 # shellcheck disable=SC2034
-FORMS_ROLES=(
-  'forms|skyforms:*' 'forms|skyforms:feedback:*' 'forms|skyforms:access' 'forms|skyforms:form:manage'
-  'forms|skyforms:response:manage' 'forms|skyforms:feedback:manage'
+FORMS_ROLES=('forms|skyforms:*' 'forms|skyforms:feedback:*')
+# core's app roles bound to the holder (role_classes.go AppRoles) that DK keeps (Y1, Y5).
+# shellcheck disable=SC2034
+APP_ROLES=(
+  'core|url:access' 'core|url:create' 'core|url:get' 'core|url:update' 'core|url:delete'
+  'forms|skyforms:access' 'forms|skyforms:form:manage' 'forms|skyforms:response:manage'
+  'forms|skyforms:feedback:manage'
 )
 # shellcheck disable=SC2034
 READ_ROLES=(
@@ -159,6 +174,9 @@ while [[ $# -gt 0 ]]; do
 done
 if [[ -n $RESTORE_FILE && ($FORMS == remove || -n $BACKUP_FILE) ]]; then
   usage
+fi
+if [[ -z $RESTORE_FILE && $MODE == apply && -z $BACKUP_FILE ]]; then
+  BACKUP_FILE=/tmp/dk-read-only-${TARGET_REALM:-realm}-$(date -u +%Y%m%dT%H%M%SZ).tsv
 fi
 
 log() {
@@ -389,7 +407,8 @@ fi
 if [[ -n $RESTORE_FILE ]]; then
   log "realm=$TARGET_REALM mode=$MODE restore=$RESTORE_FILE (${#RESTORE_LINES[@]} mapping(s))"
 else
-  log "realm=$TARGET_REALM mode=$MODE forms=$FORMS"
+  # The backup's path first: a run cut halfway still names it.
+  log "realm=$TARGET_REALM mode=$MODE forms=$FORMS${BACKUP_FILE:+ backup=$BACKUP_FILE}"
 fi
 if ! realm_name=$(kcadm get "realms/$TARGET_REALM" --fields realm --format csv --noquotes 2>/dev/null | tr -d '\r') \
   || [[ $realm_name != "$TARGET_REALM" ]]; then
@@ -483,7 +502,8 @@ if [[ -n $RESTORE_FILE ]]; then
   if [[ $MODE == apply ]]; then
     for key in "${!restore_of[@]}"; do
       read -r -a items <<<"${restore_of[$key]}"
-      write_mappings create "${gid_of[${key%%|*}]}" "${key#*|}" "${items[@]}"
+      write_mappings create "${gid_of[${key%%|*}]}" "${key#*|}" "${items[@]}" \
+        || { log "a write failed in realm $TARGET_REALM; stopped (run the restore again: it grants only what is missing)" >&2; exit 1; }
     done
   fi
   summary
@@ -496,7 +516,7 @@ grants=()     # path|client_uuid|client|role_id|role|in place of
 for path in "${roots[@]}"; do
   gid=${gid_of[$path]}
   held=$(read_or_stop "the role mappings of $path" mappings "$gid")
-  reads=() writes=() forms_kept=() others=()
+  reads=() apps=() writes=() forms_kept=() others=()
   declare -A holds=() replaced_of=()
   while IFS=$'\t' read -r client uuid rid role; do
     [[ -n ${role:-} ]] || continue
@@ -505,6 +525,8 @@ for path in "${roots[@]}"; do
       others+=("realm/$role")
     elif listed READ_ROLES "$client" "$role"; then
       reads+=("$client/$role")
+    elif listed APP_ROLES "$client" "$role"; then
+      apps+=("$client/$role")
     elif listed WRITE_ROLES "$client" "$role" || { [[ $FORMS == remove ]] && listed FORMS_ROLES "$client" "$role"; }; then
       writes+=("$client/$role")
       removals+=("$path|$uuid|$client|$rid|$role")
@@ -559,7 +581,31 @@ for path in "${roots[@]}"; do
     done <<<"$effective"
   done
 
+  # Subgroups of the root (at any depth) that hold a write role directly: core refuses a role there
+  # from the panel (PlacementPrivilegedSubgroup), the Admin Console does not. Reported, not taken away.
+  pending=("$gid|$path")
+  while [[ ${#pending[@]} -gt 0 ]]; do
+    item=${pending[0]}
+    pending=("${pending[@]:1}")
+    children_read=$(read_or_stop "the subgroups of ${item#*|}" csv "groups/${item%%|*}/children" id,name -q first=0 -q max=1000)
+    while IFS=, read -r child_id child_name; do
+      [[ -n $child_id ]] || continue
+      child_path="${item#*|}/$child_name"
+      pending+=("$child_id|$child_path")
+      child_held=$(read_or_stop "the role mappings of $child_path" mappings "$child_id")
+      while IFS=$'\t' read -r client _ _ role; do
+        [[ -n ${role:-} && $client != - ]] || continue
+        if listed WRITE_ROLES "$client" "$role" || { [[ $FORMS == remove ]] && listed FORMS_ROLES "$client" "$role"; }; then
+          warning "$child_path, a subgroup of $path, holds $client/$role directly; not taken away (remove it in the Admin Console: the SKY LAB admin panel puts no role on a Privileged root's subgroup)"
+        fi
+      done <<<"$child_held"
+    done <<<"$children_read"
+  done
+
   log "$path: read roles kept: $(printf '%s\n' ${reads[@]+"${reads[@]}"} | sort | paste -sd, - | sed 's/,/, /g; s/^$/none/')"
+  if [[ ${#apps[@]} -gt 0 ]]; then
+    log "$path: app roles kept (the holder's own, core's app roles): $(printf '%s\n' "${apps[@]}" | sort | paste -sd, - | sed 's/,/, /g')"
+  fi
   if [[ ${#forms_kept[@]} -gt 0 ]]; then
     log "NOTE: $path: Forms roles kept until forms-backend reads forms/$FORMS_READ: ${forms_kept[*]} (--forms takes them away then; runbook §28)"
   fi
@@ -596,7 +642,6 @@ fi
 if [[ ${#removals[@]} == 0 ]]; then
   log 'nothing to take away; no backup written'
 else
-  BACKUP_FILE=${BACKUP_FILE:-/tmp/dk-read-only-$TARGET_REALM-$(date -u +%Y%m%dT%H%M%SZ).tsv}
   {
     printf '# dk-read-only backup: realm %s, %s; put back with dk-read-only.sh --restore <this file> --apply\n' \
       "$TARGET_REALM" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -616,15 +661,21 @@ else
     summary
     exit 1
   fi
+  log "backup: $BACKUP_FILE (${#removals[@]} mapping(s) to take away; put them back with --restore $BACKUP_FILE --apply)"
 fi
 declare -A batch=()
 for item in ${grants[@]+"${grants[@]}"}; do
   IFS='|' read -r path uuid _ rid role _ <<<"$item"
   batch[$path|$uuid]="${batch[$path|$uuid]:-} $rid|$role"
 done
+# write_failed: a write failed halfway; the backup holds every planned removal (exit 1).
+write_failed() {
+  log "a write failed in realm $TARGET_REALM; stopped. ${BACKUP_FILE:+The backup $BACKUP_FILE holds every planned removal: put back what was taken with --restore $BACKUP_FILE --apply, or }run this step again" >&2
+  exit 1
+}
 for key in "${!batch[@]}"; do
   read -r -a items <<<"${batch[$key]}"
-  write_mappings create "${gid_of[${key%%|*}]}" "${key#*|}" "${items[@]}"
+  write_mappings create "${gid_of[${key%%|*}]}" "${key#*|}" "${items[@]}" || write_failed
 done
 batch=()
 for item in ${removals[@]+"${removals[@]}"}; do
@@ -633,9 +684,6 @@ for item in ${removals[@]+"${removals[@]}"}; do
 done
 for key in "${!batch[@]}"; do
   read -r -a items <<<"${batch[$key]}"
-  write_mappings delete "${gid_of[${key%%|*}]}" "${key#*|}" "${items[@]}"
+  write_mappings delete "${gid_of[${key%%|*}]}" "${key#*|}" "${items[@]}" || write_failed
 done
-if [[ ${#removals[@]} -gt 0 ]]; then
-  log "backup: $BACKUP_FILE (${#removals[@]} mapping(s) taken away; put them back with --restore $BACKUP_FILE --apply)"
-fi
 summary

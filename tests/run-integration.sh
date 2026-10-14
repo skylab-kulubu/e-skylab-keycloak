@@ -1481,7 +1481,7 @@ stage_legacy_flow_still_bound_stops_retirement() {
     fail 'reconciliation succeeded although another client is still bound to account-center-browser'
   fi
   grep -Fq 'Another client is still bound to account-center-browser' "$log" \
-    || fail 'reconciliation did not name the client still bound to account-center-browser'
+    || { cat "$log" >&2; fail 'reconciliation did not name the client still bound to account-center-browser'; }
   ! grep -Fq 'compressed' "$log" || fail 'a kcadm read in the reconciler combined --fields with -c'
   kcadm get "authentication/flows/$flow_uuid" -r e-skylab-test >/dev/null \
     || fail 'reconciliation deleted account-center-browser although a client is still bound to it'
@@ -1494,7 +1494,7 @@ stage_legacy_flow_still_bound_stops_retirement() {
     fail 'reconciliation succeeded although a realm flow binding still uses account-center-browser'
   fi
   grep -Fq 'A realm flow binding still uses account-center-browser' "$log" \
-    || fail 'reconciliation did not name the realm flow binding that still uses account-center-browser'
+    || { cat "$log" >&2; fail 'reconciliation did not name the realm flow binding that still uses account-center-browser'; }
   kcadm get "authentication/flows/$flow_uuid" -r e-skylab-test >/dev/null \
     || fail 'reconciliation deleted account-center-browser although a realm binding still uses it'
   kcadm update realms/e-skylab-test -s "directGrantFlow=$direct_grant_before" >/dev/null

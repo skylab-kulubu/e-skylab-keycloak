@@ -3311,9 +3311,10 @@ browser plus passkey forms (ALTERNATIVE)
 - Ekran her girdide aynıdır (spec §7.4): hesaba çıkmayan, iki kişiye çıkan ya da kapalı hesaba çıkan
   girdi aynı kod sayfasını ve hiç postalanmayan bir kodu alır (deneme hakları da aynı işler). Posta
   istekten sonra arka planda, kendi Keycloak oturumunda gider (`BackgroundLoginCodeMail`, yürütücü
-  `sky-email-code`); yanıt süresi posta yüzünden değişmez. Hesabın olup olmadığı yalnız doğru koddan
-  sonra belli olur; kayıt kapalıyken bu, kimseye postalanmamış bir kodun tutturulmasıdır
-  (`no_account`).
+  `sky-email-code`); yanıt süresi posta yüzünden değişmez. Sayfa hiçbir zaman "hesap yok" demez
+  (#103 incelemesi): kimseye postalanmamış bir kodun tutturulması (pratikte olmaz) süresi dolmuş kodun
+  sayfasını alır (`code_expired`); yalnız yöneticinin okuduğu olay `no_account` der. Kayıt (bilet 09)
+  bu dalı, kayıt için postalanmış bir kodda kayıt formuna çevirecek.
 - Doğru kodda: kilit (kaba kuvvet) ve kapalı hesap denetlenir, kodun gittiği adres hâlâ kişinin kod
   adresi mi bakılır (10 dakikada birincil değiştiyse kod çalışmaz), birincil doğrulanmamışsa
   doğrulanır (Keycloak'ın sıfırlama bağlantısı gibi; `VERIFY_EMAIL` eylemi kalkar), sonra koşullu OTP

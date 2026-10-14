@@ -38,9 +38,11 @@ import org.keycloak.sessions.AuthenticationSessionModel;
  * the same whatever was typed (spec §7.4): an identifier that names nobody, two people, a disabled
  * account or an account with nowhere to mail a code to gets the same code page and a code that is
  * never mailed, so the store traffic and the tries look the same too. The mail itself leaves after
- * the request, in the background ({@link LoginCodeMail}), so the answer takes the same time. Whether
- * an account exists is said only after the right code (ADR-0063, the second OWASP deviation); while
- * Self-registration is off (ticket 09) that is "no account" for a code nobody was mailed.
+ * the request, in the background ({@link LoginCodeMail}), so the answer takes the same time. The
+ * page never says that an address has no account: the right code of a code nobody was mailed (a
+ * guess) gets a dead code's sentence; only the event, for the administrators, says {@code no_account}.
+ * Self-registration (ticket 09) will turn that branch into the sign-up form for a code that was
+ * mailed to sign up.
  *
  * <p>The code follows CONTEXT's Login code ({@link LoginCodes}): eight digits, ten minutes, dead after
  * five wrong tries, single use, valid only in the sign-in session (browser and tab) that asked for
@@ -120,6 +122,8 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
     static final String RATE_LIMITED_ERROR = "sky_email_code_rate_limited";
     /** The event detail of a person with OTP refused because the flow would skip it. */
     static final String OTP_UNGUARDED = "otp_unguarded";
+    /** The event detail of the right code for nobody; the page shows a dead code's sentence. */
+    static final String NO_ACCOUNT = "no_account";
     /**
      * The event detail when the person's wrong codes reached the day's ceiling (security review
      * K2): a code that was not mailed, or a try spent without looking at the code.
@@ -152,7 +156,6 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
         WRONG_CODE("wrong_code"),
         CODE_EXPIRED("code_expired"),
         TOO_MANY_TRIES("too_many_tries"),
-        NO_ACCOUNT("no_account"),
         ACCOUNT_DISABLED("account_disabled"),
         ACCOUNT_LOCKED("account_locked"),
         /** The flow no longer asks a person with OTP for it after the code (security review K1). */
@@ -401,8 +404,11 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
 
         UserModel user = isBlank(pending.userId()) ? null : session.users().getUserById(realm, pending.userId());
         if (user == null) {
-            failure(context, null, Problem.NO_ACCOUNT.value, Errors.USER_NOT_FOUND);
-            context.challenge(identifierPage(context, identifier, Problem.NO_ACCOUNT));
+            // A code nobody was mailed, guessed, or the account went away in the ten minutes. The
+            // page says what it says for a dead code: "no account" would tell an address apart
+            // (the code page itself never does). Only the event, for the administrators, says it.
+            failure(context, null, NO_ACCOUNT, Errors.USER_NOT_FOUND);
+            context.challenge(identifierPage(context, identifier, Problem.CODE_EXPIRED));
             return;
         }
         if (!user.isEnabled()) {

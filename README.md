@@ -418,7 +418,8 @@ kodunu durdurmaz, yarısında ve dolduğunda `/ADMIN` grubunun etkin ve adresi o
 günde en çok 10 yanlış kod (`SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT`, güvenlik incelemesi K2): tavana
 ulaşan hesaba gün bitene kadar kod postalanmaz, ekran aynı kalır, önceden gönderilmiş kod artık
 denetlenmez (denemesi yanlış sayılır); günün ilk böyle hesabı aynı alarm grubuna posta, her biri
-`sky_email_code_wrong_ceiling` log satırı yazar. Koddan
+`sky_email_code_wrong_ceiling` log satırı yazar. Sayfa hiçbir zaman "hesap yok" demez: kimseye
+postalanmamış bir kodun tutturulması süresi dolmuş kod gibi görünür (olayda `no_account`). Koddan
 sonraki OTP Admin Console'da kapatılırsa OTP'li kişi kodla giremez (`otp_unguarded`, güvenlik incelemesi
 K1). Posta SkyMail'in `keycloak.login-code` şablonuyla (SkyMail
 yoksa SPI'nın FreeMarker kopyası) çıkar: konuda kod yok, bağlantı yok. Olaylar: başarılı giriş

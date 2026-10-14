@@ -682,8 +682,11 @@ class EmailCodeAuthenticatorTest {
         verify(ada, never()).setEmailVerified(anyBoolean());
     }
 
+    // The #103 review: the page never says "no account" (the code page itself never tells an
+    // address apart). The right code of a code nobody was mailed gets a dead code's page; only the
+    // event, which administrators read, says what it was.
     @Test
-    void aGuessedCodeForNobodySignsNobodyIn() {
+    void aGuessedCodeForNobodySignsNobodyInAndLooksLikeADeadCode() {
         browser.send("nobody@example.com");
         String handle = browser.notes.get(EmailCodeAuthenticator.HANDLE_NOTE);
         // Nobody can read the code that was never mailed; put a known one in its place.
@@ -692,8 +695,20 @@ class EmailCodeAuthenticatorTest {
         browser.verify(known);
 
         assertFalse(browser.succeeded);
-        assertEquals("identifier", browser.stage());
-        assertEquals("no_account", browser.error());
+        assertNull(browser.signedIn);
+        assertEquals("no_account", browser.lastFailure().get(EmailCodeAuthenticator.EVENT_DETAIL));
+        Map<String, Object> guessed = new HashMap<>(browser.page);
+
+        Browser late = new Browser("root-late", "198.51.100.9");
+        late.send("nobody@example.com");
+        Time.setOffset(LoginCodes.TTL_SECONDS + 1);
+        late.verify(other(""));
+
+        assertEquals("code_expired", late.error());
+        assertEquals(late.page, guessed, "the same page as a code that ran out");
+        for (EmailCodeAuthenticator.Problem problem : EmailCodeAuthenticator.Problem.values()) {
+            assertNotEquals("no_account", problem.value, "the page has no sentence for it");
+        }
     }
 
     // ------------------------------------------------------------------------------- navigation

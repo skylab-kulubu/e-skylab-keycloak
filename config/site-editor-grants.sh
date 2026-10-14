@@ -4,7 +4,8 @@
 #   - cms:access to the Privileged groups (ADMIN, YK, DK: each at /<NAME> and/or /UYELER/<NAME>,
 #     whichever exist) and to the Leader groups (the direct subgroups LIDERLER and KOORDINATORLER)
 #     of the site's teams: the owning lab team and the event's organization team;
-#   - client:admin to the ADMIN group(s) only.
+#   - client:admin to the ADMIN and YK groups (Yusuf, 2026-10-12; never DK, which reads and does not
+#     write: a DK holder is a WARNING, like any holder outside the set).
 # Teams of each site (decision of 2026-10-03, CONTEXT.md "Site editor"):
 #   artlab     /UYELER/ARGE/AIRLAB   and  /UYELER/ORGANIZASYON/ARTLAB
 #   yildizjam  /UYELER/ARGE/GAMELAB  and  /UYELER/ORGANIZASYON/YILDIZJAM
@@ -12,7 +13,11 @@
 #   main       none: the main site's sandbox client (frontend-main in e-skylab-sandbox only, made by
 #              site-clients.sh --site main) gets the Privileged groups; production's frontend-main
 #              grants are made in the SKY LAB admin panel and --site main is refused in e-skylab
-# --team SITE=PATH adds one more team for one site; its Leader groups get cms:access too.
+# --team SITE=PATH adds one more team for one site; its Leader groups get cms:access too. PATH must
+# be a top team, /UYELER/<area>/<team>: a Sub-team's Leader groups never get cms:access (ADR-0065
+# addendum of 2026-10-12: a Group that holds site-wide write is not delegated, and only top teams'
+# Leaders are Site editors until inscribed writes per collection), so a deeper or shallower PATH is
+# a usage error (exit 2) before a login.
 #
 # Grants go to groups only, never to a person, never to /UYELER, never to a group at or above a
 # default group (a planned grant to one is a PROBLEM and is not made). Nothing is ever taken away: a group or a
@@ -100,6 +105,8 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || usage
       [[ $2 =~ ^(artlab|yildizjam|skydays|main)=/[A-Za-z0-9_./-]+$ && $2 != *//* && $2 != */ ]] \
         || { printf 'bad --team %s (SITE=/GROUP/PATH)\n' "$2" >&2; exit 2; }
+      [[ ${2#*=} =~ ^/UYELER/[^/]+/[^/]+$ ]] \
+        || { printf 'refusing --team %s: only a top team (/UYELER/<area>/<team>) gets cms:access; a Sub-team'"'"'s Leader groups never do (ADR-0065 addendum of 2026-10-12); nothing was read or changed\n' "$2" >&2; exit 2; }
       EXTRA_TEAMS+=("$2")
       shift 2
       ;;
@@ -254,7 +261,7 @@ for name in "${PRIVILEGED_NAMES[@]}"; do
     [[ -n $id ]] || continue
     gid_of[$path]=$id
     privileged+=("$path")
-    [[ $name != ADMIN ]] || admin_groups+=("$path")
+    [[ $name != ADMIN && $name != YK ]] || admin_groups+=("$path")
     found=true
   done
   [[ $found == true ]] || warning "no Privileged group $name (neither /$name nor /UYELER/$name)"

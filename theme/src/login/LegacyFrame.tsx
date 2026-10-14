@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import skyLabWatermarkUrl from "../assets/skylab-watermark.svg";
 import AnimatedSkyLabLogo from "./AnimatedSkyLabLogo";
+import DeveloperCredit from "./DeveloperCredit";
 import GridBackdrop from "./GridBackdrop";
 import TeamMarquee from "./TeamMarquee";
 import YtuMark from "./YtuMark";
@@ -26,6 +27,8 @@ export type LegacyFrameBrand = {
 
 type LegacyFrameProps = {
   brand?: LegacyFrameBrand;
+  /** The developer credit links to LinkedIn; false keeps it plain text (Web handoff failure page). */
+  creditLinked?: boolean;
   /** Rendered between the title and the card body; can be empty for pages whose body is the message. */
   children: ReactNode;
   description?: ReactNode;
@@ -49,6 +52,7 @@ export default function LegacyFrame(props: LegacyFrameProps) {
   const {
     brand,
     children,
+    creditLinked = true,
     description,
     headerExtras,
     kvkkLinkText,
@@ -151,7 +155,7 @@ export default function LegacyFrame(props: LegacyFrameProps) {
               {kvkkSuffix}
             </p>
             <strong>e-skylab by WEBLAB</strong>
-            <span className="sl-legacy-credit">Developed by Yusuf Açmacı</span>
+            <DeveloperCredit linked={creditLinked} />
 
             {showLanguageMenu && (
               <nav className="sl-legacy-languages" aria-label={languageMenu.label}>

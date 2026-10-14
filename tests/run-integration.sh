@@ -8,8 +8,9 @@ COMPOSE=(docker compose -f "$COMPOSE_FILE")
 KCADM=("${COMPOSE[@]}" exec -T keycloak /opt/keycloak/bin/kcadm.sh)
 ADMIN_CONFIG=/tmp/integration-kcadm.config
 
-# INTEGRATION_GROUP runs one of the groups CI runs as parallel jobs (.github/workflows/ci.yml,
-# integration-group); the default, all, runs every stage in one Keycloak, as release.yml does.
+# INTEGRATION_GROUP runs one of the groups CI and the release run as parallel jobs
+# (.github/workflows/ci.yml integration-group, release.yml keycloak-integration); the default, all,
+# runs every stage in one Keycloak.
 # Every group starts its own Keycloak with the fixture realm and runs the shared realm prefix
 # (bootstrap, first reconciliation, drift, second reconciliation and their assertions); the stages
 # after it are split as below. A group that runs later stages without an earlier group's stages
@@ -24,7 +25,8 @@ ADMIN_CONFIG=/tmp/integration-kcadm.config
 #            and token contracts, Chromium, passkey cleanup, K5, K4b, sky-account SPI, passkey
 #            ceremonies
 # Every group ends with the RabbitMQ provider contract. tests/check-fresh-runner.sh keeps this
-# list and the CI matrix equal.
+# list and the CI matrix equal; release.yml reads its matrix from this line, and its package job
+# requires a passed run of every group listed here.
 INTEGRATION_GROUPS=(erasure roles login spi)
 INTEGRATION_GROUP=${INTEGRATION_GROUP:-all}
 if [[ $INTEGRATION_GROUP != all && " ${INTEGRATION_GROUPS[*]} " != *" $INTEGRATION_GROUP "* ]]; then
@@ -90,6 +92,7 @@ chmod 0644 "$sky_mail_dir/client.secret"
 "$SCRIPT_DIR/check-production-preflight.sh"
 "$SCRIPT_DIR/check-account-center-origin.sh"
 "$SCRIPT_DIR/check-operator-login-prompts.sh"
+"$SCRIPT_DIR/check-site-editor-grants-team.sh"
 
 fail() {
   printf 'integration failure: %s\n' "$1" >&2
@@ -2188,6 +2191,9 @@ stage_v2_passkey_cleanup "$client_secret"
 stage_k5_system_mail_through_skymail
 # K4b after K5: its reset mails leave through SkyMail and the stage reads them there.
 stage_reset_by_either_email "$client_secret"
+# eskylab-login-ux 23: the reset asks a person with OTP for the code, never for a new authenticator.
+stage_reset_verifies_otp "$client_secret"
+stage_reset_otp_guard
 
 # The sky-account SPI contract runs against the same realm: bearer guard, Verified
 # YTÜ lock, brute force, sudo binding, password/TOTP/username flows and events.

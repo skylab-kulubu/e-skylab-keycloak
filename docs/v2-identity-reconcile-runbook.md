@@ -34,8 +34,11 @@ entegrasyon testi bunu doğrular.
 | `core-erasure` istemcisi (hesap silme, ADR-0051) | Uzlaştırıcı **yalnız doğrular** (`keycloak-mailer` gibi): istemci yoksa uyarı ve çalıştırılacak komut. Şunlardan biri sözleşmeden farklıysa koşu hata ile durur ve operatör komutunu yazar: bayraklar (gizli, yalnız service account, standard flow / direct grant / implicit kapalı, `fullScopeAllowed=false`), varsayılan kapsamlar (tam olarak `basic` ve `roles`; Keycloak'ın eklediği `service_account` hoş görülür), isteğe bağlı kapsamlar (tam olarak üç `account-erase-*`), doğrudan scope mapping (olmamalı), her erase kapsamının tek audience mapper'ı ve tek rolü, servis istemcilerinin (`skymail`, `skycms`, `forms`) varlığı. Service account rolleri uzlaştırıcı kimliğiyle okunamadığından uyarı olarak raporlanır. İstemciyi, kapsamları ve rolleri operatör `config/create-erasure-client.sh` ile kurar (§11). |
 | Parola formu (K4, §15) | Realm tarayıcı akışı `browser plus passkey`'deki `auth-username-password-form`'un yerine aynı alt akışta, aynı öncelik ve `REQUIRED` ile `sky-username-password-form` konur; akışın geri kalanına dokunulmaz. İki formdan tam olarak biri yoksa, form `REQUIRED` değilse ya da yanındaki bir yürütmeyle aynı önceliği paylaşıyorsa koşu hiçbir şey yazmadan durur. `KEYCLOAK_PASSWORD_FORM=auth-username-password-form` Keycloak'ın formunu geri koyar. |
 | Parola sıfırlamanın kişi seçme adımı (K4b, §17) | Realm'in `reset credentials` akışındaki `reset-credentials-choose-user`'ın yerine aynı öncelik ve `REQUIRED` ile `sky-reset-credentials-choose-user` konur. Keycloak'ın yerleşik akışı değiştirilemediği için realm yerleşik bir akışa bağlıysa akış bir kez `sky reset credentials` adıyla kopyalanır, adım kopyada değiştirilir, realm ancak ondan sonra kopyaya bağlanır. Durdurma kuralları parola formununkiyle aynıdır. `KEYCLOAK_RESET_CHOOSE_USER=reset-credentials-choose-user` Keycloak'ın adımını bağlı akışa geri koyar. |
+| Parola sıfırlamanın OTP adımı (eskylab-login-ux 23, §17.1) | Bağlı (düzenlenebilir) sıfırlama akışının "Reset - Conditional OTP" alt akışında `reset-otp`'nin yerine aynı öncelik ve `REQUIRED` ile `auth-otp-form` konur; koşul `conditional-user-configured` aynen kalır. Durdurma kuralları parola formununkiyle aynıdır; yarıda kalmış değişim ve Admin Console'un acil yolunun bıraktığı hâl (DISABLED `reset-otp` yanında REQUIRED `auth-otp-form`) tamamlanır. Keycloak'ın yerleşik akışına dokunulmaz. `KEYCLOAK_RESET_OTP_STEP=reset` Keycloak'ın adımını geri koyar. |
 | Kimlik korumaları: core sertifika rolleri, OBS `department mapper`, core'un `manage-clients` rolü | Uzlaştırıcı **dokunmaz**: kimliğinin kullanıcı ve kimlik sağlayıcısı yetkisi yoktur. Operatör `config/identity-guardrails.sh` ile uygular (§8). |
-| SkyMail'in Privileged rolü (§25) | `skymail` istemcisinde `skymail:system-mails:read` her koşuda var edilir (yoksa açıklamasıyla oluşturulur). core'un kaynak rolleri gibi Privileged gruplara **bir kez** verilir ve `skylab.seeded-group-mappings` ile işaretlenir; tohumlamayı operatörün `KEYCLOAK_RECONCILE_ONLY=core-roles` koşusu yapar. Diğer `skymail:*` rolleri elle verilmiştir, uzlaştırıcı onlara dokunmaz. |
+| SkyMail'in Privileged rolleri (§25) | `skymail` istemcisinde `skymail:system-mails:read` (ADMIN, YK, DK) ve `skymail:announcements:send` (yalnız ADMIN ve YK; duyuru-haber D4) her koşuda var edilir (yoksa açıklamasıyla oluşturulur). core'un kaynak rolleri gibi kendi Privileged gruplarına **bir kez** verilir ve `skylab.seeded-group-mappings` ile işaretlenir; tohumlamayı operatörün `KEYCLOAK_RECONCILE_ONLY=core-roles` koşusu yapar. Kişilerin diğer `skymail:*` rolleri `/ROLLER` rol gruplarına taşınır (§26). |
+| Servis hesaplarının rolleri (§20, §20.1) | `forms`'a core'un dört servis rolü, `skymail-backend`'e core'un `audience:read`'i, `core`'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`, `skymail:lists:read`, `skymail:lists:write` rolleri. Uzlaştırıcı kimliği core rollerini oluşturur ve raporlar; vermeyi operatör `KEYCLOAK_RECONCILE_ONLY=service-roles` ile yapar. SkyMail'in rolleri oluşturulmaz. |
+| Rol grupları `/ROLLER/<UYGULAMA>-<ROL>` (§26) ve Leader gruplarının uygulama rolleri (§27) | Uzlaştırıcı **dokunmaz** (gruba rol eşlemek kullanıcı yetkisi ister). Operatör `config/role-groups.sh` ve `config/leader-app-roles.sh` (ya da `KEYCLOAK_RECONCILE_ONLY=role-groups` / `leader-app-roles`) ile kurar; kuru koşu varsayılandır, `--apply` yazar; üye hiç eklenmez. |
 
 Ortam değişkenleri: `KEYCLOAK_PASSKEY_RP_ID` (varsayılan `yildizskylab.com`) ve
 `KEYCLOAK_PASSKEY_EXTRA_ORIGINS` (virgülle ayrılmış, varsayılan
@@ -399,6 +402,10 @@ Parola sıfırlama adımının (K4b) geri dönüşü de imajdan **önce** yapıl
 1.14.0'dan da eskiye dönülecekse iki bayrak aynı koşuda verilir. Her imajda çalışan acil yol:
 Admin Console'dan realm'in Reset credentials flow bağlantısını yerleşik `reset credentials`'a
 geri almak (§17).
+
+Sıfırlamanın OTP adımının (§17.1) geri dönüşü imaja bağlı değildir: `auth-otp-form` ve
+`reset-otp` Keycloak'ın kendi adımlarıdır, her imajda vardır. `KEYCLOAK_RESET_OTP_STEP=reset`
+koşusu istendiği zaman yapılır.
 
 Group overage mapper'ı (`sky-group-overage-mapper`, SPI 1.16.0, ADR-0059) da imajdan **önce** geri
 alınır: 1.16.0'dan eski bir imaja dönmeden önce, onu kullanan her istemcide
@@ -883,20 +890,27 @@ ister, §6). Realm yeniden kurulursa betik yeniden koşulur.
 
 | İstemci | Rol | Gruplar |
 |---|---|---|
-| `frontend-main` | `cms:access` | `/ADMIN`, `/UYELER/YK`, `/UYELER/DK`, her `…/LIDERLER` ve `…/KOORDINATORLER` |
+| `frontend-main` | `cms:access` | `/ADMIN`, `/UYELER/YK`, `/UYELER/DK`, yalnız en üst takımların (`/UYELER/<alan>/<ekip>`) `LIDERLER` ve `KOORDINATORLER` grupları |
 | `frontend-main` | `client:admin` | `/ADMIN`, `/UYELER/YK` |
-| `frontend-arge` | `cms:access` | `/ADMIN`, `/UYELER/YK`, her `…/LIDERLER` ve `…/KOORDINATORLER` |
+| `frontend-arge` | `cms:access` | `/ADMIN`, `/UYELER/YK`, yalnız en üst takımların (`/UYELER/<alan>/<ekip>`) `LIDERLER` ve `KOORDINATORLER` grupları |
 | `frontend-arge` | `client:admin` | `/ADMIN`, `/UYELER/YK` |
 | `admin` | `content:read`, `content:write` | `/ADMIN`, `/UYELER/YK`, `/UYELER/DK` |
 
 - Hiçbir CMS rolü `/UYELER`'e, bir kişiye, varsayılan rollere ya da varsayılan gruplara
-  verilmez. `client:admin` liderlere verilmez.
+  verilmez. `client:admin` yalnız `ADMIN` ve `YK`'dadır (Yusuf, 2026-10-12): liderlere ve `DK`'ya
+  verilmez (`DK` okur, yazmaz). Etkinlik sitelerinde de böyledir (`site-editor-grants.sh`).
 - Bilinen sınır: inscribed'da `content:write` tenant geneli. `frontend-main`'de
   `cms:access` alan lider ana sitenin bütün sayfa bloklarını da düzenleyebilir. Fatih
   yalnız koleksiyona yazma yeteneğini getirene kadar kabul edildi. Hangi takımı
   düzenleyeceğini `teams` koleksiyonunun `ClaimDerived` kuralı sınırlar.
-- Yeni takım açılınca `LIDERLER` ve `KOORDINATORLER` gruplarına iki sitede de
-  `cms:access` verilir.
+- Yeni bir en üst takım (`/UYELER/<alan>/<ekip>`) açılınca `LIDERLER` ve
+  `KOORDINATORLER` gruplarına iki sitede de `cms:access` verilir. Alt ekiplerin
+  (`/UYELER/<alan>/<ekip>/<alt ekip>` ve daha derin) Leader gruplarına, takım ya da alan
+  gruplarının kendisine `cms:access` verilmez (ADR-0065'in 2026-10-12 eki). Site editörlüğü
+  (`content:write`, `cms:access` dahil) taşıyan grup ve altı ekip yetki devrinde yalnız
+  Privileged'ca yönetilir. Alt ekip Leader grubuna verilseydi üst ekibin Leader'ı oraya üye
+  ekleyerek site geneli yazmayı dağıtabilirdi. Bu kural inscribed'a koleksiyon ya da kayıt bazında
+  yazma gelene kadar geçerlidir.
 
 ### Geçiş gecesi: `--post-cutover`
 
@@ -1604,7 +1618,8 @@ uzlaştırıcı `KEYCLOAK_RESET_CHOOSE_USER=reset-credentials-choose-user` ile k
 bağlı realm'de hiçbir şey yazmaz).
 
 Harness: `tests/reset-by-either-email.sh` (`run-integration.sh` içinden). İlk uzlaştırmada
-yerleşik akış değişmez; kopya, yerleşik akıştan yalnız adımıyla ayrılır ve realm ona bağlanır.
+yerleşik akış değişmez; kopya, yerleşik akıştan yalnız adımıyla (ve §17.1'in OTP adımıyla) ayrılır
+ve realm ona bağlanır.
 Yarıda kalmış bir koşu (realm yerleşik akışa geri bağlı, kopyada Keycloak'ın adımı) ikinci
 uzlaştırmada aynı kopyayla tamamlanır; no-op koşu sessizdir. Geri dönüş ve yeniden ileri, K4'ün
 koşularıyla birlikte (`tests/login-by-either-email.sh`): geri dönüşte kişisel e-posta kimseyi
@@ -1615,6 +1630,122 @@ yollatır; kullanıcı adı Keycloak'ın yoluyla çalışır; bilinmeyen, iki ki
 kişisel, bağlantısız okul e-postası ve devre dışı hesap aynı sayfayı alır, posta gitmez ve olayları
 Keycloak'ınki gibidir; SkyMail tam olarak üç posta alır. Postadaki bağlantı, isteyen tarayıcıda
 yeni parolayı kurar ve kişi okul e-postası ile yeni parolasıyla girer; adresleri değişmez.
+
+### 17.1 Sıfırlamada kayıtlı OTP ile doğrulama (eskylab-login-ux 23)
+
+Keycloak'ın yerleşik `reset credentials` akışı (ve K4b'nin kopyası `sky reset credentials`) son
+adımda "Reset - Conditional OTP" alt akışını taşır: `Condition - user configured` +
+`Reset OTP` (`reset-otp`). OTP'si olan herkeste koşul tutar ve `reset-otp` çalışır: config yoksa
+(yerleşik akışta ve kopyada yok) mevcut OTP silinmez ama oturuma `CONFIGURE_TOTP` eklenir; kişi
+e-postadaki bağlantıdan sonra kayıtlı kodunu girmek yerine "Mobil kimlik doğrulayıcıyı kur" (QR)
+sayfasını görür, tamamlarsa iki OTP kaydı olur. Kayıtlı faktörle doğrulama hiç yapılmaz.
+
+Karar (Microsoft Entra SSPR ve Google hesap kurtarma modeli): sıfırlamada kişi önceden **kayıtlı**
+yöntemiyle doğrulanır; sıfırlama MFA yöntemini silmez, yenisini kurdurmaz. Uzlaştırıcının
+`reconcile_reset_otp_step`'i, `reconcile_reset_choose_user`'dan hemen sonra, realm'in bağlı
+sıfırlama akışında `reset-otp`'nin yerine aynı alt akışta, aynı öncelik ve `REQUIRED` ile
+`auth-otp-form`'u (Keycloak'ın "OTP Form"u) koyar (`swap_flow_execution`, aynı durdurma kuralları).
+Koşul aynen kalır:
+
+- OTP'si olan kişi: e-postadaki bağlantı → kayıtlı doğrulayıcının kodu → yeni parola. OTP kaydı
+  aynı kalır, kurulum istenmez. Yanlış kod brute force sayacına girer (giriş formundaki gibi);
+  `failureFactor`'a (10) ulaşınca kişi kilitlenir ve doğru kod da reddedilir. Sıfırlama bitince
+  kişi oturum açmış olur (Keycloak; Microsoft Entra'da kişi yeni parolayla ayrıca girer).
+- OTP'si olmayan kişi (yalnız parola ya da passkey): koşul tutmaz, kod sorulmaz; bağlantıdan
+  doğrudan yeni parola.
+- `reset-password` parolayı akışta değil `UPDATE_PASSWORD` required action'ında değiştirir; OTP
+  doğrulanmadan parola değişmez.
+
+Admin REST, birden fazla gereklilik seçeneği sunan adımları (`auth-otp-form`, `reset-otp`)
+`DISABLED` ekler; değişim yeni adımı ekledikten sonra `REQUIRED` yapar, ardından eskisini siler.
+Bu iki yazım arasında kesilmiş bir koşuyu (aynı yerde REQUIRED `reset-otp` + DISABLED
+`auth-otp-form`) sonraki koşu tamamlar (`reset-otp`'de config varsa değişim gibi reddeder). Acil yolun bıraktığı hâli (DISABLED `reset-otp` yanında
+REQUIRED `auth-otp-form`, öncelik farklı olabilir) uzlaştırıcı devralır: yalnız DISABLED
+`reset-otp`'yi siler; geri alınmış acil yolun DISABLED `auth-otp-form`'unu silip değişimi yapar.
+Keycloak'ın yerleşik akışı değiştirilemez; realm yerleşik akışa bağlıysa
+(yalnız K4b geri dönüşü kopyası olmayan bir realm'de) koşu uyarı yazar ve geçer.
+
+`verify`'de değişimden sonra `ReconcileJson otp-guard` adımın gerçekten çalıştığını denetler:
+tek REQUIRED `auth-otp-form`, CONDITIONAL bir alt akışta, alt akışın tek etkin koşulu REQUIRED
+`conditional-user-configured`, alt akışta başka REQUIRED ya da CONDITIONAL adım yok, üstteki hiçbir alt
+akış DISABLED değil. Değilse (Admin Console'da alt akış DISABLED yapılmış, koşul silinmiş, adım alt
+akış dışına taşınmış ya da yanına REQUIRED bir adım, ör. WebAuthn, eklenmişse OTP'li kişi yalnız
+e-postayla sıfırlar; `user configured` yanındaki her REQUIRED adımın kişide kurulu olmasını ister) `unchanged` satırı yazılmaz, yerine uyarı gelir; diğer adımlar koşar, koşu
+başarı satırı yerine şu satırla **3** çıkış koduyla biter:
+
+- `[reconcile] WARNING: OTP step of flow 'sky reset credentials': subflow 'sky reset credentials Reset - Conditional OTP' is DISABLED; OTP is not verified on reset as intended`
+- `Account Center Keycloak configuration is reconciled except the reset OTP step (OTP step of flow 'sky reset credentials': subflow 'sky reset credentials Reset - Conditional OTP' is DISABLED); fix the subflow in the Admin Console and run again`
+
+(Nedenin metni duruma göre değişir: `subflow '…' is REQUIRED, not CONDITIONAL`, `subflow '…' has the
+enabled conditions […], not exactly one REQUIRED conditional-user-configured`, `subflow '…' also
+requires [webauthn-authenticator REQUIRED] besides auth-otp-form, so a person with OTP alone skips it`,
+`auth-otp-form is at the top level, outside a conditional subflow`.) Admin Console'da alt akış CONDITIONAL'a, koşul
+yerine konup koşu yinelenir. Yayın wizard'ı `WARNING: OTP step of flow` satırında ve 3 çıkışında
+durmalıdır. Realm yerleşik akışa bağlıysa `verify`'nin uyarısı:
+`[reconcile] WARNING: OTP step of flow 'reset credentials' was not changed: Keycloak's built-in flow cannot be edited and runs reset-otp; a run with the default KEYCLOAK_RESET_CHOOSE_USER binds the realm to 'sky reset credentials' first`
+(çıkış 0; wizard bunu da durdurucu saymalıdır, çünkü `reset-otp` e-postayla yeni OTP kurdurur).
+
+Satırlar (realm `sky reset credentials`'a bağlı, ilk koşu):
+
+- `[reconcile] OTP step of flow 'sky reset credentials': updated (reset-otp -> auth-otp-form in subflow 'sky reset credentials Reset - Conditional OTP', priority 20, REQUIRED)`
+
+İkinci koşu:
+
+- `[reconcile] OTP step of flow 'sky reset credentials': unchanged (auth-otp-form)`
+
+Acil yol sonrası ilk koşu:
+`[reconcile] OTP step of flow 'sky reset credentials': updated (removed the DISABLED reset-otp next to the REQUIRED auth-otp-form)`.
+
+Öncelik Keycloak 26'nın yerleşik akışında 20'dir; değişim neyse onu korur. `reset-otp`'de
+authenticator config varsa (Admin Console'dan "Remove one/all" seçilmişse) koşu hiçbir şey
+yazmadan durur; o zaman önce config kaldırılır ya da koşu `KEYCLOAK_RESET_OTP_STEP=reset` ile
+yapılır (o yönde `reset-otp` zaten yerindeyse `unchanged` der). Üretimdeki hâli salt okur
+sky_lab_genel `ops/wizards/keycloak-reset-otp-facts.sh` gösterir.
+
+Geri dönüş bayrağı `KEYCLOAK_RESET_OTP_STEP` (varsayılan `verify`; `reset` Keycloak'ın
+`reset-otp`'sini aynı yere geri koyar, beklenen satır `OTP step of flow 'sky reset credentials':
+updated (auth-otp-form -> reset-otp …)`; başka değer koşuyu hiçbir şey okumadan durdurur). İkisi
+de Keycloak'ın adımıdır; geri dönüş imaj sırası gerektirmez (§7). Dikkat: sky_lab_genel'deki K4b
+wizard'ının `--rollback`'i realm'i yerleşik `reset credentials`'a bağlarsa yerleşik akıştaki
+`reset-otp` (değiştirilemez) geri gelir.
+
+**Acil yol (Admin Console, uzlaştırıcı gerekmez; yayın gelene kadar elle yapılmış fark olarak
+not edilir):**
+
+1. Admin Console → `e-skylab` realm'i → Authentication → `sky reset credentials`
+   ("Used by: Reset credentials flow" yazmalı).
+2. `… Reset - Conditional OTP` alt akışının satırındaki **+** → **Add step** → **OTP Form** → Add.
+3. Yeni **OTP Form** satırının Requirement'ı → **Required**.
+4. **Reset OTP** satırının Requirement'ı → **Disabled** (silmek yerine; geri dönüş tek tık).
+   `Condition - user configured` DISABLED adımları saymaz, yalnız OTP Form'a bakar.
+5. Dene: OTP'li bir test hesabıyla "Şifremi unuttum" → postadaki bağlantı → **kod sorulmalı**, QR
+   gelmemeli → yeni parola. OTP'siz hesapla kod sorulmadan yeni parola.
+6. Geri: Reset OTP → Required, OTP Form → Disabled (ya da sil).
+
+Bu düzeltmeyi taşıyan uzlaştırıcı sonraki yayında acil yolun hâlini bozmaz, devralır (yukarıdaki
+satır). Acil yol geri alınmışsa (Reset OTP Required, OTP Form Disabled) koşu önce DISABLED OTP
+Form'u siler (`updated (removed the DISABLED auth-otp-form next to the REQUIRED reset-otp)`),
+sonra değişimi yapar.
+
+Bilinen sapmalar (ayrı karar): (a) OTP'si olmayan ama passkey'i olan yöneticiler sıfırlamada
+ikinci doğrulama vermez (Microsoft yönetici rollerinden iki yöntem ister); istenirse passkey
+doğrulaması sonraki iş. (b) Hem parolasını hem OTP cihazını kaybeden kişi kendi başına
+sıfırlayamaz: yönetici Admin Console → Users → kişi → Credentials'tan OTP kaydını siler
+(Microsoft'ta da yardım masası yolu).
+
+Harness (`tests/reset-by-either-email.sh`): ilk uzlaştırma `reset-otp`'yi `auth-otp-form` ile
+değiştirir, kopya yerleşik akıştan yalnız iki adımla ayrılır; DISABLED eklenmiş `auth-otp-form`'da
+kesilmiş değişimi ikinci uzlaştırma tamamlar; no-op koşu `unchanged` der. K4'ün geri dönüş
+koşularında `KEYCLOAK_RESET_OTP_STEP=reset` kopyayı yerleşik akışın tam eşi yapar (ikinci koşu
+sessiz); ileri koşu acil yolun hâlini devralır; geçersiz bayrak durdurulur. K5'ten sonra gerçek
+sıfırlama: OTP'li kişide postadaki bağlantı kod sayfasını (`login-otp.ftl`) açar, QR kurulum
+sayfası gelmez; yanlış kod sayfada tutar, doğru kod yeni parola sayfasına götürür; sonunda OTP
+kaydı aynı (aynı kimlik), required action yok, parola yeni. OTP'siz kişide bağlantı doğrudan yeni
+parola sayfasını açar. Yanlış kod brute force sayacını 1 yapar; ikinci sıfırlamada `failureFactor`
+yanlış koddan (aralarında quick login denetiminden uzun bekleme) sonra kişi kilitlidir, doğru kod
+reddedilir, parola değişmez. Alt akış DISABLED yapılınca gerçek koşu uyarı satırını yazar, `unchanged`
+demez, diğer adımları koşar ve 3 ile biter. Planlayıcı vakaları: `otp-guard` (koşulsuz, REQUIRED alt
+akış, üst düzey adım, yanında REQUIRED WebAuthn; DISABLED ya da ALTERNATIVE WebAuthn geçer) ve config'li `reset-otp`'de `resume` reddi.
 
 ## 18. Etkinlik sitelerinin site istemcileri ve editör grupları (ADR-0056 eki)
 
@@ -1646,11 +1777,14 @@ yazar, ikinci koşu hiçbir şey yazmaz; kcadm prompt'u ya da `--kcadm-config`):
 3. `config/site-editor-grants.sh [--site …]... [--team SITE=/YOL]...`: `cms:access` Privileged gruplara
    (`ADMIN`, `YK`, `DK`; `/<AD>` ve `/UYELER/<AD>` hangisi varsa) ve sitenin iki takımının doğrudan
    `LIDERLER`/`KOORDINATORLER` alt gruplarına: sahip lab takımı ve etkinliğin organizasyon takımı
-   (karar 2026-10-03, CONTEXT.md "Site editor"); `client:admin` yalnız `ADMIN` gruplarına. Takımlar:
+   (karar 2026-10-03, CONTEXT.md "Site editor"); `client:admin` `ADMIN` ve `YK` gruplarına (Yusuf, 2026-10-12;
+   `DK`'ya verilmez, `DK`'da varsa `WARNING`). Takımlar:
    ARTLAB → `/UYELER/ARGE/AIRLAB` + `/UYELER/ORGANIZASYON/ARTLAB`, YıldızJam → `/UYELER/ARGE/GAMELAB`
    + `/UYELER/ORGANIZASYON/YILDIZJAM`, SkyDays → `/UYELER/ARGE/SKYSEC` + `/UYELER/ORGANIZASYON/SKYDAYS`.
    Realm'de olmayan bir takım ya da `LIDERLER`/`KOORDINATORLER`'i olmayan bir takım `WARNING`'dir; öbür
-   yetkiler yine verilir. `--team` bir siteye bir takım daha ekler. Kişiye, `/UYELER`'e ya da bir
+   yetkiler yine verilir. `--team` bir siteye bir en üst takım (`/UYELER/<alan>/<ekip>`) daha ekler;
+   daha derin (alt ekip) ya da daha sığ bir yol girişten önce `refusing --team …` ile 2 döner
+   (ADR-0065'in 2026-10-12 eki). Kişiye, `/UYELER`'e ya da bir
    varsayılan grubu kapsayan gruba rol verilmez (`PROBLEM`). Hiçbir şey geri alınmaz: beklenmeyen bir
    sahip `WARNING`'dir. İstemci ya da rolleri yoksa site `MISSING` ile atlanır, çıkış 1.
 
@@ -1679,7 +1813,7 @@ köken `https://sandbox.yildizskylab.com` (sitenin kodu `sandbox.` ve `sandbox-`
 `NEXTAUTH_URL`'yi sandbox sayar ve arama motorlarına kapatır), redirect birebir
 `https://sandbox.yildizskylab.com/api/auth/callback/keycloak`. Rolleri `inscribed-cms-roles.sh --client
 frontend-main` kurar (servis hesabı yalnız `content:read` + `schema:sync`); editörleri yalnız
-Privileged gruplardır (takım yok; `--team main=/YOL` eklenebilir), `client:admin` yalnız `ADMIN`'e.
+Privileged gruplardır (takım yok; `--team main=/YOL` eklenebilir), `client:admin` `ADMIN` ve `YK`'ya.
 Harness bunu da dener: production reddi, istemcinin biçimi, ADMIN üyesinin token'ında `cms:access` +
 `client:admin`, düz üyede CMS rolü olmadığı, servis hesabının salt okuma kaldığı, ikinci koşunun
 yazmadığı. Operatör: `ops/wizards/site-cms-setup-wizard.sh --site main --sandbox`.
@@ -1916,8 +2050,8 @@ KEYCLOAK_RECONCILE_ONLY=service-roles (runbook §20)` basar. Operatör adımı h
 hesabının rollerini yeniden okur. Adımın eski adı `KEYCLOAK_RECONCILE_ONLY=media-attach` aynı adımı
 koşar.
 
-**Kuru koşu.** `KEYCLOAK_RECONCILE_CHECK=true` (yalnız operatör oturumu ve `service-roles` ile; başka
-türlüsü 2 ile reddedilir) her şeyi okur, her değişikliği `would create …`, `would set … on client
+**Kuru koşu.** `KEYCLOAK_RECONCILE_CHECK=true` (yalnız operatör oturumu ve `service-roles` ile, ya da
+§26/§27'nin `role-groups`/`leader-app-roles` adımlarıyla; başka türlüsü 2 ile reddedilir) her şeyi okur, her değişikliği `would create …`, `would set … on client
 forms …`, `would map …`, `would grant
 <rol> to service account …`, `would record the grant of …` diye yazar ve hiçbir şey yazmaz. Son
 satırlar `check: N change(s) pending; nothing was written` ve `Core service roles are checked;
@@ -1929,6 +2063,8 @@ kapsamlar, rol kapsamı, servis hesabı ve rolleri, varsayılan rol, rollerin ku
 grupları), sonra yazar. Bir okuma Keycloak'ın "yok" cevabı dışında başarısız olursa (`… could not be
 read in realm …; nothing was granted`) koşu hiçbir şey vermeden ve işaretlemeden hata verir; boş
 cevap "yok" sayılmaz. Eksik rolün oluşturulması (zararsız, hiçbir şey vermez) okumalardan önce gelir.
+İstisna: eksik varsayılan `roles` kapsamı okuma sırasında eklenir (§20.1); sonraki bir okuma düşerse
+kapsam eklenmiş kalır (zararsız, idempotent).
 
 Operatör adımı (Keycloak konteynerinde; kullanıcı adını `read` sorar, parola kcadm'ın kendi
 prompt'una girilir, config dosyası sonda silinir). Önce sandbox, sonra production; önce kuru koşu:
@@ -2204,6 +2340,15 @@ değilse, adım iki kez ya da yanlış yerdeyse durdurur.
 - `[reconcile] realm first broker login flow binding: updated (first broker login -> sky first broker login)`
 - `[reconcile] identity provider OBS first login flow: ...` (aşağıda)
 
+Her koşuda kopyanın kendisi de denetlenir (#96 incelemesi F2). Adım ve DISABLED bağlantıyla
+doğrulama dışında kopya yerleşik akışla aynı biçimde olmalı (`ReconcileJson same-shape … sky-ytu-first-login`):
+`[reconcile] shape of flow 'sky first broker login': unchanged (the built-in 'first broker login' plus the SKY LAB edits)`.
+Elle eklenmiş bir adım (ör. `idp-auto-link`, `idp-detect-existing-broker-user`) ya da değişmiş bir
+gereklilik şu uyarıyla bildirilir:
+`[reconcile] WARNING: flow 'sky first broker login' is not shaped like the built-in 'first broker login' apart from the SKY LAB edits: …; nothing was changed`.
+Uzlaştırıcı kopyayı değiştirmez, wizard ✗ sayar. Bir Keycloak yükseltmesi yerleşik akışı
+değiştirirse aynı uyarı çıkar.
+
 İkinci koşuda hepsi `unchanged`; bayraksız (`keep`) koşuda bağlama satırı
 `unchanged (sky first broker login; KEYCLOAK_YTU_FIRST_LOGIN=on or off changes it)`. Öncelik
 Keycloak 26'nın yerleşik akışında 10'dur (adım 9). Kopya yerleşik akışı dondurur: Keycloak
@@ -2211,16 +2356,80 @@ yükseltmesinde yerleşik `first broker login` değişirse kopyaya geçmez (K4b'
 credentials`'ı gibi yükseltme listesine).
 
 **OBS'nin kendi ilk giriş akışı.** Bir IdP'de "First login flow override" seçiliyse realm
-bağlaması o IdP için geçmez. Keycloak 24'ten önce kurulan IdP'lerde bu alan çoğu zaman
-`first broker login`'dir; üretimdeki değer bilinmiyor. Uzlaştırıcı kimliği IdP okuyamaz (tasarım
-gereği), satır şöyle olur:
+bağlaması o IdP için geçmez (Keycloak 26.7.4 `LoginActionsService`: IdP'nin akışı varsa o, yoksa
+realm'inki). Üretimde OBS'nin geçersiz kılması **`first broker login for obs`** (2026-09-21
+olguları; 2026-10-13 salt okur dökümü): yerleşik `first broker login`'in Admin Console'da
+"Duplicate" ile alınmış, önce `first broker login kopyasi` adıyla yapılıp sonra yeniden adlandırılmış
+elle bir kopyası. Biçimi (adım, düzey, sıra, gereklilik) yerleşik akışla aynı; tek farkı review
+profile config'inde `update.profile.on.first.login=on` (yerleşikte ve `sky first broker login`'de
+`missing`). Bu yüzden 2026-10-13'teki `on` koşusundan sonra realm kopyaya bağlandı ama adım hiçbir
+YTÜ girişinde çalışmadı (eskylab-login-ux 22).
+
+Uzlaştırıcı kimliği IdP okuyamaz (tasarım gereği), satır şöyle olur:
 `identity provider OBS first login flow: unchanged (not readable with this identity; an operator checks it with KEYCLOAK_RECONCILE_ONLY=first-broker-login)`.
-Bir yönetici oturumuyla koşulan adım OBS'yi okur: geçersiz kılma `first broker login` ya da
-`sky first broker login` ise kaldırılır (`updated (its override is removed; it follows the realm binding)`),
-yoksa `unchanged (follows the realm binding)`; başka bir akışı gösteriyorsa dokunulmaz, uyarı
-basılır. `off` ile kopyayı gösteren geçersiz kılma da kaldırılır (geri dönüş OBS'ye de ulaşır).
-OBS'yi elle kopyaya bağlamayın; realm bağlaması yeter. OBS'nin geri kalanı (secret dahil) aynı kalır. Böylece açma ve geri alma yalnız realm
-bağlamasıdır ve uzlaştırıcı kimliğiyle de yapılır.
+Bir yönetici oturumuyla koşulan adım OBS'yi okur (`keep` OBS'ye hiç bakmaz):
+
+- `on`, geçersiz kılma yok: `identity provider OBS first login flow: unchanged (follows the realm binding)`.
+- `on`, geçersiz kılma `first broker login` ya da `sky first broker login`: kaldırılır,
+  `identity provider OBS first login flow: updated (its override is removed; it follows the realm binding)`.
+- `on`, geçersiz kılma bilinen eski adlardan biri (`first broker login for obs`, `first broker login
+  kopyasi`; `YTU_IDP_LEGACY_FIRST_BROKER_FLOWS`): önce o akışın biçimi yerleşik akışla
+  karşılaştırılır (`ReconcileJson same-shape`: aynı adımlar aynı sırada, aynı düzey, sıra, gereklilik
+  ve sağlayıcı; ad, açıklama, öncelik ve config değerleri karşılaştırılmaz). Aynıysa geçersiz
+  kılma kaldırılır ve kaldırılan ad OBS'nin kendi config'ine not edilir
+  (`skyFirstLoginFlowBeforeYtuStep`, tek güncellemede):
+  `identity provider OBS: first login flow binding removed (follows realm binding 'sky first broker login'; previous 'first broker login for obs' kept, unused)`.
+  Akış silinmez (geri dönüş için kalır, kullanılmaz). Biçim farklıysa OBS'de hiçbir şey değişmez,
+  çıkış 0 ama uyarı basılır:
+  `[reconcile] WARNING: identity provider OBS: first login flow binding refused (its override 'first broker login for obs' is not shaped like the built-in 'first broker login': execution N is …, not …; …)`.
+  Bu satır görülürse fark Admin Console'da okunur (ör. eklenmiş bir `idp-auto-link`), karar
+  verilmeden yeniden koşulmaz.
+- `off`, OBS'de not varsa (geçersiz kılma boş ya da kopyayı gösteriyorsa): geçersiz kılma nottaki
+  akışa geri yazılır, not boşaltılır:
+  `identity provider OBS: first login flow binding restored ('first broker login for obs', as before KEYCLOAK_YTU_FIRST_LOGIN=on)`.
+  Yalnız şu üç koşul birlikte tutarsa yazılır (#96 incelemesi F1; not ve kullanılmayan akış `on`'dan
+  sonra değiştirilebilir):
+  - nottaki ad bilinen eski adlardan biri;
+  - akış hâlâ var;
+  - akış hâlâ yerleşikle aynı biçimde.
+
+  Değilse hiçbir şey geri yazılmaz. Kopyayı gösteren geçersiz kılma boşaltılır, OBS realm bağlamasını
+  (yerleşik akış) izler, not okunmak için kalır:
+  `WARNING: identity provider OBS: first login flow binding not restored (<neden>; OBS follows the realm binding 'first broker login'; inspect it in the Admin Console)`.
+  Nedenler:
+  - `its note names '…', not one of the known earlier flows`
+  - `the flow '…' it had before KEYCLOAK_YTU_FIRST_LOGIN=on is absent`
+  - `the flow '…' is not shaped like the built-in 'first broker login' any more: …`
+
+  Wizard bunu ✗ sayar; durum zararsızdır (10-13 öncesinden tek fark review profile `missing`).
+  İkinci `off`: `identity provider OBS first login flow: unchanged (keeps its own first login flow 'first broker login for obs', as before KEYCLOAK_YTU_FIRST_LOGIN=on)`.
+- `off`, not yoksa: kopyayı gösteren geçersiz kılma kaldırılır (önceki satır), yoksa dokunulmaz.
+- Başka bir akışı gösteren geçersiz kılmaya hiç dokunulmaz:
+  `WARNING: identity provider OBS keeps its own first login flow '…' and ignores the realm binding`.
+
+**Neden not, sabit ad değil:** `off` yalnız `on`'un kaldırdığını geri yazar; birinin elle
+kaldırdığı (ya da hiç olmamış) bir geçersiz kılmayı tahminle geri koymaz. Not IdP'nin üzerinde
+durur, IdP silinirse onunla gider. Not kaybolursa (ör. Admin Console bilinmeyen config anahtarını
+düşürürse) `off` OBS'yi realm bağlamasında (yerleşik akış) bırakır; tek fark review profile
+`missing` olur, zararsız. Acil yol aşağıda.
+
+**Bilerek bırakılan fark (karar, 2026-10-13):** `first broker login for obs`'teki
+`update.profile.on.first.login=on` kopyaya taşınmaz. Kopyada `missing`: profil sayfası yalnız
+zorunlu bir alan eksikse çıkar; ilk YTÜ girişinde adım okul adresini birincil yazar ve profil
+zaten dolu gelir. Microsoft ve Google'ın federasyonlu ilk girişte yaptığı gibi yalnız eksik olan
+sorulur. `off` `on`'u geri getirir.
+
+OBS'yi elle kopyaya bağlamayın; realm bağlaması yeter. OBS'nin geri kalanı (secret, `syncMode`,
+`trustEmail`, post broker login akışı) aynı kalır.
+
+**Elle yapılmış, kodlanmamış akışlar (bu adım dokunmaz; izleme: hub
+`.scratch/keycloak-yayin/issues/02-elle-yapilmis-akislar.md`):**
+
+- `post-broker-passkey-offer`: OBS'nin post broker login akışı ("sso sonrası passkey teklif et").
+  `passkey-offer-authenticator` REQUIRED ve CONDITIONAL "cond 2fa" alt akışı (`conditional-user-role`
+  DISABLED, config "admin mi2" `condUserRole=ADMIN`; `auth-otp-form` REQUIRED). Koşul DISABLED
+  olduğu için alt akışın nasıl değerlendirildiği ayrıca doğrulanmalı.
+- `first broker login + http ` (sonunda boşlukla): hiçbir IdP'ye bağlı görünmüyor.
 
 ### Üretim sırası
 
@@ -2240,8 +2449,12 @@ bağlamasıdır ve uzlaştırıcı kimliğiyle de yapılır.
    ```
 3. Sandbox yürüyüşü (bilet 02'nin adımları): yeni bir YTÜ kimliğiyle Microsoft'tan sonra sayfa
    çıkmamalı; Admin Console'da `email` = okul adresi, Email verified açık, Required user actions boş.
-4. Canlı: aynı komut `KEYCLOAK_REALM=e-skylab` ile (`KEYCLOAK_YTU_FIRST_LOGIN=on` açıkça). Satırlar yukarıdaki gibi; OBS satırı
-   `updated (its override is removed ...)` ya da `unchanged (follows the realm binding)` olmalı.
+4. Canlı: aynı komut `KEYCLOAK_REALM=e-skylab` ile (`KEYCLOAK_YTU_FIRST_LOGIN=on` açıkça), **yönetici
+   oturumuyla** (OBS'yi yalnız o okur). Satırlar yukarıdaki gibi; OBS satırı
+   `identity provider OBS: first login flow binding removed (follows realm binding 'sky first broker login'; previous 'first broker login for obs' kept, unused)`
+   (ilk koşu), `updated (its override is removed ...)` ya da `unchanged (follows the realm binding)`
+   olmalı. `WARNING: identity provider OBS: first login flow binding refused …` ya da `keeps its own
+   first login flow` görülürse adım OBS'de çalışmıyor: durulur, fark okunur.
    Sonra oturum dosyası silinir: `docker exec "$kc" rm -f /tmp/fbl-kcadm.config`.
 5. Sonraki tam uzlaştırmalar (wizard'lar, uzlaştırıcı kimliği, bayraksız) bağlamayı korur
    (`unchanged`); 2-4'ten önce koşan bir tam uzlaştırma özelliği açmaz.
@@ -2255,12 +2468,17 @@ Yerleşik akış hiç değişmediği için bugünkü davranış (profil sayfası
 Kopya kalır; bayraksız (`keep`) sonraki koşular geri dönüşü korur, yalnız `on` yeniden bağlar.
 1.17.0'dan eski bir
 imaja dönülecekse ÖNCE geri dönüş koşulur; yoksa realm'in her ilk YTÜ girişi bilinmeyen adım
-yüzünden düşer. Geri dönüş uzlaştırıcı kimliğiyle de (wizard) operatör oturumuyla da koşar; OBS
-kopyayı gösteren bir geçersiz kılma taşıyorsa onu yalnız operatör oturumu kaldırabilir (uzlaştırıcı
-kimliği IdP okuyamaz). OBS'nin `first broker login` geçersiz kılması geri konmaz (realm bağlamasını
-izlemesi zararsızdır). Acil yol (her imajda): Admin Console → Authentication → yerleşik
-`first broker login` → Bind flow → First broker login flow; OBS'nin "First login flow override"ı
-kopyayı gösteriyorsa onu da boşaltın.
+yüzünden düşer. Geri dönüş uzlaştırıcı kimliğiyle de (wizard) operatör oturumuyla da koşar, ama
+OBS'yi yalnız operatör oturumu okur (uzlaştırıcı kimliği IdP okuyamaz). Operatör oturumundaki `off`
+OBS'nin geçersiz kılmasını `on`'un not ettiği akışa (üretimde `first broker login for obs`) geri
+yazar: `identity provider OBS: first login flow binding restored ('first broker login for obs', as
+before KEYCLOAK_YTU_FIRST_LOGIN=on)`. Böylece geri dönüş 2026-10-13 öncesini tam verir (review
+profile `on`, bağlantıyla doğrulama yolu açık). Kopyayı gösteren bir geçersiz kılma (not yoksa)
+kaldırılır; OBS'nin `first broker login` geçersiz kılması geri konmaz (realm bağlamasını izlemesi
+zararsızdır). Acil yol (her imajda): Admin Console → Authentication → yerleşik `first broker login`
+→ Bind flow → First broker login flow; sonra Identity providers → OBS → Advanced → "First login
+flow override" = `first broker login for obs` → Save (geçersiz kılma `sky first broker login` ya da
+boşsa).
 
 ### Harness
 
@@ -2278,7 +2496,15 @@ görülür; yeni kimlik, bağlı hesap, başka hesabın `personalEmail`'i, doğr
 parolayla yeniden doğrulama, posta yok) ve doğrulanmamış `email`'i (sahip kilitlenmez), OBS FORCE
 (uyarı, bağlanan hesabın birincili değişmez), A6, kopyayı gösteren OBS geçersiz kılmasıyla geri
 dönüş, `keep`'in kapalı bırakması, yeniden açma ve başka akışa bağlı realm'in reddi gerçek
-girişlerle (curl, Keycloak'ın kendi sayfaları) denenir. Birim testi: `SkyYtuFirstLoginTest`
+girişlerle (curl, Keycloak'ın kendi sayfaları) denenir. Sonra üretimdeki OBS kurulur: yerleşik
+akışın `first broker login for obs` adlı kopyası (review profile `on`) OBS'ye bağlanır. Realm
+kopyaya bağlıyken adımın OBS'de çalışmadığı (2026-10-13 hatası), `keep`'in OBS'ye dokunmadığı,
+fazladan `idp-auto-link` eklenmiş ya da bir gerekliliği değişmiş kopyanın uyarıyla reddedildiği
+(OBS değişmez), kopyaya eklenen adımın `keep`'te uyarıyla bildirildiği (dokunulmaz), `off`'un
+sonradan değiştirilmiş eski akışı ya da kopyayı gösteren notu geri yazmadığı, biçimi aynı
+kopyada `on`'un geçersiz kılmayı kaldırıp not ettiği (adım çalışır, kopya ve config'i değişmez),
+`off`'un geri yazıp notu boşalttığı (profil sayfası yine çıkar) ve ikinci koşuların bir şey
+değiştirmediği görülür. Birim testi: `SkyYtuFirstLoginTest`
 (kırpma, büyük/küçük harf, alan adı ve tırnaklı yerel kısım, sahip türleri, FORCE yolları).
 
 ## 23. İlk YTÜ girişinin sonunda kişisel e-posta önerisi (eskylab-login-ux 21)
@@ -2397,7 +2623,10 @@ Uzlaştırıcı kimliğinin `manage-realm` rolü yeter.
 1. SPI 1.18.0'ı ve yeni tema sayfasını taşıyan imaj yayımlanır (`main` → `production`). **Tema
    değişti: Touch ID kapısı yeni bir fiziksel testle** (`keycloak-production` ortamındaki
    değişkenler tam birleştirme SHA'sı ve issue #1 kanıtı). §22'nin adımı (`KEYCLOAK_YTU_FIRST_LOGIN=on`)
-   açık değilse öneri hiç çıkmaz; önce o. Bu imajla Hesap Merkezi YTÜ alan adlı kişisel adresi
+   açık değilse öneri hiç çıkmaz; önce o. Adımın açık olması yetmez, OBS realm bağlamasını izlemeli
+   (§22 "OBS'nin kendi ilk giriş akışı": yönetici oturumundaki `on` koşusunda OBS satırı `binding
+   removed …` ya da `unchanged (follows the realm binding)`); OBS kendi akışındaysa öneriyi koyan
+   adım hiç çalışmaz. Bu imajla Hesap Merkezi YTÜ alan adlı kişisel adresi
    `400 email_school_domain` ile reddeder; account-center'ın bu kodu tanıyan sürümü (account-center
    #79) aynı sırada yayımlanmalı.
 1a. **`on`'dan önce IP denetimi:** IP sınıfı bütçesi Keycloak'ın gördüğü istemci IP'si kadar
@@ -2485,7 +2714,9 @@ Microsoft paylaşılan cihazı sezip soruyu gizliyor; biz sezemiyoruz, yalnız m
 SPI 1.19.0'daki `sky-stay-signed-in` gerekli eylemi (`com.skylab.authenticator.SkyStaySignedIn`).
 Bir authenticator değil, çünkü bağlı bir hesabın YTÜ girişinde Keycloak IdP'den doğrudan girişin
 sonuna gider; realm'e bağlı hiçbir akış çalışmaz (yalnız IdP'ye özel post broker login akışı
-çalışırdı, onu da uzlaştırıcı kimliği okuyamaz). Her girişte çalışan şey realm'in gerekli
+çalışırdı, onu da uzlaştırıcı kimliği okuyamaz). Üretimde OBS'nin post broker login akışı
+`post-broker-passkey-offer` elle yapılmış, kodlanmamış (§22 sonundaki not); gerekli eylemler ondan
+sonra çalışır, bu eylem ona dokunmaz. Her girişte çalışan şey realm'in gerekli
 eylemlerinin `evaluateTriggers`'ıdır. Eylem kendini kullanıcıya değil **giriş oturumuna** ekler
 (`authSession.addRequiredAction`), yalnız şunlar birlikte tutunca:
 
@@ -2592,6 +2823,40 @@ kullanıcısız eski oturum, realm'de beni-hatırla kapalı, elle konmuş eylem,
 testindedir (`SkyStaySignedInTest`). Tema sayfası: `StaySignedIn.test.tsx`, `Template.test.tsx` ve
 görsel temeller (`sky-stay-signed-in-{desktop,mobile}`).
 
+### 20.1 SkyMail'in servis hesabı ve core'un SkyMail rolleri (duyuru-haber 04)
+
+Aynı adım iki servis hesabını daha yönetir:
+
+| Rol | Hangi istemcide | Sahibi | Ne için |
+| --- | --- | --- | --- |
+| `audience:read` | `core` (adım oluşturur) | yalnız `skymail-backend`'in servis hesabı | `POST /v1/audiences/resolve`: bir haber ya da duyuru gönderiminin kime gideceği (core #242, core `docs/news-audience.md`). core rolü yalnız servis hesabı token'ından okur; `skymail-backend` SkyMail'in `KEYCLOAK_SERVICE_CLIENT_ID`'sidir |
+| `skymail:access`, `skymail:mails:send` | `skymail` (oluşturulmaz) | `core`'un servis hesabı (kişiler de taşır) | core'un tekil postaları, `POST /v1/mail_tasks/single` (core `internal/mail/mail.go`) |
+| `skymail:lists:read`, `skymail:lists:write` | `skymail` (oluşturulmaz) | `core`'un servis hesabı (kişiler de taşır) | core'un etkinlik posta listeleri: `GET /v1/mailing_lists/…` okuma, `POST`/`DELETE` yazma (core `internal/mail/lists.go`, SkyMail `main.go` rota tablosu) |
+
+Liste `CORE_SERVICE_ROLE_DEFINITIONS` (core) ve `SKYMAIL_SERVICE_ROLE_DEFINITIONS` (SkyMail)
+dizilerindedir; ikisi aynı gövdeyle (`reconcile_service_roles`) yürür ve operatör adımının sonunda tek
+toplam yazılır (`check: N change(s) pending…` / `applied N change(s)`). SkyMail'in rolleri SkyMail'in
+kataloğudur: yoksa `WARNING: client role <rol> of skymail does not exist in realm …; it is not granted
+to core` yazılır ve o rol atlanır. Bunlar bugüne kadar elle verilmişti; kuru koşu production'daki
+farkı gösterir. `core`'un servis hesabı `skymail:mails:write` da taşıyorsa `NOTE: service account
+service-account-core also holds the skymail roles skymail:mails:write …` yazılır, rol alınmaz (tekil
+gönderim için `skymail:mails:send` yeter; geniş rolü kaldırmak ayrı bir karardır).
+
+**`roles` varsayılan kapsamı.** core `aud ∋ core` ister (`internal/authn/jwt.go`); bunu ve
+`resource_access`'i servis token'ına varsayılan `roles` kapsamı koyar. Listelenen bir istemcide
+(`forms`, `skymail-backend`, `core`) bu kapsam yoksa adım onu ekler (istemci ayarı, `manage-clients`:
+uzlaştırıcı kimliği de yapar): `default client scope roles of <istemci>: added …`, kuru koşuda `would
+add the default client scope roles to client …`. Realm'de `roles` kapsamı hiç yoksa yalnız uyarır.
+Ekleme okuma döngüsünün içinde yapılır ve tam uzlaştırmada da kuru koşusuz çalışır. Yayından sonraki otomatik tam uzlaştırma operatör kuru koşusundan önce koştuğu için,
+eksik kapsamı o ekler. Bu yüzden önizleme, o tam uzlaştırmanın çıktısıdır: `default client scope
+roles of <istemci>: verified` ya da `added …` satırlarına (`forms`, `skymail-backend`, `core`) bakılır.
+Sonraki `service-roles` kuru koşusu yalnız `verified` gösterir. Ekleme idempotenttir ve yalnız bu üç
+servis istemcisine dokunur. Bu kontrol, SkyMail'in kitle çağrısını açan yayından önce yapılır.
+
+**Sıra.** `audience:read` core #242'nin ucunu açar; uç rol yokken 403 `audience_role_missing` döner
+(zararsız). Rolün Keycloak'ta oluşması ve `skymail-backend`'e verilmesi SkyMail'in kitle çağrısını
+açan yayından önce yapılır.
+
 ## 25. SkyMail'in Privileged rolü: `skymail:system-mails:read` (skymail-backend #61)
 
 skymail-backend #61 tekil sistem postalarının (doğrulama, bildirim gibi tek alıcılı postalar)
@@ -2618,6 +2883,20 @@ olsun. Bu yüzden rol §19'daki core kaynak rolleriyle aynı biçimde yönetilir
   zaman geçer, yani Privileged bir kişinin SkyMail token'ındaki `resource_access.skymail.roles` rolü
   taşır. Ek kapsam eşlemesi gerekmez.
 
+**`skymail:announcements:send` (duyuru-haber D4, 2026-10-12).** Aynı listede (`SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS`,
+`rol|Privileged adlar|açıklama`) ikinci rol: haber ve duyuruyu Mail onayı olmadan gönderir. Yalnız
+`ADMIN` ve `YK`'ya (`/ADMIN`, `/YK`, `/UYELER/ADMIN`, `/UYELER/YK`; hangileri varsa) bir kez verilir;
+DK okur, yazmaz (grup-yonetimi GY1), DK'ya hiç verilmez ve DK eksikliği bu rol için uyarılmaz. Alt
+gruplar (YK görev grupları) eşlemeyi miras alır. Başkaları Mail onayıyla gönderir. Tohumlama, işaret
+ve geri dönüş `skymail:system-mails:read` ile aynıdır; operatör çıktısı `skymail role
+skymail:announcements:send: seeded once to /ADMIN,/UYELER/YK (granted to: …)`.
+
+**Kuru koşu yok.** `core-roles` adımının `KEYCLOAK_RECONCILE_CHECK=true`'su yoktur; koşu doğrudan
+yazar. Önizleme, yayından sonraki tam uzlaştırmanın uyarı satırlarıdır: `WARNING: skymail roles not
+yet granted to the Privileged groups: …` ve `WARNING: core roles not yet granted to the Privileged
+groups: …`. Operatör `core-roles`'ı koşmadan önce bu satırlarda yalnız beklenen rolleri (bu yayında
+`skymail:announcements:send`) gördüğünü doğrular; başka işaretsiz rol varsa aynı koşu onu da tohumlar.
+
 **Sıra.** Rol SkyMail'de yalnız bir yetkiyi açar; rol yokken #61'in kapısı kapalı kalır (içerik
 gizli). Bu yüzden Keycloak yayını ve operatör tohumlaması skymail-backend #61'in yayınından önce
 yapılırsa YK/DK/ADMIN #61 yayınlandığı an içeriği görür; sonra yapılırsa arada içerik kimseye
@@ -2631,6 +2910,148 @@ için uzlaştırıcı onları geri koymaz.
 Harness (`tests/skymail-roles.sh`, `run-integration.sh` çağırır, `roles` grubu): ilk tam koşu rolü
 açıklamasıyla oluşturur, kimseye vermez, işaretlemez ve uyarır; operatörün `core-roles` koşusu rolü
 `/ADMIN` ve `/UYELER/YK`'ya verir ve işaretler; YK üyesinin etkin `skymail` rolleri `skymail:access`
-ve bu rol, gruba üye olmayan kişide rol yok. Gruptan kaldırılan eşleme sonraki koşuda geri gelmez;
+ve bu iki rol, gruba üye olmayan kişide rol yok. Koşu için açılan `/DK` grubu varken işareti silinen
+`skymail:announcements:send` yalnız `/ADMIN` ve `/UYELER/YK`'ya verilir, `/DK` almaz. Gruptan kaldırılan eşleme sonraki koşuda geri gelmez;
 işareti silinen rol yalnız eksik gruba yeniden verilir. Değişiklik üretmeyen tam koşu rolleri,
 işaretleri ve grupların `skymail` eşlemelerini de karşılaştırır.
+
+## 26. Rol grupları: `/ROLLER/<UYGULAMA>-<ROL>` (rol-temizligi 05)
+
+Microsoft Entra bir uygulama rolünü kişiye değil güvenlik grubuna verir. Karşılığı: kişi bir client
+rolünü `/ROLLER` altındaki bir yaprağa üye olarak alır; yaprak tek bir istemcinin rollerini taşır
+(kararlar R1, R3, S4, S5, S7, S8; `sky_lab_genel/.scratch/rol-temizligi`). Yapraklar
+`config/role-groups.json`'dadır (ad, istemci, roller, `display_name_tr`, `description_tr`):
+
+| Yaprak | İstemci / rol |
+| --- | --- |
+| `FORMS-ACCESS`, `FORMS-ALL` | `forms` `skyforms:access`, `skyforms:*` |
+| `PLACE-ADMIN`, `PLACE-MODERATOR` | `place` `place:admin`, `place:moderator` |
+| `SKYMAIL-ACCESS`, `SKYMAIL-TEMPLATES-READ`, `SKYMAIL-TEMPLATES-WRITE`, `SKYMAIL-LISTS-READ`, `SKYMAIL-LISTS-WRITE`, `SKYMAIL-MAILS-READ`, `SKYMAIL-MAILS-WRITE`, `SKYMAIL-MAILS-APPROVE` | `skymail` `skymail:<rol>` (her rol için bir yaprak) |
+| `CF-ZERO-TRUST-ACCESS` | `cloudflare-zero-trust` `cloudflare:zero-trust:access` |
+| `SKYCLOUD-ACCESS`, `SKYCLOUD-ADMIN` | `skycloud` `skycloud:access`, `admin` (SkyCloud/Nextcloud yöneticisi) |
+
+SkyCloud kullanılıyor ve kalıyor (Yusuf, 2026-10-13; S8'in SkyCloud kısmını değiştirir): erişim ve
+yönetici rolü yaprak olur, liderler `skycloud:access`'i Leader grubundan alır (§27). `SKYCLOUD-ADMIN`'in
+rol adı (`admin`) F0 ölçümündeki `f3|kayip|skycloud|admin` satırından alındı; production kuru
+koşusunda `the role skycloud/admin does not exist` uyarısı çıkarsa ad `role-groups.json`'da
+düzeltilir. core #240 SkyCloud rollerini sınıflandırmaz: korunan (yönetici) sayılır, yaprağın
+üyeliğini yalnız Privileged değiştirir. SkyAutomate ve SkyLapp için yaprak yoktur (kullanılmıyor).
+
+**Ne yapılır** (`config/role-groups.sh`; operatör betiği, kuru koşu varsayılan, `--apply` yazar):
+
+- `/ROLLER` (rolsüz) ve eksik yapraklar öznitelikleriyle açılır; öznitelik farklıysa yeniden yazılır.
+- Her yaprağa yalnız kendi rolleri eşlenir. Yaprakta listede olmayan bir rol (başka istemcinin rolü,
+  realm rolü), `/ROLLER`'in kendisinde rol, yaprağın altında alt grup ve dosyada olmayan bir `/ROLLER`
+  grubu `WARNING`'dir; **hiçbir şey alınmaz ya da silinmez**.
+- **Üye hiç eklenmez ve çıkarılmaz.** Üyelik yalnız SKY LAB yönetim panelinden yapılır (denetim kaydı
+  ve posta panelden); kişiye doğrudan verilmiş rollerin yapraklara göçü rol-temizligi F2 wizard'ının
+  işidir (bilet 08). Bu PR'dan sonra `/ROLLER` yapraklarının üyelikleri boştur.
+- İstemcisi ya da rollerinden biri realm'de olmayan yaprak `WARNING` ile atlanır (açılmaz): aynı dosya
+  sandbox'ta da koşar (sandbox'ta `place` ya da `cloudflare-zero-trust` yoksa o yapraklar atlanır).
+- `/ROLLER` ya da altı varsayılan grupsa `PROBLEM`: hiçbir şey yazılmaz (her yeni kişi rolleri alırdı).
+
+**Ad kuralı** (spec §7.3): yaprak adı ekip kodu kuralına uyar (`^[A-Z][A-Z0-9-]{1,23}$`), dosyada bir
+kez geçer, tek istemci taşır (`ReconcileJson role-groups` dosyayı okurken reddeder, betik 2 ile
+çıkar) ve realm'deki hiçbir en üst ekibin (`/UYELER/<alan>/<ekip>`) ya da onun hemen altındaki alt
+ekibin (Leader grupları hariç) kodunu alt dize olarak içermez (içerirse o yaprak `PROBLEM` ile
+atlanır). Yeni rol grubu: `role-groups.json`'a bir nesne eklenir, PR
+açılır, yayından sonra betik önce kuru, sonra `--apply` koşulur. Kuru koşuda `PROBLEM … team code`
+görülürse (ör. `AI` gibi kısa bir alt ekip kodu `SKYMAIL-*` yapraklarının adında geçer) `--apply`
+koşulmadan önce ekip ya da yaprak adı ad kuralına göre değiştirilir; değiştirilmezse o yaprak atlanır,
+öbürleri uygulanır ve betik 1 ile çıkar.
+
+**Denetim (`--audit`, salt okur).** Her client ve realm rolünün doğrudan sahiplerini okur (rol başına
+iki okuma; production'da dakikalar sürer) ve yalnız sayı ile grup yolu basar, **kişi adı basmaz**:
+rol başına `audit: <istemci>/<rol>: N person(s) directly; groups: …`; `audit K1:` doğrudan client
+rolü ve realm rolü taşıyan kişi sayısı (servis hesapları ve `default-roles-<realm>` hariç; hedef 0);
+`audit K3:` `realm-management` rolü taşıyan kişi ve grup; `audit K4:` izinli yerler dışında rol
+taşıyan gruplar ve rolleri. İzinli yerler core'un kuralıyla birebir aynıdır (core
+`internal/authz/role_placement.go` `RolePlacement`, varsayılan kökler `DefaultPrivilegedRoots`): bir
+Privileged kökün kendisi (`/ADMIN`, `/YK`, `/DK`, `/UYELER/ADMIN`, `/UYELER/YK`, `/UYELER/DK`; altındaki
+görev grupları değil), en üst ekiplerin `LIDERLER`/`KOORDINATORLER` grupları ve altında grup olmayan
+`/ROLLER/<AD>` yaprakları. core'un varsayılanı altı köktür, production'da üçü vardır; core
+`AUTHZ_PRIVILEGED_ROOTS` ile daraltılırsa bu liste de daraltılır. Kim hangi SkyMail rolünü
+elle taşıyor sorusunun (duyuru-haber 04 madde 3) sayı cevabı da buradadır; adları rol-temizligi F0
+wizard'ı yalnız Yusuf'un terminalinde gösterir.
+
+Operatör adımı (Keycloak konteynerinde; önce sandbox, sonra production; önce kuru koşu). Uzlaştırıcı
+adı da aynı betiği koşar: `KEYCLOAK_RECONCILE_ONLY=role-groups` (+ `KEYCLOAK_RECONCILE_KCADM_CONFIG`;
+`KEYCLOAK_RECONCILE_CHECK=true` kuru koşu, yoksa `--apply`; operatör oturumu olmadan 2 ile reddedilir):
+
+```bash
+read -r -p 'master realm geçici yönetici: ' OPERATOR_USER
+/opt/keycloak/bin/kcadm.sh config credentials --config /tmp/kcadm-operator.config \
+  --server http://localhost:8080 --realm master --user "$OPERATOR_USER"
+KEYCLOAK_REALM=e-skylab-sandbox /opt/keycloak/config/role-groups.sh --kcadm-config /tmp/kcadm-operator.config --audit
+KEYCLOAK_REALM=e-skylab-sandbox /opt/keycloak/config/role-groups.sh --kcadm-config /tmp/kcadm-operator.config --apply
+KEYCLOAK_REALM=e-skylab-sandbox /opt/keycloak/config/role-groups.sh --kcadm-config /tmp/kcadm-operator.config
+rm -f /tmp/kcadm-operator.config
+```
+
+Son satır `check: 0 change(s) pending, …` olmalıdır. Geri dönüş: yapraklar boşken Admin Console'dan
+silinebilir; üyesi olan yaprak silinmeden önce üyeler F2'nin durum dosyasındaki doğrudan rollere
+döndürülür.
+
+**Okuma hatası.** Bir grubun okunması Keycloak'ın "yok" cevabı dışında başarısız olursa (ağ, yetki,
+sunucu hatası) betik `the group … could not be read in realm …; stopped` yazar ve 1 ile çıkar; hata
+"grup yok" sayılmaz.
+
+Harness `tests/role-groups.sh` (CI işi `role-groups`) tek başına çalışır: kuru koşu 31 değişiklik
+planlar (kök + 15 yaprak + 15 eşleme) ve yazmaz (admin olayı yok); `--apply` `/ROLLER`'i ve 15 yaprağı
+kurar (öznitelikler, roller, üye yok); ikinci `--apply` hiçbir şey yazmaz; kayma onarılır, fazlası
+raporlanır ve kalır; yaprağa eklenen kişinin token'ında rol vardır; varsayılan grup, en üst ekip ve
+alt ekip adlı yaprak `PROBLEM`'dir; `/ROLLER` okuması düşerse 1 ile durur, yazmaz; sandbox'ta eksik
+istemcinin yaprakları atlanır (9 açılır, 6 atlanır); `--audit` kişi adı basmaz ve K4'te YK görev
+grubunu ve alt gruplu yaprağı listeler; uzlaştırıcı adımı betiği koşar.
+
+## 27. Leader gruplarının uygulama rolleri: Forms koltuğu ve SkyCloud (rol-temizligi 09)
+
+Java dönemindeki `<EKİP>_LEADER` realm rolünün canlı işi composite'iydi: Forms koltuğu ve SkyCloud.
+Rol F3'te kalkmadan önce bunlar client rolü olarak doğrudan Leader gruplarına verilir:
+
+| İstemci / rol | Neden |
+| --- | --- |
+| `forms` `skyforms:access` (zorunlu) | Forms koltuğu (S7, bilet 09); `forms` yoksa `PROBLEM` |
+| `skycloud` `skycloud:access` (isteğe bağlı) | SkyCloud kullanılıyor ve kalıyor (Yusuf, 2026-10-13); bugün `_LEADER` composite'iyle geliyor, liderler F3'te kaybetmesin diye. `skycloud` yoksa (sandbox) `WARNING` ile atlanır |
+
+Composite'in öbür üç Forms rolü (`skyforms:form:manage`, `skyforms:response:manage`,
+`skyforms:feedback:manage`) **verilmez**: Forms depolarında okuyan yok, F3 kilidi onları ölü sayar;
+Fatih'in teyidi (rol-temizligi 15) beklenirken yayılmazlar. Fatih "okuyorum" derse `APP_ROLES`'a
+eklenir.
+
+**Yeni koltuk.** Bugün `<EKİP>_LEADER` realm rolünü taşımayan bir Leader grubunun üyeleri rolleri
+**yeni** alır (ör. SKYDEVOPS, F5'te açılanlar). Kuru ve uygulayan koşu bunları ayrı satırda yazar:
+`NEW SEAT: <yol> holds no <TEAM>_LEADER realm role: its N member(s) get the roles newly` ve sonda
+`new seats: G Leader group(s) without a <TEAM>_LEADER realm role, M member(s) in all` (yalnız sayı,
+kişi adı yok). Bu liste Yusuf'a gösterilir.
+
+`config/leader-app-roles.sh` (kuru koşu varsayılan, `--apply` yazar; `KEYCLOAK_RECONCILE_ONLY=leader-app-roles`
+aynı betiği koşar):
+
+- Ekipler canlı ağaçtan okunur, liste tutulmaz: `/UYELER/<alan>/<ekip>` (alan `ADMIN`, `YK`, `DK`
+  değil) ve doğrudan alt grupları `LIDERLER`, `KOORDINATORLER`. Alt ekiplerin Leader grupları (ADR-0065
+  eki) ve YK görev grupları almaz. Leader grubu olmayan ekip `NOTE` ile yazılır (F5 açar, sonra adım
+  yeniden koşulur).
+- Yalnız eksik eşleme eklenir; ikinci koşu `applied 0 change(s)`.
+- Beklenen yerler (en üst ekiplerin Leader grupları, `/ROLLER/<AD>`, Privileged kökler) dışında bu
+  rolleri taşıyan grup `WARNING`; rolü doğrudan taşıyan kişiler yalnız sayıyla `NOTE` (F2 taşır);
+  hiçbir şey alınmaz. Varsayılan grup bir Leader grubunun altındaysa o gruba verilmez (`PROBLEM`).
+- `forms` yoksa `PROBLEM` (çıkış 1); `skycloud` yoksa ya da bir rol yoksa `WARNING` ile atlanır.
+- Bir grubun okunması "yok" dışında bir nedenle düşerse (ör. `/UYELER`) betik 1 ile durur ve yazmaz;
+  hata "ekip yok" sayılmaz.
+
+**Ne zaman koşulur.** Her yeni en üst ekip ya da Leader grubu açıldığında (site editörlüğüyle aynı yer,
+§18), F5'ten sonra ve F3'ten (realm rollerinin kaldırılması) önce. En üst ekip Leader grubunu yalnız
+Privileged değiştirir; devir kuralı değişmez.
+
+```bash
+KEYCLOAK_REALM=e-skylab-sandbox /opt/keycloak/config/leader-app-roles.sh --kcadm-config /tmp/kcadm-operator.config
+KEYCLOAK_REALM=e-skylab-sandbox /opt/keycloak/config/leader-app-roles.sh --kcadm-config /tmp/kcadm-operator.config --apply
+```
+
+Harness: `tests/role-groups.sh` (aynı CI işi): yalnız en üst ekibin `LIDERLER` ve `KOORDINATORLER`'i
+`skyforms:access` ve `skycloud:access`'i alır (4 değişiklik), üç `*:manage` planlanmaz; `_LEADER`
+taşımayan `LIDERLER` `NEW SEAT` satırında 1 üyeyle görünür, `AIRLAB_LEADER` taşıyan `KOORDINATORLER`
+görünmez; Leader'ın token'ında iki rol vardır, alt ekip Leader'ınınki boştur; alt ekip grubundaki rol
+`WARNING`'dir; `/UYELER` okuması düşerse 1 ile durur, yazmaz; sandbox'ta `skycloud` atlanır (2 değişiklik,
+1 uyarı).

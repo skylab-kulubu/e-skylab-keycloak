@@ -78,6 +78,13 @@ import java.util.TreeMap;
  *   config-value NAME VALUE     stdin is one authenticator config ({id, alias, config}); prints it
  *                               with config.NAME = VALUE and exits 3 when that changes it, prints
  *                               nothing and exits 0 when config.NAME is already VALUE.
+ *   role-groups FILE            FILE is config/role-groups.json (role-groups.sh); validates it and
+ *                               prints "root<TAB>name<TAB>display_name_tr<TAB>description_tr", then
+ *                               "group<TAB>name<TAB>client<TAB>role role...<TAB>display_name_tr<TAB>
+ *                               description_tr" per role group. A name off the team code rule
+ *                               (^[A-Z][A-Z0-9-]{1,23}$), a name twice, a group without exactly one
+ *                               client or without a role, a role twice, or a text with a tab, a
+ *                               line break, a double quote or a backslash is refused (exit 1).
  *   same-shape OTHER.json [STEP]
  *                               stdin and OTHER are the flat execution lists of two authentication
  *                               flows; exits 0 when both have the same shape (the same executions in
@@ -128,6 +135,7 @@ public final class ReconcileJson {
             case "password-form" -> System.exit(passwordForm(args, readStdin(), out));
             case "first-broker-login" -> System.exit(firstBrokerLogin(args, readStdin(), out));
             case "config-value" -> System.exit(configValue(args, readStdin(), out));
+            case "role-groups" -> roleGroups(requireFile(args), out);
             case "same-shape" -> System.exit(sameShape(args, readStdin()));
             case "otp-guard" -> System.exit(otpGuard(args, readStdin(), out));
             default -> usage();
@@ -141,7 +149,7 @@ public final class ReconcileJson {
                 + "  |  ReconcileJson realm-attribute NAME VALUE"
                 + "  |  ReconcileJson password-form FROM TO  |  ReconcileJson first-broker-login STEP"
                 + "  |  ReconcileJson config-value NAME VALUE  |  ReconcileJson same-shape OTHER [STEP]"
-                + "  |  ReconcileJson otp-guard STEP");
+                + "  |  ReconcileJson otp-guard STEP  |  ReconcileJson role-groups FILE");
         System.exit(1);
     }
 
@@ -406,6 +414,76 @@ public final class ReconcileJson {
             String value = values.isArray() && !values.isEmpty() ? values.get(0).asText() : "";
             out.println(name + "\t" + value.replace('\t', ' ').replace('\n', ' '));
         }
+    }
+
+    // ------------------------------------------------------------------ role-groups
+
+    private static final java.util.regex.Pattern ROLE_GROUP_NAME =
+            java.util.regex.Pattern.compile("^[A-Z][A-Z0-9-]{1,23}$");
+    private static final java.util.regex.Pattern ROLE_NAME = java.util.regex.Pattern.compile("^\\S+$");
+
+    private static void roleGroups(JsonNode config, PrintStream out) {
+        if (!config.isObject()) {
+            throw new IllegalArgumentException("role-groups expects a JSON object");
+        }
+        String root = roleGroupName(config, "root");
+        out.println(String.join("\t", "root", root,
+                roleGroupText(config, "root_display_name_tr", root),
+                roleGroupText(config, "root_description_tr", root)));
+        JsonNode groups = config.path("groups");
+        if (!groups.isArray() || groups.isEmpty()) {
+            throw new IllegalArgumentException("role-groups: groups must be a non-empty array");
+        }
+        java.util.Set<String> names = new java.util.HashSet<>();
+        names.add(root);
+        for (JsonNode group : groups) {
+            if (!group.isObject()) {
+                throw new IllegalArgumentException("role-groups: every group must be an object");
+            }
+            String name = roleGroupName(group, "name");
+            if (!names.add(name)) {
+                throw new IllegalArgumentException("role-groups: the name " + name + " is used twice");
+            }
+            JsonNode client = group.path("client");
+            if (!client.isTextual() || !ROLE_NAME.matcher(client.asText()).matches()) {
+                throw new IllegalArgumentException("role-groups: " + name + " needs exactly one client (a string)");
+            }
+            JsonNode roles = group.path("roles");
+            if (!roles.isArray() || roles.isEmpty()) {
+                throw new IllegalArgumentException("role-groups: " + name + " needs at least one role");
+            }
+            java.util.Set<String> seen = new java.util.LinkedHashSet<>();
+            for (JsonNode role : roles) {
+                if (!role.isTextual() || !ROLE_NAME.matcher(role.asText()).matches()
+                        || role.asText().contains("\"") || role.asText().contains("\\")
+                        || !seen.add(role.asText())) {
+                    throw new IllegalArgumentException("role-groups: " + name + " has an empty, odd or repeated role");
+                }
+            }
+            out.println(String.join("\t", "group", name, client.asText(), String.join(" ", seen),
+                    roleGroupText(group, "display_name_tr", name),
+                    roleGroupText(group, "description_tr", name)));
+        }
+    }
+
+    private static String roleGroupName(JsonNode node, String field) {
+        String name = node.path(field).asText("");
+        if (!node.path(field).isTextual() || !ROLE_GROUP_NAME.matcher(name).matches()) {
+            throw new IllegalArgumentException("role-groups: " + field + " '" + name
+                    + "' is not a team code style name (^[A-Z][A-Z0-9-]{1,23}$)");
+        }
+        return name;
+    }
+
+    private static String roleGroupText(JsonNode node, String field, String name) {
+        JsonNode value = node.path(field);
+        String text = value.asText("");
+        if (!value.isTextual() || text.isBlank() || text.contains("\t") || text.contains("\n")
+                || text.contains("\r") || text.contains("\"") || text.contains("\\")) {
+            throw new IllegalArgumentException("role-groups: " + name + " needs a one-line " + field
+                    + " without tabs, double quotes or backslashes");
+        }
+        return text;
     }
 
     // ------------------------------------------------------------------ realm-attribute

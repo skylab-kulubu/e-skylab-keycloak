@@ -96,6 +96,19 @@ jobs:
       - name: Forms SkyMail grants script against a throwaway Keycloak
         run: bash tests/forms-skymail-grants.sh
 
+  # config/role-groups.sh (/ROLLER application role groups) and config/leader-app-roles.sh (the Forms
+  # seat on the top teams' Leader groups), also as the reconciler's operator steps, against the stock
+  # Keycloak image in dev mode, with real password-grant tokens; needs no build of this repository's
+  # image.
+  role-groups:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Role groups and Leader application roles against a throwaway Keycloak
+        run: bash tests/role-groups.sh
+
   # config/sandbox-admin-local-client.sh (the admin panel's local-development client admin-local,
   # sandbox realm only) against the stock Keycloak image in dev mode, with real authorization code
   # flows (PKCE) through admin-local and the panel's client; needs no build of this repository's image.

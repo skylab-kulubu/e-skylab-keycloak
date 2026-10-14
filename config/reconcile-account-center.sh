@@ -140,8 +140,12 @@ ADMIN_PANEL_API_CLIENTS=(core forms)
 # only as the scoped reconciler identity, so an operator session requires KEYCLOAK_RECONCILE_ONLY.
 OPERATOR_KCADM_CONFIG=${KEYCLOAK_RECONCILE_KCADM_CONFIG:-}
 RECONCILE_ONLY=${KEYCLOAK_RECONCILE_ONLY:-}
-# KEYCLOAK_RECONCILE_CHECK=true: a dry run of the operator's service-roles step (runbook §20); it
-# prints "would ..." for each change and writes nothing. No other step has a dry run.
+# KEYCLOAK_RECONCILE_CHECK=true: a dry run of the operator's service-roles step (runbook §20), or of
+# the role-groups and leader-app-roles steps (§26, §27); it prints "would ..." for each change and
+# writes nothing. No other step has a dry run.
+# role-groups and leader-app-roles are operator scripts of their own (config/role-groups.sh,
+# config/leader-app-roles.sh: a dry run by default, --apply writes); this step runs the script with
+# the operator's kcadm session and --apply unless KEYCLOAK_RECONCILE_CHECK=true.
 RECONCILE_CHECK=${KEYCLOAK_RECONCILE_CHECK:-false}
 # Event retention (account erasure ticket 09). Keycloak deletes no event with the person core's
 # erasure saga removes: CREATE and UPDATE admin events hold the whole user representation
@@ -156,19 +160,19 @@ EVENT_RETENTION_SETTINGS="{\"eventsEnabled\":true,\"eventsExpiration\":$EVENT_RE
 ADMIN_EVENTS_EXPIRATION_ATTRIBUTE=adminEventsExpiration
 ACCOUNT_ROLE_ALLOWLIST=(manage-account view-profile manage-account-links)
 case $RECONCILE_ONLY in
-  '' | admin-panel-client | login-clients | core-roles | service-roles | first-broker-login) ;;
+  '' | admin-panel-client | login-clients | core-roles | service-roles | first-broker-login | role-groups | leader-app-roles) ;;
   # The step's name before core's service roles became a list (core-internal-auth ticket 03).
   media-attach) RECONCILE_ONLY=service-roles ;;
   *)
-    printf 'KEYCLOAK_RECONCILE_ONLY must be empty, admin-panel-client, login-clients, core-roles, service-roles or first-broker-login, not %s\n' "$RECONCILE_ONLY" >&2
+    printf 'KEYCLOAK_RECONCILE_ONLY must be empty, admin-panel-client, login-clients, core-roles, service-roles, first-broker-login, role-groups or leader-app-roles, not %s\n' "$RECONCILE_ONLY" >&2
     exit 2
     ;;
 esac
 case $RECONCILE_CHECK in
   false) ;;
   true)
-    if [[ $RECONCILE_ONLY != service-roles || -z $OPERATOR_KCADM_CONFIG ]]; then
-      printf 'KEYCLOAK_RECONCILE_CHECK=true is a dry run of the operator step KEYCLOAK_RECONCILE_ONLY=service-roles with KEYCLOAK_RECONCILE_KCADM_CONFIG only\n' >&2
+    if [[ ! $RECONCILE_ONLY =~ ^(service-roles|role-groups|leader-app-roles)$ || -z $OPERATOR_KCADM_CONFIG ]]; then
+      printf 'KEYCLOAK_RECONCILE_CHECK=true is a dry run of the operator step KEYCLOAK_RECONCILE_ONLY=service-roles (or role-groups, leader-app-roles) with KEYCLOAK_RECONCILE_KCADM_CONFIG only\n' >&2
       exit 2
     fi
     ;;
@@ -190,6 +194,18 @@ if [[ -n $OPERATOR_KCADM_CONFIG ]]; then
   KCADM_CONFIG=$OPERATOR_KCADM_CONFIG
 else
   KCADM_CONFIG=$(mktemp /tmp/account-center-kcadm.XXXXXX)
+fi
+if [[ $RECONCILE_ONLY == role-groups || $RECONCILE_ONLY == leader-app-roles ]]; then
+  if [[ -z $OPERATOR_KCADM_CONFIG ]]; then
+    rm -f "$KCADM_CONFIG"
+    printf 'KEYCLOAK_RECONCILE_ONLY=%s is an operator step: set KEYCLOAK_RECONCILE_KCADM_CONFIG (mapping roles to groups needs user permissions the reconciler identity %s does not have)\n' \
+      "$RECONCILE_ONLY" "$CONFIG_CLIENT_ID" >&2
+    exit 2
+  fi
+  operator_step_arguments=(--kcadm-config "$OPERATOR_KCADM_CONFIG")
+  [[ $RECONCILE_CHECK == true ]] || operator_step_arguments+=(--apply)
+  KEYCLOAK_REALM=$TARGET_REALM KEYCLOAK_ADMIN_URL=$ADMIN_URL \
+    exec bash "$CONFIG_DIR/$RECONCILE_ONLY.sh" "${operator_step_arguments[@]}"
 fi
 WORK_DIR=$(mktemp -d /tmp/account-center-reconcile.XXXXXX)
 JSON_TOOL_CLASSPATH=''
@@ -2019,14 +2035,17 @@ CORE_ROLE_RENAMES=(
   'competition:manage|competitor:manage'
 )
 
-# The Privileged groups that exist, one "path<TAB>id" per line. Only Keycloak's answer that the
-# path does not exist counts as a missing group; any other failed lookup (network, permission,
+# The Privileged groups that exist, one "path<TAB>id" per line: of the names given (ADMIN, YK, DK),
+# all three when none is given. Only Keycloak's answer that the path does not exist counts as a
+# missing group; any other failed lookup (network, permission,
 # server error) fails the function, so the caller never seeds and marks a role without a group
 # that is in fact there.
 core_privileged_groups() {
   local name path line id stderr_file
+  local wanted=("$@")
+  [[ ${#wanted[@]} -gt 0 ]] || wanted=("${CORE_PRIVILEGED_NAMES[@]}")
   stderr_file=$(mktemp "$WORK_DIR/stderr.XXXXXX")
-  for name in "${CORE_PRIVILEGED_NAMES[@]}"; do
+  for name in "${wanted[@]}"; do
     for path in "/$name" "/UYELER/$name"; do
       if line=$(kcadm get "group-by-path$path" -r "$TARGET_REALM" --fields id,path --format csv --noquotes \
         2>"$stderr_file"); then
@@ -2115,7 +2134,7 @@ reconcile_core_roles() {
     fi
   done
   if [[ ${#privileged[@]} -gt 0 ]]; then
-    seed_privileged_client_roles core "$core_uuid" "${privileged[@]}"
+    seed_privileged_client_roles core "$core_uuid" "${CORE_PRIVILEGED_NAMES[*]}" "${privileged[@]}"
   fi
   for name in ${renamed[@]+"${renamed[@]}"}; do
     core_role_seed_rename "$core_uuid" "$name" "$(core_role_rename_source "$name")"
@@ -2131,13 +2150,14 @@ core_role_rename_source() {
   return 0
 }
 
-# seed_privileged_client_roles LABEL CLIENT_UUID NAME...: grants each client role to the Privileged
-# groups once and marks it (operator session). Nothing is written unless every check passes. LABEL
-# (core, skymail) names the roles in the messages ("<LABEL> role <name>: seeded once to ...").
-# core's resource roles (runbook §19) and SkyMail's Privileged roles (§25) share it.
+# seed_privileged_client_roles LABEL CLIENT_UUID GROUP_NAMES NAME...: grants each client role to the
+# Privileged groups named in GROUP_NAMES (space separated: ADMIN YK DK or fewer) once and marks it
+# (operator session). Nothing is written unless every check passes. LABEL (core, skymail) names the
+# roles in the messages ("<LABEL> role <name>: seeded once to ..."). core's resource roles (runbook
+# §19) and SkyMail's Privileged roles (§25) share it.
 seed_privileged_client_roles() {
-  local label=$1 client_uuid=$2
-  shift 2
+  local label=$1 client_uuid=$2 group_names=$3
+  shift 3
   local names=("$@") kind
   if [[ $label == core ]]; then
     kind='core resource roles'
@@ -2145,11 +2165,12 @@ seed_privileged_client_roles() {
     kind="$label Privileged roles"
   fi
   local name groups default path gid stamp granted held role_id paths role_ids body defaults
-  if ! groups=$(core_privileged_groups); then
+  # shellcheck disable=SC2086  # GROUP_NAMES is a space separated list of plain names
+  if ! groups=$(core_privileged_groups $group_names); then
     return 1
   fi
   if [[ -z $groups ]]; then
-    warn "no Privileged group (/ADMIN, /YK, /DK or under /UYELER) exists in realm $TARGET_REALM; nothing was granted, the $kind stay unseeded"
+    warn "no Privileged group ($group_names, at /<NAME> or under /UYELER) exists in realm $TARGET_REALM; nothing was granted, the $kind stay unseeded"
     return 0
   fi
   # Read into a variable first: a failed read inside a process substitution would pass as "no
@@ -2170,7 +2191,7 @@ seed_privileged_client_roles() {
       fi
     done <<<"$groups"
   done <<<"$defaults"
-  for name in "${CORE_PRIVILEGED_NAMES[@]}"; do
+  for name in $group_names; do
     grep -Eq "^(/UYELER)?/$name"$'\t' <<<"$groups" \
       || warn "no Privileged group $name (neither /$name nor /UYELER/$name) in realm $TARGET_REALM; it gets none of the $kind"
   done
@@ -2367,8 +2388,13 @@ core_rename_list() {
 #                       product's service account.
 #   url:forms           form-bound short links, /v1/urls/forms/{formId} and GET /v1/urls/availability.
 #   users:read          GET /v1/users/{id}.
+#   audience:read       POST /v1/audiences/resolve: who a News send goes to (core #242,
+#                       docs/news-audience.md); SkyMail's service account (client skymail-backend,
+#                       skymail-backend's KEYCLOAK_SERVICE_CLIENT_ID) only (duyuru-haber ticket 04).
 # url:forms and users:read were granted to the forms service account by hand before (forms-url-role
 # wizard, Java era); they are codified here with the other two.
+# The same step grants SkyMail's client roles to core's own service account (client core), which
+# calls SkyMail: SKYMAIL_SERVICE_ROLE_DEFINITIONS below, granted by hand until 2026-10-13.
 #
 # Every run creates a missing role (manage-clients; the description is written only then) and, for
 # a listed client whose fullScopeAllowed is false, maps the role in the client's role scope, or it
@@ -2396,6 +2422,20 @@ CORE_SERVICE_ROLE_DEFINITIONS=(
   "ticket:forms|forms|services|Forms reports its answers (POST /v1/forms/{formId}/responses, core docs/form-response-tickets.md); core writes the Tickets an accepted answer to an Event's form earns. Service accounts only; never a person or a group."
   "url:forms|forms|services|Forms service account: form-bound short links (/v1/urls/forms/{formId}) and GET /v1/urls/availability only. Grants nothing on the generic /v1/urls endpoints."
   "users:read|forms|shared|Reads a person's profile (GET /v1/users/{id}); held by the Forms service account."
+  "audience:read|skymail-backend|services|SkyMail asks who a News send goes to (POST /v1/audiences/resolve, core docs/news-audience.md). SkyMail's service account only; never a person or a group."
+)
+# SkyMail's client roles that core's service account (client core) holds: core sends single mails
+# (POST /v1/mail_tasks/single: skymail:access and skymail:mails:send, core internal/mail/mail.go) and
+# keeps the event mailing lists (POST/DELETE /v1/mailing_lists... need skymail:lists:write, GET
+# skymail:lists:read; core internal/mail/lists.go, SkyMail main.go route table). People hold these
+# roles too (shared). The roles are SkyMail's own: a missing one is reported, never created here.
+# skymail:mails:write also allows the single send; a core service account that holds it is reported
+# in a NOTE and keeps it.
+SKYMAIL_SERVICE_ROLE_DEFINITIONS=(
+  "skymail:access|core|shared|"
+  "skymail:mails:send|core|shared|"
+  "skymail:lists:read|core|shared|"
+  "skymail:lists:write|core|shared|"
 )
 CORE_SERVICE_ROLE_GRANT_ATTRIBUTE=skylab.granted-service-accounts
 # Listed clients that must be service account only: no browser login (standard or implicit flow) and
@@ -2431,49 +2471,60 @@ service_role_change() {
   return 0
 }
 
-reconcile_core_service_roles() {
-  local core_uuid roles_file marks role_name value definition name clients holders description
+# reconcile_service_roles RESOURCE DEFINITIONS CREATE: the service roles of one resource client
+# (core's, SkyMail's): DEFINITIONS names the array of name|clients|holders|description lines; CREATE
+# is create (a missing role is created) or existing (a missing role is reported and skipped: SkyMail's
+# roles are SkyMail's catalogue, made with the client skymail). Changes add up in SERVICE_ROLE_CHANGES;
+# the caller resets it and logs the total.
+reconcile_service_roles() {
+  local resource=$1 create=$3
+  local -n definitions=$2
+  local resource_uuid roles_file marks role_name value definition name clients holders description
   local role_id client client_uuid flags full_scope scopes mapped sa_line sa_id sa_name held
   local stderr_file line accounts stamp label others account users groups defaults extra
-  local flag flag_value open
+  local flag flag_value open roles_scope_id
   local operator=false
   local names=() all_clients=() plan=() sets=()
   local -A role_ids=() role_clients=() role_holders=() markers=() granted=() client_lines=() person_logins=()
   [[ -z $OPERATOR_KCADM_CONFIG ]] || operator=true
-  SERVICE_ROLE_CHANGES=0
-  if ! core_uuid=$(optional_lookup client_id_by_client_id "$CORE_CLIENT_ID"); then
+  if ! resource_uuid=$(optional_lookup client_id_by_client_id "$resource"); then
     return 2
   fi
-  if [[ -z $core_uuid ]]; then
-    warn "client $CORE_CLIENT_ID does not exist in realm $TARGET_REALM; skipped its service roles"
+  if [[ -z $resource_uuid ]]; then
+    warn "client $resource does not exist in realm $TARGET_REALM; skipped its service roles"
     return 0
   fi
 
-  # The roles: created when missing (harmless, they grant nothing), before every read.
-  for definition in "${CORE_SERVICE_ROLE_DEFINITIONS[@]}"; do
+  # The roles: created when missing (harmless, they grant nothing), before every read; with CREATE
+  # existing a missing role is reported and left out of the step.
+  for definition in "${definitions[@]}"; do
     IFS='|' read -r name clients holders description <<<"$definition"
+    label="client role $name of $resource"
+    if ! role_id=$(optional_lookup client_role_id_by_name "$resource_uuid" "$name"); then
+      return 2
+    fi
+    if [[ -z $role_id && $create != create ]]; then
+      warn "$label does not exist in realm $TARGET_REALM (it is made with the client $resource, not here); it is not granted to ${clients// /, }"
+      continue
+    fi
     names+=("$name")
     role_clients[$name]=$clients
     role_holders[$name]=$holders
     for client in $clients; do
       [[ " ${all_clients[*]} " == *" $client "* ]] || all_clients+=("$client")
     done
-    label="client role $name of $CORE_CLIENT_ID"
-    if ! role_id=$(optional_lookup client_role_id_by_name "$core_uuid" "$name"); then
-      return 2
-    fi
     if [[ -n $role_id ]]; then
       log "$label: unchanged"
     elif service_role_change "create $label"; then
-      kcadm_quiet create "clients/$core_uuid/roles" -r "$TARGET_REALM" \
+      kcadm_quiet create "clients/$resource_uuid/roles" -r "$TARGET_REALM" \
         -s "name=$name" -s "description=$description"
-      role_id=$(client_role_id_by_name "$core_uuid" "$name")
+      role_id=$(client_role_id_by_name "$resource_uuid" "$name")
       log "$label: created"
     fi
     role_ids[$name]=$role_id
   done
   roles_file=$(mktemp "$WORK_DIR/service-roles.XXXXXX")
-  kcadm_json "clients/$core_uuid/roles" -r "$TARGET_REALM" -q briefRepresentation=false >"$roles_file"
+  kcadm_json "clients/$resource_uuid/roles" -r "$TARGET_REALM" -q briefRepresentation=false >"$roles_file"
   # Into a variable first: a failure inside a process substitution would pass as "no record".
   marks=$(json_tool role-attribute "$CORE_SERVICE_ROLE_GRANT_ATTRIBUTE" <"$roles_file")
   # "<timestamp> <service account>,<service account>"
@@ -2487,12 +2538,12 @@ reconcile_core_service_roles() {
       return 2
     fi
     if [[ -z $client_uuid ]]; then
-      warn "client $client does not exist in realm $TARGET_REALM; its core service roles are not granted to its service account"
+      warn "client $client does not exist in realm $TARGET_REALM; its $resource service roles are not granted to its service account"
       continue
     fi
     flags=$(service_role_read "Client $client" "clients/$client_uuid" --fields serviceAccountsEnabled,fullScopeAllowed)
     if [[ ${flags%%,*} != true ]]; then
-      warn "client $client has no service account (serviceAccountsEnabled=${flags%%,*}); its core service roles are not granted and nothing was changed on the client"
+      warn "client $client has no service account (serviceAccountsEnabled=${flags%%,*}); its $resource service roles are not granted and nothing was changed on the client"
       continue
     fi
     full_scope=${flags#*,}
@@ -2507,13 +2558,24 @@ reconcile_core_service_roles() {
     fi
     scopes=$(service_role_read "The default client scopes of $client" "clients/$client_uuid/default-client-scopes" --fields name)
     if grep -Fxq roles <<<"$scopes"; then
-      log "default client scope roles of $client: verified (it puts resource_access and, through audience resolve, aud $CORE_CLIENT_ID in the token)"
+      log "default client scope roles of $client: verified (it puts resource_access and, through audience resolve, aud $resource in the token)"
     else
-      warn "client $client has no default client scope roles: its token carries neither resource_access.$CORE_CLIENT_ID nor aud $CORE_CLIENT_ID; nothing was changed on the client, add roles back to its default client scopes"
+      # Without it the service token carries neither resource_access.<resource> nor aud <resource>,
+      # and the roles granted below would not reach it (core requires aud core). Attaching a default
+      # client scope is client configuration (manage-clients): both identities do it.
+      if ! roles_scope_id=$(optional_lookup client_scope_id_by_name roles); then
+        return 2
+      fi
+      if [[ -z $roles_scope_id ]]; then
+        warn "client $client has no default client scope roles and realm $TARGET_REALM has no client scope roles: its token carries neither resource_access.$resource nor aud $resource"
+      elif service_role_change "add the default client scope roles to client $client (its token lacks resource_access.$resource and aud $resource without it)"; then
+        kcadm_quiet update "clients/$client_uuid/default-client-scopes/$roles_scope_id" -r "$TARGET_REALM"
+        log "default client scope roles of $client: added (it puts resource_access and, through audience resolve, aud $resource in the token)"
+      fi
     fi
     mapped=-
     if [[ $full_scope == false ]]; then
-      mapped=$(service_role_read "The role scope of $client" "clients/$client_uuid/scope-mappings/clients/$core_uuid" --fields name)
+      mapped=$(service_role_read "The role scope of $client" "clients/$client_uuid/scope-mappings/clients/$resource_uuid" --fields name)
       mapped=",$(paste -sd, - <<<"$mapped"),"
     fi
     sa_line=$(service_role_read "The service account of $client" "clients/$client_uuid/service-account-user" --fields id,username)
@@ -2524,12 +2586,12 @@ reconcile_core_service_roles() {
       return 1
     fi
     stderr_file=$(mktemp "$WORK_DIR/stderr.XXXXXX")
-    if held=$(kcadm get "users/$sa_id/role-mappings/clients/$core_uuid/composite" -r "$TARGET_REALM" \
+    if held=$(kcadm get "users/$sa_id/role-mappings/clients/$resource_uuid/composite" -r "$TARGET_REALM" \
       --fields name --format csv --noquotes 2>"$stderr_file"); then
       held=",$(tr -d '\r' <<<"$held" | sed '/^$/d' | paste -sd, -),"
     elif [[ $operator == true ]]; then
       cat "$stderr_file" >&2
-      printf 'The %s roles of %s could not be read in realm %s; nothing was granted\n' "$CORE_CLIENT_ID" "$sa_name" "$TARGET_REALM" >&2
+      printf 'The %s roles of %s could not be read in realm %s; nothing was granted\n' "$resource" "$sa_name" "$TARGET_REALM" >&2
       return 1
     else
       # The reconciler identity has no user permissions: expected, the operator step checks.
@@ -2539,11 +2601,11 @@ reconcile_core_service_roles() {
   done
 
   if [[ $operator == true ]]; then
-    defaults=$(service_role_read "The default role default-roles-${TARGET_REALM,,}" "roles/default-roles-${TARGET_REALM,,}/composites/clients/$core_uuid" --fields name)
+    defaults=$(service_role_read "The default role default-roles-${TARGET_REALM,,}" "roles/default-roles-${TARGET_REALM,,}/composites/clients/$resource_uuid" --fields name)
     for name in "${names[@]}"; do
       [[ ${role_holders[$name]} == services && -n ${role_ids[$name]} ]] || continue
-      users=$(service_role_read "The users holding $name" "clients/$core_uuid/roles/$name/users" --fields username)
-      groups=$(service_role_read "The groups holding $name" "clients/$core_uuid/roles/$name/groups" --fields path)
+      users=$(service_role_read "The users holding $name" "clients/$resource_uuid/roles/$name/users" --fields username)
+      groups=$(service_role_read "The groups holding $name" "clients/$resource_uuid/roles/$name/groups" --fields path)
       plan+=("$name"$'\037'"$(paste -sd, - <<<"$users")"$'\037'"$(paste -sd, - <<<"$groups")")
     done
   fi
@@ -2578,11 +2640,11 @@ reconcile_core_service_roles() {
       if [[ $mapped == - ]]; then
         log "role scope of $client: unchanged (full scope: the roles of its service account reach its token)"
       elif [[ $mapped == *",$name,"* ]]; then
-        log "role scope of $client: unchanged ($CORE_CLIENT_ID/$name is mapped)"
-      elif service_role_change "map $CORE_CLIENT_ID/$name in the role scope of $client (fullScopeAllowed is false)"; then
-        kcadm_quiet create "clients/$client_uuid/scope-mappings/clients/$core_uuid" -r "$TARGET_REALM" \
+        log "role scope of $client: unchanged ($resource/$name is mapped)"
+      elif service_role_change "map $resource/$name in the role scope of $client (fullScopeAllowed is false)"; then
+        kcadm_quiet create "clients/$client_uuid/scope-mappings/clients/$resource_uuid" -r "$TARGET_REALM" \
           -b "[$(role_reference "$role_id" "$name")]"
-        log "role scope of $client: updated (+$CORE_CLIENT_ID/$name; fullScopeAllowed is false)"
+        log "role scope of $client: updated (+$resource/$name; fullScopeAllowed is false)"
       fi
       if [[ $held == - ]]; then
         if [[ -n $value && ,${value#* }, == *",$sa_name,"* ]]; then
@@ -2598,7 +2660,7 @@ reconcile_core_service_roles() {
         warn "service account $sa_name lacks $name; $CORE_SERVICE_ROLE_OPERATOR_STEP"
         continue
       elif service_role_change "grant $name to service account $sa_name"; then
-        kcadm_quiet create "users/$sa_id/role-mappings/clients/$core_uuid" -r "$TARGET_REALM" \
+        kcadm_quiet create "users/$sa_id/role-mappings/clients/$resource_uuid" -r "$TARGET_REALM" \
           -b "[$(role_reference "$role_id" "$name")]"
         log "service account $sa_name: $name granted"
       fi
@@ -2611,9 +2673,9 @@ reconcile_core_service_roles() {
     if [[ -n $accounts && $accounts != "${value#* }" ]]; then
       stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
       if service_role_change "record the grant of $name ($CORE_SERVICE_ROLE_GRANT_ATTRIBUTE=<now> $accounts)"; then
-        kcadm_quiet update "clients/$core_uuid/roles/$name" -r "$TARGET_REALM" \
+        kcadm_quiet update "clients/$resource_uuid/roles/$name" -r "$TARGET_REALM" \
           -s "attributes.\"$CORE_SERVICE_ROLE_GRANT_ATTRIBUTE\"=[\"$stamp $accounts\"]"
-        log "client role $name of $CORE_CLIENT_ID: grant recorded ($CORE_SERVICE_ROLE_GRANT_ATTRIBUTE=$stamp $accounts)"
+        log "client role $name of $resource: grant recorded ($CORE_SERVICE_ROLE_GRANT_ATTRIBUTE=$stamp $accounts)"
       fi
     fi
   done
@@ -2644,8 +2706,17 @@ reconcile_core_service_roles() {
       extra+=", $role_name"
     done
     [[ -z $extra ]] \
-      || log "NOTE: service account $sa_name also holds the $CORE_CLIENT_ID roles ${extra#, }, which this step does not manage (nothing was removed)"
+      || log "NOTE: service account $sa_name also holds the $resource roles ${extra#, }, which this step does not manage (nothing was removed)"
   done
+}
+
+# The service-roles step: core's service roles, then SkyMail's roles of core's service account, and
+# for the operator one total of the changes.
+reconcile_core_service_roles() {
+  SERVICE_ROLE_CHANGES=0
+  reconcile_service_roles "$CORE_CLIENT_ID" CORE_SERVICE_ROLE_DEFINITIONS create
+  reconcile_service_roles "$SKYMAIL_CLIENT_ID" SKYMAIL_SERVICE_ROLE_DEFINITIONS existing
+  [[ -n $OPERATOR_KCADM_CONFIG ]] || return 0
   if [[ $RECONCILE_CHECK == true ]]; then
     log "check: $SERVICE_ROLE_CHANGES change(s) pending; nothing was written"
   else
@@ -2662,9 +2733,16 @@ reconcile_core_service_roles() {
 # core), so a mapping changed later in the SKY LAB admin panel (its group page lists every
 # client's roles, skymail's too) or the Keycloak Admin Console stays that way. Nothing here removes a mapping or a role. skymail is SkyMail's login client too,
 # and its own roles always pass its role scope, so a Privileged person's SkyMail token carries them.
-# name|description (the description is written only when the role is created)
+# name|Privileged groups (space separated names, each at /<NAME> and/or /UYELER/<NAME>)|description
+# (the description is written only when the role is created).
+#   skymail:system-mails:read      ADMIN, YK, DK: reading is for all three (skymail-backend #61).
+#   skymail:announcements:send     ADMIN and YK only (duyuru-haber decision D4, 2026-10-12; DK reads
+#                                  and does not write, grup-yonetimi GY1): they send a News or an
+#                                  announcement without Mail approval; everyone else sends it through
+#                                  Mail approval. Sub-groups inherit the mapping.
 SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS=(
-  'skymail:system-mails:read|Tekil sistem postalarının (doğrulama, bildirim) içeriğini görür (skymail-backend #61)'
+  'skymail:system-mails:read|ADMIN YK DK|Tekil sistem postalarının (doğrulama, bildirim) içeriğini görür (skymail-backend #61)'
+  'skymail:announcements:send|ADMIN YK|Duyuru ve haberi Mail onayı olmadan gönderir (duyuru-haber D4; yalnız ADMIN ve YK, DK yazmaz)'
 )
 
 reconcile_skymail_privileged_roles() {
@@ -2681,7 +2759,7 @@ reconcile_skymail_privileged_roles() {
     | tr -d '\r')
   for definition in "${SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS[@]}"; do
     name=${definition%%|*}
-    description=${definition#*|}
+    description=${definition##*|}
     if ! grep -Fxq -- "$name" <<<"$roles_csv"; then
       kcadm_quiet create "clients/$skymail_uuid/roles" -r "$TARGET_REALM" \
         -s "name=$name" -s "description=$description"
@@ -2713,8 +2791,29 @@ reconcile_skymail_privileged_roles() {
     return 0
   fi
 
-  # Operator session: seed, with the same checks and mark as core's resource roles.
-  seed_privileged_client_roles skymail "$skymail_uuid" "${unseeded[@]}"
+  # Operator session: seed, with the same checks and mark as core's resource roles, one call per set
+  # of Privileged groups (in the order of the list).
+  local group_names known set_names=() sets=()
+  for definition in "${SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS[@]}"; do
+    group_names=${definition#*|}
+    group_names=${group_names%%|*}
+    for known in ${sets[@]+"${sets[@]}"}; do
+      [[ $known != "$group_names" ]] || continue 2
+    done
+    sets+=("$group_names")
+  done
+  for group_names in "${sets[@]}"; do
+    set_names=()
+    for definition in "${SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS[@]}"; do
+      name=${definition%%|*}
+      if [[ ${definition#*|} == "$group_names|"* && " ${unseeded[*]} " == *" $name "* ]]; then
+        set_names+=("$name")
+      fi
+    done
+    if [[ ${#set_names[@]} -gt 0 ]]; then
+      seed_privileged_client_roles skymail "$skymail_uuid" "$group_names" "${set_names[@]}"
+    fi
+  done
 }
 
 # The keycloak-mailer service-account client (K5) is provisioned by the operator with

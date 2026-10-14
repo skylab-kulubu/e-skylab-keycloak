@@ -50,6 +50,17 @@
       "serviceAccountsEnabled": true
     },
     {
+      "clientId": "skymail-backend",
+      "name": "SkyMail backend service account (fixture; production's KEYCLOAK_SERVICE_CLIENT_ID)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "bearerOnly": false,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true
+    },
+    {
       "clientId": "skymail",
       "name": "SkyMail (fixture)",
       "enabled": true,
@@ -158,6 +169,14 @@
         {
           "name": "skymail:access",
           "description": "fixture SkyMail role; skymail:mails:send is created by the harness after the first reconciliation"
+        },
+        {
+          "name": "skymail:lists:read",
+          "description": "fixture SkyMail role (core's service account holds it, reconciler service-roles step)"
+        },
+        {
+          "name": "skymail:lists:write",
+          "description": "fixture SkyMail role (core's service account holds it, reconciler service-roles step)"
         }
       ],
       "admin": [
@@ -205,6 +224,11 @@
           "view-users"
         ]
       }
+    },
+    {
+      "username": "service-account-skymail-backend",
+      "enabled": true,
+      "serviceAccountClientId": "skymail-backend"
     },
     {
       "id": "11111111-1111-4111-8111-111111111111",

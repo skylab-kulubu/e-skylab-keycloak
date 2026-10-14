@@ -48,7 +48,10 @@
 #     address of the run and not the client's IP;
 #   - off makes the subflow DISABLED and Keycloak no longer offers it; on brings it back; a run cut
 #     in the middle is finished by the next; a REQUIRED execution next to the password flow is
-#     refused with nothing written.
+#     refused with nothing written;
+#   - a realm bound to Keycloak's built-in browser flow (the sandbox may be): keep reports it, on is
+#     refused with nothing written; after runbook §29's copy and binding, an operator session's on
+#     adds the subflow next to the copy's forms and the login page offers the step.
 # The expiry after ten minutes, the single use of the right code, the per-session and IP class
 # budgets and the code for nobody are unit tests (EmailCodeAuthenticatorTest, LoginCodesTest).
 # Requirements on the host: docker, jq, curl, node. LOGIN_BY_EMAIL_CODE_TEST_PORT (default 18099),
@@ -145,7 +148,7 @@ stage() {
 reconcile() {
   local config=$1 wanted=$2 output status=0
   shift 2
-  local environment=(-e "KEYCLOAK_ADMIN_URL=http://localhost:$PORT" -e "KEYCLOAK_REALM=$REALM"
+  local environment=(-e "KEYCLOAK_ADMIN_URL=http://localhost:$PORT" -e "KEYCLOAK_REALM=${RECONCILE_REALM:-$REALM}"
     -e KEYCLOAK_RECONCILE_ONLY=email-code-login -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$config")
   local assignment
   for assignment in "$@"; do
@@ -806,5 +809,40 @@ grep -Fq "WARNING: e-mail code sign-in of flow '$FLOW' could not be planned (web
   || { printf '%s\n' "$output" >&2; fail 'keep did not report the flow it could not plan'; }
 set_requirement "$FORMS" webauthn-authenticator-passwordless ALTERNATIVE
 printf '    off turns it off (and Keycloak stops offering it); on finishes a cut subflow and turns it back on; a REQUIRED neighbour is refused (keep only warns)\n'
+
+# ---------------------------------------------------------------------------------------------------
+stage "a realm bound to Keycloak's built-in browser flow"
+SANDBOX=e-skylab-sandbox
+kcadm create realms -s "realm=$SANDBOX" -s enabled=true -s loginWithEmailAllowed=true >/dev/null
+kcadm create clients -r "$SANDBOX" -s "clientId=$APP" -s publicClient=true -s standardFlowEnabled=true \
+  -s directAccessGrantsEnabled=false -s "redirectUris=[\"$APP_REDIRECT\"]" >/dev/null
+# The sandbox realm has no reconciler identity: an operator session (here the administrator's) runs the step.
+RECONCILE_REALM=$SANDBOX
+output=$(reconcile "$ADMIN_CONFIG" 0)
+expect_line "$output" "[reconcile] e-mail code sign-in of flow 'browser': unchanged (Keycloak's built-in flow)" \
+  'keep did not report the built-in flow'
+output=$(reconcile "$ADMIN_CONFIG" 1 KEYCLOAK_EMAIL_CODE_LOGIN=on)
+grep -Fq "Realm $SANDBOX is bound to Keycloak's built-in browser flow 'browser', which cannot be edited; nothing was changed" <<<"$output" \
+  || { printf '%s\n' "$output" >&2; fail 'on was not refused on the built-in flow'; }
+# Runbook §29, sandbox: copy the built-in flow under production's name, bind the realm to it, then on.
+kcadm create authentication/flows/browser/copy -r "$SANDBOX" -s "newName=$FLOW" >/dev/null
+kcadm update "realms/$SANDBOX" -s "browserFlow=$FLOW" >/dev/null
+output=$(reconcile "$ADMIN_CONFIG" 0 KEYCLOAK_EMAIL_CODE_LOGIN=on)
+grep -Fq "[reconcile] e-mail code sign-in of flow '$FLOW': updated (added subflow '$SUBFLOW' to '$FLOW' at priority " <<<"$output" \
+  || { printf '%s\n' "$output" >&2; fail 'on did not add the subflow to the copied flow'; }
+output=$(reconcile "$ADMIN_CONFIG" 0 KEYCLOAK_EMAIL_CODE_LOGIN=on)
+expect_line "$output" "[reconcile] e-mail code sign-in of flow '$FLOW': unchanged (subflow '$SUBFLOW' ALTERNATIVE)" \
+  'a second on changed the copied flow'
+RECONCILE_REALM=$REALM
+sandbox_step=$(kcadm get "authentication/flows/${FLOW// /%20}/executions" -r "$SANDBOX" \
+  | jq -er --arg step "$STEP" '[.[] | select(.providerId == $step)] | if length == 1 then .[0].id else error("not one") end')
+JAR="$STATE_DIR/sandbox.cookies"
+rm -f "$JAR"
+follow "$JAR" "$(printf '%s/realms/%s/protocol/openid-connect/auth?client_id=%s&response_type=code&scope=openid&redirect_uri=%s&state=s%s' \
+  "$BASE_URL" "$SANDBOX" "$APP" "$(jq -rn --arg u "$APP_REDIRECT" '$u | @uri')" "$RANDOM")"
+on_form kc-form-login || fail "the copied flow does not start at the password form ($(page_summary))"
+follow "$JAR" "$(form_action kc-form-login)" --data-urlencode "authenticationExecution=$sandbox_step"
+on_form kc-email-code-identifier-form || fail "the copied flow does not offer the e-mail code ($(page_summary))"
+printf "    built-in flow: keep reports, on refused; after copy and binding (runbook §29) on adds the subflow and the login page offers it\n"
 
 printf 'login-by-email-code: all checks passed\n'

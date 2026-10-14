@@ -3415,8 +3415,34 @@ ve alt akışların öncelikleri) 2026-09-21 olgularından; ilk `on`'dan önce A
      -e KEYCLOAK_EMAIL_CODE_LOGIN=on "$kc" /opt/keycloak/config/reconcile-account-center.sh
    ```
 
-   Sandbox realm'i Keycloak'ın yerleşik `browser` akışına bağlıysa `on` reddedilir; önce akış
-   kopyalanır ve bağlanır (production'ın biçimi).
+   Sandbox realm'i Keycloak'ın yerleşik `browser` akışına bağlıysa `on` hiçbir şey yazmadan reddedilir
+   (`Realm e-skylab-sandbox is bound to Keycloak's built-in browser flow 'browser', which cannot be
+   edited; nothing was changed`; `keep` yalnız `unchanged (Keycloak's built-in flow)` der). Yerleşik
+   akışı kopyalayan bir uzlaştırıcı kipi yok (parola formu adımı `browser plus passkey`'i adıyla arar
+   ve yalnız tam uzlaştırmada koşar; sandbox'ta uzlaştırıcı kimliği yok). Bu yüzden önce aynı operatör
+   oturumuyla (production sunucusunda) bağlama bakılır:
+
+   ```bash
+   docker exec "$kc" /opt/keycloak/bin/kcadm.sh get realms/e-skylab-sandbox --config /tmp/fbl-kcadm.config --fields browserFlow
+   ```
+
+   `browser` çıkarsa yerleşik akış production'ın adıyla kopyalanır ve realm ona bağlanır:
+
+   ```bash
+   docker exec "$kc" /opt/keycloak/bin/kcadm.sh create authentication/flows/browser/copy -r e-skylab-sandbox --config /tmp/fbl-kcadm.config -s "newName=browser plus passkey"
+   ```
+
+   ```bash
+   docker exec "$kc" /opt/keycloak/bin/kcadm.sh update realms/e-skylab-sandbox --config /tmp/fbl-kcadm.config -s "browserFlow=browser plus passkey"
+   ```
+
+   Sonra yukarıdaki `on` komutu alt akışı kopyanın en üst düzeyine, `forms`'un yanına koyar
+   (`updated (added subflow 'sky email code' to 'browser plus passkey' at priority …)`). Kopya
+   Keycloak'ın kendi parola formunu taşır: sandbox'ta parolayla girişte okul ve kişisel adres
+   tanımlayıcı olmaz (K4 yalnız tam uzlaştırmayla gelir); kodla giriş tanımlayıcıların hepsini alır.
+   Geri dönüş: `-s "browserFlow=browser"` ile realm yerleşik akışa geri bağlanır (kopya kalır).
+   `tests/login-by-email-code.sh`'ın son aşaması bu sırayı (red, kopya, bağlama, `on`, giriş sayfası
+   adımı sunuyor) sınar.
 7. Sandbox yürüyüşü (bilet 08): masaüstü ve telefon, gerçek posta kutusu (Gmail, Outlook, okul): kodla
    giriş; TOTP'li hesapla giriş; yanlış kod; yeniden gönder; postanın gelen kutusuna düşmesi.
 8. Üç gün sandbox, sonra canlı: aynı komut `KEYCLOAK_REALM=e-skylab` ile; sonra

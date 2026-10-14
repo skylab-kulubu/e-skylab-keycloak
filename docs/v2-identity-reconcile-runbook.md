@@ -2310,6 +2310,15 @@ değilse, adım iki kez ya da yanlış yerdeyse durdurur.
 - `[reconcile] realm first broker login flow binding: updated (first broker login -> sky first broker login)`
 - `[reconcile] identity provider OBS first login flow: ...` (aşağıda)
 
+Her koşuda kopyanın kendisi de denetlenir (#96 incelemesi F2). Adım ve DISABLED bağlantıyla
+doğrulama dışında kopya yerleşik akışla aynı biçimde olmalı (`ReconcileJson same-shape … sky-ytu-first-login`):
+`[reconcile] shape of flow 'sky first broker login': unchanged (the built-in 'first broker login' plus the SKY LAB edits)`.
+Elle eklenmiş bir adım (ör. `idp-auto-link`, `idp-detect-existing-broker-user`) ya da değişmiş bir
+gereklilik şu uyarıyla bildirilir:
+`[reconcile] WARNING: flow 'sky first broker login' is not shaped like the built-in 'first broker login' apart from the SKY LAB edits: …; nothing was changed`.
+Uzlaştırıcı kopyayı değiştirmez, wizard ✗ sayar. Bir Keycloak yükseltmesi yerleşik akışı
+değiştirirse aynı uyarı çıkar.
+
 İkinci koşuda hepsi `unchanged`; bayraksız (`keep`) koşuda bağlama satırı
 `unchanged (sky first broker login; KEYCLOAK_YTU_FIRST_LOGIN=on or off changes it)`. Öncelik
 Keycloak 26'nın yerleşik akışında 10'dur (adım 9). Kopya yerleşik akışı dondurur: Keycloak
@@ -2317,16 +2326,80 @@ yükseltmesinde yerleşik `first broker login` değişirse kopyaya geçmez (K4b'
 credentials`'ı gibi yükseltme listesine).
 
 **OBS'nin kendi ilk giriş akışı.** Bir IdP'de "First login flow override" seçiliyse realm
-bağlaması o IdP için geçmez. Keycloak 24'ten önce kurulan IdP'lerde bu alan çoğu zaman
-`first broker login`'dir; üretimdeki değer bilinmiyor. Uzlaştırıcı kimliği IdP okuyamaz (tasarım
-gereği), satır şöyle olur:
+bağlaması o IdP için geçmez (Keycloak 26.7.4 `LoginActionsService`: IdP'nin akışı varsa o, yoksa
+realm'inki). Üretimde OBS'nin geçersiz kılması **`first broker login for obs`** (2026-09-21
+olguları; 2026-10-13 salt okur dökümü): yerleşik `first broker login`'in Admin Console'da
+"Duplicate" ile alınmış, önce `first broker login kopyasi` adıyla yapılıp sonra yeniden adlandırılmış
+elle bir kopyası. Biçimi (adım, düzey, sıra, gereklilik) yerleşik akışla aynı; tek farkı review
+profile config'inde `update.profile.on.first.login=on` (yerleşikte ve `sky first broker login`'de
+`missing`). Bu yüzden 2026-10-13'teki `on` koşusundan sonra realm kopyaya bağlandı ama adım hiçbir
+YTÜ girişinde çalışmadı (eskylab-login-ux 22).
+
+Uzlaştırıcı kimliği IdP okuyamaz (tasarım gereği), satır şöyle olur:
 `identity provider OBS first login flow: unchanged (not readable with this identity; an operator checks it with KEYCLOAK_RECONCILE_ONLY=first-broker-login)`.
-Bir yönetici oturumuyla koşulan adım OBS'yi okur: geçersiz kılma `first broker login` ya da
-`sky first broker login` ise kaldırılır (`updated (its override is removed; it follows the realm binding)`),
-yoksa `unchanged (follows the realm binding)`; başka bir akışı gösteriyorsa dokunulmaz, uyarı
-basılır. `off` ile kopyayı gösteren geçersiz kılma da kaldırılır (geri dönüş OBS'ye de ulaşır).
-OBS'yi elle kopyaya bağlamayın; realm bağlaması yeter. OBS'nin geri kalanı (secret dahil) aynı kalır. Böylece açma ve geri alma yalnız realm
-bağlamasıdır ve uzlaştırıcı kimliğiyle de yapılır.
+Bir yönetici oturumuyla koşulan adım OBS'yi okur (`keep` OBS'ye hiç bakmaz):
+
+- `on`, geçersiz kılma yok: `identity provider OBS first login flow: unchanged (follows the realm binding)`.
+- `on`, geçersiz kılma `first broker login` ya da `sky first broker login`: kaldırılır,
+  `identity provider OBS first login flow: updated (its override is removed; it follows the realm binding)`.
+- `on`, geçersiz kılma bilinen eski adlardan biri (`first broker login for obs`, `first broker login
+  kopyasi`; `YTU_IDP_LEGACY_FIRST_BROKER_FLOWS`): önce o akışın biçimi yerleşik akışla
+  karşılaştırılır (`ReconcileJson same-shape`: aynı adımlar aynı sırada, aynı düzey, sıra, gereklilik
+  ve sağlayıcı; ad, açıklama, öncelik ve config değerleri karşılaştırılmaz). Aynıysa geçersiz
+  kılma kaldırılır ve kaldırılan ad OBS'nin kendi config'ine not edilir
+  (`skyFirstLoginFlowBeforeYtuStep`, tek güncellemede):
+  `identity provider OBS: first login flow binding removed (follows realm binding 'sky first broker login'; previous 'first broker login for obs' kept, unused)`.
+  Akış silinmez (geri dönüş için kalır, kullanılmaz). Biçim farklıysa OBS'de hiçbir şey değişmez,
+  çıkış 0 ama uyarı basılır:
+  `[reconcile] WARNING: identity provider OBS: first login flow binding refused (its override 'first broker login for obs' is not shaped like the built-in 'first broker login': execution N is …, not …; …)`.
+  Bu satır görülürse fark Admin Console'da okunur (ör. eklenmiş bir `idp-auto-link`), karar
+  verilmeden yeniden koşulmaz.
+- `off`, OBS'de not varsa (geçersiz kılma boş ya da kopyayı gösteriyorsa): geçersiz kılma nottaki
+  akışa geri yazılır, not boşaltılır:
+  `identity provider OBS: first login flow binding restored ('first broker login for obs', as before KEYCLOAK_YTU_FIRST_LOGIN=on)`.
+  Yalnız şu üç koşul birlikte tutarsa yazılır (#96 incelemesi F1; not ve kullanılmayan akış `on`'dan
+  sonra değiştirilebilir):
+  - nottaki ad bilinen eski adlardan biri;
+  - akış hâlâ var;
+  - akış hâlâ yerleşikle aynı biçimde.
+
+  Değilse hiçbir şey geri yazılmaz. Kopyayı gösteren geçersiz kılma boşaltılır, OBS realm bağlamasını
+  (yerleşik akış) izler, not okunmak için kalır:
+  `WARNING: identity provider OBS: first login flow binding not restored (<neden>; OBS follows the realm binding 'first broker login'; inspect it in the Admin Console)`.
+  Nedenler:
+  - `its note names '…', not one of the known earlier flows`
+  - `the flow '…' it had before KEYCLOAK_YTU_FIRST_LOGIN=on is absent`
+  - `the flow '…' is not shaped like the built-in 'first broker login' any more: …`
+
+  Wizard bunu ✗ sayar; durum zararsızdır (10-13 öncesinden tek fark review profile `missing`).
+  İkinci `off`: `identity provider OBS first login flow: unchanged (keeps its own first login flow 'first broker login for obs', as before KEYCLOAK_YTU_FIRST_LOGIN=on)`.
+- `off`, not yoksa: kopyayı gösteren geçersiz kılma kaldırılır (önceki satır), yoksa dokunulmaz.
+- Başka bir akışı gösteren geçersiz kılmaya hiç dokunulmaz:
+  `WARNING: identity provider OBS keeps its own first login flow '…' and ignores the realm binding`.
+
+**Neden not, sabit ad değil:** `off` yalnız `on`'un kaldırdığını geri yazar; birinin elle
+kaldırdığı (ya da hiç olmamış) bir geçersiz kılmayı tahminle geri koymaz. Not IdP'nin üzerinde
+durur, IdP silinirse onunla gider. Not kaybolursa (ör. Admin Console bilinmeyen config anahtarını
+düşürürse) `off` OBS'yi realm bağlamasında (yerleşik akış) bırakır; tek fark review profile
+`missing` olur, zararsız. Acil yol aşağıda.
+
+**Bilerek bırakılan fark (karar, 2026-10-13):** `first broker login for obs`'teki
+`update.profile.on.first.login=on` kopyaya taşınmaz. Kopyada `missing`: profil sayfası yalnız
+zorunlu bir alan eksikse çıkar; ilk YTÜ girişinde adım okul adresini birincil yazar ve profil
+zaten dolu gelir. Microsoft ve Google'ın federasyonlu ilk girişte yaptığı gibi yalnız eksik olan
+sorulur. `off` `on`'u geri getirir.
+
+OBS'yi elle kopyaya bağlamayın; realm bağlaması yeter. OBS'nin geri kalanı (secret, `syncMode`,
+`trustEmail`, post broker login akışı) aynı kalır.
+
+**Elle yapılmış, kodlanmamış akışlar (bu adım dokunmaz; izleme: hub
+`.scratch/keycloak-yayin/issues/02-elle-yapilmis-akislar.md`):**
+
+- `post-broker-passkey-offer`: OBS'nin post broker login akışı ("sso sonrası passkey teklif et").
+  `passkey-offer-authenticator` REQUIRED ve CONDITIONAL "cond 2fa" alt akışı (`conditional-user-role`
+  DISABLED, config "admin mi2" `condUserRole=ADMIN`; `auth-otp-form` REQUIRED). Koşul DISABLED
+  olduğu için alt akışın nasıl değerlendirildiği ayrıca doğrulanmalı.
+- `first broker login + http ` (sonunda boşlukla): hiçbir IdP'ye bağlı görünmüyor.
 
 ### Üretim sırası
 
@@ -2346,8 +2419,12 @@ bağlamasıdır ve uzlaştırıcı kimliğiyle de yapılır.
    ```
 3. Sandbox yürüyüşü (bilet 02'nin adımları): yeni bir YTÜ kimliğiyle Microsoft'tan sonra sayfa
    çıkmamalı; Admin Console'da `email` = okul adresi, Email verified açık, Required user actions boş.
-4. Canlı: aynı komut `KEYCLOAK_REALM=e-skylab` ile (`KEYCLOAK_YTU_FIRST_LOGIN=on` açıkça). Satırlar yukarıdaki gibi; OBS satırı
-   `updated (its override is removed ...)` ya da `unchanged (follows the realm binding)` olmalı.
+4. Canlı: aynı komut `KEYCLOAK_REALM=e-skylab` ile (`KEYCLOAK_YTU_FIRST_LOGIN=on` açıkça), **yönetici
+   oturumuyla** (OBS'yi yalnız o okur). Satırlar yukarıdaki gibi; OBS satırı
+   `identity provider OBS: first login flow binding removed (follows realm binding 'sky first broker login'; previous 'first broker login for obs' kept, unused)`
+   (ilk koşu), `updated (its override is removed ...)` ya da `unchanged (follows the realm binding)`
+   olmalı. `WARNING: identity provider OBS: first login flow binding refused …` ya da `keeps its own
+   first login flow` görülürse adım OBS'de çalışmıyor: durulur, fark okunur.
    Sonra oturum dosyası silinir: `docker exec "$kc" rm -f /tmp/fbl-kcadm.config`.
 5. Sonraki tam uzlaştırmalar (wizard'lar, uzlaştırıcı kimliği, bayraksız) bağlamayı korur
    (`unchanged`); 2-4'ten önce koşan bir tam uzlaştırma özelliği açmaz.
@@ -2361,12 +2438,17 @@ Yerleşik akış hiç değişmediği için bugünkü davranış (profil sayfası
 Kopya kalır; bayraksız (`keep`) sonraki koşular geri dönüşü korur, yalnız `on` yeniden bağlar.
 1.17.0'dan eski bir
 imaja dönülecekse ÖNCE geri dönüş koşulur; yoksa realm'in her ilk YTÜ girişi bilinmeyen adım
-yüzünden düşer. Geri dönüş uzlaştırıcı kimliğiyle de (wizard) operatör oturumuyla da koşar; OBS
-kopyayı gösteren bir geçersiz kılma taşıyorsa onu yalnız operatör oturumu kaldırabilir (uzlaştırıcı
-kimliği IdP okuyamaz). OBS'nin `first broker login` geçersiz kılması geri konmaz (realm bağlamasını
-izlemesi zararsızdır). Acil yol (her imajda): Admin Console → Authentication → yerleşik
-`first broker login` → Bind flow → First broker login flow; OBS'nin "First login flow override"ı
-kopyayı gösteriyorsa onu da boşaltın.
+yüzünden düşer. Geri dönüş uzlaştırıcı kimliğiyle de (wizard) operatör oturumuyla da koşar, ama
+OBS'yi yalnız operatör oturumu okur (uzlaştırıcı kimliği IdP okuyamaz). Operatör oturumundaki `off`
+OBS'nin geçersiz kılmasını `on`'un not ettiği akışa (üretimde `first broker login for obs`) geri
+yazar: `identity provider OBS: first login flow binding restored ('first broker login for obs', as
+before KEYCLOAK_YTU_FIRST_LOGIN=on)`. Böylece geri dönüş 2026-10-13 öncesini tam verir (review
+profile `on`, bağlantıyla doğrulama yolu açık). Kopyayı gösteren bir geçersiz kılma (not yoksa)
+kaldırılır; OBS'nin `first broker login` geçersiz kılması geri konmaz (realm bağlamasını izlemesi
+zararsızdır). Acil yol (her imajda): Admin Console → Authentication → yerleşik `first broker login`
+→ Bind flow → First broker login flow; sonra Identity providers → OBS → Advanced → "First login
+flow override" = `first broker login for obs` → Save (geçersiz kılma `sky first broker login` ya da
+boşsa).
 
 ### Harness
 
@@ -2384,7 +2466,15 @@ görülür; yeni kimlik, bağlı hesap, başka hesabın `personalEmail`'i, doğr
 parolayla yeniden doğrulama, posta yok) ve doğrulanmamış `email`'i (sahip kilitlenmez), OBS FORCE
 (uyarı, bağlanan hesabın birincili değişmez), A6, kopyayı gösteren OBS geçersiz kılmasıyla geri
 dönüş, `keep`'in kapalı bırakması, yeniden açma ve başka akışa bağlı realm'in reddi gerçek
-girişlerle (curl, Keycloak'ın kendi sayfaları) denenir. Birim testi: `SkyYtuFirstLoginTest`
+girişlerle (curl, Keycloak'ın kendi sayfaları) denenir. Sonra üretimdeki OBS kurulur: yerleşik
+akışın `first broker login for obs` adlı kopyası (review profile `on`) OBS'ye bağlanır. Realm
+kopyaya bağlıyken adımın OBS'de çalışmadığı (2026-10-13 hatası), `keep`'in OBS'ye dokunmadığı,
+fazladan `idp-auto-link` eklenmiş ya da bir gerekliliği değişmiş kopyanın uyarıyla reddedildiği
+(OBS değişmez), kopyaya eklenen adımın `keep`'te uyarıyla bildirildiği (dokunulmaz), `off`'un
+sonradan değiştirilmiş eski akışı ya da kopyayı gösteren notu geri yazmadığı, biçimi aynı
+kopyada `on`'un geçersiz kılmayı kaldırıp not ettiği (adım çalışır, kopya ve config'i değişmez),
+`off`'un geri yazıp notu boşalttığı (profil sayfası yine çıkar) ve ikinci koşuların bir şey
+değiştirmediği görülür. Birim testi: `SkyYtuFirstLoginTest`
 (kırpma, büyük/küçük harf, alan adı ve tırnaklı yerel kısım, sahip türleri, FORCE yolları).
 
 ## 23. İlk YTÜ girişinin sonunda kişisel e-posta önerisi (eskylab-login-ux 21)
@@ -2503,7 +2593,10 @@ Uzlaştırıcı kimliğinin `manage-realm` rolü yeter.
 1. SPI 1.18.0'ı ve yeni tema sayfasını taşıyan imaj yayımlanır (`main` → `production`). **Tema
    değişti: Touch ID kapısı yeni bir fiziksel testle** (`keycloak-production` ortamındaki
    değişkenler tam birleştirme SHA'sı ve issue #1 kanıtı). §22'nin adımı (`KEYCLOAK_YTU_FIRST_LOGIN=on`)
-   açık değilse öneri hiç çıkmaz; önce o. Bu imajla Hesap Merkezi YTÜ alan adlı kişisel adresi
+   açık değilse öneri hiç çıkmaz; önce o. Adımın açık olması yetmez, OBS realm bağlamasını izlemeli
+   (§22 "OBS'nin kendi ilk giriş akışı": yönetici oturumundaki `on` koşusunda OBS satırı `binding
+   removed …` ya da `unchanged (follows the realm binding)`); OBS kendi akışındaysa öneriyi koyan
+   adım hiç çalışmaz. Bu imajla Hesap Merkezi YTÜ alan adlı kişisel adresi
    `400 email_school_domain` ile reddeder; account-center'ın bu kodu tanıyan sürümü (account-center
    #79) aynı sırada yayımlanmalı.
 1a. **`on`'dan önce IP denetimi:** IP sınıfı bütçesi Keycloak'ın gördüğü istemci IP'si kadar
@@ -2591,7 +2684,9 @@ Microsoft paylaşılan cihazı sezip soruyu gizliyor; biz sezemiyoruz, yalnız m
 SPI 1.19.0'daki `sky-stay-signed-in` gerekli eylemi (`com.skylab.authenticator.SkyStaySignedIn`).
 Bir authenticator değil, çünkü bağlı bir hesabın YTÜ girişinde Keycloak IdP'den doğrudan girişin
 sonuna gider; realm'e bağlı hiçbir akış çalışmaz (yalnız IdP'ye özel post broker login akışı
-çalışırdı, onu da uzlaştırıcı kimliği okuyamaz). Her girişte çalışan şey realm'in gerekli
+çalışırdı, onu da uzlaştırıcı kimliği okuyamaz). Üretimde OBS'nin post broker login akışı
+`post-broker-passkey-offer` elle yapılmış, kodlanmamış (§22 sonundaki not); gerekli eylemler ondan
+sonra çalışır, bu eylem ona dokunmaz. Her girişte çalışan şey realm'in gerekli
 eylemlerinin `evaluateTriggers`'ıdır. Eylem kendini kullanıcıya değil **giriş oturumuna** ekler
 (`authSession.addRequiredAction`), yalnız şunlar birlikte tutunca:
 

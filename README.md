@@ -320,7 +320,9 @@ kopyaya çevirir. Bu yalnız açıkça istenince olur: `KEYCLOAK_YTU_FIRST_LOGIN
 yerleşik akışa geri bağlar; varsayılan `keep` bağlamayı olduğu gibi bırakır (tam uzlaştırma
 özelliği açıp kapatmaz, bağlı kopyayı yalnız onarır). Kendi ilk giriş akışı seçili olan bir IdP
 realm bağlamasını görmez; uzlaştırıcı kimliği IdP okuyamadığı için OBS'yi bir kez operatör oturumu
-(`KEYCLOAK_RECONCILE_ONLY=first-broker-login`) realm bağlamasına bırakır. Ayrıntı, üretim sırası ve geri dönüş: runbook §22. Harness
+(`KEYCLOAK_RECONCILE_ONLY=first-broker-login`) realm bağlamasına bırakır. Üretimdeki OBS'nin elle
+yapılmış `first broker login for obs` geçersiz kılması da yalnız biçimi yerleşik akışla aynıysa
+kaldırılır (adı OBS'ye not edilir, akış silinmez); `off` onu geri yazar (bilet 22). Ayrıntı, üretim sırası ve geri dönüş: runbook §22. Harness
 `tests/ytu-first-login.sh` tek başına çalışır (stok imaj, SPI jar'ı, taklit YTÜ kiracısı).
 
 Bilet 21'den sonra (SPI 1.18.0) aynı ilk girişin sonunda bir kez kişisel e-posta önerisi çıkar:

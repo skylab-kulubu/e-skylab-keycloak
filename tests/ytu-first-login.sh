@@ -45,6 +45,12 @@
 #   - linking YTÜ to a signed-in account (A6, kc_action=idp_link:OBS): no page, e-mail unchanged;
 #   - KEYCLOAK_YTU_FIRST_LOGIN=off binds the built-in flow back and removes an OBS override that
 #     names the copy (today's page and empty e-mail again); keep leaves it off; on reuses the copy;
+#   - production's OBS override, its own duplicate of the built-in flow ('first broker login for
+#     obs', review profile "on"; eskylab-login-ux 22): with it the step never runs (the bug of
+#     2026-10-13); keep never touches it; a duplicate of another shape is refused with a WARNING and
+#     nothing on OBS changes; on removes the override (OBS follows the realm binding, the step runs,
+#     the duplicate stays unused) and notes it on OBS; off writes it back and empties the note;
+#     second runs change nothing;
 #   - the Personal e-mail offer (ticket 21, required action sky-personal-email-offer, the SPI's own
 #     page as no SKY LAB theme runs here; KEYCLOAK_PERSONAL_EMAIL_OFFER): keep registers nothing,
 #     on registers and enables it, second runs change nothing; a new YTÜ identity sees the page once
@@ -418,6 +424,42 @@ built_in_before=$(flow "$BUILT_IN" | jq -S -c .)
 printf '    ytu-mock tenant, e-skylab with OBS (override %s, review profile on), app client\n' "'$BUILT_IN'"
 
 # ---------------------------------------------------------------------------------------------------
+# ReconcileJson same-shape on the real built-in flow and edited variants of it (the reconciler's
+# shape checks of eskylab-login-ux 22). shape_status VARIANT_JSON [STEP] -> exit status; stderr kept.
+CURRENT_STAGE='ReconcileJson same-shape'
+docker exec -i "$CONTAINER" sh -c 'cat >/tmp/rj/built-in.json' <<<"$built_in_before"
+shape_status() {
+  local status=0
+  docker exec -i "$CONTAINER" bash -c 'jars=('"$JACKSON_GLOB"'); IFS=:
+    java -cp "/tmp/rj:${jars[*]}" ReconcileJson same-shape /tmp/rj/built-in.json "$@"' _ "${@:2}" <<<"$1" \
+    2>"$STATE_DIR/shape.err" || status=$?
+  printf '%s\n' "$status"
+}
+expect_shape() { # expect_shape LABEL WANTED_STATUS STDERR_PATTERN VARIANT_JSON [STEP]
+  local got
+  got=$(shape_status "$4" "${@:5}")
+  [[ $got == "$2" ]] || { cat "$STATE_DIR/shape.err" >&2; fail "same-shape $1: exit $got, not $2"; }
+  [[ -z $3 ]] || grep -q -- "$3" "$STATE_DIR/shape.err" || { cat "$STATE_DIR/shape.err" >&2; fail "same-shape $1: no '$3' in the difference"; }
+}
+expect_shape identical 0 '' "$built_in_before"
+expect_shape 'ids, names, priorities, configs' 0 '' "$(jq -c 'map(.id = "x" | .displayName = "y" | .priority = 999 | del(.authenticationConfig))' <<<"$built_in_before")"
+expect_shape 'a requirement' 4 'REQUIRED' "$(jq -c 'map(if .providerId == "idp-email-verification" then .requirement = "REQUIRED" else . end)' <<<"$built_in_before")"
+expect_shape 'a missing step' 4 'nothing' "$(jq -c '.[:-1]' <<<"$built_in_before")"
+expect_shape 'an inserted idp-auto-link' 4 'idp-auto-link' \
+  "$(jq -c '.[:3] + [{providerId: "idp-auto-link", level: 1, index: 0, requirement: "ALTERNATIVE"}] + .[3:]' <<<"$built_in_before")"
+# The copy of eskylab-login-ux 07: the step on top (indexes shift), link verification DISABLED.
+copy_like=$(jq -c --arg step "$STEP" '[{providerId: $step, level: 0, index: 0, requirement: "REQUIRED"}]
+  + map(if .level == 0 then .index += 1 else . end | if .providerId == "idp-email-verification" then .requirement = "DISABLED" else . end)' \
+  <<<"$built_in_before")
+expect_shape 'the copy, as a copy' 0 '' "$copy_like" "$STEP"
+expect_shape 'the copy, as a duplicate' 4 '' "$copy_like"
+expect_shape 'the copy with an idp-auto-link' 4 'idp-auto-link' \
+  "$(jq -c '. + [{providerId: "idp-auto-link", level: 0, index: 9, requirement: "ALTERNATIVE"}]' <<<"$copy_like")" "$STEP"
+expect_shape 'the copy with another requirement' 4 'REQUIRED' \
+  "$(jq -c 'map(if .providerId == "idp-review-profile" then .requirement = "DISABLED" else . end)' <<<"$copy_like")" "$STEP"
+printf '    same-shape: ids/names/priorities/configs ignored; a requirement, a missing step, an extra idp-auto-link refused; copy mode\n'
+
+# ---------------------------------------------------------------------------------------------------
 stage 'before the step: production today'
 mock_person Ytu.Before@STD.Yildiz.edu.tr 'Elektrik Mühendisliği'
 ytu_login before "$MOCK_USERNAME"
@@ -448,6 +490,7 @@ expect_line "$output" "[reconcile] first login step of flow '$COPY': updated (ad
 expect_line "$output" "[reconcile] review profile of flow '$COPY': updated (update.profile.on.first.login=missing)" 'review profile not set'
 expect_line "$output" "[reconcile] link verification of flow '$COPY': updated (idp-email-verification ALTERNATIVE -> DISABLED)" 'link verification not disabled'
 expect_line "$output" "[reconcile] realm first broker login flow binding: updated ($BUILT_IN -> $COPY)" 'realm not bound'
+expect_line "$output" "[reconcile] shape of flow '$COPY': unchanged (the built-in '$BUILT_IN' plus the SKY LAB edits)" 'copy shape not checked'
 expect_line "$output" '[reconcile] identity provider OBS first login flow: unchanged (not readable with this identity; an operator checks it with KEYCLOAK_RECONCILE_ONLY=first-broker-login)' \
   'OBS not reported'
 [[ $(bound) == "$COPY" ]] || fail "the realm is bound to '$(bound)'"
@@ -671,6 +714,142 @@ grep -Fq 'created' <<<"$output" && fail 'forward made another copy'
   || fail 'there is not exactly one copy'
 reconcile "$SCOPED_CONFIG" 1 KEYCLOAK_YTU_FIRST_LOGIN=maybe >/dev/null
 printf '    off: built-in flow, OBS override on the copy removed, today'"'"'s page again; keep stays off; on: the same copy\n'
+
+# ---------------------------------------------------------------------------------------------------
+# Production's OBS overrides the first login flow with its own hand-made duplicate of the built-in
+# flow, 'first broker login for obs' (review profile "on"; eskylab-login-ux 22). Here it is a
+# Keycloak copy of the built-in flow under that name, with its copied review profile config "on".
+stage "production's OBS: its own duplicate of the built-in flow"
+LEGACY='first broker login for obs'
+NOTE=skyFirstLoginFlowBeforeYtuStep
+kcadm create "authentication/flows/${BUILT_IN// /%20}/copy" -r "$REALM" -s "newName=$LEGACY" >/dev/null
+legacy_review=$(flow "$LEGACY" | jq -r '.[] | select(.providerId == "idp-review-profile") | .authenticationConfig')
+kcadm get "authentication/config/$legacy_review" -r "$REALM" | jq -e '.config["update.profile.on.first.login"] == "on"' >/dev/null \
+  || fail "the duplicate's review profile config is not on"
+kcadm update identity-provider/instances/OBS -r "$REALM" -s "firstBrokerLoginFlowAlias=$LEGACY" >/dev/null
+legacy_before=$(flow "$LEGACY" | jq -S -c .)
+obs_note() {
+  kcadm get identity-provider/instances/OBS -r "$REALM" | jq -r --arg note "$NOTE" '"\(.firstBrokerLoginFlowAlias // "")|\(.config[$note] // "")"'
+}
+[[ $(bound) == "$COPY" ]] || fail "the realm is bound to '$(bound)', not the copy"
+# The bug of 2026-10-13: the realm runs the copy, OBS runs its own flow, the step never runs.
+mock_person Legacy.Before@std.yildiz.edu.tr 'Fizik'
+ytu_login legacy-before "$MOCK_USERNAME"
+on_review_profile || fail "OBS's own flow did not show the review profile page ($(page_summary))"
+submit_review_profile
+jq -e '(.email // "") == ""' <<<"$(user_by_username "$MOCK_USERNAME")" >/dev/null || fail "OBS's own flow ran the step"
+# A full reconciliation (keep) never touches OBS, even in an operator session.
+output=$(reconcile "$ADMIN_CONFIG" 0)
+expect_quiet "$output" 'keep changed something'
+grep -q 'identity provider OBS' <<<"$output" && { printf '%s\n' "$output" >&2; fail 'keep reported on OBS'; }
+[[ $(obs_note) == "$LEGACY|" ]] || fail "keep changed OBS: $(obs_note)"
+# Review F2: the copy itself is checked against the built-in flow on every run; an execution added
+# by hand is reported (a WARNING) and left alone.
+copy_extra=$(kcadm create "authentication/flows/${COPY// /%20}/executions/execution" -r "$REALM" -i -b '{"provider":"idp-auto-link"}')
+output=$(reconcile "$SCOPED_CONFIG" 0)
+grep -Fq "[reconcile] WARNING: flow '$COPY' is not shaped like the built-in '$BUILT_IN' apart from the SKY LAB edits: " <<<"$output" \
+  || { printf '%s\n' "$output" >&2; fail 'an execution added to the copy was not reported'; }
+grep -q 'idp-auto-link' <<<"$output" || { printf '%s\n' "$output" >&2; fail 'the copy warning does not name the difference'; }
+[[ $(flow "$COPY" | jq --arg id "$copy_extra" '[.[] | select(.id == $id)] | length') == 1 ]] || fail 'the reconciler removed the execution'
+kcadm delete "authentication/executions/$copy_extra" -r "$REALM" >/dev/null
+output=$(reconcile "$SCOPED_CONFIG" 0)
+expect_line "$output" "[reconcile] shape of flow '$COPY': unchanged (the built-in '$BUILT_IN' plus the SKY LAB edits)" 'the copy is not reported as in shape again'
+# A duplicate that is not shaped like the built-in flow (here an extra automatic link step) is refused.
+extra=$(kcadm create "authentication/flows/${LEGACY// /%20}/executions/execution" -r "$REALM" -i -b '{"provider":"idp-auto-link"}')
+output=$(reconcile "$ADMIN_CONFIG" 0 KEYCLOAK_YTU_FIRST_LOGIN=on)
+grep -Fq "[reconcile] WARNING: identity provider OBS: first login flow binding refused (its override '$LEGACY' is not shaped like the built-in '$BUILT_IN': " <<<"$output" \
+  || { printf '%s\n' "$output" >&2; fail 'a duplicate of another shape was not refused'; }
+grep -q 'idp-auto-link' <<<"$output" || { printf '%s\n' "$output" >&2; fail 'the refusal does not name the difference'; }
+expect_quiet "$(grep -v 'WARNING' <<<"$output")" 'the refused run changed something'
+[[ $(obs_note) == "$LEGACY|" ]] || fail "the refused run changed OBS: $(obs_note)"
+kcadm delete "authentication/executions/$extra" -r "$REALM" >/dev/null
+[[ $(flow "$LEGACY" | jq -S -c .) == "$legacy_before" ]] || fail 'the duplicate is not as before after removing the extra step'
+# ... and so is one with another requirement (link verification REQUIRED instead of ALTERNATIVE).
+set_legacy_verification() {
+  local body
+  body=$(flow "$LEGACY" | jq -c --arg r "$1" '.[] | select(.providerId == "idp-email-verification") | {id, priority, requirement: $r}')
+  kcadm update "authentication/flows/${LEGACY// /%20}/executions" -r "$REALM" -n -b "$body" >/dev/null
+}
+set_legacy_verification REQUIRED
+output=$(reconcile "$ADMIN_CONFIG" 0 KEYCLOAK_YTU_FIRST_LOGIN=on)
+grep -Fq "[reconcile] WARNING: identity provider OBS: first login flow binding refused (its override '$LEGACY' is not shaped like the built-in '$BUILT_IN': " <<<"$output" \
+  && grep -q 'idp-email-verification (level [0-9]*, index [0-9]*, REQUIRED)' <<<"$output" \
+  || { printf '%s\n' "$output" >&2; fail 'a duplicate with another requirement was not refused'; }
+[[ $(obs_note) == "$LEGACY|" ]] || fail "the refused run changed OBS: $(obs_note)"
+set_legacy_verification ALTERNATIVE
+[[ $(flow "$LEGACY" | jq -S -c .) == "$legacy_before" ]] || fail 'the duplicate is not as before after its requirement was put back'
+# Shaped like the built-in flow: OBS follows the realm binding; the duplicate stays, unused.
+output=$(reconcile "$ADMIN_CONFIG" 0 KEYCLOAK_YTU_FIRST_LOGIN=on)
+expect_line "$output" "[reconcile] identity provider OBS: first login flow binding removed (follows realm binding '$COPY'; previous '$LEGACY' kept, unused)" \
+  "OBS's duplicate override was not removed"
+if grep '^\[reconcile\]' <<<"$output" | grep -v 'identity provider OBS' | grep -qv 'unchanged'; then
+  printf '%s\n' "$output" >&2
+  fail 'the operator run changed more than OBS'
+fi
+grep -q 'WARNING' <<<"$output" && { printf '%s\n' "$output" >&2; fail 'the operator run warned'; }
+[[ $(obs_note) == "|$LEGACY" ]] || fail "OBS does not follow the realm binding with a note of its previous flow: $(obs_note)"
+kcadm get identity-provider/instances/OBS -r "$REALM" | jq -e '.trustEmail == true and .config.syncMode == "LEGACY"' >/dev/null \
+  || fail 'OBS changed beyond its override'
+[[ $(flow "$LEGACY" | jq -S -c .) == "$legacy_before" ]] || fail 'the duplicate changed'
+kcadm get "authentication/config/$legacy_review" -r "$REALM" | jq -e '.config["update.profile.on.first.login"] == "on"' >/dev/null \
+  || fail "the duplicate's review profile config changed"
+mock_person Legacy.After@STD.yildiz.edu.tr 'Kimya'
+ytu_login legacy-after "$MOCK_USERNAME"
+[[ $LANDED == app ]] || fail "after removing the duplicate override a page stood before the application ($(page_summary))"
+jq -e '.email == "legacy.after@std.yildiz.edu.tr" and .emailVerified == true' <<<"$(user_by_username "$MOCK_USERNAME")" >/dev/null \
+  || fail 'the step did not run for OBS'
+output=$(reconcile "$ADMIN_CONFIG" 0 KEYCLOAK_YTU_FIRST_LOGIN=on)
+expect_quiet "$output" 'a second on changed something'
+expect_line "$output" '[reconcile] identity provider OBS first login flow: unchanged (follows the realm binding)' 'OBS not reported as following'
+# off gives back exactly the state before on: the built-in binding and OBS's own duplicate.
+output=$(reconcile "$ADMIN_CONFIG" 0 KEYCLOAK_YTU_FIRST_LOGIN=off)
+expect_line "$output" "[reconcile] realm first broker login flow binding: updated ($COPY -> $BUILT_IN)" 'off did not rebind'
+expect_line "$output" "[reconcile] identity provider OBS: first login flow binding restored ('$LEGACY', as before KEYCLOAK_YTU_FIRST_LOGIN=on)" \
+  "off did not give OBS its duplicate back"
+[[ $(obs_note) == "$LEGACY|" ]] || fail "off left OBS at $(obs_note)"
+mock_person Legacy.Rollback@std.yildiz.edu.tr 'Fizik'
+ytu_login legacy-rollback "$MOCK_USERNAME"
+on_review_profile || fail "off did not bring OBS's review profile page back ($(page_summary))"
+submit_review_profile
+jq -e '(.email // "") == ""' <<<"$(user_by_username "$MOCK_USERNAME")" >/dev/null || fail 'off still ran the step for OBS'
+output=$(reconcile "$ADMIN_CONFIG" 0 KEYCLOAK_YTU_FIRST_LOGIN=off)
+expect_quiet "$output" 'a second off changed something'
+expect_line "$output" "[reconcile] identity provider OBS first login flow: unchanged (keeps its own first login flow '$LEGACY', as before KEYCLOAK_YTU_FIRST_LOGIN=on)" \
+  'a second off did not report the restored duplicate'
+grep -q 'WARNING' <<<"$output" && { printf '%s\n' "$output" >&2; fail 'a second off warned'; }
+# Forward again: the same removal; the later stages run with OBS following the copy.
+output=$(reconcile "$ADMIN_CONFIG" 0 KEYCLOAK_YTU_FIRST_LOGIN=on)
+expect_line "$output" "[reconcile] realm first broker login flow binding: updated ($BUILT_IN -> $COPY)" 'forward did not rebind'
+expect_line "$output" "[reconcile] identity provider OBS: first login flow binding removed (follows realm binding '$COPY'; previous '$LEGACY' kept, unused)" \
+  'forward did not remove the duplicate override'
+[[ $(obs_note) == "|$LEGACY" ]] || fail "forward left OBS at $(obs_note)"
+# Review F1: off writes back only a known earlier flow that still has the built-in shape.
+# (a) The unused duplicate was edited after on: not restored, OBS follows the built-in binding.
+extra=$(kcadm create "authentication/flows/${LEGACY// /%20}/executions/execution" -r "$REALM" -i -b '{"provider":"idp-auto-link"}')
+output=$(reconcile "$ADMIN_CONFIG" 0 KEYCLOAK_YTU_FIRST_LOGIN=off)
+expect_line "$output" "[reconcile] realm first broker login flow binding: updated ($COPY -> $BUILT_IN)" 'off did not rebind'
+grep -Fq "[reconcile] WARNING: identity provider OBS: first login flow binding not restored (the flow '$LEGACY' is not shaped like the built-in '$BUILT_IN' any more: " <<<"$output" \
+  && grep -Fq "OBS follows the realm binding '$BUILT_IN'" <<<"$output" \
+  || { printf '%s\n' "$output" >&2; fail 'off restored an edited duplicate'; }
+grep -q 'binding restored' <<<"$output" && { printf '%s\n' "$output" >&2; fail 'off reported a restore'; }
+[[ $(obs_note) == "|$LEGACY" ]] || fail "off with an edited duplicate left OBS at $(obs_note)"
+kcadm delete "authentication/executions/$extra" -r "$REALM" >/dev/null
+output=$(reconcile "$ADMIN_CONFIG" 0 KEYCLOAK_YTU_FIRST_LOGIN=on)
+expect_line "$output" '[reconcile] identity provider OBS first login flow: unchanged (follows the realm binding)' 'on after a refused restore'
+# (b) A note naming the copy (with OBS overriding with the copy): not restored, the copy override
+# is cleared, OBS follows the built-in binding.
+kcadm update identity-provider/instances/OBS -r "$REALM" -s "firstBrokerLoginFlowAlias=$COPY" -s "config.$NOTE=$COPY" >/dev/null
+output=$(reconcile "$ADMIN_CONFIG" 0 KEYCLOAK_YTU_FIRST_LOGIN=off)
+expect_line "$output" "[reconcile] realm first broker login flow binding: updated ($COPY -> $BUILT_IN)" 'off did not rebind'
+grep -Fq "[reconcile] WARNING: identity provider OBS: first login flow binding not restored (its note names '$COPY', not one of the known earlier flows; OBS follows the realm binding '$BUILT_IN'" <<<"$output" \
+  || { printf '%s\n' "$output" >&2; fail 'off restored a note naming the copy'; }
+[[ $(obs_note) == "|$COPY" ]] || fail "off with a note naming the copy left OBS at $(obs_note)"
+kcadm update identity-provider/instances/OBS -r "$REALM" -s "config.$NOTE=$LEGACY" >/dev/null
+output=$(reconcile "$ADMIN_CONFIG" 0 KEYCLOAK_YTU_FIRST_LOGIN=on)
+expect_line "$output" "[reconcile] realm first broker login flow binding: updated ($BUILT_IN -> $COPY)" 'forward did not rebind'
+[[ $(obs_note) == "|$LEGACY" ]] || fail "forward left OBS at $(obs_note)"
+printf '    OBS on its own duplicate: keep leaves it; another shape or requirement is refused; on removes it (noted), the step runs; off restores it; second runs change nothing\n'
+printf '    off restores only a known earlier flow still shaped like the built-in one; the copy is checked against the built-in flow\n'
 
 # ---------------------------------------------------------------------------------------------------
 # The Personal e-mail offer (ticket 21). No SKY LAB theme runs here, so the page is the SPI's own

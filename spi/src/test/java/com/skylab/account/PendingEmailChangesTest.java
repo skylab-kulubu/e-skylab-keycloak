@@ -38,6 +38,7 @@ class PendingEmailChangesTest {
         String code = pending.issue("user-a", "ada@example.com", true);
 
         assertTrue(PendingEmailChanges.CODE.matcher(code).matches(), "the code must be six digits");
+        assertTrue(code.matches("^[0-9]{6}$"), "ADR-0044's code stays six digits (only the Login code has eight)");
         assertEquals(PendingEmailChanges.TTL_SECONDS, store.lifespanOf(PendingEmailChanges.key("user-a")));
         assertEquals(10 * 60, PendingEmailChanges.TTL_SECONDS);
         Map<String, String> stored = store.get(PendingEmailChanges.key("user-a"));

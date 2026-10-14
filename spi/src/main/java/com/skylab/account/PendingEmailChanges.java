@@ -31,7 +31,9 @@ final class PendingEmailChanges {
 
     static final int TTL_SECONDS = SingleUseCodes.TTL_SECONDS;
     static final int MAX_ATTEMPTS = SingleUseCodes.MAX_ATTEMPTS;
-    static final Pattern CODE = SingleUseCodes.CODE;
+    /** ADR-0044's code: six digits (the Login code has eight, {@link LoginCodes#DIGITS}). */
+    static final int DIGITS = 6;
+    static final Pattern CODE = SingleUseCodes.pattern(DIGITS);
 
     private static final String KEY_PREFIX = "sky-account:email-change:";
     private static final String LOGIN_SESSION_KEY_PREFIX = "sky-account:login-email-offer:";
@@ -80,7 +82,7 @@ final class PendingEmailChanges {
     }
 
     private PendingEmailChanges(SingleUseObjectProvider store, String keyPrefix) {
-        this.codes = new SingleUseCodes(store, PendingEmailChanges::hasAddress);
+        this.codes = new SingleUseCodes(store, DIGITS, PendingEmailChanges::hasAddress);
         this.keyPrefix = keyPrefix;
     }
 

@@ -17,15 +17,20 @@ import java.util.regex.Pattern;
  * identifier that names nobody holds a code too, for nobody ({@code userId} and {@code address}
  * empty) and never mailed, so that the page and its tries look the same either way.
  *
- * <p>The code's rules are {@link SingleUseCodes}': six digits, ten minutes, dead after five wrong
- * tries, single use, only a salted hash stored. A new code for the same session replaces the old
- * one.
+ * <p>The code's rules are {@link SingleUseCodes}': ten minutes, dead after five wrong tries, single
+ * use, only a salted hash stored; a new code for the same session replaces the old one. A Login code
+ * has {@value #DIGITS} digits, not ADR-0044's six (security review K2, Yusuf's decision of
+ * 2026-10-15): it signs a person in, also a person without a password, so a guess is worth more,
+ * and eight digits make it a hundred times harder.
  */
 final class LoginCodes {
 
     static final int TTL_SECONDS = SingleUseCodes.TTL_SECONDS;
     static final int MAX_ATTEMPTS = SingleUseCodes.MAX_ATTEMPTS;
-    static final Pattern CODE = SingleUseCodes.CODE;
+    static final int DIGITS = 8;
+    static final Pattern CODE = SingleUseCodes.pattern(DIGITS);
+    /** Longer input is refused before it is looked at: eight digits with a space between each. */
+    static final int MAX_CODE_INPUT_LENGTH = 2 * DIGITS + 8;
 
     private static final String KEY_PREFIX = "sky-email-code:";
     private static final String USER_ID_NOTE = "userId";
@@ -67,7 +72,7 @@ final class LoginCodes {
     private final SingleUseCodes codes;
 
     LoginCodes(SingleUseObjectProvider store) {
-        this.codes = new SingleUseCodes(store, LoginCodes::isWellFormed);
+        this.codes = new SingleUseCodes(store, DIGITS, LoginCodes::isWellFormed);
     }
 
     /** Stores a code for this session's handle, replacing any earlier one, and returns it, once. */
@@ -104,6 +109,32 @@ final class LoginCodes {
             case WRONG_CODE -> Outcome.wrongCode(result.payload().get(USER_ID_NOTE), result.attemptsLeft());
             case NONE -> Outcome.none();
         };
+    }
+
+    /**
+     * Spends one try of this session's code without looking at what was typed (the person's wrong
+     * codes reached the day's ceiling): it answers as a wrong code does, and the right code cannot win.
+     */
+    Outcome spendTry(String handle) {
+        if (handle == null) {
+            return Outcome.none();
+        }
+        SingleUseCodes.Result result = codes.spendTry(key(handle));
+        return result.status() == SingleUseCodes.Status.WRONG_CODE
+                ? Outcome.wrongCode(result.payload().get(USER_ID_NOTE), result.attemptsLeft())
+                : Outcome.none();
+    }
+
+    /**
+     * The code as typed, without the spaces people keep when they copy it; null when what is left
+     * is not {@value #DIGITS} digits (such input never costs a try).
+     */
+    static String codeFromInput(String typed) {
+        if (typed == null || typed.length() > MAX_CODE_INPUT_LENGTH) {
+            return null;
+        }
+        String code = typed.strip().replace(" ", "");
+        return CODE.matcher(code).matches() ? code : null;
     }
 
     /** The store key of a session's code. */

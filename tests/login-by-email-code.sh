@@ -22,7 +22,8 @@
 # config/account-center-realm-security.json, the production User Profile, verifyEmail=true) and a
 # browser flow in production's shape ('browser plus passkey': forms holds the 'password flow' subflow
 # (SKY LAB password form, conditional OTP, passkey offer) and passwordless WebAuthn, both
-# ALTERNATIVE). SKY_EMAIL_CODE_DAILY_LIMIT is small here so the operator alarm fires within the run.
+# ALTERNATIVE). SKY_EMAIL_CODE_DAILY_LIMIT and SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT are small here so
+# the operator alarms fire within the run. Login codes have eight digits.
 #
 # What it proves:
 #   - keep adds nothing; on, under an identity with exactly the reconciler's realm-management roles,
@@ -39,6 +40,9 @@
 #   - the fourth code to one address within a quarter hour is not mailed, the page is the same, a
 #     rate_limited_address event is written; the overall daily budget mails the operator at half
 #     and when used up (to the enabled members of /ADMIN), and sign-in codes still go;
+#   - an account's wrong codes reach the day's ceiling (SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT, small
+#     here): no further code is mailed to it and the page is the same as for nobody, the right code
+#     of a code mailed before is not looked at, the members of /ADMIN get one alarm, a log line;
 #   - a person with TOTP is asked for it after the code; when the OTP subflow is turned off in the
 #     Admin Console, keep warns and exits 3, the right code refuses a person with TOTP (unavailable,
 #     an otp_unguarded event and log line) but still signs in a person without, and on repairs it;
@@ -95,6 +99,9 @@ SUBFLOW='sky email code'
 OTP_SUBFLOW='sky email code conditional otp'
 STEP=sky-email-code
 DAILY_LIMIT=6
+# Wrong codes per account a day (security review K2; production default 10): above the five of the
+# 'five wrong codes' stage, low enough for the ceiling stage.
+WRONG_CEILING=6
 ALARM_TO=ops@example.invalid
 CURRENT_STAGE=startup
 STATUS=''
@@ -330,7 +337,7 @@ await_code() {
   task=$(skymail_records | jq -s -c --arg to "$1" \
     '[.[] | select(.event == "mail_task" and .template_key == "keycloak.login-code" and .recipient_email == $to)] | last')
   jq -e '.body_variables | .purpose == "login" and .link == "" and .codeExpirationMinutes == "10"
-      and .subjectKey == "skyLoginCodeSubject" and (.code | test("^[0-9]{6}$"))' <<<"$task" >/dev/null \
+      and .subjectKey == "skyLoginCodeSubject" and (.code | test("^[0-9]{8}$"))' <<<"$task" >/dev/null \
     || fail 'the Login code mail task does not carry the code, purpose=login and the ten minutes without a link'
   jq -e '.missing_variables == [] and (.roles | index("skymail:mails:send")) != null' <<<"$task" >/dev/null \
     || fail 'the Login code mail task lacks a variable or the send role'
@@ -352,15 +359,15 @@ await_smtp_code() {
   message=$(curl -fsS "$MAIL_URL/api/v1/message/$id")
   jq -e '((.Text // "") + (.HTML // "")) | test("https?://[^ ]*(login-actions|action-token)") | not' <<<"$message" >/dev/null \
     || fail 'the code mail carries a link'
-  code=$(jq -r '.Text // "" | split("\n")[] | select(test("^\\s*[0-9]{6}\\s*$")) | gsub("\\s"; "")' <<<"$message" | head -n 1)
-  [[ $code =~ ^[0-9]{6}$ ]] || fail 'the code mail carries no six-digit code'
+  code=$(jq -r '.Text // "" | split("\n")[] | select(test("^\\s*[0-9]{8}\\s*$")) | gsub("\\s"; "")' <<<"$message" | head -n 1)
+  [[ $code =~ ^[0-9]{8}$ ]] || fail 'the code mail carries no eight-digit code'
   subject=$(jq -r '.Subject // ""' <<<"$message")
   [[ $subject != *"$code"* ]] || fail 'the code is in the subject line'
   printf '%s\n' "$code"
 }
 
 other_code() {
-  [[ $1 == 000000 ]] && printf '000001\n' || printf '000000\n'
+  [[ $1 == 00000000 ]] && printf '00000001\n' || printf '00000000\n'
 }
 
 # token_claims: redeems APP_CODE and prints the access token's claims that must not depend on how
@@ -445,7 +452,7 @@ docker run --rm -d --name "$SKYMAIL_CONTAINER" --network "$NETWORK" --memory 128
 # No SKY_MAIL_TOKEN_URL: as in production, the token endpoint comes from the request's issuer.
 docker run --rm -d --name "$CONTAINER" --network "$NETWORK" --memory "$MEMORY" -p "127.0.0.1:$PORT:$PORT" \
   -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
-  -e SKY_EMAIL_CODE_DAILY_LIMIT="$DAILY_LIMIT" \
+  -e SKY_EMAIL_CODE_DAILY_LIMIT="$DAILY_LIMIT" -e SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT="$WRONG_CEILING" \
   -e SKY_HARNESS=1 -e SKY_MAIL_ENABLED=true -e "SKY_MAIL_BASE_URL=http://$SKYMAIL_CONTAINER:8080" \
   -e SKY_MAIL_CLIENT_ID=keycloak-mailer -e "SKY_MAIL_CLIENT_SECRET=$MAILER_SECRET" -e SKY_MAIL_TIMEOUT_MILLISECONDS=3000 \
   -v "$SPI_JAR:/opt/keycloak/providers/e-skylab-spi.jar:ro" \
@@ -730,6 +737,53 @@ CODES+=("$code")
 printf '    a fourth code to one address is not mailed (same page, event); the operator alarm at half and full; codes go on\n'
 
 # ---------------------------------------------------------------------------------------------------
+stage 'the wrong-code ceiling of an account'
+# Security review K2: WRONG_CEILING wrong codes in a day, then no code is mailed to the account, the
+# page stays the same, a code mailed before is no longer looked at, and /ADMIN hears it once.
+hakan=$(person hakan hakan@example.invalid)
+open_code_page hakan-first
+ask_code hakan
+code=$(await_code hakan@example.invalid 0)
+CODES+=("$code")
+for attempt in 1 2 3 4 5; do
+  type_code "$(other_code "$code")"
+done
+expect_error kc-email-code-identifier-form too_many_tries 'five wrong codes'
+open_code_page hakan-second
+ask_code hakan
+code=$(await_code hakan@example.invalid 1)
+CODES+=("$code")
+for _ in $(seq 1 $((WRONG_CEILING - 5))); do
+  type_code "$(other_code "$code")"
+  expect_error kc-email-code-form wrong_code 'a wrong code up to the ceiling'
+done
+type_code "$code"
+[[ $LANDED != app ]] || fail 'the right code worked past the ceiling'
+expect_error kc-email-code-form wrong_code 'the right code past the ceiling (no account_locked: it was not looked at)'
+kcadm get events -r "$REALM" -q type=LOGIN_ERROR -q "user=$hakan" \
+  | jq -e '.[0].details.sky_email_code == "wrong_code_ceiling"' >/dev/null || fail 'no wrong_code_ceiling event'
+open_code_page hakan-third
+ask_code hakan
+ceiling_page=$(page_shape)
+open_code_page nobody-ceiling
+ask_code nobody-ceiling@example.invalid
+[[ $ceiling_page == "$(page_shape)" ]] || fail 'the page tells an account past its ceiling apart'
+sleep 5
+(($(code_count hakan@example.invalid) == 2)) || fail "a code was mailed past the ceiling ($(code_count hakan@example.invalid) mails)"
+for _ in $(seq 1 30); do
+  [[ $(alarm_subjects "$ALARM_TO") == *skyLoginCodeAlarmCeilingSubject* ]] && break
+  sleep 1
+done
+for address in "$ALARM_TO" ops2@example.invalid; do
+  [[ $(alarm_subjects "$address") == '["skyLoginCodeAlarmCeilingSubject","skyLoginCodeAlarmFullSubject","skyLoginCodeAlarmHalfSubject"]' ]] \
+    || fail "a member of /ADMIN did not get the ceiling alarm once: $(alarm_subjects "$address")"
+done
+docker logs "$CONTAINER" >"$STATE_DIR/server.log" 2>&1
+grep -Fq "sky_email_code_wrong_ceiling accounts=1 ceiling=$WRONG_CEILING realm=$REALM" "$STATE_DIR/server.log" \
+  || fail 'the ceiling left no log line'
+printf '    %s wrong codes: no further code mailed (same page), the right code of a mailed one is not looked at, one alarm to /ADMIN\n' "$WRONG_CEILING"
+
+# ---------------------------------------------------------------------------------------------------
 stage 'SkyMail refuses: the SMTP fallback'
 person fallback skymail-fallback@example.invalid >/dev/null
 open_code_page fallback
@@ -833,7 +887,7 @@ for code in "${CODES[@]}"; do
 done
 for address in ada@example.invalid ytu.personal@example.invalid ytu.okul@std.yildiz.edu.tr only.okul@std.yildiz.edu.tr \
   nobody@example.invalid bea@example.invalid cem@example.invalid dila@example.invalid eda@example.invalid fikret@example.invalid \
-  skymail-fallback@example.invalid; do
+  skymail-fallback@example.invalid hakan@example.invalid gul@example.invalid; do
   ! grep -Fiq "$address" "$STATE_DIR/server.log" || fail 'an address of the run reached the server log'
 done
 [[ -n $remote ]] || fail 'no client IP in the LOGIN event to look for'

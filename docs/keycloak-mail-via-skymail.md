@@ -45,7 +45,7 @@ postanın kapsamıdır, istekle birlikte atılır ve birim testinde sunucu
 | `sendConfirmIdentityBrokerLink` | `identity-provider-link.ftl` | `keycloak.idp-link` | `identityProviderLinkSubject` |
 | `send(...)` | `sky-personal-email-confirm.ftl` (`EmailResource.TEMPLATE`) | `keycloak.personal-email-confirm` | çağıranın konu anahtarı (`skyPersonalEmailConfirmSubject`) |
 | `send(...)` | `sky-login-code.ftl` (`EmailCodeAuthenticator.MAIL_TEMPLATE`) | `keycloak.login-code` | `skyLoginCodeSubject` |
-| `SkyMailNotice.sendLoginCodeAlarm` (şablon sağlayıcısız, düz metin yedekli) | — | `keycloak.login-code-alarm` | `skyLoginCodeAlarmHalfSubject` / `skyLoginCodeAlarmFullSubject` |
+| `SkyMailNotice.sendLoginCodeAlarm` (şablon sağlayıcısız, düz metin yedekli) | — | `keycloak.login-code-alarm` | `skyLoginCodeAlarmHalfSubject` / `skyLoginCodeAlarmFullSubject` / `skyLoginCodeAlarmCeilingSubject` |
 | `sendExecuteActions` | `executeActions.ftl` | `keycloak.generic` | `executeActionsSubject` |
 | `sendEvent`, `sendOrgInviteEmail`, `sendVerifiableCredentialOffer`, eşlenmemiş her `send(...)` | ilgili `.ftl` | `keycloak.generic` | Keycloak'ın konu anahtarı |
 | `sendSmtpTestEmail` | `email-test.ftl` | — (SkyMail'e gitmez) | — |
@@ -63,7 +63,11 @@ SkyMail yolu arka planda da çalışır. Genel günlük sınırın operatör ala
 tek posta olarak gider (`keycloak-mailer`'ın `skymail:mails:send` yetkisiyle; SkyMail'in grup
 gönderimi `skymail:mails:write` isterdi): metni kodda kurulduğu için şablon sağlayıcısına uğramaz,
 SkyMail mesajı oturuma doğrudan yazılır (`SkyMailNotice`) ve SkyMail yoksa göndericiye verilen düz
-metin SMTP'den çıkar; SkyMail şablonu yarı ve dolu durumu `subjectKey`'den ayırır.
+metin SMTP'den çıkar; SkyMail şablonu yarı, dolu ve yanlış kod tavanı (güvenlik incelemesi K2: günün
+ilk hesabı tavana ulaştığında) durumlarını `subjectKey`'den ayırır. Sayılar (tavan, hesap sayısı) her
+postaya giden dokuz değişkende yoktur: SkyMail metni bunları sabit cümleyle söyler, düz metin yedeği
+ve sunucu günlüğü (`sky_email_code_wrong_ceiling accounts=… ceiling=…`) sayıları taşır. Giriş kodu 8
+hanedir (Hesap Merkezi'nin kodu 6).
 
 Hesap Merkezi'nin kişisel e-posta kodu (K3c) genel `send(...)` aşırı
 yüklemesinden geçer. Eşleme, sky-account'un postayı gönderdiği sabitin kendisini

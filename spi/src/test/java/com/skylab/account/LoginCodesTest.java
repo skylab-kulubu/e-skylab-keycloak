@@ -40,10 +40,12 @@ class LoginCodesTest {
     }
 
     @Test
-    void issuesASixDigitCodeAndKeepsOnlyASaltedHashOfItForTenMinutes() {
+    void issuesAnEightDigitCodeAndKeepsOnlyASaltedHashOfItForTenMinutes() {
         String code = codes.issue("handle-a", "user-a", "ada@example.com");
 
-        assertTrue(LoginCodes.CODE.matcher(code).matches(), "the code must be six digits");
+        assertEquals(8, LoginCodes.DIGITS, "security review K2: a hundred times harder to guess than six");
+        assertTrue(code.matches("^[0-9]{8}$"), "the code must be eight digits");
+        assertTrue(LoginCodes.CODE.matcher(code).matches());
         assertEquals(10 * 60, LoginCodes.TTL_SECONDS);
         assertEquals(LoginCodes.TTL_SECONDS, store.lifespanOf(LoginCodes.key("handle-a")));
         Map<String, String> stored = store.get(LoginCodes.key("handle-a"));
@@ -126,7 +128,7 @@ class LoginCodesTest {
     void malformedCodesAreRefusedWithoutCostingATry() {
         String code = codes.issue("handle-a", "user-a", "ada@example.com");
 
-        for (String malformed : new String[] {null, "", "12345", "1234567", "12a456", " 123456"}) {
+        for (String malformed : new String[] {null, "", "123456", "1234567", "123456789", "12a45678", " 12345678"}) {
             assertEquals(Outcome.none(), codes.confirm("handle-a", malformed), String.valueOf(malformed));
         }
         assertEquals(LoginCodes.MAX_ATTEMPTS, codes.peek("handle-a").attemptsLeft());
@@ -162,6 +164,47 @@ class LoginCodesTest {
         assertNull(codes.peek("handle-a"));
     }
 
+    // The mail shows the eight digits in one piece; people still type or paste them with spaces.
+    @Test
+    void theCodeMayBeTypedWithSpacesButNotWithAnythingElse() {
+        assertEquals("12345678", LoginCodes.codeFromInput("12345678"));
+        assertEquals("12345678", LoginCodes.codeFromInput(" 1234 5678 "));
+        assertEquals("12345678", LoginCodes.codeFromInput("1 2 3 4 5 6 7 8"));
+        for (String malformed : new String[] {null, "", "123456", "1234567", "123456789", "1234-5678", "12345678x",
+                "１２３４５６７８", "1234 5678" + " ".repeat(LoginCodes.MAX_CODE_INPUT_LENGTH)}) {
+            assertNull(LoginCodes.codeFromInput(malformed), String.valueOf(malformed));
+        }
+    }
+
+    // Security review K2: once the person's wrong codes reach the day's ceiling, a try is spent
+    // without looking at what was typed, so the page goes on as for any wrong code.
+    @Test
+    void aTrySpentWithoutLookingCostsLikeAWrongCodeAndTheRightCodeNoLongerHelps() {
+        String code = codes.issue("handle-a", "user-a", "ada@example.com");
+
+        assertEquals(Outcome.wrongCode("user-a", LoginCodes.MAX_ATTEMPTS - 1), codes.spendTry("handle-a"));
+        assertEquals(Outcome.wrongCode("user-a", LoginCodes.MAX_ATTEMPTS - 2), codes.spendTry("handle-a"));
+        for (int left = LoginCodes.MAX_ATTEMPTS - 3; left >= 0; left--) {
+            assertEquals(Outcome.wrongCode("user-a", left), codes.spendTry("handle-a"));
+        }
+        assertEquals(Outcome.none(), codes.spendTry("handle-a"));
+        assertEquals(Outcome.none(), codes.confirm("handle-a", code), "the right code died with the last try");
+        assertEquals(Outcome.none(), codes.spendTry(null));
+        assertEquals(Outcome.none(), codes.spendTry("handle-b"));
+    }
+
+    @Test
+    void aSpentTryDoesNotExtendTheDeadline() {
+        String code = codes.issue("handle-a", "user-a", "ada@example.com");
+
+        Time.setOffset(LoginCodes.TTL_SECONDS - 60);
+        codes.spendTry("handle-a");
+        assertTrue(store.lifespanOf(LoginCodes.key("handle-a")) <= 60);
+        Time.setOffset(LoginCodes.TTL_SECONDS + 1);
+        assertEquals(Outcome.none(), codes.spendTry("handle-a"));
+        assertEquals(Outcome.none(), codes.confirm("handle-a", code));
+    }
+
     @Test
     void discardingMakesTheCodeUseless() {
         String code = codes.issue("handle-a", "user-a", "ada@example.com");
@@ -179,7 +222,7 @@ class LoginCodesTest {
                 Map.of("userId", "user-a", "address", "ada@example.com", "attemptsLeft", "5", "salt", "s", "codeHash", "h"),
                 Map.of("userId", "user-a", "address", "ada@example.com", "expiresAt", "soon", "attemptsLeft", "5", "salt", "s", "codeHash", "h"))) {
             store.put(key, 60, broken);
-            assertEquals(Outcome.none(), codes.confirm("handle-a", "123456"), broken.toString());
+            assertEquals(Outcome.none(), codes.confirm("handle-a", "12345678"), broken.toString());
         }
     }
 
@@ -222,9 +265,9 @@ class LoginCodesTest {
         assertEquals(1, winners.get(), "exactly one confirmation may win");
     }
 
-    /** A six-digit code that is certainly not {@code code}. */
+    /** An eight-digit code that is certainly not {@code code}. */
     private static String other(String code) {
-        return code.equals("000000") ? "000001" : "000000";
+        return code.equals("00000000") ? "00000001" : "00000000";
     }
 
     /** Honours put/remove exactly like Infinispan: remove hands the entry to one caller. */

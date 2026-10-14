@@ -397,14 +397,14 @@ eklenmez. Harness
 OBS; Microsoft'a gidilmez, yalnız Keycloak'ın yönlendirmesi okunur); optimize imajda
 `run-integration.sh`'ın `login` grubu da aynı yönlendirmeye bakar.
 
-SPI 1.21.0'dan sonra "E-postayla devam et": herkes e-postasına gelen 6 haneli kodla girebilir
+SPI 1.21.0'dan sonra "E-postayla devam et": herkes e-postasına gelen 8 haneli kodla girebilir
 (eskylab-login-ux bilet 08, ADR-0063 karar 2, CONTEXT "Login code"). Bunu SPI'daki `sky-email-code`
 (`com.skylab.account.EmailCodeAuthenticator`) yapar: kişi e-posta adresini ya da kullanıcı adını yazar,
 kod hesabın birincil e-postasına (birincili olmayan YTÜ hesabında okul adresine) gider, hangi
 tanımlayıcı yazılmış olursa olsun (parolalı girişin `LoginIdentifiers` kuralı). Adres sayfası her
 girdide aynıdır; hiçbir hesaba çıkmayan, iki kişiye çıkan ya da kapalı bir hesaba çıkan girdi de aynı
 kod sayfasını ve hiç postalanmayan bir kodu alır, posta istekten sonra arka planda gider (yanıt süresi
-aynı). Kod 6 hane, 10 dakika, 5 yanlışta ölür, tek kullanım, yalnız isteyen giriş oturumunda (tarayıcı
+aynı). Kod 8 hane (güvenlik incelemesi K2; Hesap Merkezi'nin kodu 6 hane kalır), 10 dakika, 5 yanlışta ölür, tek kullanım, yalnız isteyen giriş oturumunda (tarayıcı
 ve sekme) çalışır, yalnız tuzlu özeti saklanır (`LoginCodes`, Hesap Merkezi'nin koduyla ortak
 `SingleUseCodes`); yeni kod eskisini geçersiz kılar, "yeniden gönder" 60 saniye sonra açılır. Yanlış kod
 Keycloak'ın kaba kuvvet sayacına kişinin hatası olarak yazılır; kilitli ya da kapalı kişi doğru kodla da
@@ -414,7 +414,13 @@ giremez. Doğru koddan sonra realm'in koşullu OTP'si gelir: TOTP'si olan kişiy
 istekte posta gitmez, ekran aynı kalır, oturumun eski kodu da yerini postalanmayan yeni koda bırakır
 (güvenlik incelemesi B3: kalan deneme sayısı iki tanımlayıcının aynı hesaba çıktığını söylemesin); genel sınır giriş
 kodunu durdurmaz, yarısında ve dolduğunda `/ADMIN` grubunun etkin ve adresi olan üyelerine posta
-(`SKY_EMAIL_CODE_ALARM_GROUP`, `off` ile yalnız `sky_email_code_budget` log satırı) gider. Posta SkyMail'in `keycloak.login-code` şablonuyla (SkyMail
+(`SKY_EMAIL_CODE_ALARM_GROUP`, `off` ile yalnız `sky_email_code_budget` log satırı) gider. Hesap başına
+günde en çok 10 yanlış kod (`SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT`, güvenlik incelemesi K2): tavana
+ulaşan hesaba gün bitene kadar kod postalanmaz, ekran aynı kalır, önceden gönderilmiş kod artık
+denetlenmez (denemesi yanlış sayılır); günün ilk böyle hesabı aynı alarm grubuna posta, her biri
+`sky_email_code_wrong_ceiling` log satırı yazar. Koddan
+sonraki OTP Admin Console'da kapatılırsa OTP'li kişi kodla giremez (`otp_unguarded`, güvenlik incelemesi
+K1). Posta SkyMail'in `keycloak.login-code` şablonuyla (SkyMail
 yoksa SPI'nın FreeMarker kopyası) çıkar: konuda kod yok, bağlantı yok. Olaylar: başarılı giriş
 Keycloak'ın `LOGIN` olayı, ayrıntısı `sky_method=email_code`; her ret `LOGIN_ERROR`, ayrıntısı
 `sky_email_code` (`wrong_code`, `rate_limited`, `rate_limited_address`, `account_locked`, …), IP'siz

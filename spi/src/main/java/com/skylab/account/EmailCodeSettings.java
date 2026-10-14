@@ -17,11 +17,19 @@ import java.util.regex.Pattern;
  * @param alarmGroup  the group whose members get the alarm ({@code SKY_EMAIL_CODE_ALARM_GROUP}, a
  *                    group path, default {@value #DEFAULT_ALARM_GROUP}: the administrators, Yusuf's
  *                    decision of 2026-10-15); {@code null} ({@code off}) leaves the alarm a log line
+ * @param wrongCodesPerAccount the wrong Login codes one account may have in a (UTC) day
+ *                    ({@code SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT}, 1 to
+ *                    {@value #MAX_WRONG_CODES_PER_ACCOUNT}, default
+ *                    {@value #DEFAULT_WRONG_CODES_PER_ACCOUNT}; security review K2, Yusuf's decision
+ *                    of 2026-10-15): past it the account gets no code by mail that day
  */
-record EmailCodeSettings(String ytuIdpAlias, int dailyLimit, String alarmGroup) {
+record EmailCodeSettings(String ytuIdpAlias, int dailyLimit, String alarmGroup, int wrongCodesPerAccount) {
 
     static final String DAILY_LIMIT_ENV = "SKY_EMAIL_CODE_DAILY_LIMIT";
     static final String ALARM_GROUP_ENV = "SKY_EMAIL_CODE_ALARM_GROUP";
+    static final String WRONG_CODES_PER_ACCOUNT_ENV = "SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT";
+    static final int DEFAULT_WRONG_CODES_PER_ACCOUNT = 10;
+    static final int MAX_WRONG_CODES_PER_ACCOUNT = 1000;
     static final String DEFAULT_ALARM_GROUP = "/ADMIN";
     static final String ALARM_OFF = "off";
     static final int DEFAULT_DAILY_LIMIT = RateLimiter.LOGIN_CODES_PER_DAY;
@@ -49,6 +57,20 @@ record EmailCodeSettings(String ytuIdpAlias, int dailyLimit, String alarmGroup) 
                 dailyLimit = DEFAULT_DAILY_LIMIT;
             }
         }
+        int wrongCodesPerAccount = DEFAULT_WRONG_CODES_PER_ACCOUNT;
+        String ceiling = trimmed(environment.get(WRONG_CODES_PER_ACCOUNT_ENV));
+        if (ceiling != null) {
+            try {
+                wrongCodesPerAccount = Integer.parseInt(ceiling);
+            } catch (NumberFormatException malformed) {
+                wrongCodesPerAccount = -1;
+            }
+            if (wrongCodesPerAccount < 1 || wrongCodesPerAccount > MAX_WRONG_CODES_PER_ACCOUNT) {
+                LOG.warnf("sky_email_code_config reason=wrong_codes_per_account_invalid default=%d",
+                        DEFAULT_WRONG_CODES_PER_ACCOUNT);
+                wrongCodesPerAccount = DEFAULT_WRONG_CODES_PER_ACCOUNT;
+            }
+        }
         String alarmGroup = trimmed(environment.get(ALARM_GROUP_ENV));
         if (alarmGroup == null) {
             alarmGroup = DEFAULT_ALARM_GROUP;
@@ -58,7 +80,8 @@ record EmailCodeSettings(String ytuIdpAlias, int dailyLimit, String alarmGroup) 
             LOG.warnf("sky_email_code_config reason=alarm_group_invalid default=%s", DEFAULT_ALARM_GROUP);
             alarmGroup = DEFAULT_ALARM_GROUP;
         }
-        return new EmailCodeSettings(LoginIdentifiers.ytuIdpAlias(configuredYtuIdpAlias), dailyLimit, alarmGroup);
+        return new EmailCodeSettings(LoginIdentifiers.ytuIdpAlias(configuredYtuIdpAlias), dailyLimit, alarmGroup,
+                wrongCodesPerAccount);
     }
 
     private static String trimmed(String value) {

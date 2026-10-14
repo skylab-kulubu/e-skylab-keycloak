@@ -26,7 +26,7 @@ import org.keycloak.sessions.AuthenticationSessionModel;
 /**
  * {@code sky-email-code}: "E-postayla devam et", sign-in with a Login code (ADR-0063 decision 2,
  * CONTEXT "Login code", eskylab-login-ux 08). The person types an e-mail address or a username and
- * asks for a code; a six-digit code goes to the account's Primary e-mail (its School e-mail when it
+ * asks for a code; an eight-digit code goes to the account's Primary e-mail (its School e-mail when it
  * has no Primary e-mail and is a Verified YTÜ account; spec S4), whichever identifier was typed;
  * the code typed on the next page signs the person in. The realm's browser flow runs it as the first
  * step of its own ALTERNATIVE subflow, followed by Keycloak's conditional OTP (a person with TOTP is
@@ -42,7 +42,7 @@ import org.keycloak.sessions.AuthenticationSessionModel;
  * an account exists is said only after the right code (ADR-0063, the second OWASP deviation); while
  * Self-registration is off (ticket 09) that is "no account" for a code nobody was mailed.
  *
- * <p>The code follows CONTEXT's Login code ({@link LoginCodes}): six digits, ten minutes, dead after
+ * <p>The code follows CONTEXT's Login code ({@link LoginCodes}): eight digits, ten minutes, dead after
  * five wrong tries, single use, valid only in the sign-in session (browser and tab) that asked for
  * it, only a salted hash stored; a new code replaces the old one. A wrong code counts toward the
  * person's brute-force lock (Keycloak's protector, as a wrong password does), and a locked or
@@ -57,8 +57,12 @@ import org.keycloak.sessions.AuthenticationSessionModel;
  * day) and overall per day ({@link RateLimiter}, spec §7.2). Past the session or IP class budget the
  * page says so; past the address budget nothing is mailed and the page stays the same, and the new
  * code that is never mailed replaces the session's old one like any other (security review B3: a
- * kept code's tries left would link two identifiers to one account). The overall budget never stops a sign-in code: it
- * alarms the operator at its half and when it is used up. Budget keys are keyed hashes
+ * kept code's tries left would link two identifiers to one account). The overall budget never stops
+ * a sign-in code: it alarms the operator at its half and when it is used up. Wrong codes are limited
+ * per account and day (security review K2, {@code SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT}, default
+ * ten): past that ceiling the account is mailed no code until the day ends, the page stays the
+ * same, and a code already mailed is no longer looked at (its tries are spent as wrong ones); the
+ * first account of the day at the ceiling alarms the operator. Budget keys are keyed hashes
  * ({@link BudgetKeys}); the IP itself is written nowhere.
  *
  * <p>Events: every refusal is a {@code LOGIN_ERROR} with {@code sky_method=email_code} and the
@@ -116,6 +120,11 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
     static final String RATE_LIMITED_ERROR = "sky_email_code_rate_limited";
     /** The event detail of a person with OTP refused because the flow would skip it. */
     static final String OTP_UNGUARDED = "otp_unguarded";
+    /**
+     * The event detail when the person's wrong codes reached the day's ceiling (security review
+     * K2): a code that was not mailed, or a try spent without looking at the code.
+     */
+    static final String WRONG_CODE_CEILING = "wrong_code_ceiling";
 
     /** What a code is for, in the mail; only sign-in here. */
     static final String PURPOSE_LOGIN = "login";
@@ -269,15 +278,21 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
         // Charged for nobody too, under what was typed, so the work and the answer are the same.
         String budgetAddress = PersonalEmailProof.normalise(address != null ? address : identifier);
         boolean withinBudget = claimAddressBudgets(context, budgetAddress);
+        boolean mailable = user != null && address != null;
         if (!withinBudget) {
             failure(context, user, "rate_limited_address", RATE_LIMITED_ERROR);
+        } else if (mailable && pastCeiling(context, user.getId())) {
+            // Security review K2: no code reaches the account for the rest of the day; the page
+            // and the code that is never mailed are the ones anybody else gets.
+            failure(context, user, WRONG_CODE_CEILING, RATE_LIMITED_ERROR);
+            mailable = false;
         }
 
         // A new code always replaces the old one, mailed or not: had a code already mailed kept
         // working past the address budget, its tries left would tell whether two identifiers name
         // one account (security review B3).
         codes.discard(previousHandle);
-        if (withinBudget && user != null && address != null) {
+        if (withinBudget && mailable) {
             String handle = handle();
             String code = codes.issue(handle, user.getId(), address);
             authSession.setAuthNote(HANDLE_NOTE, handle);
@@ -331,30 +346,37 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
         AuthenticationSessionModel authSession = context.getAuthenticationSession();
         String handle = authSession.getAuthNote(HANDLE_NOTE);
         LoginCodes codes = new LoginCodes(context.getSession().singleUseObjects());
-        if (handle == null || codes.peek(handle) == null) {
+        LoginCodes.Waiting waiting = handle == null ? null : codes.peek(handle);
+        if (waiting == null) {
             expired(context, null);
             return;
         }
-        String code = PersonalEmailVerification.codeFromInput(typed);
+        String code = LoginCodes.codeFromInput(typed);
         if (code == null) {
             context.challenge(codePage(context, Problem.MALFORMED_CODE, null));
             return;
         }
-        LoginCodes.Outcome outcome = codes.confirm(handle, code);
+        // Past the person's ceiling of wrong codes no code is looked at: the try is spent as a
+        // wrong one, so the page is the one any wrong code gets (security review K2).
+        boolean pastCeiling = !isBlank(waiting.userId()) && pastCeiling(context, waiting.userId());
+        LoginCodes.Outcome outcome = pastCeiling ? codes.spendTry(handle) : codes.confirm(handle, code);
         switch (outcome.status()) {
             case NONE -> expired(context, null);
-            case WRONG_CODE -> wrongCode(context, outcome);
+            case WRONG_CODE -> wrongCode(context, outcome, pastCeiling);
             case CONFIRMED -> confirmed(context, outcome.pending());
         }
     }
 
-    private void wrongCode(AuthenticationFlowContext context, LoginCodes.Outcome outcome) {
+    private void wrongCode(AuthenticationFlowContext context, LoginCodes.Outcome outcome, boolean pastCeiling) {
         UserModel user = isBlank(outcome.userId()) ? null
                 : context.getSession().users().getUserById(context.getRealm(), outcome.userId());
         if (user != null) {
             recordFailedLogin(context, user);
+            if (!pastCeiling) {
+                countTowardTheCeiling(context, user);
+            }
         }
-        failure(context, user, Problem.WRONG_CODE.value, Errors.INVALID_CODE);
+        failure(context, user, pastCeiling ? WRONG_CODE_CEILING : Problem.WRONG_CODE.value, Errors.INVALID_CODE);
         if (outcome.attemptsLeft() > 0) {
             context.challenge(codePage(context, Problem.WRONG_CODE, outcome.attemptsLeft()));
         } else {
@@ -458,6 +480,36 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
         RateLimiter limiter = new RateLimiter(session.singleUseObjects());
         return limiter.claim(RateLimiter.LOGIN_CODE_ADDRESS, key) == 0
                 && limiter.claim(RateLimiter.LOGIN_CODE_ADDRESS_DAY, key) == 0;
+    }
+
+    /** Whether the person's wrong codes reached today's ceiling (security review K2). */
+    private boolean pastCeiling(AuthenticationFlowContext context, String userId) {
+        return new RateLimiter(context.getSession().singleUseObjects())
+                .spent(RateLimiter.loginCodeWrongPerAccount(settings.wrongCodesPerAccount()), ceilingKey(context, userId));
+    }
+
+    /**
+     * One wrong code of the person toward today's ceiling. The one that reaches it is logged with
+     * how many accounts reached it today; the first account of the day also alarms the operator.
+     */
+    private void countTowardTheCeiling(AuthenticationFlowContext context, UserModel user) {
+        int ceiling = settings.wrongCodesPerAccount();
+        RateLimiter limiter = new RateLimiter(context.getSession().singleUseObjects());
+        if (limiter.claimSlot(RateLimiter.loginCodeWrongPerAccount(ceiling), ceilingKey(context, user.getId())) != ceiling) {
+            return;
+        }
+        int accounts = limiter.claimSlot(RateLimiter.LOGIN_CODE_CEILING_ACCOUNTS, context.getRealm().getId());
+        // No person: the LOGIN_ERROR event names them for the administrators.
+        LOG.warnf("sky_email_code_wrong_ceiling accounts=%s ceiling=%d realm=%s",
+                accounts == 0 ? "more_than_" + RateLimiter.LOGIN_CODE_CEILING_ACCOUNTS.maxAttempts() : Integer.toString(accounts),
+                ceiling, context.getRealm().getName());
+        if (accounts == 1) {
+            mail.ceilingAlarm(context, ceiling, accounts);
+        }
+    }
+
+    private static String ceilingKey(AuthenticationFlowContext context, String userId) {
+        return BudgetKeys.keyed(context.getSession(), context.getRealm(), "wrong-account:" + userId);
     }
 
     // ------------------------------------------------------------------------------- the page

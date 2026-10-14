@@ -3279,7 +3279,7 @@ token'ında yalnız `content:read` vardır ve editör kapısı kapalıdır.
 
 ## 29. "E-postayla devam et": e-postaya gelen kodla giriş (eskylab-login-ux 08, ADR-0063)
 
-ADR-0063 karar 2 (Yusuf, 2026-10-04): herkes e-postasına gelen 6 haneli kodla girebilir; TOTP'si
+ADR-0063 karar 2 (Yusuf, 2026-10-04): herkes e-postasına gelen 8 haneli kodla girebilir; TOTP'si
 olana koddan sonra TOTP yine sorulur. Kayıt (bilet 09) bu adımın "hesap yok" dalına gelir ve kapalıdır:
 bugün kod yalnız var olan hesaba gider.
 
@@ -3331,7 +3331,9 @@ browser plus passkey forms (ALTERNATIVE)
 
 ### Kod, sınırlar ve olaylar
 
-- Kod: CONTEXT "Login code" (`LoginCodes`, Hesap Merkezi'nin koduyla ortak `SingleUseCodes`): 6 hane,
+- Kod: CONTEXT "Login code" (`LoginCodes`, Hesap Merkezi'nin koduyla ortak `SingleUseCodes`): 8 hane
+  (güvenlik incelemesi K2, Yusuf 2026-10-15; Hesap Merkezi'nin ADR-0044 kodu 6 hane kalır; kutu
+  `inputmode=numeric`, `autocomplete=one-time-code`, boşluklu yazım kabul, en çok 24 karakter),
   10 dakika, 5 yanlışta ölür, tek kullanım, yalnız isteyen giriş oturumunda (tarayıcı ve sekme)
   çalışır, depoda yalnız tuzlu SHA-256 özeti. Kayıt, oturumun kimlik doğrulama notundaki rastgele bir
   tutamağa bağlıdır; yeni kod eskisini geçersiz kılar.
@@ -3340,6 +3342,28 @@ browser plus passkey forms (ALTERNATIVE)
   60 sn kilit) kilitli kişi doğru kodla da giremez (`account_locked`). Kod girişi başarılı girişte
   sayacı sıfırlamaz: Keycloak sıfırlamayı yalnız parola, OTP ve kurtarma kodu için yapar; sayaç
   `maxDeltaTimeSeconds` (12 saat) sonra kendiliğinden düşer.
+- Hesap başına yanlış kod tavanı (güvenlik incelemesi K2, Yusuf 2026-10-15): bir hesap UTC gününde en
+  çok 10 yanlış kod alır (`SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT`, 1-1000). Tavana ulaşınca o hesaba
+  gün bitene kadar kod postalanmaz; kod isteyen aynı kod sayfasını ve postalanmayan bir kodu alır
+  (sahte kod yolu; olay `wrong_code_ceiling`, hata `sky_email_code_rate_limited`). O hesaba önceden
+  gönderilmiş, hâlâ geçerli kodlar artık denetlenmez: deneme yazılanla karşılaştırılmadan yanlış sayılır
+  (sayfa yine `wrong_code`; olay `wrong_code_ceiling`), böylece günde 10'dan fazla tahmin olmaz. Tavana
+  ulaşan her hesap `sky_email_code_wrong_ceiling accounts=N ceiling=10 realm=…` WARN satırı yazar (kişi
+  yok); günün ilk hesabı alarm grubuna (`/ADMIN`) bir posta atar (SkyMail `keycloak.login-code-alarm`,
+  `subjectKey=skyLoginCodeAlarmCeilingSubject`; kişi adı, adres, IP yok). Parola, passkey ve YTÜ girişi
+  etkilenmez; bedeli: saldırgan 10 yanlış kodla bir hesabın o günkü kodla girişini kapatabilir (bunun
+  için kurbana en az iki kod postası gider, kod başına beş deneme; saldırı görünürdür).
+  - Hesap: kod başına 5 deneme, hesap başına günde en çok 10 yanlış; 8 hanede bir tahminin tutma olasılığı
+    10⁻⁸. Hesap başına yılda en çok 10 × 365 = 3.650 tahmin, yani ≈ 3,65·10⁻⁵ ≈ **%0,004** (inceleyicinin
+    hesabı; önceki 6 hane ve tavansız düzende günde 50 tahmin, yılda ≈ %1,8).
+  - Sayaç diğer bütçelerle aynı yerde: `RateLimiter`, Keycloak'ın single-use deposu (Infinispan). Canlı
+    `KC_CACHE=local`, tek replika: sayaç tutarlıdır, Keycloak yeniden başlayınca (diğer bütçeler gibi)
+    sıfırlanır. Çok replikaya geçilirse sayaç, diğer bütçeler gibi, dağıtık önbellekle paylaşılır.
+  - NIST SP 800-63B: hesapta ardışık başarısız denemeyi en çok 100 ile sınırla. Uyan: günde en çok 10
+    yanlış, Keycloak'ın kaba kuvvet kilidi ek olarak. Sapan: sayaç ardışık değil günlüktür ve
+    başarılı girişte sıfırlanmaz; kesintisiz bir saldırı 100 ardışık başarısızlığa 10 günde ulaşır
+    (yeniden başlatma da günün sayacını sıfırlar). Günlük alarm yöneticiyi ilk gün uyarır. Tam uyum için
+    kullanıcı özniteliğinde ardışık sayaç (≤100, başarılı girişte sıfır) ayrı iş olarak açık.
 - Gönderim sınırları (`RateLimiter`, single-use deposu; anahtarlar §23'teki gibi realm'e özel HMAC,
   IP yalnız /24 ya da /64 sınıfı olarak):
 
@@ -3370,7 +3394,7 @@ browser plus passkey forms (ALTERNATIVE)
   sayfa gösteren bir gerekli eylem çıkarsa `LOGIN` sonraki istekte yazılır ve ayrıntıyı taşımaz (kod
   girişinde nadir: doğrulanmamış birincil zaten doğrulanır). Her ret ayrı bir `LOGIN_ERROR`:
   `sky_method=email_code`, `sky_email_code` = `wrong_code`, `code_expired`, `rate_limited`,
-  `rate_limited_address`, `no_account`, `account_disabled`, `account_locked`, `otp_unguarded`; hata
+  `rate_limited_address`, `wrong_code_ceiling`, `no_account`, `account_disabled`, `account_locked`, `otp_unguarded`; hata
   `invalid_code`, `expired_code`, `sky_email_code_rate_limited`, `user_not_found`, `user_disabled`,
   `user_temporarily_disabled`, `invalid_config`. Bu olaylarda IP (`ipAddress`) ve yazılan tanımlayıcı (`username`) yoktur
   (spec §7.5): jboss-logging dinleyicisi olayları sunucu günlüğüne de yazar. Kodun gönderilmesi
@@ -3383,8 +3407,9 @@ kcadm.sh get events -r e-skylab -q type=LOGIN -q max=10000 \
   | jq '[.[] | .details.sky_method // "password_or_other"] | group_by(.) | map({(.[0]): length}) | add'
 ```
 
-- Ortam (Keycloak, Dokploy'da; ikisi de isteğe bağlı): `SKY_EMAIL_CODE_ALARM_GROUP` (grup yolu;
-  yoksa `/ADMIN`, `off` yalnız log), `SKY_EMAIL_CODE_DAILY_LIMIT` (1-100000; yoksa 500). Bozuk değer bir kez
+- Ortam (Keycloak, Dokploy'da; üçü de isteğe bağlı): `SKY_EMAIL_CODE_ALARM_GROUP` (grup yolu;
+  yoksa `/ADMIN`, `off` yalnız log), `SKY_EMAIL_CODE_DAILY_LIMIT` (1-100000; yoksa 500),
+  `SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT` (1-1000; yoksa 10). Bozuk değer bir kez
   `sky_email_code_config reason=…` uyarısıyla varsayılana düşer, Keycloak yine açılır. Yalnız açılışta
   okunur.
 
@@ -3500,7 +3525,10 @@ dokunmaz, ikinci koşu değiştirmez; kodla giriş (kullanıcı adı), TOTP sayf
 claim'leri parolalı girişinkiyle aynı, `LOGIN` olayında `sky_method=email_code`; okul ve kişisel adresle
 istekte kod birincile, birincilsiz YTÜ hesabında okul adresine; hesapsız adreste aynı sayfa, posta yok;
 başka tarayıcıda kod çalışmaz; beş yanlış kodu öldürür; olaylarda IP ve tanımlayıcı yok; kilitli kişi
-doğru kodla giremez; bir adrese 15 dakikada dördüncü kod gitmez (aynı sayfa, olay); operatör alarmı
+doğru kodla giremez; bir adrese 15 dakikada dördüncü kod gitmez (aynı sayfa, olay); hesap yanlış kod
+tavanına ulaşınca (harness'ta 6) ona kod postalanmaz, sayfa hesapsız girdininkiyle aynı, önceden
+postalanmış kodun doğrusu denetlenmez (`wrong_code`), `/ADMIN` üyelerine bir tavan alarmı ve günlük
+satırı; operatör alarmı
 yarıda ve dolunca gider, kodlar gitmeye devam eder; SkyMail reddedince kod SMTP'den (FreeMarker kopyası,
 bağlantısız, konuda kod yok) gelir ve çalışır, `config`/`token` geri düşüşü yoktur; TOTP'li kişiye koddan sonra TOTP; "Parolanla gir"
 parola formuna götürür; sunucu günlüğünde kod, adres ve istemci IP'si yok; `off` kapatır ve Keycloak

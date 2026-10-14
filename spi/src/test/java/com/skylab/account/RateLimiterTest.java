@@ -16,6 +16,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -195,6 +196,27 @@ class RateLimiterTest {
         assertEquals(new RateLimiter.Limit("login-code-address-day", 10, 24 * 60 * 60), RateLimiter.LOGIN_CODE_ADDRESS_DAY);
         assertEquals(24 * 60 * 60, RateLimiter.loginCodesPerDay(500).windowSeconds());
         assertEquals(new RateLimiter.Limit("login-code-all", 500, 24 * 60 * 60), RateLimiter.loginCodesPerDay(500));
+        // Security review K2: wrong codes per account a day, and the accounts that reached it.
+        assertEquals(new RateLimiter.Limit("login-code-wrong-account", 10, 24 * 60 * 60),
+                RateLimiter.loginCodeWrongPerAccount(10));
+        assertEquals(new RateLimiter.Limit("login-code-ceiling-accounts", 100_000, 24 * 60 * 60),
+                RateLimiter.LOGIN_CODE_CEILING_ACCOUNTS);
+    }
+
+    @Test
+    void aBudgetIsSpentOnceItsLastSlotIsTakenAndLookingDoesNotSpendIt() {
+        Time.setOffset(-(Time.currentTime() % 600));
+        assertFalse(limiter.spent(LIMIT, "user-e"));
+        limiter.claimSlot(LIMIT, "user-e");
+        limiter.claimSlot(LIMIT, "user-e");
+        assertFalse(limiter.spent(LIMIT, "user-e"));
+        assertFalse(limiter.spent(LIMIT, "user-e"), "looking claims nothing");
+        assertEquals(3, limiter.claimSlot(LIMIT, "user-e"));
+        assertTrue(limiter.spent(LIMIT, "user-e"));
+        assertFalse(limiter.spent(LIMIT, "user-f"));
+
+        Time.setOffset(Time.getOffset() + 600);
+        assertFalse(limiter.spent(LIMIT, "user-e"), "the next window starts unspent");
     }
 
     /** Honours putIfAbsent exactly like Infinispan: atomic, first claim wins, lifespan kept. */

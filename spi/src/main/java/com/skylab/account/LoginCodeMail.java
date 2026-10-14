@@ -27,4 +27,10 @@ interface LoginCodeMail {
      * {@link #FULL}) of {@code dailyLimit} today. Never throws.
      */
     void alarm(AuthenticationFlowContext context, String level, int dailyLimit);
+
+    /**
+     * Tells the operator that an account reached the day's ceiling of {@code ceiling} wrong codes,
+     * the {@code accounts}-th today (security review K2). No person, no address. Never throws.
+     */
+    void ceilingAlarm(AuthenticationFlowContext context, int ceiling, int accounts);
 }

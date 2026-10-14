@@ -100,6 +100,11 @@ class EmailCodeAuthenticatorTest {
             alarms.add(level + "/" + dailyLimit);
         }
 
+        @Override
+        public void ceilingAlarm(AuthenticationFlowContext context, int ceiling, int accounts) {
+            alarms.add("ceiling/" + ceiling + "/" + accounts);
+        }
+
         Sent last() {
             return sent.get(sent.size() - 1);
         }
@@ -261,7 +266,12 @@ class EmailCodeAuthenticatorTest {
     }
 
     private EmailCodeAuthenticator authenticator(int dailyLimit, WebAuthnConditionalUIAuthenticator webauthn) {
-        return new EmailCodeAuthenticator(new EmailCodeSettings(YTU, dailyLimit, null), mail, webauthn);
+        return authenticator(dailyLimit, webauthn, EmailCodeSettings.DEFAULT_WRONG_CODES_PER_ACCOUNT);
+    }
+
+    private EmailCodeAuthenticator authenticator(int dailyLimit, WebAuthnConditionalUIAuthenticator webauthn,
+            int wrongCodesPerAccount) {
+        return new EmailCodeAuthenticator(new EmailCodeSettings(YTU, dailyLimit, null, wrongCodesPerAccount), mail, webauthn);
     }
 
     /** A person of the realm; attributes are name=value pairs. */
@@ -408,7 +418,7 @@ class EmailCodeAuthenticatorTest {
         browser.send("ada");
         String code = mail.last().code();
 
-        browser.verify(code.substring(0, 3) + " " + code.substring(3));
+        browser.verify(code.substring(0, 4) + " " + code.substring(4));
 
         assertTrue(browser.succeeded);
     }
@@ -556,10 +566,12 @@ class EmailCodeAuthenticatorTest {
         person("ada", "ada", "ada@example.com");
         browser.send("ada");
 
-        browser.verify("12a4");
+        for (String malformed : new String[] {"12a4", "123456", mail.last().code().substring(0, 6), "1234-5678"}) {
+            browser.verify(malformed);
 
-        assertEquals("code", browser.stage());
-        assertEquals("malformed_code", browser.error());
+            assertEquals("code", browser.stage());
+            assertEquals("malformed_code", browser.error(), malformed);
+        }
         verify(protector, never()).failedLogin(any(), any(), any(), any(), any());
         browser.verify(mail.last().code());
         assertTrue(browser.succeeded);
@@ -904,6 +916,118 @@ class EmailCodeAuthenticatorTest {
         assertTrue(mail.alarms.isEmpty());
     }
 
+    // Security review K2 (Yusuf, 2026-10-15): at most so many wrong codes per account a day.
+    // Past the ceiling the account gets no new code by mail, the page stays as it is (no account
+    // is told apart), and no outstanding code is looked at any more.
+
+    /** {@code count} wrong codes for the person, each from a session of its own. */
+    private void wrongCodes(String identifier, int count) {
+        for (int i = 0; i < count; i++) {
+            Browser guesser = new Browser("root-guess-" + identifier + "-" + i, "198.51.100." + (100 + i));
+            guesser.send(identifier);
+            guesser.verify(other(mail.last().code()));
+            assertEquals("wrong_code", guesser.error());
+        }
+    }
+
+    @Test
+    void pastTheDaysCeilingOfWrongCodesTheAccountIsMailedNoCodeAndThePageIsTheSame() {
+        authenticator = authenticator(500, null, 2);
+        person("ada", "ada", "ada@example.com");
+        Time.setOffset(-(Time.currentTime() % (24 * 60 * 60)));
+        wrongCodes("ada", 2);
+        Browser mailed = new Browser("root-mailed", "198.51.100.1");
+        mailed.send("nobody@example.com");
+        Map<String, Object> page = new HashMap<>(mailed.page);
+        int sent = mail.sent.size();
+
+        browser.send("ADA@example.com");
+
+        assertEquals(sent, mail.sent.size(), "no code is mailed to the account past its ceiling");
+        page.put(EmailCodeAuthenticator.IDENTIFIER_ATTRIBUTE, "ADA@example.com");
+        assertEquals(page, browser.page, "the page must not tell the account apart");
+        assertEquals("wrong_code_ceiling", browser.lastFailure().get(EmailCodeAuthenticator.EVENT_DETAIL));
+        browser.verify(other(""));
+        assertEquals("wrong_code", browser.error());
+        assertEquals("4", browser.shown(EmailCodeAuthenticator.ATTEMPTS_LEFT_ATTRIBUTE));
+    }
+
+    @Test
+    void pastTheCeilingEvenTheRightCodeOfACodeMailedBeforeNoLongerSignsIn() {
+        authenticator = authenticator(500, null, 2);
+        UserModel ada = person("ada", "ada", "ada@example.com");
+        Time.setOffset(-(Time.currentTime() % (24 * 60 * 60)));
+        browser.send("ada");
+        String waiting = mail.last().code();
+        Browser guesser = new Browser("root-guesser", "198.51.100.2");
+        guesser.send("ada");
+        guesser.verify(other(mail.last().code()));
+        guesser.verify(other(mail.last().code()));
+
+        browser.verify(waiting);
+
+        assertFalse(browser.succeeded, "the ceiling holds for codes mailed before it was reached");
+        assertNull(browser.signedIn);
+        assertEquals("wrong_code", browser.error(), "answered as any wrong code");
+        assertEquals("4", browser.shown(EmailCodeAuthenticator.ATTEMPTS_LEFT_ATTRIBUTE));
+        assertEquals("wrong_code_ceiling", browser.lastFailure().get(EmailCodeAuthenticator.EVENT_DETAIL));
+        verify(protector, times(3)).failedLogin(eq(realm), eq(ada), any(), any(), isNull());
+    }
+
+    @Test
+    void theCeilingCountsWrongCodesPerAccountWhicheverIdentifierAndBrowser() {
+        authenticator = authenticator(500, null, 3);
+        person("ada", "ada", "ada@example.com", IdentityResource.PERSONAL_EMAIL_ATTRIBUTE + "=ada.home@example.org",
+                IdentityResource.PERSONAL_EMAIL_VERIFIED_AT_ATTRIBUTE + "=2026-10-01T10:00:00Z");
+        person("bea", "bea", "bea@example.com");
+        Time.setOffset(-(Time.currentTime() % (24 * 60 * 60)));
+        wrongCodes("ada", 1);
+        wrongCodes("ada@example.com", 1);
+        wrongCodes("bea", 2);
+        int sent = mail.sent.size();
+
+        new Browser("root-a", "198.51.100.3").send("ada.home@example.org");
+        new Browser("root-b", "198.51.100.4").send("bea");
+
+        assertEquals(sent + 2, mail.sent.size(), "two wrong codes leave both below a ceiling of three");
+        // A quarter of an hour later each time, so the address budget never decides here.
+        Time.setOffset(Time.getOffset() + 15 * 60);
+        wrongCodes("ada.home@example.org", 1);
+        Time.setOffset(Time.getOffset() + 15 * 60);
+        int before = mail.sent.size();
+        new Browser("root-c", "198.51.100.5").send("ada");
+        assertEquals(before, mail.sent.size(), "the third wrong code of ada, under any identifier, reached it");
+    }
+
+    @Test
+    void theCeilingAlarmGoesOnceADayAtTheFirstAccountThatReachesIt() {
+        authenticator = authenticator(500, null, 1);
+        person("ada", "ada", "ada@example.com");
+        person("bea", "bea", "bea@example.com");
+        Time.setOffset(-(Time.currentTime() % (24 * 60 * 60)));
+
+        wrongCodes("ada", 1);
+        wrongCodes("bea", 1);
+
+        assertEquals(List.of("ceiling/1/1"), mail.alarms, "once a day, with the ceiling and the account count");
+        Time.setOffset(Time.getOffset() + 24 * 60 * 60);
+        person("cem", "cem", "cem@example.com");
+        wrongCodes("cem", 1);
+        assertEquals(List.of("ceiling/1/1", "ceiling/1/1"), mail.alarms, "a new day, a new alarm");
+    }
+
+    @Test
+    void wrongCodesForNobodyReachNoCeilingAndNoAlarm() {
+        authenticator = authenticator(500, null, 1);
+        Time.setOffset(-(Time.currentTime() % (24 * 60 * 60)));
+        for (int i = 0; i < 3; i++) {
+            Browser guesser = new Browser("root-n" + i, "198.51.100.1" + i);
+            guesser.send("nobody@example.com");
+            guesser.verify(other(""));
+        }
+        assertTrue(mail.alarms.isEmpty());
+    }
+
     // Spec §7.2: the IP is written nowhere; the budget keys are keyed hashes, not addresses or IPs.
     @Test
     void neitherTheStoreNorTheBudgetKeysHoldTheCodeTheAddressOrTheIp() {
@@ -922,9 +1046,9 @@ class EmailCodeAuthenticatorTest {
 
     // ------------------------------------------------------------------------------- helpers
 
-    /** A six-digit code that is certainly not {@code code}. */
+    /** An eight-digit code that is certainly not {@code code}. */
     private static String other(String code) {
-        return code.equals("000000") ? "000001" : "000000";
+        return code.equals("00000000") ? "00000001" : "00000000";
     }
 
     /** Keycloak's single-use store: atomic remove and putIfAbsent, lifespans ignored (Time drives expiry). */

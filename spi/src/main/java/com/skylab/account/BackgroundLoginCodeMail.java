@@ -45,6 +45,7 @@ final class BackgroundLoginCodeMail implements LoginCodeMail {
     static final String SUBJECT_KEY = "skyLoginCodeSubject";
     static final String ALARM_HALF_SUBJECT_KEY = "skyLoginCodeAlarmHalfSubject";
     static final String ALARM_FULL_SUBJECT_KEY = "skyLoginCodeAlarmFullSubject";
+    static final String ALARM_CEILING_SUBJECT_KEY = "skyLoginCodeAlarmCeilingSubject";
 
     private static final Logger LOG = Logger.getLogger(BackgroundLoginCodeMail.class);
 
@@ -84,11 +85,27 @@ final class BackgroundLoginCodeMail implements LoginCodeMail {
     public void alarm(AuthenticationFlowContext context, String level, int dailyLimit) {
         String realmName = context.getRealm().getName();
         LOG.warnf("sky_email_code_budget level=%s daily_limit=%d realm=%s", level, dailyLimit, realmName);
+        boolean full = FULL.equals(level);
+        mailAlarmGroup(context, full ? ALARM_FULL_SUBJECT_KEY : ALARM_HALF_SUBJECT_KEY, alarmSubject(full),
+                alarmText(realmName, full, dailyLimit));
+    }
+
+    /**
+     * The first account of the day at the wrong-code ceiling (security review K2): the same group
+     * gets a mail; the log line of every such account is the authenticator's.
+     */
+    @Override
+    public void ceilingAlarm(AuthenticationFlowContext context, int ceiling, int accounts) {
+        mailAlarmGroup(context, ALARM_CEILING_SUBJECT_KEY, ceilingSubject(),
+                ceilingText(context.getRealm().getName(), ceiling, accounts));
+    }
+
+    private void mailAlarmGroup(AuthenticationFlowContext context, String subjectKey, String subject, String text) {
+        String realmName = context.getRealm().getName();
         String groupPath = settings.alarmGroup();
         if (groupPath == null) {
             return;
         }
-        boolean full = FULL.equals(level);
         run(context, "sky_email_code_alarm_failed realm=" + realmName, (session, realm) -> {
             List<UserModel> recipients = alarmRecipients(session, realm, groupPath);
             if (recipients.isEmpty()) {
@@ -98,9 +115,7 @@ final class BackgroundLoginCodeMail implements LoginCodeMail {
             int failed = 0;
             for (UserModel recipient : recipients) {
                 try {
-                    SkyMailNotice.sendLoginCodeAlarm(session, realm,
-                            full ? ALARM_FULL_SUBJECT_KEY : ALARM_HALF_SUBJECT_KEY,
-                            recipient, alarmSubject(full), alarmText(realmName, full, dailyLimit));
+                    SkyMailNotice.sendLoginCodeAlarm(session, realm, subjectKey, recipient, subject, text);
                 } catch (Exception exception) {
                     failed++;
                     LOG.debug("sky-email-code alarm failure", exception);
@@ -145,6 +160,22 @@ final class BackgroundLoginCodeMail implements LoginCodeMail {
                         + " e-posta kodu gönderildi; günlük genel sınır " + dailyLimit + ".\n")
                 + "Giriş kodları sınırdan sonra da gider. Beklenmedik bir artışsa Keycloak olaylarına bakın "
                 + "(LOGIN_ERROR, sky_email_code) ve SkyMail'in keycloak.login-code gönderimlerine bakın.\n"
+                + "Bu posta Keycloak'ın e-posta kodu girişinden (sky-email-code) otomatik gelir.\n";
+    }
+
+    static String ceilingSubject() {
+        return "SKY LAB: bir hesap e-posta kodunda günlük yanlış kod tavanına ulaştı";
+    }
+
+    /** No person, no address, no IP: the realm, the ceiling and how many accounts reached it so far. */
+    static String ceilingText(String realmName, int ceiling, int accounts) {
+        return "Keycloak'ın " + realmName + " realm'inde bugün (UTC günü) " + accounts
+                + " hesap e-posta kodunda günlük yanlış kod tavanına (" + ceiling + " yanlış kod) ulaştı.\n"
+                + "O hesaplara gün bitene kadar yeni kod postalanmaz; ekran kod isteyene aynı görünür. "
+                + "Parola, passkey ve YTÜ girişi etkilenmez.\n"
+                + "Bu uyarı günde bir kez gelir; gün içinde tavana ulaşan sonraki hesaplar yalnız sunucu "
+                + "günlüğünde sayılır (sky_email_code_wrong_ceiling accounts=…). Keycloak olaylarında "
+                + "LOGIN_ERROR, ayrıntı sky_email_code=wrong_code ve wrong_code_ceiling.\n"
                 + "Bu posta Keycloak'ın e-posta kodu girişinden (sky-email-code) otomatik gelir.\n";
     }
 

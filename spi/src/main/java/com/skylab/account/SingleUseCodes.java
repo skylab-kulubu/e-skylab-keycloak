@@ -16,13 +16,14 @@ import java.util.function.Predicate;
 import java.util.regex.Pattern;
 
 /**
- * The six-digit mailed codes of ADR-0044 and CONTEXT's Login code, kept in Keycloak's single-use
- * object store so they are shared across cluster nodes and expire on their own. Every code this
- * extension mails is one of these: Account center's Personal e-mail proof and the first-login
- * offer's ({@link PendingEmailChanges}) and the Login code ({@link LoginCodes}); each keeps its
- * own key space and its own payload (what the code proves) next to the code's fields.
+ * The mailed codes of ADR-0044 (six digits) and CONTEXT's Login code (eight digits), kept in
+ * Keycloak's single-use object store so they are shared across cluster nodes and expire on their
+ * own. Every code this extension mails is one of these: Account center's Personal e-mail proof and
+ * the first-login offer's ({@link PendingEmailChanges}) and the Login code ({@link LoginCodes});
+ * each keeps its own key space, its own length and its own payload (what the code proves) next to
+ * the code's fields.
  *
- * <p>A six-digit code is guessable in principle, so it is bounded: it lives ten minutes, it dies
+ * <p>A short code is guessable in principle, so it is bounded: it lives ten minutes, it dies
  * after {@link #MAX_ATTEMPTS} wrong tries, and its callers limit how many codes are sent. The
  * store holds a salted SHA-256 of the code, never the code, and the comparison takes constant time.
  *
@@ -35,7 +36,6 @@ final class SingleUseCodes {
 
     static final int TTL_SECONDS = 10 * 60;
     static final int MAX_ATTEMPTS = 5;
-    static final Pattern CODE = Pattern.compile("^[0-9]{6}$");
 
     private static final int SALT_BYTES = 16;
     private static final String SALT_NOTE = "salt";
@@ -64,20 +64,37 @@ final class SingleUseCodes {
     }
 
     private final SingleUseObjectProvider store;
+    private final int digits;
+    private final Pattern code;
     private final Predicate<Map<String, String>> wellFormed;
 
     /**
+     * @param digits     how many digits a code has (6 to 9)
      * @param wellFormed whether a stored entry carries the payload its caller wrote; an entry that
      *                   does not is treated as no entry at all (fails closed)
      */
-    SingleUseCodes(SingleUseObjectProvider store, Predicate<Map<String, String>> wellFormed) {
+    SingleUseCodes(SingleUseObjectProvider store, int digits, Predicate<Map<String, String>> wellFormed) {
+        if (digits < 6 || digits > 9) {
+            throw new IllegalArgumentException("a code has 6 to 9 digits, not " + digits);
+        }
         this.store = store;
+        this.digits = digits;
+        this.code = pattern(digits);
         this.wellFormed = wellFormed;
+    }
+
+    /** What a code of {@code digits} digits looks like: digits only, exactly that many. */
+    static Pattern pattern(int digits) {
+        return Pattern.compile("^[0-9]{" + digits + "}$");
     }
 
     /** Stores the payload under {@code key}, replacing whatever was there, and returns its code, once. */
     String issue(String key, Map<String, String> payload) {
-        String code = String.format("%06d", RANDOM.nextInt(1_000_000));
+        int bound = 1;
+        for (int i = 0; i < digits; i++) {
+            bound *= 10;
+        }
+        String code = String.format("%0" + digits + "d", RANDOM.nextInt(bound));
         String salt = Base64Url.encode(SecretGenerator.getInstance().randomBytes(SALT_BYTES));
         Map<String, String> notes = new HashMap<>(payload);
         notes.put(SALT_NOTE, salt);
@@ -117,9 +134,24 @@ final class SingleUseCodes {
      * touching the entry, so a typo does not cost a try.
      */
     Result confirm(String key, String code) {
-        if (key == null || code == null || !CODE.matcher(code).matches()) {
+        if (key == null || code == null || !this.code.matcher(code).matches()) {
             return Result.NONE;
         }
+        return attempt(key, code);
+    }
+
+    /**
+     * Spends one try of the code under {@code key} without looking at any code: the entry fares
+     * exactly as after a wrong code (one try fewer, dead after the last), and the right code cannot
+     * win this try. For a caller that must refuse every code for now and still answer as for a
+     * wrong one (the Login code's per-account ceiling, security review K2).
+     */
+    Result spendTry(String key) {
+        return key == null ? Result.NONE : attempt(key, null);
+    }
+
+    /** One attempt: {@code code} null spends the try without comparing. */
+    private Result attempt(String key, String code) {
         Map<String, String> notes = store.remove(key);
         if (notes == null || !wellFormed.test(notes)) {
             return Result.NONE;
@@ -136,7 +168,7 @@ final class SingleUseCodes {
             return Result.NONE;
         }
 
-        if (MessageDigest.isEqual(hash(salt, code).getBytes(StandardCharsets.US_ASCII),
+        if (code != null && MessageDigest.isEqual(hash(salt, code).getBytes(StandardCharsets.US_ASCII),
                 codeHash.getBytes(StandardCharsets.US_ASCII))) {
             return new Result(Status.CONFIRMED, Map.copyOf(notes), 0);
         }

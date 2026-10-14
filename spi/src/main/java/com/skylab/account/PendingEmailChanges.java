@@ -1,16 +1,7 @@
 package com.skylab.account;
 
-import org.keycloak.common.util.Base64Url;
-import org.keycloak.common.util.SecretGenerator;
-import org.keycloak.common.util.Time;
 import org.keycloak.models.SingleUseObjectProvider;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
-import java.util.HashMap;
-import java.util.HexFormat;
 import java.util.Map;
 import java.util.regex.Pattern;
 
@@ -28,10 +19,8 @@ import java.util.regex.Pattern;
  * three codes an hour ({@link RateLimiter#EMAIL_CHANGE}). The store holds a salted SHA-256 of the
  * code, never the code.
  *
- * <p>Every attempt takes the entry out with {@link SingleUseObjectProvider#remove}, which hands it
- * to exactly one caller in Infinispan, and a wrong attempt puts it back with one try fewer and
- * only the time it had left. Two racing attempts therefore cannot both spend the same try, and
- * the right code works at most once.
+ * <p>The code itself, its salted hash, its deadline and its tries are {@link SingleUseCodes}', the
+ * store every mailed code of this extension shares (the Login code is {@link LoginCodes}).
  *
  * <p>Two places prove a Personal e-mail with this store, each in its own key space: Account
  * center keys the change by the person ({@link #PendingEmailChanges(SingleUseObjectProvider)}),
@@ -40,20 +29,14 @@ import java.util.regex.Pattern;
  */
 final class PendingEmailChanges {
 
-    static final int TTL_SECONDS = 10 * 60;
-    static final int MAX_ATTEMPTS = 5;
-    static final Pattern CODE = Pattern.compile("^[0-9]{6}$");
+    static final int TTL_SECONDS = SingleUseCodes.TTL_SECONDS;
+    static final int MAX_ATTEMPTS = SingleUseCodes.MAX_ATTEMPTS;
+    static final Pattern CODE = SingleUseCodes.CODE;
 
-    private static final int SALT_BYTES = 16;
     private static final String KEY_PREFIX = "sky-account:email-change:";
     private static final String LOGIN_SESSION_KEY_PREFIX = "sky-account:login-email-offer:";
     private static final String ADDRESS_NOTE = "address";
     private static final String MAKE_PRIMARY_NOTE = "makePrimary";
-    private static final String SALT_NOTE = "salt";
-    private static final String CODE_HASH_NOTE = "codeHash";
-    private static final String EXPIRES_AT_NOTE = "expiresAt";
-    private static final String ATTEMPTS_LEFT_NOTE = "attemptsLeft";
-    private static final SecureRandom RANDOM = new SecureRandom();
 
     /** What the person asked for when the code was sent. */
     record Pending(String address, boolean makePrimary) {
@@ -88,7 +71,7 @@ final class PendingEmailChanges {
         }
     }
 
-    private final SingleUseObjectProvider store;
+    private final SingleUseCodes codes;
     private final String keyPrefix;
 
     /** Account center's changes, one per person (the owner is the user id). */
@@ -97,7 +80,7 @@ final class PendingEmailChanges {
     }
 
     private PendingEmailChanges(SingleUseObjectProvider store, String keyPrefix) {
-        this.store = store;
+        this.codes = new SingleUseCodes(store, PendingEmailChanges::hasAddress);
         this.keyPrefix = keyPrefix;
     }
 
@@ -112,19 +95,9 @@ final class PendingEmailChanges {
 
     /** Stores the change for this person, replacing any earlier one, and returns its code, once. */
     String issue(String userId, String address, boolean makePrimary) {
-        String code = String.format("%06d", RANDOM.nextInt(1_000_000));
-        String salt = Base64Url.encode(SecretGenerator.getInstance().randomBytes(SALT_BYTES));
-        store.put(keyOf(userId), TTL_SECONDS, Map.of(
+        return codes.issue(keyOf(userId), Map.of(
                 ADDRESS_NOTE, address,
-                MAKE_PRIMARY_NOTE, Boolean.toString(makePrimary),
-                SALT_NOTE, salt,
-                CODE_HASH_NOTE, hash(salt, code),
-                // The store's lifespan is the first deadline. This one travels with the entry, so a
-                // store that keeps it longer still cannot accept an old code, and a wrong attempt can
-                // put the entry back for exactly the time it had left.
-                EXPIRES_AT_NOTE, Integer.toString(Time.currentTime() + TTL_SECONDS),
-                ATTEMPTS_LEFT_NOTE, Integer.toString(MAX_ATTEMPTS)));
-        return code;
+                MAKE_PRIMARY_NOTE, Boolean.toString(makePrimary)));
     }
 
     /**
@@ -136,23 +109,14 @@ final class PendingEmailChanges {
         if (userId == null) {
             return null;
         }
-        Map<String, String> notes = store.get(keyOf(userId));
-        if (notes == null) {
-            return null;
-        }
-        String address = notes.get(ADDRESS_NOTE);
-        Integer expiresAt = integer(notes.get(EXPIRES_AT_NOTE));
-        Integer attemptsLeft = integer(notes.get(ATTEMPTS_LEFT_NOTE));
-        if (address == null || address.isBlank() || expiresAt == null || attemptsLeft == null
-                || expiresAt < Time.currentTime() || attemptsLeft <= 0) {
-            return null;
-        }
-        return new Waiting(address, expiresAt, attemptsLeft);
+        SingleUseCodes.Entry entry = codes.peek(keyOf(userId));
+        return entry == null ? null
+                : new Waiting(entry.payload().get(ADDRESS_NOTE), entry.expiresAt(), entry.attemptsLeft());
     }
 
     /** Drops a change whose mail could not be sent, so its code never works. */
     void discard(String userId) {
-        store.remove(keyOf(userId));
+        codes.discard(keyOf(userId));
     }
 
     /**
@@ -160,40 +124,16 @@ final class PendingEmailChanges {
      * without touching the change, so a typo does not cost a try.
      */
     Outcome confirm(String userId, String code) {
-        if (userId == null || code == null || !CODE.matcher(code).matches()) {
+        if (userId == null) {
             return Outcome.none();
         }
-        String key = keyOf(userId);
-        Map<String, String> notes = store.remove(key);
-        if (notes == null) {
-            return Outcome.none();
-        }
-        String address = notes.get(ADDRESS_NOTE);
-        String salt = notes.get(SALT_NOTE);
-        String codeHash = notes.get(CODE_HASH_NOTE);
-        Integer expiresAt = integer(notes.get(EXPIRES_AT_NOTE));
-        Integer attemptsLeft = integer(notes.get(ATTEMPTS_LEFT_NOTE));
-        if (address == null || address.isBlank() || salt == null || codeHash == null
-                || expiresAt == null || attemptsLeft == null) {
-            return Outcome.none();
-        }
-        int remainingSeconds = expiresAt - Time.currentTime();
-        if (remainingSeconds < 0 || attemptsLeft <= 0) {
-            return Outcome.none();
-        }
-
-        if (MessageDigest.isEqual(hash(salt, code).getBytes(StandardCharsets.US_ASCII),
-                codeHash.getBytes(StandardCharsets.US_ASCII))) {
-            return Outcome.confirmed(new Pending(address, Boolean.parseBoolean(notes.get(MAKE_PRIMARY_NOTE))));
-        }
-
-        int left = attemptsLeft - 1;
-        if (left > 0) {
-            Map<String, String> kept = new HashMap<>(notes);
-            kept.put(ATTEMPTS_LEFT_NOTE, Integer.toString(left));
-            store.put(key, Math.max(1, remainingSeconds), kept);
-        }
-        return Outcome.wrongCode(left);
+        SingleUseCodes.Result result = codes.confirm(keyOf(userId), code);
+        return switch (result.status()) {
+            case CONFIRMED -> Outcome.confirmed(new Pending(result.payload().get(ADDRESS_NOTE),
+                    Boolean.parseBoolean(result.payload().get(MAKE_PRIMARY_NOTE))));
+            case WRONG_CODE -> Outcome.wrongCode(result.attemptsLeft());
+            case NONE -> Outcome.none();
+        };
     }
 
     /** The store key of Account center's change for a person. */
@@ -206,23 +146,8 @@ final class PendingEmailChanges {
         return keyPrefix + owner;
     }
 
-    private static Integer integer(String value) {
-        if (value == null) {
-            return null;
-        }
-        try {
-            return Integer.parseInt(value);
-        } catch (NumberFormatException malformed) {
-            return null;
-        }
-    }
-
-    private static String hash(String salt, String code) {
-        try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-                    .digest((salt + ":" + code).getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 is unavailable", exception);
-        }
+    private static boolean hasAddress(Map<String, String> notes) {
+        String address = notes.get(ADDRESS_NOTE);
+        return address != null && !address.isBlank();
     }
 }

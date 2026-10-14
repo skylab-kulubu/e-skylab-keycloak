@@ -29,6 +29,8 @@ record SkyMailMessage(String templateKey, String recipientFullName, Map<String, 
     /** The sky-account personal e-mail proof (K3c) is a code the person types, not a link. */
     static final String CODE = "code";
     static final String CODE_EXPIRATION_MINUTES = "codeExpirationMinutes";
+    /** What a Login code is for: login (sign-in), later signup and link; empty for every other mail. */
+    static final String PURPOSE = "purpose";
     static final String FIRST_NAME = "firstName";
     static final String USERNAME = "username";
     static final String REALM_DISPLAY_NAME = "realmDisplayName";
@@ -36,7 +38,7 @@ record SkyMailMessage(String templateKey, String recipientFullName, Map<String, 
 
     /** Always sent, in this order, never omitted. */
     static final List<String> VARIABLE_NAMES = List.of(
-            LINK, LINK_EXPIRATION_MINUTES, CODE, CODE_EXPIRATION_MINUTES,
+            LINK, LINK_EXPIRATION_MINUTES, CODE, CODE_EXPIRATION_MINUTES, PURPOSE,
             FIRST_NAME, USERNAME, REALM_DISPLAY_NAME, SUBJECT_KEY);
 
     SkyMailMessage {
@@ -74,11 +76,25 @@ record SkyMailMessage(String templateKey, String recipientFullName, Map<String, 
             String codeExpirationMinutes,
             UserModel user,
             RealmModel realm) {
+        return of(templateKey, subjectKey, link, linkExpirationMinutes, code, codeExpirationMinutes, "", user, realm);
+    }
+
+    static SkyMailMessage of(
+            String templateKey,
+            String subjectKey,
+            String link,
+            String linkExpirationMinutes,
+            String code,
+            String codeExpirationMinutes,
+            String purpose,
+            UserModel user,
+            RealmModel realm) {
         Map<String, String> variables = new LinkedHashMap<>();
         variables.put(LINK, text(link));
         variables.put(LINK_EXPIRATION_MINUTES, text(linkExpirationMinutes));
         variables.put(CODE, text(code));
         variables.put(CODE_EXPIRATION_MINUTES, text(codeExpirationMinutes));
+        variables.put(PURPOSE, text(purpose));
         variables.put(FIRST_NAME, user == null ? "" : text(user.getFirstName()));
         variables.put(USERNAME, user == null ? "" : text(user.getUsername()));
         variables.put(REALM_DISPLAY_NAME, realmDisplayName(realm));

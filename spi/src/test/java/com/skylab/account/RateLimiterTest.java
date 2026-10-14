@@ -132,9 +132,83 @@ class RateLimiterTest {
         limiter.hit(LIMIT, "user-a");
     }
 
+    // The Login code's overall budget alarms the operator at exactly one hit of the day (eskylab-login-ux
+    // 08): the slot number says which hit a claim was, and no two claims of a window get the same one.
+    @Test
+    void claimSlotNumbersTheHitsOfAWindowAndAnswersZeroWhenNoneIsLeft() {
+        Time.setOffset(-(Time.currentTime() % 600));
+        assertEquals(1, limiter.claimSlot(LIMIT, "user-d"));
+        assertEquals(2, limiter.claimSlot(LIMIT, "user-d"));
+        assertEquals(3, limiter.claimSlot(LIMIT, "user-d"));
+        assertEquals(0, limiter.claimSlot(LIMIT, "user-d"));
+        assertTrue(limiter.claim(LIMIT, "user-d") > 0, "claim and claimSlot share one budget");
+
+        Time.setOffset(Time.getOffset() + 600);
+        assertEquals(1, limiter.claimSlot(LIMIT, "user-d"), "the next window counts from one again");
+    }
+
+    @Test
+    void parallelClaimsGetEverySlotNumberExactlyOnce() throws Exception {
+        RateLimiter.Limit limit = new RateLimiter.Limit("numbered", 10, 600);
+        int requests = 40;
+        ExecutorService pool = Executors.newFixedThreadPool(requests);
+        try {
+            CountDownLatch start = new CountDownLatch(1);
+            List<Future<Integer>> futures = new ArrayList<>();
+            for (int i = 0; i < requests; i++) {
+                futures.add(pool.submit(() -> {
+                    start.await();
+                    return limiter.claimSlot(limit, "everybody");
+                }));
+            }
+            start.countDown();
+            List<Integer> slots = new ArrayList<>();
+            for (Future<Integer> future : futures) {
+                slots.add(future.get());
+            }
+            assertEquals(30, slots.stream().filter(slot -> slot == 0).count(), "everything past the budget is refused");
+            assertEquals(List.of(1, 2, 3, 4, 5, 6, 7, 8, 9, 10),
+                    slots.stream().filter(slot -> slot > 0).sorted().toList(), "each slot number is handed out once");
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    // A day's overall budget has hundreds of slots; a claim late in the day must not walk all of
+    // them (the claimed slots are always 1..n, so it looks for the first free one by halving).
+    @Test
+    void aClaimLateInALargeWindowLooksAtFewSlots() {
+        RateLimiter.Limit large = new RateLimiter.Limit("large", 500, 24 * 60 * 60);
+        for (int i = 1; i <= 400; i++) {
+            assertEquals(i, limiter.claimSlot(large, "realm"));
+        }
+        store.resetCalls();
+        assertEquals(401, limiter.claimSlot(large, "realm"));
+        assertTrue(store.calls() <= 12, "a claim looked at " + store.calls() + " slots");
+    }
+
+    @Test
+    void theLoginCodeBudgetsFollowTheSpec() {
+        assertEquals(new RateLimiter.Limit("login-code-session", 5, 60 * 60), RateLimiter.LOGIN_CODE_SESSION);
+        assertEquals(new RateLimiter.Limit("login-code-ip-class", 100, 60 * 60), RateLimiter.LOGIN_CODE_IP_CLASS);
+        assertEquals(new RateLimiter.Limit("login-code-address", 3, 15 * 60), RateLimiter.LOGIN_CODE_ADDRESS);
+        assertEquals(new RateLimiter.Limit("login-code-address-day", 10, 24 * 60 * 60), RateLimiter.LOGIN_CODE_ADDRESS_DAY);
+        assertEquals(24 * 60 * 60, RateLimiter.loginCodesPerDay(500).windowSeconds());
+        assertEquals(new RateLimiter.Limit("login-code-all", 500, 24 * 60 * 60), RateLimiter.loginCodesPerDay(500));
+    }
+
     /** Honours putIfAbsent exactly like Infinispan: atomic, first claim wins, lifespan kept. */
     private static final class AtomicStore implements SingleUseObjectProvider {
         private final ConcurrentHashMap<String, Long> entries = new ConcurrentHashMap<>();
+        private final AtomicInteger calls = new AtomicInteger();
+
+        void resetCalls() {
+            calls.set(0);
+        }
+
+        int calls() {
+            return calls.get();
+        }
 
         long claimed(String prefix) {
             return entries.keySet().stream().filter(key -> key.startsWith(prefix)).count();
@@ -146,6 +220,7 @@ class RateLimiterTest {
 
         @Override
         public boolean putIfAbsent(String key, long lifespanInSeconds) {
+            calls.incrementAndGet();
             if (lifespanInSeconds <= 0) {
                 throw new IllegalArgumentException("lifespan must be positive");
             }
@@ -174,6 +249,7 @@ class RateLimiterTest {
 
         @Override
         public boolean contains(String key) {
+            calls.incrementAndGet();
             return entries.containsKey(key);
         }
 

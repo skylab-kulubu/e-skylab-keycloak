@@ -179,19 +179,22 @@ public final class SkyMailEmailTemplateProvider implements EmailTemplateProvider
     /**
      * A mail sent through the generic overloads is named by its freemarker body template. The
      * Account Center personal e-mail code (K3c) arrives this way, carrying {@code code} and
-     * {@code codeExpiration} instead of a link.
+     * {@code codeExpiration} instead of a link, and so does the Login code, which also carries
+     * {@code purpose}.
      */
     private void recordGeneric(String subjectFormatKey, String bodyTemplate,
             Map<String, Object> bodyAttributes) {
         Map<String, Object> attributes = bodyAttributes == null ? Map.of() : bodyAttributes;
         Object link = attributes.get(SkyMailMessage.LINK);
         Object code = attributes.get(SkyMailMessage.CODE);
+        Object purpose = attributes.get(SkyMailMessage.PURPOSE);
         record(SkyMailMessage.of(SkyMailTemplates.forBodyTemplate(bodyTemplate),
                 subjectFormatKey,
                 link instanceof String text ? text : "",
                 SkyMailMessage.minutes(attributes.get("linkExpiration")),
                 code instanceof String text ? text : "",
                 SkyMailMessage.minutes(attributes.get("codeExpiration")),
+                purpose instanceof String text ? text : "",
                 user,
                 realm));
     }

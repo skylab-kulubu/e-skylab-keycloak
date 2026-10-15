@@ -44,7 +44,7 @@ postanın kapsamıdır, istekle birlikte atılır ve birim testinde sunucu
 | `sendEmailUpdateConfirmation` | `email-update-confirmation.ftl` | `keycloak.update-email` | `emailUpdateConfirmationSubject` |
 | `sendConfirmIdentityBrokerLink` | `identity-provider-link.ftl` | `keycloak.idp-link` | `identityProviderLinkSubject` |
 | `send(...)` | `sky-personal-email-confirm.ftl` (`EmailResource.TEMPLATE`) | `keycloak.personal-email-confirm` | çağıranın konu anahtarı (`skyPersonalEmailConfirmSubject`) |
-| `send(...)` | `sky-login-code.ftl` (`EmailCodeAuthenticator.MAIL_TEMPLATE`) | `keycloak.login-code` | `skyLoginCodeSubject` |
+| `send(...)` | `sky-login-code.ftl` (`EmailCodeAuthenticator.MAIL_TEMPLATE`) | `keycloak.login-code` | `skyLoginCodeSubject` (kayıt kodunda `skySignUpCodeSubject`) |
 | `SkyMailNotice.sendLoginCodeAlarm` (şablon sağlayıcısız, düz metin yedekli) | — | `keycloak.login-code-alarm` | `skyLoginCodeAlarmHalfSubject` / `skyLoginCodeAlarmFullSubject` / `skyLoginCodeAlarmCeilingSubject` |
 | `sendExecuteActions` | `executeActions.ftl` | `keycloak.generic` | `executeActionsSubject` |
 | `sendEvent`, `sendOrgInviteEmail`, `sendVerifiableCredentialOffer`, eşlenmemiş her `send(...)` | ilgili `.ftl` | `keycloak.generic` | Keycloak'ın konu anahtarı |
@@ -57,7 +57,11 @@ uğramaz, bekleyen bir kayıt varsa da temizlenir.
 
 E-postayla girişin kodu (eskylab-login-ux 08) de genel `send(...)`'tan geçer ve
 `EmailCodeAuthenticator.MAIL_TEMPLATE` sabitiyle eşlenir; `code`, `codeExpirationMinutes` ve
-`purpose` (`login`; ileride `signup`, `link`) taşır. Posta istekten sonra arka planda, kendi
+`purpose` (`login`; kayıtta `signup`, ileride `link`) taşır. Kayıt kodu (eskylab-login-ux 09) hesabı
+olmayan bir adrese gider: şablon sağlayıcıları bir kişi için çizdiğinden, posta yalnız bellekte duran bir
+yer tutucu kişiyle (adres ve giriş sayfasının dili, hiçbir yere yazılmaz) gönderilir; konu anahtarı
+`skySignUpCodeSubject`, `firstName` ve `username` boş, SMTP yedeğindeki FreeMarker kopyası `purpose`'a
+göre kayıt metnini yazar. Posta istekten sonra arka planda, kendi
 oturumunda gönderilir; oturuma isteğin adresi (URI) verilir, token uç noktası ondan türetildiği için
 SkyMail yolu arka planda da çalışır. Genel günlük sınırın operatör alarmı alarm grubunun (varsayılan `/ADMIN`) her üyesine ayrı bir
 tek posta olarak gider (`keycloak-mailer`'ın `skymail:mails:send` yetkisiyle; SkyMail'in grup
@@ -86,9 +90,9 @@ Keycloak bilmiyorsa boş string olarak:
 | --- | --- |
 | `link` | Keycloak'ın eylem bağlantısı (olmayan postalarda boş) |
 | `linkExpirationMinutes` | Bağlantının dakika cinsinden ömrü (ondalık metin, yoksa boş) |
-| `code` | Kişisel e-posta ya da e-postayla giriş kodu, 6 rakam (yalnız `keycloak.personal-email-confirm` ve `keycloak.login-code`; diğerlerinde boş) |
+| `code` | Kişisel e-posta kodu (6 rakam) ya da e-postayla giriş ve kayıt kodu (8 rakam); yalnız `keycloak.personal-email-confirm` ve `keycloak.login-code`, diğerlerinde boş |
 | `codeExpirationMinutes` | Kodun dakika cinsinden ömrü (`10`; kod taşımayan postalarda boş) |
-| `purpose` | Giriş kodunun amacı: `login` (ileride `signup`, `link`); yalnız `keycloak.login-code`, diğerlerinde boş |
+| `purpose` | Kodun amacı: `login` (giriş), `signup` (kayıt, eskylab-login-ux 09; ileride `link`); yalnız `keycloak.login-code`, diğerlerinde boş |
 | `firstName` | `user.firstName` |
 | `username` | `user.username` |
 | `realmDisplayName` | Realm görünen adı, yoksa Keycloak'ın kuralıyla baş harfi büyütülmüş realm adı |

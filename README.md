@@ -432,6 +432,29 @@ DISABLED yapar (geri dönüş), varsayılan `keep` dokunmaz; operatör adımı
 `KEYCLOAK_RECONCILE_ONLY=email-code-login`. Ayrıntı, üretim sırası ve geri dönüş: runbook §29. Harness
 `tests/login-by-email-code.sh` tek başına çalışır (stok imaj, SPI jar'ı, SkyMail fixture'ı, Mailpit).
 
+SPI 1.22.0'dan sonra aynı kapıdan e-postayla kayıt (eskylab-login-ux bilet 09, ADR-0063 karar 1, CONTEXT
+"Self-registration"); realm başına, varsayılan kapalı. Ayar `sky-email-code` yürütmesinin Keycloak
+yapılandırmasındadır (`sign-up`, yapılandırma adı `sky email code sign-up`); Keycloak'ın hazır kayıt
+sayfası (`registrationAllowed`) kapalı kalır. Açıkken hiçbir hesaba çıkmayan bir e-posta adresine kayıt
+kodu gider (`purpose=signup`, aynı sayfa, aynı bütçeler; genel sınır dolunca yalnız kayıt kodları durur,
+yanlış kayıt kodları adres başına aynı günlük tavana sayılır). Doğru kod ayrı bir tema sayfası
+(`sky-email-code-sign-up.ftl`, `theme/src/login/EmailCodeSignUp.tsx`) açar: adres salt okunur, ad ve soyad,
+KVKK yalnız bilgilendirir. "Hesabı aç" hesabı User Profile ile açar (`ProfileSignUpAccounts`, yönetici
+bağlamı, realm'in ad ve adres doğrulamaları): adres doğrulanmış birincil ve kanıtlı kişisel adres
+(`personalEmailVerifiedAt`), kullanıcı adı adresin yerel kısmından (`SignUpUsernames`: Hesap Merkezi'nin
+`[a-z0-9._]{3,30}` alfabesi, çakışmada sayı), parola, grup ve realm varsayılanı dışında rol yok,
+`REGISTER` olayı (`register_method` ve `sky_method` `email_code`); kişi girer, oturum notu
+`sky-email-code.signed-up` bilet 10'un soruları içindir. YTÜ alan adındaki adres hesap açmaz, YTÜ
+girişine (OBS) yönlendirilir. Adres bu arada bir hesaba eklendiyse ikinci hesap açılmaz, kod o hesapla
+girer; aynı adresin iki kaydı tek hesap açar (adres başına bir dakikalık kilit ve veritabanının tekil
+e-postası). Tema "Hesap aç"ı yürütme seçimiyle birlikte `sky-email-code-intent=sign-up` göndererek
+açar; hesabı olan kişi koddan sonra "Bu adresle zaten hesabın vardı, giriş yaptın." görür. Parola formu
+sayfası kaydın açık olduğunu `skyEmailCodeSignUp` ile söyler. Uzlaştırıcı `KEYCLOAK_EMAIL_CODE_SIGN_UP=on`
+ayarı açar, `off` kapatır (geri dönüş), `keep` dokunmaz; aynı operatör adımı
+(`KEYCLOAK_RECONCILE_ONLY=email-code-login`). Canlıda bilet 11 (Sudo e-posta kodu) ve 12 (çift hesap
+koruması) olmadan açılmaz. Ayrıntı: runbook §30. Harness `tests/sign-up-by-email-code.sh` tek başına
+çalışır.
+
 Hesap silmede (ADR-0051) core, SkyMail, CMS ve Forms'a ayrı bir gizli service
 account istemcisinden, `core-erasure`'dan aldığı token'larla gider. Operatör
 istemciyi, üç isteğe bağlı `account-erase-*` kapsamını ve üç erase rolünü

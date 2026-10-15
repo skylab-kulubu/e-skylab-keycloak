@@ -93,7 +93,7 @@ test("registers one passkey after the relying party id switch", async ({ browser
   const authorization = await authorizationUrl();
   await page.goto(authorization.url);
   await expect(page.locator(".sl-legacy-shell")).toBeVisible();
-  const passwordChoice = page.getByRole("button", { name: "YTÜ Öğrencisi Değilim" });
+  const passwordChoice = page.getByRole("button", { name: "E-postayla devam et" });
   const username = page.locator("#username");
   await expect(passwordChoice.or(username).first()).toBeVisible();
   if (await passwordChoice.isVisible()) {

@@ -3276,3 +3276,265 @@ yalnız `/ADMIN` ve `/UYELER/YK`'ya, `audit:read`'i üçüne, `global:read`'i ve
 yalnız aşama için açılan `/UYELER/DK`'ya verir; DK üyesinin panel token'ında core rolü olarak yalnız
 ikisi vardır. `tests/site-clients.sh`: DK `content:read` alır, `cms:access` almaz; DK üyesinin site
 token'ında yalnız `content:read` vardır ve editör kapısı kapalıdır.
+
+## 29. "E-postayla devam et": e-postaya gelen kodla giriş (eskylab-login-ux 08, ADR-0063)
+
+ADR-0063 karar 2 (Yusuf, 2026-10-04): herkes e-postasına gelen 8 haneli kodla girebilir; TOTP'si
+olana koddan sonra TOTP yine sorulur. Kayıt (bilet 09) bu adımın "hesap yok" dalına gelir ve kapalıdır:
+bugün kod yalnız var olan hesaba gider.
+
+### Nasıl çalışır
+
+SPI 1.21.0'daki `sky-email-code` (`com.skylab.account.EmailCodeAuthenticator`), realm'in tarayıcı
+akışında kendi ALTERNATIVE alt akışının ilk adımıdır:
+
+```
+browser plus passkey forms (ALTERNATIVE)
+├─ password flow (ALTERNATIVE)            bugünkü: SKY LAB parola formu, koşullu OTP, passkey önerisi
+├─ passwordless WebAuthn (ALTERNATIVE)    bugünkü
+└─ sky email code (ALTERNATIVE)           yeni
+   ├─ sky-email-code                      REQUIRED
+   ├─ sky email code conditional otp      CONDITIONAL (conditional-user-configured + auth-otp-form)
+   └─ passkey-offer-authenticator         REQUIRED
+```
+
+- Tema ilk ekrandaki "E-postayla devam et" ile Keycloak'ın yürütme seçimini kullanır
+  (`authenticationExecution`, seçenek `auth.authenticationSelections`'ta `sky-email-code-display-name`);
+  "Parolanla gir" aynı yolla parola formuna döner. Alt akış yoksa tema bugünkü parola görünümünü açar.
+- Adres sayfası: e-posta ya da kullanıcı adı, [Kod gönder] ve Keycloak'ın passkey koşullu arayüzü
+  (`WebAuthnConditionalUIAuthenticator`, parola formundakinin aynısı). Kod sayfası: kod, [Kodu yeniden
+  gönder] (60 sn sonra), [Başka bir adres yaz].
+- Kod nereye: kişinin birincil e-postası; birincili yoksa ve YTÜ bağlantısı varsa okul adresi
+  (spec S4); kapalı hesap ve servis hesabı için hiçbir yere. Kim olduğu parola formunun kuralıyla
+  (`LoginIdentifiers`) bulunur: kullanıcı adı, birincil, YTÜ bağlı hesabın okul adresi, kanıtlı kişisel
+  adres. Kod, yazılan adrese değil, hep o kişinin kod adresine gider.
+- Ekran her girdide aynıdır (spec §7.4): hesaba çıkmayan, iki kişiye çıkan ya da kapalı hesaba çıkan
+  girdi aynı kod sayfasını ve hiç postalanmayan bir kodu alır (deneme hakları da aynı işler). Posta
+  istekten sonra arka planda, kendi Keycloak oturumunda gider (`BackgroundLoginCodeMail`, yürütücü
+  `sky-email-code`); yanıt süresi posta yüzünden değişmez. Sayfa hiçbir zaman "hesap yok" demez
+  (#103 incelemesi): kimseye postalanmamış bir kodun tutturulması (pratikte olmaz) süresi dolmuş kodun
+  sayfasını alır (`code_expired`); yalnız yöneticinin okuduğu olay `no_account` der. Kayıt (bilet 09)
+  bu dalı, kayıt için postalanmış bir kodda kayıt formuna çevirecek.
+- Doğru kodda: kilit (kaba kuvvet) ve kapalı hesap denetlenir, kodun gittiği adres hâlâ kişinin kod
+  adresi mi bakılır (10 dakikada birincil değiştiyse kod çalışmaz), birincil doğrulanmamışsa
+  doğrulanır (Keycloak'ın sıfırlama bağlantısı gibi; `VERIFY_EMAIL` eylemi kalkar), sonra koşullu OTP
+  ve passkey önerisi gelir. Giriş olayının `username` ayrıntısı ve oturumun giriş adı, parola
+  formundaki gibi yazılan tanımlayıcıdır.
+- Çalışma anı koruması (güvenlik incelemesi K1, `OtpAfterCode`): kişinin OTP'si varsa kod, ancak akış
+  koddan sonra OTP'yi hâlâ soruyorsa kabul edilir. Aranan biçim: kodun alt akışında, koddan sonra
+  CONDITIONAL bir alt akış; tek etkin koşulu REQUIRED `conditional-user-configured`, tek REQUIRED ya da
+  CONDITIONAL adımı REQUIRED `auth-otp-form` (sıfırlama akışındaki `otp-guard` kuralı). Admin
+  Console'da OTP alt akışı kapatılır, koşul ya da form değiştirilir ya da yanına başka bir koşul veya
+  REQUIRED adım eklenirse, bir sonraki yayını beklemeden OTP'li kişi doğru kodla da giremez: sayfa
+  `unavailable` ("E-postayla giriş şu an kullanılamıyor. Parolanla ya da passkey ile gir.") der, olay
+  `otp_unguarded`, sunucu günlüğünde `sky_email_code_otp_unguarded realm=…` ERROR satırı (kişi, adres,
+  IP yok). OTP'si olmayan kişi etkilenmez. Düzeltme: `KEYCLOAK_EMAIL_CODE_LOGIN=on` (ya da `off`).
+
+### Kod, sınırlar ve olaylar
+
+- Kod: CONTEXT "Login code" (`LoginCodes`, Hesap Merkezi'nin koduyla ortak `SingleUseCodes`): 8 hane
+  (güvenlik incelemesi K2, Yusuf 2026-10-15; Hesap Merkezi'nin ADR-0044 kodu 6 hane kalır; kutu
+  `inputmode=numeric`, `autocomplete=one-time-code`, boşluklu yazım kabul, en çok 24 karakter),
+  10 dakika, 5 yanlışta ölür, tek kullanım, yalnız isteyen giriş oturumunda (tarayıcı ve sekme)
+  çalışır, depoda yalnız tuzlu SHA-256 özeti. Kayıt, oturumun kimlik doğrulama notundaki rastgele bir
+  tutamağa bağlıdır; yeni kod eskisini geçersiz kılar.
+- Yanlış kod Keycloak'ın kaba kuvvet sayacına kişinin hatası olarak yazılır (kategorisiz
+  `failedLogin`; parola gibi sayılır). Realm ayarıyla (§ kaba kuvvet: 10 hata, 1 sn içinde iki hata
+  60 sn kilit) kilitli kişi doğru kodla da giremez (`account_locked`). Kod girişi başarılı girişte
+  sayacı sıfırlamaz: Keycloak sıfırlamayı yalnız parola, OTP ve kurtarma kodu için yapar; sayaç
+  `maxDeltaTimeSeconds` (12 saat) sonra kendiliğinden düşer.
+- Hesap başına yanlış kod tavanı (güvenlik incelemesi K2, Yusuf 2026-10-15): bir hesap UTC gününde en
+  çok 10 yanlış kod alır (`SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT`, 1-1000). Tavana ulaşınca o hesaba
+  gün bitene kadar kod postalanmaz; kod isteyen aynı kod sayfasını ve postalanmayan bir kodu alır
+  (sahte kod yolu; olay `wrong_code_ceiling`, hata `sky_email_code_rate_limited`). O hesaba önceden
+  gönderilmiş, hâlâ geçerli kodlar artık denetlenmez: deneme yazılanla karşılaştırılmadan yanlış sayılır
+  (sayfa yine `wrong_code`; olay `wrong_code_ceiling`), böylece günde 10'dan fazla tahmin olmaz. Tavana
+  ulaşan her hesap `sky_email_code_wrong_ceiling accounts=N ceiling=10 realm=…` WARN satırı yazar (kişi
+  yok); günün ilk hesabı alarm grubuna (`/ADMIN`) bir posta atar (SkyMail `keycloak.login-code-alarm`,
+  `subjectKey=skyLoginCodeAlarmCeilingSubject`; kişi adı, adres, IP yok). Parola, passkey ve YTÜ girişi
+  etkilenmez; bedeli: saldırgan 10 yanlış kodla bir hesabın o günkü kodla girişini kapatabilir (bunun
+  için kurbana en az iki kod postası gider, kod başına beş deneme; saldırı görünürdür).
+  - Hesap: kod başına 5 deneme, hesap başına günde en çok 10 yanlış; 8 hanede bir tahminin tutma olasılığı
+    10⁻⁸. Hesap başına yılda en çok 10 × 365 = 3.650 tahmin, yani ≈ 3,65·10⁻⁵ ≈ **%0,004** (inceleyicinin
+    hesabı; önceki 6 hane ve tavansız düzende günde 50 tahmin, yılda ≈ %1,8).
+  - Sayaç diğer bütçelerle aynı yerde: `RateLimiter`, Keycloak'ın single-use deposu (Infinispan). Canlı
+    `KC_CACHE=local`, tek replika: sayaç tutarlıdır, Keycloak yeniden başlayınca (diğer bütçeler gibi)
+    sıfırlanır. Çok replikaya geçilirse sayaç, diğer bütçeler gibi, dağıtık önbellekle paylaşılır.
+  - NIST SP 800-63B: hesapta ardışık başarısız denemeyi en çok 100 ile sınırla. Uyan: günde en çok 10
+    yanlış, Keycloak'ın kaba kuvvet kilidi ek olarak. Sapan: sayaç ardışık değil günlüktür ve
+    başarılı girişte sıfırlanmaz; kesintisiz bir saldırı 100 ardışık başarısızlığa 10 günde ulaşır
+    (yeniden başlatma da günün sayacını sıfırlar). Günlük alarm yöneticiyi ilk gün uyarır. Tam uyum için
+    kullanıcı özniteliğinde ardışık sayaç (≤100, başarılı girişte sıfır) ayrı iş olarak açık.
+- Gönderim sınırları (`RateLimiter`, single-use deposu; anahtarlar §23'teki gibi realm'e özel HMAC,
+  IP yalnız /24 ya da /64 sınıfı olarak):
+
+  | Sınır | Değer | Aşılınca |
+  | --- | --- | --- |
+  | Giriş oturumu | saatte 5 | sayfa `rate_limited` der |
+  | IP sınıfı | saatte 100 | sayfa `rate_limited` der |
+  | Adres | 15 dakikada 3, günde 10 | posta gitmez, ekran aynı, oturumun eski kodu yerini postalanmayan yeni koda bırakır (B3), olay yazılır |
+  | Realm geneli | günde 500 (`SKY_EMAIL_CODE_DAILY_LIMIT`, UTC günü) | giriş kodu durmaz; yarısında ve dolduğunda operatör alarmı |
+
+  Spec §7.2'nin önerisinden bir sapma: IP sınıfı saatte 20 değil 100'dür (§23'ün öneri bütçesiyle aynı
+  gerekçe: kulüp tanıtım gününde tek kampüs ağı). Adres bütçesi hesabı olmayan girdi için de yazılan
+  adres üzerinden harcanır (ekran ve iş aynı kalsın diye). Bütçe dolunca gönderilmiş kodun çalışmaya
+  devam etmesi kolaylığı bilerek bırakıldı (güvenlik incelemesi B3): eski kod kalsaydı, bir yanlış
+  denemeden sonra gösterilen kalan hak (3 ya da 4), iki tanımlayıcının (ör. kullanıcı adı ve okul
+  adresi) aynı hesabın kod adresine çıkıp çıkmadığını söylerdi.
+- Alarm: genel bütçenin ortadaki ve son dilimini alan istek, günde birer kez,
+  `sky_email_code_budget level=half|full daily_limit=… realm=…` WARN satırı yazar ve alarm grubunun
+  (`SKY_EMAIL_CODE_ALARM_GROUP`, varsayılan `/ADMIN`; Yusuf'un kararı 2026-10-15: "bana ya da adminlere")
+  etkin ve e-posta adresi olan her üyesine, en çok 50 kişiye, birer posta atar (SkyMail
+  `keycloak.login-code-alarm`; SkyMail yoksa realm SMTP'si düz metinle). Gönderim `keycloak-mailer`'ın
+  mevcut `skymail:mails:send` yetkisiyle kişi başına tek postadır: SkyMail'in kendi grup gönderimi
+  (`POST /v1/mail_tasks`) `skymail:mails:write` ister, servis hesabına bu yetki verilmedi. Grup realm'de
+  yoksa ya da üyesi yoksa yalnız log (`sky_email_code_alarm_unsent reason=no_recipient`). Postada kod
+  isteyen kişi, adres ya da IP yoktur.
+- Olaylar: başarılı giriş Keycloak'ın `LOGIN` olayı, ayrıntısı `sky_method=email_code` (alt akışın
+  bittiği istekte, `onParentFlowSuccess`; TOTP ve passkey önerisi sayfası gelse de). Girişten sonra
+  sayfa gösteren bir gerekli eylem çıkarsa `LOGIN` sonraki istekte yazılır ve ayrıntıyı taşımaz (kod
+  girişinde nadir: doğrulanmamış birincil zaten doğrulanır). Her ret ayrı bir `LOGIN_ERROR`:
+  `sky_method=email_code`, `sky_email_code` = `wrong_code`, `code_expired`, `rate_limited`,
+  `rate_limited_address`, `wrong_code_ceiling`, `no_account`, `account_disabled`, `account_locked`, `otp_unguarded`; hata
+  `invalid_code`, `expired_code`, `sky_email_code_rate_limited`, `user_not_found`, `user_disabled`,
+  `user_temporarily_disabled`, `invalid_config`. Bu olaylarda IP (`ipAddress`) ve yazılan tanımlayıcı (`username`) yoktur
+  (spec §7.5): jboss-logging dinleyicisi olayları sunucu günlüğüne de yazar. Kodun gönderilmesi
+  Keycloak olayı değildir; gönderim kaydı SkyMail'dedir (`keycloak.login-code`). Ölçüm (spec §11):
+  `LOGIN` ve `details.sky_method == "email_code"`; reddedilenler `LOGIN_ERROR` ve
+  `details.sky_email_code`.
+
+```bash
+kcadm.sh get events -r e-skylab -q type=LOGIN -q max=10000 \
+  | jq '[.[] | .details.sky_method // "password_or_other"] | group_by(.) | map({(.[0]): length}) | add'
+```
+
+- Ortam (Keycloak, Dokploy'da; üçü de isteğe bağlı): `SKY_EMAIL_CODE_ALARM_GROUP` (grup yolu;
+  yoksa `/ADMIN`, `off` yalnız log), `SKY_EMAIL_CODE_DAILY_LIMIT` (1-100000; yoksa 500),
+  `SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT` (1-1000; yoksa 10). Bozuk değer bir kez
+  `sky_email_code_config reason=…` uyarısıyla varsayılana düşer, Keycloak yine açılır. Yalnız açılışta
+  okunur.
+
+### Uzlaştırıcı
+
+`reconcile_email_code_login`, parola formu adımından hemen sonra koşar; operatör oturumuyla tek başına
+`KEYCLOAK_RECONCILE_ONLY=email-code-login`. Realm'in bağlı tarayıcı akışını izler (Keycloak'ın yerleşik
+akışına bağlı realm'de `on` reddedilir). Bayrak `KEYCLOAK_EMAIL_CODE_LOGIN`: `keep` (varsayılan) yalnız
+bildirir; `on` eksiği ekler (önce alt akış DISABLED, sonra parçaları, sonra gereklilikleri, en son alt
+akış ALTERNATIVE: alt akış adımsız hiç çalışmaz), kesilmiş bir koşuyu sonraki koşu tamamlar; `off` alt
+akışı DISABLED yapar. Parola alt akışına ve WebAuthn'a dokunulmaz. `ReconcileJson email-code-flow`
+planlar ve şu durumlarda hiçbir şey yazmadan durdurur: akışta tam olarak bir REQUIRED parola formu yok,
+form bir alt akışta değil ya da o alt akış ALTERNATIVE değil, yanında REQUIRED ya da CONDITIONAL bir
+yürütme var (ALTERNATIVE yanında hiç çalışmazdı), `sky email code` ya da bir parçası iki kez var,
+`sky-email-code` alt akışın dışında, alt akışta elle eklenmiş başka bir yürütme var, parçalar sırasız.
+Satırlar:
+
+- `[reconcile] e-mail code sign-in of flow 'browser plus passkey': unchanged (no subflow; KEYCLOAK_EMAIL_CODE_LOGIN=on adds it)`
+- `[reconcile] e-mail code sign-in of flow 'browser plus passkey': updated (added subflow 'sky email code' to 'browser plus passkey forms' at priority N; added sky-email-code; …; subflow 'sky email code' DISABLED -> ALTERNATIVE)` (ilk `on`)
+- `[reconcile] e-mail code sign-in of flow 'browser plus passkey': unchanged (subflow 'sky email code' ALTERNATIVE)` (ikinci `on`)
+- `[reconcile] e-mail code sign-in of flow 'browser plus passkey': updated (subflow 'sky email code' ALTERNATIVE -> DISABLED)` (`off`)
+- `[reconcile] e-mail code sign-in of flow 'browser plus passkey': unchanged (subflow 'sky email code' ALTERNATIVE; KEYCLOAK_EMAIL_CODE_LOGIN=on or off changes it)` (`keep`)
+- `[reconcile] WARNING: e-mail code sign-in of flow 'browser plus passkey' could not be planned (…); KEYCLOAK_EMAIL_CODE_LOGIN=on or off would stop here` (`keep`, planlanamayan akış: diğer adımlar koşar; `on` ve `off` aynı durumda hiçbir şey yazmadan çıkış 1 ile durur). Akışta `sky-email-code` varsa koddan sonra OTP'ye kefil olunamaz: koşu aşağıdaki gibi 3 ile biter.
+
+OTP kayması (güvenlik incelemesi K1; §17.1'deki sıfırlama korumasının eşi): `keep`'te alt akış DISABLED
+değilken parçaları yerinde değilse (Admin Console'da `sky email code conditional otp` kapatılmış, koşul
+ya da form DISABLED yapılmış, bir parça silinmiş) ya da akış `sky-email-code`'u taşıyıp planlanamıyorsa
+uyarı yazılır; diğer adımlar koşar, koşu başarı satırı yerine **3** çıkış koduyla biter:
+
+- `[reconcile] WARNING: subflow 'sky email code' of flow 'browser plus passkey' runs without all its parts (sky-email-code REQUIRED, subflow 'sky email code conditional otp' DISABLED, conditional-user-configured REQUIRED, auth-otp-form REQUIRED, passkey-offer-authenticator REQUIRED); a person with TOTP may not be asked for it after the code; KEYCLOAK_EMAIL_CODE_LOGIN=on completes it, off turns it off`
+- tam uzlaştırmada: `Account Center Keycloak configuration is reconciled except the OTP after the e-mail code (subflow 'sky email code' of flow 'browser plus passkey' runs without all its parts); run again with KEYCLOAK_EMAIL_CODE_LOGIN=on (or off), or fix the subflow in the Admin Console`
+- operatör adımında (`KEYCLOAK_RECONCILE_ONLY=email-code-login`): `E-mail code sign-in is reconciled except the OTP after the code (…); run again with KEYCLOAK_EMAIL_CODE_LOGIN=on (or off), or fix the subflow in the Admin Console`
+
+Sıfırlama koruması da tetiklenmişse iki `reconciled except` satırı birlikte yazılır, çıkış yine 3'tür.
+Yayın wizard'ı `WARNING: subflow 'sky email code'`, `reconciled except the OTP after the e-mail code`
+satırlarında ve 3 çıkışında durmalıdır (bugünkü wizard yalnız sıfırlama satırını tanır; sonraki yayının
+wizard'ına eklenir). Bu arada SPI, OTP'li kişiyi kendiliğinden reddeder (yukarıda, çalışma anı
+koruması). Onarım: `KEYCLOAK_EMAIL_CODE_LOGIN=on` eksik parçayı ekler ve gereklilikleri düzeltir
+(`updated (subflow 'sky email code conditional otp' DISABLED -> CONDITIONAL)`); `off` alt akışı kapatır.
+
+Uzlaştırıcı kimliğinin `manage-realm` rolü yeter. Üretimin akış adları (`browser plus passkey forms`
+ve alt akışların öncelikleri) 2026-09-21 olgularından; ilk `on`'dan önce Admin Console'da bakılır.
+
+### Üretim sırası
+
+1. SPI 1.21.0'ı taşıyan imaj yayımlanır (`main` → `production`, Touch ID kapısı). Bu imajla hiçbir şey
+   değişmez: adım bir akışa konmadıkça çalışmaz.
+2. SkyMail şablonları (`keycloak.login-code`, `keycloak.login-code-alarm`) skymail-frontend'den
+   tohumlanır. Önce `on` edilirse posta SkyMail 404 ile SMTP'ye düşer (`sky_mail_fallback
+   reason=template_missing`), yine gider.
+3. Tema PR'ı (ilk ekrandaki "E-postayla devam et" ve kod sayfaları) yayımlanır. O olmadan alt akış
+   açılsa da SKY LAB temasında ona giden düğme yoktur.
+4. IP denetimi §23 1a'daki gibi (IP sınıfı bütçesi Keycloak'ın gördüğü IP kadar doğrudur).
+5. Ortam değişikliği gerekmez: alarm varsayılan olarak `/ADMIN` üyelerine gider. Başka bir grup ya da
+   yalnız log isteniyorsa Dokploy → Keycloak → Environment: `SKY_EMAIL_CODE_ALARM_GROUP` (grup yolu ya
+   da `off`), gerekirse `SKY_EMAIL_CODE_DAILY_LIMIT`; Deploy.
+6. Sandbox önce, §22'deki operatör oturumuyla (production sunucusunda):
+
+   ```bash
+   docker exec -e KEYCLOAK_ADMIN_URL=http://127.0.0.1:8080 -e KEYCLOAK_REALM=e-skylab-sandbox \
+     -e KEYCLOAK_RECONCILE_ONLY=email-code-login -e KEYCLOAK_RECONCILE_KCADM_CONFIG=/tmp/fbl-kcadm.config \
+     -e KEYCLOAK_EMAIL_CODE_LOGIN=on "$kc" /opt/keycloak/config/reconcile-account-center.sh
+   ```
+
+   Sandbox realm'i Keycloak'ın yerleşik `browser` akışına bağlıysa `on` hiçbir şey yazmadan reddedilir
+   (`Realm e-skylab-sandbox is bound to Keycloak's built-in browser flow 'browser', which cannot be
+   edited; nothing was changed`; `keep` yalnız `unchanged (Keycloak's built-in flow)` der). Yerleşik
+   akışı kopyalayan bir uzlaştırıcı kipi yok (parola formu adımı `browser plus passkey`'i adıyla arar
+   ve yalnız tam uzlaştırmada koşar; sandbox'ta uzlaştırıcı kimliği yok). Bu yüzden önce aynı operatör
+   oturumuyla (production sunucusunda) bağlama bakılır:
+
+   ```bash
+   docker exec "$kc" /opt/keycloak/bin/kcadm.sh get realms/e-skylab-sandbox --config /tmp/fbl-kcadm.config --fields browserFlow
+   ```
+
+   `browser` çıkarsa yerleşik akış production'ın adıyla kopyalanır ve realm ona bağlanır:
+
+   ```bash
+   docker exec "$kc" /opt/keycloak/bin/kcadm.sh create authentication/flows/browser/copy -r e-skylab-sandbox --config /tmp/fbl-kcadm.config -s "newName=browser plus passkey"
+   ```
+
+   ```bash
+   docker exec "$kc" /opt/keycloak/bin/kcadm.sh update realms/e-skylab-sandbox --config /tmp/fbl-kcadm.config -s "browserFlow=browser plus passkey"
+   ```
+
+   Sonra yukarıdaki `on` komutu alt akışı kopyanın en üst düzeyine, `forms`'un yanına koyar
+   (`updated (added subflow 'sky email code' to 'browser plus passkey' at priority …)`). Kopya
+   Keycloak'ın kendi parola formunu taşır: sandbox'ta parolayla girişte okul ve kişisel adres
+   tanımlayıcı olmaz (K4 yalnız tam uzlaştırmayla gelir); kodla giriş tanımlayıcıların hepsini alır.
+   Geri dönüş: `-s "browserFlow=browser"` ile realm yerleşik akışa geri bağlanır (kopya kalır).
+   `tests/login-by-email-code.sh`'ın son aşaması bu sırayı (red, kopya, bağlama, `on`, giriş sayfası
+   adımı sunuyor) sınar.
+7. Sandbox yürüyüşü (bilet 08): masaüstü ve telefon, gerçek posta kutusu (Gmail, Outlook, okul): kodla
+   giriş; TOTP'li hesapla giriş; yanlış kod; yeniden gönder; postanın gelen kutusuna düşmesi.
+8. Üç gün sandbox, sonra canlı: aynı komut `KEYCLOAK_REALM=e-skylab` ile; sonra
+   `docker exec "$kc" rm -f /tmp/fbl-kcadm.config`. 7 gün sonra spec §11'in sayıları.
+
+### Geri dönüş
+
+`KEYCLOAK_EMAIL_CODE_LOGIN=off` alt akışı DISABLED yapar; tema düğmesi kendiliğinden bugünkü parola
+görünümüne döner, parola ve passkey yolları hiç değişmemiştir. 1.21.0'dan eski bir imaja dönülecekse
+ÖNCE `off` koşulur (yoksa Admin Console akışı bilinmeyen sağlayıcı yüzünden gösteremez). Acil yol (her
+imajda): Admin Console → Authentication → `browser plus passkey` → `sky email code` → Disabled.
+
+### Harness
+
+`tests/login-by-email-code.sh` (CI'da `login-by-email-code` işi): stok Keycloak imajı dev kipinde, SPI
+jar'ı, production'ın akış biçimi, sayfalar SPI'nın yedek şablonları. Posta production'daki gibi SkyMail'e
+gider (entegrasyon harness'ının SkyMail fixture'ı, `keycloak-mailer`'ın gerçek token'ı;
+`SKY_MAIL_TOKEN_URL` verilmez, token adresi istekten türetilir: arka plandaki gönderim isteğin adresini
+taşır); fixture'ın reddettiği bir alıcı SMTP yedeğini (Mailpit) kanıtlar. Sınananlar: `keep` eklemez; `on` uzlaştırıcı kimliğiyle alt akışı kurar, parola alt akışına
+dokunmaz, ikinci koşu değiştirmez; kodla giriş (kullanıcı adı), TOTP sayfası yok, token'ın `aud` ve
+claim'leri parolalı girişinkiyle aynı, `LOGIN` olayında `sky_method=email_code`; okul ve kişisel adresle
+istekte kod birincile, birincilsiz YTÜ hesabında okul adresine; hesapsız adreste aynı sayfa, posta yok;
+başka tarayıcıda kod çalışmaz; beş yanlış kodu öldürür; olaylarda IP ve tanımlayıcı yok; kilitli kişi
+doğru kodla giremez; bir adrese 15 dakikada dördüncü kod gitmez (aynı sayfa, olay); hesap yanlış kod
+tavanına ulaşınca (harness'ta 6) ona kod postalanmaz, sayfa hesapsız girdininkiyle aynı, önceden
+postalanmış kodun doğrusu denetlenmez (`wrong_code`), `/ADMIN` üyelerine bir tavan alarmı ve günlük
+satırı; operatör alarmı
+yarıda ve dolunca gider, kodlar gitmeye devam eder; SkyMail reddedince kod SMTP'den (FreeMarker kopyası,
+bağlantısız, konuda kod yok) gelir ve çalışır, `config`/`token` geri düşüşü yoktur; TOTP'li kişiye koddan sonra TOTP; "Parolanla gir"
+parola formuna götürür; sunucu günlüğünde kod, adres ve istemci IP'si yok; `off` kapatır ve Keycloak
+adımı artık sunmaz; `on` kesilmiş alt akışı tamamlar; yanında REQUIRED yürütme olan akış yazılmadan
+reddedilir, `keep` aynı akışta uyarır ve 3 ile çıkar; OTP alt akışı Admin Console'da kapatılınca `keep`
+uyarır ve 3 ile çıkar, TOTP'li kişi doğru kodla `unavailable` alır (`otp_unguarded` olayı ve günlük
+satırı), TOTP'siz kişi girer, `on` onarır ve TOTP yeniden sorulur. Süre dolumu, tek kullanım, oturum ve IP sınıfı bütçeleri, hesapsız girdinin kodu ve
+passkey yolu birim testindedir (`EmailCodeAuthenticatorTest`, `LoginCodesTest`, `RateLimiterTest`).

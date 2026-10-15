@@ -1070,9 +1070,9 @@ stage_k5_system_mail_through_skymail() {
   json_assert "$task" '.missing_variables == []' \
     'SkyMail would render <no value>: a body variable was omitted'
   json_assert "$task" \
-    '(.body_variables | keys | sort) == ["code","codeExpirationMinutes","firstName","link","linkExpirationMinutes","realmDisplayName","subjectKey","username"]' \
-    'the mail task did not carry exactly the eight agreed body variables'
-  json_assert "$task" '.body_variables.code == "" and .body_variables.codeExpirationMinutes == ""' \
+    '(.body_variables | keys | sort) == ["code","codeExpirationMinutes","firstName","link","linkExpirationMinutes","purpose","realmDisplayName","subjectKey","username"]' \
+    'the mail task did not carry exactly the nine agreed body variables'
+  json_assert "$task" '.body_variables.code == "" and .body_variables.codeExpirationMinutes == "" and .body_variables.purpose == ""' \
     'a link mail must send the code variables empty'
   json_assert "$task" \
     '.body_variables.subjectKey == "emailVerificationSubject" and .body_variables.firstName == "Sky" and .body_variables.username == "skymail-fixture"' \

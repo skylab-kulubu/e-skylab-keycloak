@@ -1,5 +1,6 @@
 package com.skylab.mail;
 
+import com.skylab.account.EmailCodeAuthenticator;
 import com.skylab.account.EmailResource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -135,6 +136,25 @@ class SkyMailEmailTemplateProviderTest {
         assertEquals("10", message.variables().get(SkyMailMessage.CODE_EXPIRATION_MINUTES));
         assertEquals("", message.variables().get(SkyMailMessage.LINK), "the code mail carries no link");
         assertEquals("skyPersonalEmailConfirmSubject", message.variables().get(SkyMailMessage.SUBJECT_KEY));
+    }
+
+    @Test
+    void carriesTheCodeAndThePurposeOfTheLoginCodeMail() throws EmailException {
+        // Exactly what BackgroundLoginCodeMail hands Keycloak's template provider.
+        Map<String, Object> bodyAttributes = new HashMap<>();
+        bodyAttributes.put("code", "731904");
+        bodyAttributes.put("codeExpiration", 10);
+        bodyAttributes.put("purpose", "login");
+
+        provider.send("skyLoginCodeSubject", List.of(), EmailCodeAuthenticator.MAIL_TEMPLATE,
+                bodyAttributes, "ada@example.com");
+
+        SkyMailMessage message = recorded();
+        assertEquals(SkyMailTemplates.LOGIN_CODE, message.templateKey());
+        assertEquals("731904", message.variables().get(SkyMailMessage.CODE));
+        assertEquals("10", message.variables().get(SkyMailMessage.CODE_EXPIRATION_MINUTES));
+        assertEquals("login", message.variables().get(SkyMailMessage.PURPOSE));
+        assertEquals("", message.variables().get(SkyMailMessage.LINK), "the code mail carries no link");
     }
 
     @Test

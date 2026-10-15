@@ -164,6 +164,20 @@ jobs:
       - name: First YTÜ login against a throwaway Keycloak
         run: bash tests/ytu-first-login.sh
 
+  # "E-postayla devam et" (eskylab-login-ux 08): the SPI's sky-email-code step and the reconciler's
+  # e-mail code step (KEYCLOAK_RECONCILE_ONLY=email-code-login, KEYCLOAK_EMAIL_CODE_LOGIN) against the
+  # stock Keycloak image in dev mode, with the SPI jar built from spi/ in the Dockerfile's Maven image,
+  # production's browser flow shape, codes read from the integration harness's pinned Mailpit image
+  # and real logins (password, code, code then TOTP); needs no build of this repository's image.
+  login-by-email-code:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Sign-in with an e-mail code against a throwaway Keycloak
+        run: bash tests/login-by-email-code.sh
+
   # The SPI's microsoft identity provider: Keycloak's re-authentication (max_age exceeded,
   # prompt=login) goes to Microsoft as prompt=login; an ordinary first login and SSO unchanged;
   # SKY_FORWARD_REAUTHENTICATION=false gives Keycloak's own behaviour back. Stock Keycloak image

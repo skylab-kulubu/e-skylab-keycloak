@@ -1150,6 +1150,29 @@ textarea.sl-legacy-input {
   font-size: 0.875rem;
 }
 
+.sl-email-code-sign-up__note {
+  margin: 0.25rem 0 0;
+  color: var(--sl-legacy-label);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+.sl-email-code-sign-up__actions {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+.sl-email-code-sign-up__secondary {
+  min-height: 3rem;
+  font-size: 0.875rem;
+}
+
+.sl-email-code-sign-up input[readonly] {
+  color: var(--sl-legacy-label);
+  overflow-wrap: anywhere;
+}
+
 /* 4. DefaultPage class contract ------------------------------------------- */
 
 .sl-legacy-content {

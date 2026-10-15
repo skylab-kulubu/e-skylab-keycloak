@@ -34,6 +34,8 @@ theme_entries=$(unzip -Z1 "$THEME_JAR")
   || fail 'the Web handoff failure page (sky-handoff v1/failed) is missing or duplicated'
 [[ $(grep -c '^theme/e-skylab-theme/login/sky-personal-email-offer.ftl$' <<<"$theme_entries") == 1 ]] \
   || fail 'the first-login personal e-mail offer page (sky-personal-email-offer) is missing or duplicated'
+[[ $(grep -c '^theme/e-skylab-theme/login/sky-email-code-sign-up.ftl$' <<<"$theme_entries") == 1 ]] \
+  || fail 'the sign-up page after the right sign-up code (sky-email-code-sign-up) is missing or duplicated'
 [[ $(grep -c '^theme/e-skylab-theme/login/sky-stay-signed-in.ftl$' <<<"$theme_entries") == 1 ]] \
   || fail 'the stay signed in page after a YTÜ login (sky-stay-signed-in) is missing or duplicated'
 
@@ -56,6 +58,8 @@ for required_token in \
   skyOfferStage \
   'Kişisel e-postanı ekle.' \
   skyStaySignedInMaxDays \
+  skySignUpStage \
+  'Bu adresle zaten hesabın vardı, giriş yaptın.' \
   'Bu cihazda oturumum açık kalsın mı?' \
   data-skylab-logo-animation \
   mediation; do

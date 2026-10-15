@@ -84,6 +84,13 @@ const { getKcContextMock } = createGetKcContextMock({
   kcContextExtensionPerPage: {
     "passkey-offer.ftl": {},
     "sky-personal-email-offer.ftl": { skyOfferStage: "address", skyOfferCodeMinutes: "10" },
+    // The YTÜ stage of the sign-up page links to the YTÜ sign-in, as Keycloak's own pages do.
+    "sky-email-code-sign-up.ftl": {
+      skySignUpStage: "form",
+      skySignUpAddress: "ayse.yilmaz@example.org",
+      skySignUpYtuAlias: "OBS",
+      social: { providers: [microsoftProvider] }
+    },
     "sky-stay-signed-in.ftl": { skyStaySignedInIdleDays: "7", skyStaySignedInMaxDays: "30" },
     "sky-handoff-failed.ftl": { skyHandoffReason: "expired" }
   } satisfies KcContextExtensionPerPage,
@@ -291,6 +298,9 @@ const { getKcContextMock } = createGetKcContextMock({
       brokerContext: { username: previewUser.email }
     },
     "passkey-offer.ftl": {},
+    "sky-email-code-sign-up.ftl": {
+      isAppInitiatedAction: false
+    },
     // Rendered outside any login flow.
     "sky-handoff-failed.ftl": {
       isAppInitiatedAction: false
@@ -433,7 +443,28 @@ export function getDevKcContext(): KcContext {
     Object.assign(kcContext, getPersonalEmailOfferPreview(offer));
   }
 
+  // `?page=sky-email-code-sign-up.ftl&signup=ytu` previews another stage of the sign-up page (ytu,
+  // existing, unavailable); `&signup=error` the form after a refused name.
+  const signUp = searchParams.get("signup");
+  if (kcContext.pageId === "sky-email-code-sign-up.ftl" && signUp !== null) {
+    Object.assign(kcContext, getEmailCodeSignUpPreview(signUp));
+  }
+
   return kcContext;
+}
+
+/** The SPI's page attributes for one preview of the sign-up page (see getDevKcContext). */
+export function getEmailCodeSignUpPreview(signUp: string): Record<string, string> {
+  if (signUp === "ytu") {
+    return { skySignUpStage: "ytu", skySignUpAddress: "ayse.yilmaz@std.yildiz.edu.tr" };
+  }
+  if (signUp === "existing" || signUp === "unavailable") {
+    return { skySignUpStage: signUp };
+  }
+  if (signUp === "error") {
+    return { skySignUpStage: "form", skySignUpError: "first_name_invalid", skySignUpFirstName: "<Ayşe>", skySignUpLastName: "Yılmaz" };
+  }
+  return { skySignUpStage: "form" };
 }
 
 /** The SPI's page attributes for one preview of the personal e-mail offer (see getDevKcContext). */

@@ -17,6 +17,21 @@ export type KcContextExtensionPerPage = {
     skyOfferAttemptsLeft?: string;
     skyOfferCodeMinutes?: string;
   };
+  // Rendered by the SPI's sky-email-code step after the right sign-up code (Self-registration,
+  // eskylab-login-ux 09): the stage (form, ytu, existing, unavailable), the proven address, the form's
+  // error and what was typed, and the YTÜ identity provider's alias.
+  "sky-email-code-sign-up.ftl": {
+    skySignUpStage?: string;
+    skySignUpAddress?: string;
+    skySignUpError?: string;
+    skySignUpFirstName?: string;
+    skySignUpLastName?: string;
+    skySignUpYtuAlias?: string;
+    // Keycloak's identity providers, as on every page its login forms render: the YTÜ stage links to one.
+    social?: {
+      providers?: { alias: string; displayName: string; providerId: string; loginUrl: string }[];
+    };
+  };
   // Rendered by the SPI's sky-stay-signed-in required action (after every YTÜ login): the
   // remember-me idle time and lifespan in whole days.
   "sky-stay-signed-in.ftl": {

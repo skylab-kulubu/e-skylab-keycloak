@@ -97,6 +97,16 @@ test.describe("visual baselines", () => {
         await expect(page).toHaveScreenshot(`sky-personal-email-offer-code-${viewportName}.png`, screenshotOptions);
       });
 
+      // The sign-up page's other stages (devKcContext signup=…, eskylab-login-ux 09): a YTÜ school
+      // address sent to the YTÜ sign-in, and "Hesap aç" for an address that has an account.
+      for (const signUp of ["ytu", "existing"] as const) {
+        test(`sky-email-code-sign-up-${signUp}`, async ({ page }) => {
+          await page.goto(`/?page=sky-email-code-sign-up.ftl&signup=${signUp}`);
+          await stabilise(page, "sky-email-code-sign-up.ftl");
+          await expect(page).toHaveScreenshot(`sky-email-code-sign-up-${signUp}-${viewportName}.png`, screenshotOptions);
+        });
+      }
+
       // Server-side states of the login page (devKcContext previewStates).
       for (const state of ["reset-email-sent", "invalid-credentials", "idp-error"] as const) {
         test(`login-${state}`, async ({ page }) => {

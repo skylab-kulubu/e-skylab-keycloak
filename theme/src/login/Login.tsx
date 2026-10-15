@@ -12,6 +12,10 @@ import { chooseExecution, emailCodeExecutionId, takePasswordChoice } from "./ema
 
 type LoginProps = PageProps<Extract<KcContext, { pageId: "login.ftl" }>, I18n>;
 
+/** YTÜ's self-service reset of the school (Microsoft) password, then BİDB's help desk. */
+const SCHOOL_PASSWORD_RESET_URL = "https://passwordreset.microsoftonline.com/";
+const SCHOOL_SUPPORT_URL = "https://teknikdestek.yildiz.edu.tr/";
+
 export default function Login(props: LoginProps) {
   const { kcContext, i18n } = props;
   const {
@@ -65,7 +69,10 @@ export default function Login(props: LoginProps) {
                       <span className="sl-legacy-choice__icon">
                         <YtuMark />
                       </span>
-                      <span className="sl-legacy-choice__label">{msgStr("microsoft")}</span>
+                      <span className="sl-legacy-choice__label">
+                        {msgStr("microsoft")}{" "}
+                        <span className="sl-legacy-choice__hint">{msgStr("microsoftHint")}</span>
+                      </span>
                       <svg className="sl-legacy-choice__arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none">
                         <path d="m9 6 6 6-6 6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
                       </svg>
@@ -92,11 +99,19 @@ export default function Login(props: LoginProps) {
                         />
                       </svg>
                     </span>
-                    <span className="sl-legacy-choice__label">{msgStr("notYtuStudent")}</span>
+                    <span className="sl-legacy-choice__label">{msgStr("continueWithEmail")}</span>
                     <svg className="sl-legacy-choice__arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none">
                       <path d="m9 6 6 6-6 6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
                     </svg>
                   </button>
+                </div>
+
+                <div className="sl-legacy-trust">
+                  <p>{msgStr("skylabTrust")}</p>
+                  <details>
+                    <summary>{msgStr("skylabTrustMore")}</summary>
+                    <p>{msgStr("skylabTrustTaken")}</p>
+                  </details>
                 </div>
 
                 {hasPasskey && (
@@ -117,6 +132,20 @@ export default function Login(props: LoginProps) {
                     <a href={resetPasswordUrl}>{msg("doForgotPassword")}</a>
                   </p>
                 )}
+
+                <details className="sl-legacy-school-help">
+                  <summary>{msgStr("skylabSchoolPasswordHelp")}</summary>
+                  <p>
+                    <a href={SCHOOL_PASSWORD_RESET_URL} target="_blank" rel="noopener noreferrer">
+                      {msgStr("skylabSchoolPasswordReset")}
+                    </a>{" "}
+                    {msgStr("skylabSchoolPasswordOr")}{" "}
+                    <a href={SCHOOL_SUPPORT_URL} target="_blank" rel="noopener noreferrer">
+                      {msgStr("skylabSchoolPasswordSupport")}
+                    </a>
+                    .
+                  </p>
+                </details>
               </>
             )}
 
@@ -242,8 +271,27 @@ export default function Login(props: LoginProps) {
                     {msg("doLogIn")}
                   </button>
                 </form>
+
+                {/*
+                  No link to Keycloak's registration page, even if the realm allowed it: ADR-0063 keeps it
+                  closed and opens accounts by e-mail code only. Until then a YTÜ student's account opens on
+                  the first YTÜ sign-in, so that is the only way offered here. When self-registration
+                  (eskylab-login-ux 09) is live, this block becomes "Hesabın yok mu? E-postayla hesap aç"
+                  into the "E-postayla devam et" door.
+                */}
+                {microsoftProvider !== undefined && (
+                  <div className="sl-legacy-no-account">
+                    <p className="sl-legacy-no-account__title">{msgStr("noAccount")}</p>
+                    <p>
+                      {msgStr("skylabNoAccountYtu")}{" "}
+                      <a href={microsoftProvider.loginUrl}>{msgStr("skylabNoAccountYtuLink")}</a>.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
+
+            <p className="sl-legacy-domain">{msgStr("skylabDomainNotice")}</p>
 
             {hasPasskey && (
               <>

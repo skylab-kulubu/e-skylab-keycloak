@@ -352,19 +352,19 @@ class PersonalEmailOfferTest {
     void budgetKeysArePerRealmAndKeyedWithTheRealmsHmacKeyWhenThereIsOne() {
         RealmModel sandbox = mock(RealmModel.class);
         when(sandbox.getId()).thenReturn("sandbox-id");
-        String production = PersonalEmailOffer.keyed(session, realm, "ip-class:v4:203.0.113");
+        String production = BudgetKeys.keyed(session, realm, "ip-class:v4:203.0.113");
         assertTrue(production.startsWith("s"), "without an HMAC key the key is a SHA-256");
-        assertNotEquals(production, PersonalEmailOffer.keyed(session, sandbox, "ip-class:v4:203.0.113"));
+        assertNotEquals(production, BudgetKeys.keyed(session, sandbox, "ip-class:v4:203.0.113"));
 
         org.keycloak.models.KeyManager keys = mock(org.keycloak.models.KeyManager.class);
         org.keycloak.crypto.KeyWrapper hmac = new org.keycloak.crypto.KeyWrapper();
         hmac.setSecretKey(new javax.crypto.spec.SecretKeySpec(new byte[64], "HmacSHA512"));
         when(session.keys()).thenReturn(keys);
         when(keys.getActiveKey(realm, org.keycloak.crypto.KeyUse.SIG, org.keycloak.crypto.Algorithm.HS512)).thenReturn(hmac);
-        String keyed = PersonalEmailOffer.keyed(session, realm, "ip-class:v4:203.0.113");
+        String keyed = BudgetKeys.keyed(session, realm, "ip-class:v4:203.0.113");
         assertTrue(keyed.startsWith("h"), "with the realm's HMAC key the key is an HMAC");
         assertNotEquals(production, keyed);
-        assertEquals(keyed, PersonalEmailOffer.keyed(session, realm, "ip-class:v4:203.0.113"));
+        assertEquals(keyed, BudgetKeys.keyed(session, realm, "ip-class:v4:203.0.113"));
     }
 
     @Test
@@ -552,16 +552,16 @@ class PersonalEmailOfferTest {
 
     @Test
     void ipClassesAreTheIpv4Slash24AndTheIpv6Slash64AndNothingIsResolved() {
-        assertEquals("v4:203.0.113", PersonalEmailOffer.ipClass("203.0.113.7"));
-        assertEquals(PersonalEmailOffer.ipClass("203.0.113.200"), PersonalEmailOffer.ipClass("203.0.113.7"));
-        assertNotEquals(PersonalEmailOffer.ipClass("203.0.114.7"), PersonalEmailOffer.ipClass("203.0.113.7"));
-        assertEquals("v6:20010db800010002", PersonalEmailOffer.ipClass("2001:db8:1:2::17"));
-        assertEquals(PersonalEmailOffer.ipClass("2001:db8:1:2:ffff::1"), PersonalEmailOffer.ipClass("2001:db8:1:2::17"));
-        assertEquals("v4:198.51.100", PersonalEmailOffer.ipClass("::ffff:198.51.100.3"));
-        assertEquals("unknown", PersonalEmailOffer.ipClass("999.1.1.1"));
-        assertEquals("unknown", PersonalEmailOffer.ipClass("example.org"));
-        assertEquals("unknown", PersonalEmailOffer.ipClass("fe80::1%eth0"));
-        assertEquals("unknown", PersonalEmailOffer.ipClass(null));
+        assertEquals("v4:203.0.113", BudgetKeys.ipClass("203.0.113.7"));
+        assertEquals(BudgetKeys.ipClass("203.0.113.200"), BudgetKeys.ipClass("203.0.113.7"));
+        assertNotEquals(BudgetKeys.ipClass("203.0.114.7"), BudgetKeys.ipClass("203.0.113.7"));
+        assertEquals("v6:20010db800010002", BudgetKeys.ipClass("2001:db8:1:2::17"));
+        assertEquals(BudgetKeys.ipClass("2001:db8:1:2:ffff::1"), BudgetKeys.ipClass("2001:db8:1:2::17"));
+        assertEquals("v4:198.51.100", BudgetKeys.ipClass("::ffff:198.51.100.3"));
+        assertEquals("unknown", BudgetKeys.ipClass("999.1.1.1"));
+        assertEquals("unknown", BudgetKeys.ipClass("example.org"));
+        assertEquals("unknown", BudgetKeys.ipClass("fe80::1%eth0"));
+        assertEquals("unknown", BudgetKeys.ipClass(null));
     }
 
     @Test

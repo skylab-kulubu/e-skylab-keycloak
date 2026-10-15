@@ -6,7 +6,8 @@
 # SkyMail's Privileged roles (runbook §25): skymail:system-mails:read (skymail-backend #61, the
 # content of single system mails). The reconciler creates it on every run and only warns while it is
 # unseeded; the operator's core-roles step grants it once to the Privileged groups and marks it, the
-# same way as core's resource roles. The fixture realm has /ADMIN and /UYELER/YK, no DK.
+# same way as core's resource roles. The fixture realm has /ADMIN and /UYELER/YK, no DK; the
+# core-roles stage's operator run (which seeds this role) has /UYELER/DK, and removes it after.
 # skymail:announcements:send (duyuru-haber D4) is seeded the same way but to ADMIN and YK only: DK
 # reads and does not write; the stage proves it with a /DK group made for the run.
 
@@ -61,7 +62,7 @@ stage_skymail_roles_seeded_by_operator() {
   CURRENT_STAGE='skymail Privileged roles: seeded once by the core-roles operator step'
   local output path skymail_uuid yk_id
   skymail_uuid=$(lca_client_uuid skymail)
-  [[ $(sr_seed_mark) =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\ /ADMIN,/UYELER/YK$ ]] \
+  [[ $(sr_seed_mark) =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\ /ADMIN,/UYELER/YK,/UYELER/DK$ ]] \
     || fail "$SR_ROLE lacks its seed mark after the operator step (got: $(sr_seed_mark))"
   [[ $(sr_seed_mark "$SR_SEND_ROLE") =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\ /ADMIN,/UYELER/YK$ ]] \
     || fail "$SR_SEND_ROLE lacks its seed mark after the operator step (got: $(sr_seed_mark "$SR_SEND_ROLE"))"

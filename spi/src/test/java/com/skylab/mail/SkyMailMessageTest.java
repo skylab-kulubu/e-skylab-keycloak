@@ -73,6 +73,7 @@ class SkyMailMessageTest {
         assertEquals("", variables.get("linkExpirationMinutes").textValue());
         assertEquals("", variables.get("code").textValue());
         assertEquals("", variables.get("codeExpirationMinutes").textValue());
+        assertEquals("", variables.get("purpose").textValue(), "only the Login code says what it is for");
         assertEquals("", variables.get("firstName").textValue());
         assertEquals("E-skylab", variables.get("realmDisplayName").textValue(),
                 "Keycloak capitalises the realm name when there is no display name");

@@ -85,7 +85,7 @@ test.describe("visual baselines", () => {
       test("login-password-view", async ({ page }) => {
         await page.goto("/?page=login.ftl");
         await stabilise(page, "login.ftl");
-        await page.getByRole("button", { name: "YTÜ Öğrencisi Değilim" }).click();
+        await page.getByRole("button", { name: "E-postayla devam et" }).click();
         await expect(page.locator("#kc-login")).toBeVisible();
         await expect(page).toHaveScreenshot(`login-password-view-${viewportName}.png`, screenshotOptions);
       });
@@ -95,6 +95,13 @@ test.describe("visual baselines", () => {
         await page.goto("/?page=sky-personal-email-offer.ftl&offer=code");
         await stabilise(page, "sky-personal-email-offer.ftl");
         await expect(page).toHaveScreenshot(`sky-personal-email-offer-code-${viewportName}.png`, screenshotOptions);
+      });
+
+      // "E-postayla devam et": the code stage after a wrong code, the resend open (devKcContext code=wrong).
+      test("sky-email-code-code", async ({ page }) => {
+        await page.goto("/?page=sky-email-code.ftl&code=wrong");
+        await stabilise(page, "sky-email-code.ftl");
+        await expect(page).toHaveScreenshot(`sky-email-code-code-${viewportName}.png`, screenshotOptions);
       });
 
       // Server-side states of the login page (devKcContext previewStates).

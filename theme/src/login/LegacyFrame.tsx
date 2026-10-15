@@ -6,6 +6,12 @@ import GridBackdrop from "./GridBackdrop";
 import TeamMarquee from "./TeamMarquee";
 import YtuMark from "./YtuMark";
 
+/**
+ * The published KVKK notice itself, not the skyl.app short link (eskylab-login-ux 05). The same
+ * file as the landing page's KVKK_URL (welcome/WelcomePage.tsx); Login.test.tsx holds them equal.
+ */
+const KVKK_URL = "https://yildizskylab.com/kvkk-metni.pdf";
+
 export type LegacyFrameLanguage = {
   href: string;
   label: string;
@@ -149,7 +155,7 @@ export default function LegacyFrame(props: LegacyFrameProps) {
           <footer className="sl-legacy-footer" role="contentinfo">
             <p>
               {kvkkPrefix}
-              <a href="https://skyl.app/kvkk-metni" target="_blank" rel="noreferrer">
+              <a href={KVKK_URL} target="_blank" rel="noreferrer">
                 {kvkkLinkText}
               </a>
               {kvkkSuffix}

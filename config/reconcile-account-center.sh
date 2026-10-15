@@ -97,6 +97,25 @@ PERSONAL_EMAIL_OFFER=${KEYCLOAK_PERSONAL_EMAIL_OFFER:-keep}
 STAY_SIGNED_IN_ACTION=sky-stay-signed-in
 STAY_SIGNED_IN_NAME='SKY LAB stay signed in (after a YTÜ login)'
 STAY_SIGNED_IN=${KEYCLOAK_STAY_SIGNED_IN:-keep}
+# eskylab-login-ux 08 (ADR-0063 decision 2, CONTEXT "Login code"): "E-postayla devam et". With
+# KEYCLOAK_EMAIL_CODE_LOGIN=on the realm's browser flow gets the ALTERNATIVE subflow
+# EMAIL_CODE_FLOW_ALIAS next to the password form's subflow: the SPI step sky-email-code (address or
+# username, then the code mailed to the Primary e-mail), Keycloak's conditional OTP (a person with TOTP
+# is asked for it after the code) and the passkey offer. The login theme offers it only while the
+# subflow is there. off makes the subflow DISABLED (the rollback; the password and passkey paths never
+# change; run it before going back to an image without the step). The default, keep, only reports, so
+# a full reconciliation never turns it on or off. Realm by realm (sandbox first), also as an operator
+# step (KEYCLOAK_RECONCILE_ONLY=email-code-login).
+EMAIL_CODE_LOGIN=${KEYCLOAK_EMAIL_CODE_LOGIN:-keep}
+# Set by reconcile_email_code_login (keep) when the subflow runs but may no longer ask a person with
+# TOTP for it after the code (an Admin Console change; security review K1). Like
+# RESET_OTP_UNGUARDED, every other step still runs, then the run ends with exit status 3. The SPI
+# step refuses such a person meanwhile (OtpAfterCode).
+EMAIL_CODE_UNGUARDED=''
+EMAIL_CODE_STEP=sky-email-code
+EMAIL_CODE_FLOW_ALIAS='sky email code'
+EMAIL_CODE_OTP_FLOW_ALIAS='sky email code conditional otp'
+PASSKEY_OFFER_STEP=passkey-offer-authenticator
 SCOPE_NAME=account-center-account-api
 CORE_SCOPE_NAME=account-center-core-claims
 SKYAPP_CLIENT_ID=skyapp
@@ -109,6 +128,7 @@ FRONTEND_ARGE_CLIENT_ID=frontend-arge
 FRONTEND_ARGE_SCOPE_NAME=frontend-arge-core-audience
 SKYFORMS_CLIENT_ID=skyforms
 SKYFORMS_SCOPE_NAME=skyforms-forms-audience
+SKYFORMS_GROUPS_SCOPE_NAME=skyforms-groups
 # Login clients whose token is narrowed to the APIs their app calls (ADR-0058, ADR-0059; see
 # reconcile_login_clients). skycms-audience is the realm scope that puts inscribed's audience into
 # the Site clients' tokens: the event sites' clients (site-clients.sh) and skyapp
@@ -160,11 +180,11 @@ EVENT_RETENTION_SETTINGS="{\"eventsEnabled\":true,\"eventsExpiration\":$EVENT_RE
 ADMIN_EVENTS_EXPIRATION_ATTRIBUTE=adminEventsExpiration
 ACCOUNT_ROLE_ALLOWLIST=(manage-account view-profile manage-account-links)
 case $RECONCILE_ONLY in
-  '' | admin-panel-client | login-clients | core-roles | service-roles | first-broker-login | role-groups | leader-app-roles) ;;
+  '' | admin-panel-client | login-clients | core-roles | service-roles | first-broker-login | email-code-login | role-groups | leader-app-roles) ;;
   # The step's name before core's service roles became a list (core-internal-auth ticket 03).
   media-attach) RECONCILE_ONLY=service-roles ;;
   *)
-    printf 'KEYCLOAK_RECONCILE_ONLY must be empty, admin-panel-client, login-clients, core-roles, service-roles, first-broker-login, role-groups or leader-app-roles, not %s\n' "$RECONCILE_ONLY" >&2
+    printf 'KEYCLOAK_RECONCILE_ONLY must be empty, admin-panel-client, login-clients, core-roles, service-roles, first-broker-login, email-code-login, role-groups or leader-app-roles, not %s\n' "$RECONCILE_ONLY" >&2
     exit 2
     ;;
 esac
@@ -289,6 +309,13 @@ case $STAY_SIGNED_IN in
   keep | on | off) ;;
   *)
     printf 'KEYCLOAK_STAY_SIGNED_IN must be keep (default), on or off (rollback), not %s\n' "$STAY_SIGNED_IN" >&2
+    exit 1
+    ;;
+esac
+case $EMAIL_CODE_LOGIN in
+  keep | on | off) ;;
+  *)
+    printf 'KEYCLOAK_EMAIL_CODE_LOGIN must be keep (default), on or off (rollback), not %s\n' "$EMAIL_CODE_LOGIN" >&2
     exit 1
     ;;
 esac
@@ -475,9 +502,9 @@ optional_lookup() {
 # needed a client-specific copy of it (account-center-browser, with the sky-native-handoff
 # subflow) bound to the client; the Web handoff (ADR-0048) does not. An older deployment is
 # brought back here: the client's browser binding is removed, then that flow is deleted
-# together with its subflows. Both steps are no-ops once done. Keycloak does not refuse to
-# delete a flow that something still points to, so a realm flow binding or another client
-# that still uses it stops the run instead.
+# together with its subflows. Both steps are no-ops once done. Keycloak 26.7.4 refuses to
+# delete a flow that something still points to, but only with "unknown_error"; a realm flow
+# binding or another client that still uses it stops the run first and is named.
 retire_account_center_browser_flow() {
   local live_file overrides flow_id realm_bindings clients_json
   live_file=$(mktemp "$WORK_DIR/client-flow.XXXXXX")
@@ -500,14 +527,16 @@ retire_account_center_browser_flow() {
     log "authentication flow $LEGACY_FLOW_ALIAS: unchanged (absent)"
     return 0
   fi
-  realm_bindings=$(kcadm_json "realms/$TARGET_REALM" -c \
+  # No -c with --fields: kcadm then prints nothing and still exits 0. A map field needs (*), or
+  # kcadm returns it empty.
+  realm_bindings=$(kcadm_json "realms/$TARGET_REALM" \
     --fields browserFlow,registrationFlow,directGrantFlow,resetCredentialsFlow,clientAuthenticationFlow,dockerAuthenticationFlow,firstBrokerLoginFlow)
   if [[ $realm_bindings == *"\"$LEGACY_FLOW_ALIAS\""* ]]; then
     printf 'A realm flow binding still uses %s; bind the realm to its own flows before this flow can be retired\n' \
       "$LEGACY_FLOW_ALIAS" >&2
     return 1
   fi
-  clients_json=$(kcadm_json clients -r "$TARGET_REALM" --fields clientId,authenticationFlowBindingOverrides -c)
+  clients_json=$(kcadm_json clients -r "$TARGET_REALM" --fields 'clientId,authenticationFlowBindingOverrides(*)')
   if [[ $clients_json == *"$flow_id"* ]]; then
     printf 'Another client is still bound to %s; unbind it before this flow can be retired\n' \
       "$LEGACY_FLOW_ALIAS" >&2
@@ -757,6 +786,224 @@ reconcile_reset_otp_step() {
   grep -v ': unchanged (' <<<"$swap_lines" || true
   warn "OTP step of flow '$bound': $guard; OTP is not verified on reset as intended"
   RESET_OTP_UNGUARDED="OTP step of flow '$bound': $guard"
+}
+
+# eskylab-login-ux 08: the e-mail code subflow of the realm's browser flow (see EMAIL_CODE_LOGIN
+# above). ReconcileJson email-code-flow plans it: the subflow belongs next to the password form's
+# subflow (in production 'browser plus passkey' forms: passwordless WebAuthn ALTERNATIVE, password flow
+# ALTERNATIVE), and is refused, with nothing written, when a REQUIRED or CONDITIONAL execution there
+# would keep an ALTERNATIVE from ever running, or when someone added an execution to the subflow by
+# hand. on adds what is missing (the subflow DISABLED first, then its parts, then their
+# requirements), and only then makes the subflow ALTERNATIVE, so it never runs without its steps; a
+# run cut in between is finished by the next one. Every write is read back. The realm's own browser
+# flow binding is followed; a realm bound to Keycloak's built-in flow is refused (it cannot be edited).
+reconcile_email_code_login() {
+  local flow_alias built_in flow_id providers parent_alias subflow_path otp_path was executions
+  local changes=()
+  flow_alias=$(kcadm_json "realms/$TARGET_REALM" --fields browserFlow | json_tool field browserFlow)
+  if [[ -z $flow_alias ]]; then
+    if [[ $EMAIL_CODE_LOGIN == keep ]]; then
+      warn "realm $TARGET_REALM has no browser flow binding; the e-mail code sign-in step has nothing to report"
+      return 0
+    fi
+    printf 'Realm %s has no browser flow binding\n' "$TARGET_REALM" >&2
+    return 1
+  fi
+  flow_id=$(flow_id_by_alias "$flow_alias")
+  built_in=$(kcadm_json "authentication/flows/$flow_id" -r "$TARGET_REALM" | json_tool field builtIn)
+  if [[ $built_in == true ]]; then
+    if [[ $EMAIL_CODE_LOGIN == on ]]; then
+      printf "Realm %s is bound to Keycloak's built-in browser flow '%s', which cannot be edited; nothing was changed\n" \
+        "$TARGET_REALM" "$flow_alias" >&2
+      return 1
+    fi
+    log "e-mail code sign-in of flow '$flow_alias': unchanged (Keycloak's built-in flow)"
+    return 0
+  fi
+  # A full reconciliation (keep) never stops on a flow this step could not change: it says why, and
+  # when the flow holds the e-mail code step it cannot vouch for the OTP after the code either.
+  if [[ $EMAIL_CODE_LOGIN == keep ]]; then
+    if ! plan_email_code_flow "$flow_alias" 2>"$WORK_DIR/email-code-keep.err"; then
+      warn "e-mail code sign-in of flow '$flow_alias' could not be planned ($(head -n 1 "$WORK_DIR/email-code-keep.err")); KEYCLOAK_EMAIL_CODE_LOGIN=on or off would stop here"
+      # Read whole first: grep -q stopping early would fail the pipe under pipefail.
+      executions=$(kcadm_json "authentication/flows/$(flow_alias_path "$flow_alias")/executions" -r "$TARGET_REALM")
+      if grep -Fq "\"$EMAIL_CODE_STEP\"" <<<"$executions"; then
+        EMAIL_CODE_UNGUARDED="flow '$flow_alias' holds $EMAIL_CODE_STEP but could not be planned"
+      fi
+      return 0
+    fi
+  else
+    plan_email_code_flow "$flow_alias" || return 1
+  fi
+  case $EMAIL_CODE_LOGIN in
+    keep)
+      if [[ $ECF_SUBFLOW == - ]]; then
+        log "e-mail code sign-in of flow '$flow_alias': unchanged (no subflow; KEYCLOAK_EMAIL_CODE_LOGIN=on adds it)"
+      else
+        log "e-mail code sign-in of flow '$flow_alias': unchanged (subflow '$EMAIL_CODE_FLOW_ALIAS' $ECF_SUBFLOW_REQ; KEYCLOAK_EMAIL_CODE_LOGIN=on or off changes it)"
+        if [[ $ECF_SUBFLOW_REQ != DISABLED ]] && ! email_code_parts_in_place; then
+          warn "subflow '$EMAIL_CODE_FLOW_ALIAS' of flow '$flow_alias' runs without all its parts ($(email_code_parts_summary)); a person with TOTP may not be asked for it after the code; KEYCLOAK_EMAIL_CODE_LOGIN=on completes it, off turns it off"
+          EMAIL_CODE_UNGUARDED="subflow '$EMAIL_CODE_FLOW_ALIAS' of flow '$flow_alias' runs without all its parts"
+        fi
+      fi
+      return 0
+      ;;
+    off)
+      if [[ $ECF_SUBFLOW == - ]]; then
+        log "e-mail code sign-in of flow '$flow_alias': unchanged (no subflow; KEYCLOAK_EMAIL_CODE_LOGIN=off)"
+      elif [[ $ECF_SUBFLOW_REQ == DISABLED ]]; then
+        log "e-mail code sign-in of flow '$flow_alias': unchanged (subflow '$EMAIL_CODE_FLOW_ALIAS' DISABLED)"
+      else
+        was=$ECF_SUBFLOW_REQ
+        set_email_code_requirement "$flow_alias" "$ECF_SUBFLOW" DISABLED "$ECF_SUBFLOW_PRIO"
+        plan_email_code_flow "$flow_alias" || return 1
+        if [[ $ECF_SUBFLOW_REQ != DISABLED ]]; then
+          printf "Subflow '%s' of flow '%s' is %s after the change, not DISABLED; inspect it in the Admin Console\n" \
+            "$EMAIL_CODE_FLOW_ALIAS" "$flow_alias" "$ECF_SUBFLOW_REQ" >&2
+          return 1
+        fi
+        log "e-mail code sign-in of flow '$flow_alias': updated (subflow '$EMAIL_CODE_FLOW_ALIAS' $was -> DISABLED)"
+      fi
+      return 0
+      ;;
+  esac
+  providers=$(kcadm get authentication/authenticator-providers -r "$TARGET_REALM" --fields id --format csv --noquotes)
+  if ! grep -Fxq "$EMAIL_CODE_STEP" <<<"$providers"; then
+    printf 'The image offers no %s authenticator (SPI 1.21.0 or later); nothing was changed\n' "$EMAIL_CODE_STEP" >&2
+    return 1
+  fi
+  if [[ $ECF_SUBFLOW == - ]]; then
+    if [[ $ECF_FORMS == - ]]; then
+      parent_alias=$flow_alias
+    else
+      parent_alias=$(kcadm_json "authentication/flows/$ECF_FORMS" -r "$TARGET_REALM" | json_tool field alias)
+    fi
+    kcadm create "authentication/flows/$(flow_alias_path "$parent_alias")/executions/flow" -r "$TARGET_REALM" -i \
+      -b "{\"alias\":\"$EMAIL_CODE_FLOW_ALIAS\",\"type\":\"basic-flow\",\"description\":\"SKY LAB: e-postaya gelen kodla giris (eskylab-login-ux 08)\",\"priority\":$ECF_NEXT}" >/dev/null
+    changes+=("added subflow '$EMAIL_CODE_FLOW_ALIAS' to '$parent_alias' at priority $ECF_NEXT")
+    plan_email_code_flow "$flow_alias" || return 1
+  fi
+  subflow_path=$(flow_alias_path "$EMAIL_CODE_FLOW_ALIAS")
+  if [[ $ECF_STEP == - ]]; then
+    kcadm create "authentication/flows/$subflow_path/executions/execution" -r "$TARGET_REALM" -i \
+      -b "{\"provider\":\"$EMAIL_CODE_STEP\",\"priority\":10}" >/dev/null
+    changes+=("added $EMAIL_CODE_STEP")
+  fi
+  if [[ $ECF_OTP == - ]]; then
+    kcadm create "authentication/flows/$subflow_path/executions/flow" -r "$TARGET_REALM" -i \
+      -b "{\"alias\":\"$EMAIL_CODE_OTP_FLOW_ALIAS\",\"type\":\"basic-flow\",\"description\":\"SKY LAB: koddan sonra TOTP (yalniz TOTP sahibine)\",\"priority\":20}" >/dev/null
+    changes+=("added subflow '$EMAIL_CODE_OTP_FLOW_ALIAS'")
+  fi
+  if [[ $ECF_OFFER == - ]]; then
+    kcadm create "authentication/flows/$subflow_path/executions/execution" -r "$TARGET_REALM" -i \
+      -b "{\"provider\":\"$PASSKEY_OFFER_STEP\",\"priority\":30}" >/dev/null
+    changes+=("added $PASSKEY_OFFER_STEP")
+  fi
+  otp_path=$(flow_alias_path "$EMAIL_CODE_OTP_FLOW_ALIAS")
+  if [[ $ECF_COND == - ]]; then
+    kcadm create "authentication/flows/$otp_path/executions/execution" -r "$TARGET_REALM" -i \
+      -b '{"provider":"conditional-user-configured","priority":10}' >/dev/null
+    changes+=("added conditional-user-configured")
+  fi
+  if [[ $ECF_OTP_FORM == - ]]; then
+    kcadm create "authentication/flows/$otp_path/executions/execution" -r "$TARGET_REALM" -i \
+      -b '{"provider":"auth-otp-form","priority":20}' >/dev/null
+    changes+=("added auth-otp-form")
+  fi
+  plan_email_code_flow "$flow_alias" || return 1
+  if ! email_code_parts_present; then
+    printf "Subflow '%s' of flow '%s' still lacks a part after the additions; inspect it in the Admin Console\n" \
+      "$EMAIL_CODE_FLOW_ALIAS" "$flow_alias" >&2
+    return 1
+  fi
+  # The parts first, the subflow last: it never runs without its steps.
+  set_email_code_requirement "$flow_alias" "$ECF_STEP" REQUIRED "$ECF_STEP_PRIO" "$ECF_STEP_REQ" "$EMAIL_CODE_STEP"
+  set_email_code_requirement "$flow_alias" "$ECF_COND" REQUIRED "$ECF_COND_PRIO" "$ECF_COND_REQ" conditional-user-configured
+  set_email_code_requirement "$flow_alias" "$ECF_OTP_FORM" REQUIRED "$ECF_OTP_FORM_PRIO" "$ECF_OTP_FORM_REQ" auth-otp-form
+  set_email_code_requirement "$flow_alias" "$ECF_OTP" CONDITIONAL "$ECF_OTP_PRIO" "$ECF_OTP_REQ" "subflow '$EMAIL_CODE_OTP_FLOW_ALIAS'"
+  set_email_code_requirement "$flow_alias" "$ECF_OFFER" REQUIRED "$ECF_OFFER_PRIO" "$ECF_OFFER_REQ" "$PASSKEY_OFFER_STEP"
+  set_email_code_requirement "$flow_alias" "$ECF_SUBFLOW" ALTERNATIVE "$ECF_SUBFLOW_PRIO" "$ECF_SUBFLOW_REQ" "subflow '$EMAIL_CODE_FLOW_ALIAS'"
+  plan_email_code_flow "$flow_alias" || return 1
+  if [[ $ECF_SUBFLOW_REQ != ALTERNATIVE ]] || ! email_code_parts_in_place; then
+    printf "Subflow '%s' of flow '%s' is not in place after the changes; inspect it in the Admin Console\n" \
+      "$EMAIL_CODE_FLOW_ALIAS" "$flow_alias" >&2
+    return 1
+  fi
+  if ((${#changes[@]} == 0)); then
+    log "e-mail code sign-in of flow '$flow_alias': unchanged (subflow '$EMAIL_CODE_FLOW_ALIAS' ALTERNATIVE)"
+  else
+    local joined
+    printf -v joined '%s; ' "${changes[@]}"
+    log "e-mail code sign-in of flow '$flow_alias': updated (${joined%; })"
+  fi
+}
+
+# Reads ReconcileJson email-code-flow's plan of FLOW_ALIAS into the ECF_* globals (one per line of
+# the plan; "-" for a part that is missing). Runs in the caller's shell, never inside $( ).
+plan_email_code_flow() {
+  local flow_alias=$1 live_file plan_file status kind a b c d
+  live_file=$(mktemp "$WORK_DIR/email-code.XXXXXX")
+  plan_file=$(mktemp "$WORK_DIR/email-code-plan.XXXXXX")
+  kcadm_json "authentication/flows/$(flow_alias_path "$flow_alias")/executions" -r "$TARGET_REALM" >"$live_file"
+  if json_tool email-code-flow "$EMAIL_CODE_STEP" "$EMAIL_CODE_FLOW_ALIAS" "$EMAIL_CODE_OTP_FLOW_ALIAS" \
+    "$PASSKEY_OFFER_STEP" "$SKY_PASSWORD_FORM" "$STOCK_PASSWORD_FORM" <"$live_file" >"$plan_file"; then
+    status=0
+  else
+    status=$?
+  fi
+  if [[ $status != 0 ]]; then
+    printf "E-mail code sign-in of flow '%s' was not changed (status %s): the step above explains why\n" \
+      "$flow_alias" "$status" >&2
+    return 1
+  fi
+  ECF_FORMS=- ECF_NEXT=-
+  ECF_SUBFLOW=- ECF_SUBFLOW_REQ=- ECF_SUBFLOW_PRIO=-
+  ECF_STEP=- ECF_STEP_REQ=- ECF_STEP_PRIO=-
+  ECF_OTP=- ECF_OTP_REQ=- ECF_OTP_PRIO=-
+  ECF_OFFER=- ECF_OFFER_REQ=- ECF_OFFER_PRIO=-
+  ECF_COND=- ECF_COND_REQ=- ECF_COND_PRIO=-
+  ECF_OTP_FORM=- ECF_OTP_FORM_REQ=- ECF_OTP_FORM_PRIO=-
+  while IFS=$'\t' read -r kind a b c d; do
+    case $kind in
+      forms) ECF_FORMS=$a ECF_NEXT=$b ;;
+      subflow) ECF_SUBFLOW=$a ECF_SUBFLOW_REQ=$c ECF_SUBFLOW_PRIO=$d ;;
+      step) ECF_STEP=$a ECF_STEP_REQ=$b ECF_STEP_PRIO=$c ;;
+      otp) ECF_OTP=$a ECF_OTP_REQ=$c ECF_OTP_PRIO=$d ;;
+      offer) ECF_OFFER=$a ECF_OFFER_REQ=$b ECF_OFFER_PRIO=$c ;;
+      otp-condition) ECF_COND=$a ECF_COND_REQ=$b ECF_COND_PRIO=$c ;;
+      otp-form) ECF_OTP_FORM=$a ECF_OTP_FORM_REQ=$b ECF_OTP_FORM_PRIO=$c ;;
+    esac
+  done <"$plan_file"
+}
+
+email_code_parts_present() {
+  [[ $ECF_STEP != - && $ECF_OTP != - && $ECF_OFFER != - && $ECF_COND != - && $ECF_OTP_FORM != - ]]
+}
+
+# What each part of the subflow is now, for a warning: "sky-email-code REQUIRED, subflow '…' DISABLED, …".
+email_code_parts_summary() {
+  printf "%s %s, subflow '%s' %s, conditional-user-configured %s, auth-otp-form %s, %s %s" \
+    "$EMAIL_CODE_STEP" "${ECF_STEP_REQ/#-/missing}" "$EMAIL_CODE_OTP_FLOW_ALIAS" "${ECF_OTP_REQ/#-/missing}" \
+    "${ECF_COND_REQ/#-/missing}" "${ECF_OTP_FORM_REQ/#-/missing}" "$PASSKEY_OFFER_STEP" "${ECF_OFFER_REQ/#-/missing}"
+}
+
+email_code_parts_in_place() {
+  email_code_parts_present \
+    && [[ $ECF_STEP_REQ == REQUIRED && $ECF_OTP_REQ == CONDITIONAL && $ECF_OFFER_REQ == REQUIRED \
+      && $ECF_COND_REQ == REQUIRED && $ECF_OTP_FORM_REQ == REQUIRED ]]
+}
+
+# set_email_code_requirement FLOW_ALIAS ID WANTED PRIORITY [CURRENT LABEL]: makes the execution ID
+# WANTED with its own priority (Admin REST would otherwise move it to priority 0) and, with CURRENT
+# and LABEL, notes the change in the caller's changes array when there is one.
+set_email_code_requirement() {
+  local flow_alias=$1 id=$2 wanted=$3 priority=$4 current=${5:-} label=${6:-}
+  [[ $current != "$wanted" ]] || return 0
+  kcadm update "authentication/flows/$(flow_alias_path "$flow_alias")/executions" -r "$TARGET_REALM" -n \
+    -b "{\"id\":\"$id\",\"requirement\":\"$wanted\",\"priority\":$priority}" >/dev/null
+  if [[ -n $label ]]; then
+    changes+=("$label $current -> $wanted")
+  fi
 }
 
 # eskylab-login-ux 07: the realm's first broker login flow. With KEYCLOAK_YTU_FIRST_LOGIN=on the
@@ -1998,7 +2245,8 @@ reconcile_role_scope() {
 # SKY LAB admin panel. The list is the contract table in sky_lab_genel
 # .scratch/admin-token-authz/spec.md ("Sözleşme: core'un kaynak rolleri"); core (tickets 04/05)
 # checks exactly these names. Every run creates a missing role (manage-clients). Each role is
-# granted to the Privileged groups (ADMIN, YK, DK at /<NAME> and /UYELER/<NAME>, whichever exist)
+# granted to the Privileged groups of its set (CORE_PRIVILEGED_NAMES, or its line in
+# CORE_ROLE_SEED_GROUPS; each name at /<NAME> and /UYELER/<NAME>, whichever exist)
 # ONCE: the role attribute CORE_ROLE_SEED_ATTRIBUTE records when and to which groups, and a role
 # that carries it is never granted again, so a mapping changed or removed in the admin panel stays
 # that way. Nothing here ever removes a mapping or a role. A role added to the list later is seeded
@@ -2006,9 +2254,15 @@ reconcile_role_scope() {
 # reconciler identity deliberately lacks (ADR-0048's reason for manage-clients): its runs create
 # the roles and warn about unseeded ones; an operator seeds them by running this step alone with
 # their own kcadm session (KEYCLOAK_RECONCILE_ONLY=core-roles, runbook §19).
+# DK reads and does not write (grup-yonetimi GY1, ticket 08; core-backend #244): the write roles go
+# to ADMIN and YK only, DK gets global:read (Entra's Global Reader), audit:read (Reports Reader, with
+# ADMIN and YK) and keeps url:access (its own short links, with ADMIN and YK). The write roles DK got before this change are marked as seeded, so no run takes
+# them away: config/dk-read-only.sh does that once (runbook §28).
 CORE_CLIENT_ID=${KEYCLOAK_CORE_CLIENT_ID:-core}
 CORE_ROLE_SEED_ATTRIBUTE=skylab.seeded-group-mappings
-CORE_PRIVILEGED_NAMES=(ADMIN YK DK)
+# The Privileged groups the write roles (every role of CORE_ROLE_DEFINITIONS without a line in
+# CORE_ROLE_SEED_GROUPS) are seeded to.
+CORE_PRIVILEGED_NAMES=(ADMIN YK)
 # name|description (the description is written only when the role is created)
 CORE_ROLE_DEFINITIONS=(
   'event:manage|Her takımın etkinliklerini, etkinlik günlerini ve oturumlarını yönetir; kapı görevlisi atar (ADR-0059)'
@@ -2025,6 +2279,17 @@ CORE_ROLE_DEFINITIONS=(
   'github:activity:read|Kulübün GitHub etkinliğini (özel depolar dahil) görür (ADR-0059)'
   'url:moderator|Her kısa linki ve form bağlantısını görür ve yönetir'
   'url:access|Kısa link oluşturur, kendi linklerini görür ve yönetir'
+  'global:read|Privileged okumaların hepsini yapar, hiçbir şeyi değiştirmez (DK; Entra Global Reader, grup-yonetimi 08)'
+  'audit:read|Ekip denetim kaydını okur (ADMIN, YK ve DK; Entra Reports Reader, ekip-yetki-devri 09)'
+)
+# name|Privileged groups (space separated names): a role seeded to other groups than
+# CORE_PRIVILEGED_NAMES. global:read is DK's alone (core takes it for a reader only); audit:read is
+# read by ADMIN, YK and DK (grup-yonetimi GY1 replaced S11's "not DK"); url:access is the holder's own
+# short links, an app role DK keeps (Yusuf, 2026-10-14, Y1).
+CORE_ROLE_SEED_GROUPS=(
+  'global:read|DK'
+  'audit:read|ADMIN YK DK'
+  'url:access|ADMIN YK DK'
 )
 # new|old: a role that renames another one is seeded once where the old one is held, not to the
 # Privileged groups, so that the rename moves nobody's rights (core reads both names as one while
@@ -2036,8 +2301,8 @@ CORE_ROLE_RENAMES=(
   'competition:manage|competitor:manage'
 )
 
-# The Privileged groups that exist, one "path<TAB>id" per line: of the names given (ADMIN, YK, DK),
-# all three when none is given. Only Keycloak's answer that the path does not exist counts as a
+# The Privileged groups that exist, one "path<TAB>id" per line: of the names given (ADMIN, YK, DK or
+# fewer), CORE_PRIVILEGED_NAMES when none is given. Only Keycloak's answer that the path does not exist counts as a
 # missing group; any other failed lookup (network, permission,
 # server error) fails the function, so the caller never seeds and marks a role without a group
 # that is in fact there.
@@ -2134,12 +2399,43 @@ reconcile_core_roles() {
       privileged+=("$name")
     fi
   done
-  if [[ ${#privileged[@]} -gt 0 ]]; then
-    seed_privileged_client_roles core "$core_uuid" "${CORE_PRIVILEGED_NAMES[*]}" "${privileged[@]}"
-  fi
+  # One call per set of Privileged groups (as SkyMail's roles), the write roles' set
+  # (CORE_PRIVILEGED_NAMES) first, then the others in the order of the list.
+  local group_names known set_names=() sets=("${CORE_PRIVILEGED_NAMES[*]}")
+  for name in ${privileged[@]+"${privileged[@]}"}; do
+    group_names=$(core_role_seed_names "$name")
+    for known in "${sets[@]}"; do
+      [[ $known != "$group_names" ]] || continue 2
+    done
+    sets+=("$group_names")
+  done
+  for group_names in "${sets[@]}"; do
+    set_names=()
+    for name in ${privileged[@]+"${privileged[@]}"}; do
+      if [[ $(core_role_seed_names "$name") == "$group_names" ]]; then
+        set_names+=("$name")
+      fi
+    done
+    if [[ ${#set_names[@]} -gt 0 ]]; then
+      seed_privileged_client_roles core "$core_uuid" "$group_names" "${set_names[@]}"
+    fi
+  done
   for name in ${renamed[@]+"${renamed[@]}"}; do
     core_role_seed_rename "$core_uuid" "$name" "$(core_role_rename_source "$name")"
   done
+}
+
+# The Privileged group names (space separated) a core role is seeded to: its line in
+# CORE_ROLE_SEED_GROUPS, else CORE_PRIVILEGED_NAMES.
+core_role_seed_names() {
+  local line
+  for line in "${CORE_ROLE_SEED_GROUPS[@]}"; do
+    if [[ ${line%%|*} == "$1" ]]; then
+      printf '%s\n' "${line#*|}"
+      return 0
+    fi
+  done
+  printf '%s\n' "${CORE_PRIVILEGED_NAMES[*]}"
 }
 
 # The old name of a renamed core role (CORE_ROLE_RENAMES), empty for any other role.
@@ -2153,9 +2449,9 @@ core_role_rename_source() {
 
 # seed_privileged_client_roles LABEL CLIENT_UUID GROUP_NAMES NAME...: grants each client role to the
 # Privileged groups named in GROUP_NAMES (space separated: ADMIN YK DK or fewer) once and marks it
-# (operator session). Nothing is written unless every check passes. LABEL (core, skymail) names the
-# roles in the messages ("<LABEL> role <name>: seeded once to ..."). core's resource roles (runbook
-# §19) and SkyMail's Privileged roles (§25) share it.
+# (operator session). Nothing is written unless every check passes. LABEL (core, skymail, forms)
+# names the roles in the messages ("<LABEL> role <name>: seeded once to ..."). core's resource roles
+# (runbook §19), SkyMail's Privileged roles (§25) and Forms' (§28) share it.
 seed_privileged_client_roles() {
   local label=$1 client_uuid=$2 group_names=$3
   shift 3
@@ -2748,36 +3044,57 @@ SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS=(
   'skymail:announcements:send|ADMIN YK|Duyuru ve haberi Mail onayı olmadan gönderir (duyuru-haber D4; yalnız ADMIN ve YK, DK yazmaz)'
 )
 
-reconcile_skymail_privileged_roles() {
-  local skymail_uuid roles_csv definition name description created='' seeds role_name role_seed_value seed
+# Forms' Privileged roles (runbook §28), the same way as SkyMail's (same list format):
+#   skyforms:read-all  DK: DK reads every form, its answers and workflows in Forms and writes nothing
+#                      (Yusuf, 2026-10-12 22:15; grup-yonetimi ticket 08, Entra's Global Reader). An
+#                      admin role (club-wide personal data). Nothing reads it yet: forms-backend opens
+#                      the reads to it and no write route (Fatih's; the role contract is in sky_lab_genel
+#                      notes/mesajlar-2026-10-02/ekler/fatih-forms-rol-temizligi-devir-notu.md §6).
+#                      Until then DK keeps the skyforms:* it holds (config/dk-read-only.sh --forms takes
+#                      it away once forms-backend reads this role).
+# forms is a service account client (Forms signs people in through skyforms); the admin panel's role
+# scope carries every forms role (ADMIN_PANEL_API_CLIENTS), this one too.
+FORMS_CLIENT_ID=forms
+FORMS_PRIVILEGED_ROLE_DEFINITIONS=(
+  'skyforms:read-all|DK|Her formu, cevaplarını ve iş akışlarını okur, hiçbir şeyi değiştirmez (DK; grup-yonetimi 08)'
+)
+
+# reconcile_privileged_app_roles CLIENT_ID LABEL OWNER DEFINITIONS SECTION: the Privileged roles of one
+# application client (DEFINITIONS names its list, "name|Privileged groups|description"). LABEL names
+# the roles in the messages ("<LABEL> roles not yet granted", "<LABEL> role <name>: seeded once"),
+# OWNER is the possessive in "skipped <OWNER> Privileged roles", SECTION the runbook section.
+reconcile_privileged_app_roles() {
+  local client_id=$1 label=$2 owner=$3 section=$5
+  local -n definitions=$4
+  local client_uuid roles_csv definition name description created='' seeds role_name role_seed_value seed
   local unseeded=()
-  if ! skymail_uuid=$(optional_lookup client_id_by_client_id "$SKYMAIL_CLIENT_ID"); then
+  if ! client_uuid=$(optional_lookup client_id_by_client_id "$client_id"); then
     return 2
   fi
-  if [[ -z $skymail_uuid ]]; then
-    warn "client $SKYMAIL_CLIENT_ID does not exist in realm $TARGET_REALM; skipped SkyMail's Privileged roles"
+  if [[ -z $client_uuid ]]; then
+    warn "client $client_id does not exist in realm $TARGET_REALM; skipped $owner Privileged roles"
     return 0
   fi
-  roles_csv=$(kcadm get "clients/$skymail_uuid/roles" -r "$TARGET_REALM" --fields name --format csv --noquotes \
+  roles_csv=$(kcadm get "clients/$client_uuid/roles" -r "$TARGET_REALM" --fields name --format csv --noquotes \
     | tr -d '\r')
-  for definition in "${SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS[@]}"; do
+  for definition in "${definitions[@]}"; do
     name=${definition%%|*}
     description=${definition##*|}
     if ! grep -Fxq -- "$name" <<<"$roles_csv"; then
-      kcadm_quiet create "clients/$skymail_uuid/roles" -r "$TARGET_REALM" \
+      kcadm_quiet create "clients/$client_uuid/roles" -r "$TARGET_REALM" \
         -s "name=$name" -s "description=$description"
       created="$created, $name"
     fi
   done
   if [[ -z $created ]]; then
-    log "Privileged roles of $SKYMAIL_CLIENT_ID (${#SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS[@]}): unchanged"
+    log "Privileged roles of $client_id (${#definitions[@]}): unchanged"
   else
-    log "Privileged roles of $SKYMAIL_CLIENT_ID (${#SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS[@]}): created (${created#, })"
+    log "Privileged roles of $client_id (${#definitions[@]}): created (${created#, })"
   fi
 
-  seeds=$(kcadm_json "clients/$skymail_uuid/roles" -r "$TARGET_REALM" -q briefRepresentation=false \
+  seeds=$(kcadm_json "clients/$client_uuid/roles" -r "$TARGET_REALM" -q briefRepresentation=false \
     | json_tool role-attribute "$CORE_ROLE_SEED_ATTRIBUTE")
-  for definition in "${SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS[@]}"; do
+  for definition in "${definitions[@]}"; do
     name=${definition%%|*}
     seed=''
     while IFS=$'\t' read -r role_name role_seed_value; do
@@ -2786,18 +3103,18 @@ reconcile_skymail_privileged_roles() {
     [[ -n $seed ]] || unseeded+=("$name")
   done
   if [[ ${#unseeded[@]} == 0 ]]; then
-    log "group mappings of the $SKYMAIL_CLIENT_ID Privileged roles: unchanged (each seeded once; the SKY LAB admin panel owns them)"
+    log "group mappings of the $client_id Privileged roles: unchanged (each seeded once; the SKY LAB admin panel owns them)"
     return 0
   fi
   if [[ -z $OPERATOR_KCADM_CONFIG ]]; then
-    warn "skymail roles not yet granted to the Privileged groups: ${unseeded[*]} (granting a role to a group needs user permissions the reconciler identity does not have); run this step alone with an operator session: KEYCLOAK_RECONCILE_ONLY=core-roles (runbook §25)"
+    warn "$label roles not yet granted to the Privileged groups: ${unseeded[*]} (granting a role to a group needs user permissions the reconciler identity does not have); run this step alone with an operator session: KEYCLOAK_RECONCILE_ONLY=core-roles (runbook $section)"
     return 0
   fi
 
   # Operator session: seed, with the same checks and mark as core's resource roles, one call per set
   # of Privileged groups (in the order of the list).
   local group_names known set_names=() sets=()
-  for definition in "${SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS[@]}"; do
+  for definition in "${definitions[@]}"; do
     group_names=${definition#*|}
     group_names=${group_names%%|*}
     for known in ${sets[@]+"${sets[@]}"}; do
@@ -2807,16 +3124,24 @@ reconcile_skymail_privileged_roles() {
   done
   for group_names in "${sets[@]}"; do
     set_names=()
-    for definition in "${SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS[@]}"; do
+    for definition in "${definitions[@]}"; do
       name=${definition%%|*}
       if [[ ${definition#*|} == "$group_names|"* && " ${unseeded[*]} " == *" $name "* ]]; then
         set_names+=("$name")
       fi
     done
     if [[ ${#set_names[@]} -gt 0 ]]; then
-      seed_privileged_client_roles skymail "$skymail_uuid" "$group_names" "${set_names[@]}"
+      seed_privileged_client_roles "$label" "$client_uuid" "$group_names" "${set_names[@]}"
     fi
   done
+}
+
+reconcile_skymail_privileged_roles() {
+  reconcile_privileged_app_roles "$SKYMAIL_CLIENT_ID" skymail "SkyMail's" SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS '§25'
+}
+
+reconcile_forms_privileged_roles() {
+  reconcile_privileged_app_roles "$FORMS_CLIENT_ID" forms "Forms'" FORMS_PRIVILEGED_ROLE_DEFINITIONS '§28'
 }
 
 # The keycloak-mailer service-account client (K5) is provisioned by the operator with
@@ -2985,8 +3310,9 @@ if [[ $RECONCILE_ONLY == login-clients ]]; then
 fi
 if [[ $RECONCILE_ONLY == core-roles ]]; then
   reconcile_core_roles
-  # SkyMail's Privileged roles have the same operator step (runbook §25).
+  # SkyMail's and Forms' Privileged roles have the same operator step (runbook §25, §28).
   reconcile_skymail_privileged_roles
+  reconcile_forms_privileged_roles
   printf 'Core resource roles are reconciled.\n'
   exit 0
 fi
@@ -2995,6 +3321,16 @@ if [[ $RECONCILE_ONLY == first-broker-login ]]; then
   reconcile_personal_email_offer
   reconcile_stay_signed_in
   printf 'First broker login flow is reconciled.\n'
+  exit 0
+fi
+if [[ $RECONCILE_ONLY == email-code-login ]]; then
+  reconcile_email_code_login
+  if [[ -n $EMAIL_CODE_UNGUARDED ]]; then
+    printf 'E-mail code sign-in is reconciled except the OTP after the code (%s); run again with KEYCLOAK_EMAIL_CODE_LOGIN=on (or off), or fix the subflow in the Admin Console\n' \
+      "$EMAIL_CODE_UNGUARDED" >&2
+    exit 3
+  fi
+  printf 'E-mail code sign-in is reconciled.\n'
   exit 0
 fi
 if [[ $RECONCILE_ONLY == service-roles ]]; then
@@ -3019,6 +3355,7 @@ retire_account_center_browser_flow
 # account-center-browser, the other flow that held a username/password form, is retired and
 # deleted just above; the realm browser flow is the only one left to swap.
 reconcile_password_form "$BROWSER_FLOW_ALIAS"
+reconcile_email_code_login
 reconcile_reset_choose_user
 reconcile_reset_otp_step
 reconcile_first_broker_login
@@ -3038,6 +3375,13 @@ reconcile_skyapp_audience
 reconcile_login_clients
 reconcile_login_client_audience "$SKYFORMS_CLIENT_ID" "$SKYFORMS_SCOPE_NAME" \
   "$CONFIG_DIR/skyforms-forms-audience-mappers.json"
+# Forms' sidebar label reads the person's groups from the skyforms access token (Fatih, 2026-10-15;
+# realm roles go with the role clean-up): full paths, as core and inscribed read them, in the access
+# token and introspection only (not the ID token Auth.js keeps in its cookie, not userinfo). Its own
+# source-controlled default scope, kept like the audience scope above; a realm scope "groups" that
+# also reaches skyforms adds nothing (Keycloak merges a multivalued claim without repeating a path).
+reconcile_login_client_audience "$SKYFORMS_CLIENT_ID" "$SKYFORMS_GROUPS_SCOPE_NAME" \
+  "$CONFIG_DIR/skyforms-groups-mappers.json"
 reconcile_account_center_client_scopes "$scope_uuid" "$core_scope_uuid"
 reconcile_account_scope_mappings
 verify_mailer_client
@@ -3045,6 +3389,8 @@ verify_erasure_client
 # Before the admin panel's step, so that a core role created here enters its scope in this run.
 reconcile_core_roles
 reconcile_skymail_privileged_roles
+# Before the admin panel's step too: a forms role created here enters its scope in this run.
+reconcile_forms_privileged_roles
 # Also before the admin panel's step: a core service role created here enters its scope in this run.
 reconcile_core_service_roles
 # Last: a public admin panel client stops the run, and every other step is done by then; core and
@@ -3054,6 +3400,12 @@ reconcile_admin_panel_client
 if [[ -n $RESET_OTP_UNGUARDED ]]; then
   printf 'Account Center Keycloak configuration is reconciled except the reset OTP step (%s); fix the subflow in the Admin Console and run again\n' \
     "$RESET_OTP_UNGUARDED" >&2
+fi
+if [[ -n $EMAIL_CODE_UNGUARDED ]]; then
+  printf 'Account Center Keycloak configuration is reconciled except the OTP after the e-mail code (%s); run again with KEYCLOAK_EMAIL_CODE_LOGIN=on (or off), or fix the subflow in the Admin Console\n' \
+    "$EMAIL_CODE_UNGUARDED" >&2
+fi
+if [[ -n $RESET_OTP_UNGUARDED || -n $EMAIL_CODE_UNGUARDED ]]; then
   exit 3
 fi
 printf 'Account Center Keycloak configuration is reconciled.\n'

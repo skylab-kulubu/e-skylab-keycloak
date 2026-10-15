@@ -13,9 +13,6 @@ import org.keycloak.broker.provider.AbstractIdentityProvider;
 import org.keycloak.common.util.Base64Url;
 import org.keycloak.common.util.SecretGenerator;
 import org.keycloak.common.util.Time;
-import org.keycloak.crypto.Algorithm;
-import org.keycloak.crypto.KeyUse;
-import org.keycloak.crypto.KeyWrapper;
 import org.keycloak.events.Details;
 import org.keycloak.events.Errors;
 import org.keycloak.events.EventBuilder;
@@ -28,20 +25,7 @@ import org.keycloak.models.RequiredActionProviderModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.sessions.AuthenticationSessionModel;
 
-import java.net.Inet4Address;
-import java.net.Inet6Address;
-import java.net.InetAddress;
-import java.net.UnknownHostException;
-import java.nio.charset.StandardCharsets;
-import java.security.InvalidKeyException;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.HexFormat;
 import java.util.List;
-import java.util.regex.Pattern;
-import javax.crypto.Mac;
-import javax.crypto.SecretKey;
-import javax.crypto.spec.SecretKeySpec;
 
 /**
  * {@code sky-personal-email-offer}: once, at the end of a first YTÜ login that opened an account with
@@ -139,8 +123,6 @@ public final class PersonalEmailOffer implements RequiredActionProvider, Require
 
     private static final Logger LOG = Logger.getLogger(PersonalEmailOffer.class);
     private static final int HANDLE_BYTES = 32;
-    private static final Pattern IPV4 = Pattern.compile("^[0-9]{1,3}(\\.[0-9]{1,3}){3}$");
-    private static final Pattern IPV6 = Pattern.compile("^[0-9a-fA-F:.]+$");
 
     /**
      * Called by {@code sky-ytu-first-login} when it writes {@code schoolAddress} as the Primary e-mail
@@ -341,7 +323,7 @@ public final class PersonalEmailOffer implements RequiredActionProvider, Require
     /**
      * One slot of each budget, in order, stopping at the first that is spent: this sign-in session,
      * the IP class, everybody, then the address. The IP class and address budgets are per realm (the
-     * sandbox realm shares the server with production). Every key is a keyed hash ({@link #keyed}) or
+     * sandbox realm shares the server with production). Every key is a keyed hash ({@link BudgetKeys#keyed}) or
      * an id, never the address or the IP itself; a key lives in memory until its hour ends.
      */
     private static boolean claimBudgets(RequiredActionContext context, String address) {
@@ -365,87 +347,10 @@ public final class PersonalEmailOffer implements RequiredActionProvider, Require
         RealmModel realm = context.getRealm();
         return List.of(
                 new Budget(RateLimiter.OFFER_SESSION,
-                        keyed(session, realm, "session:" + authSession.getParentSession().getId() + "/" + authSession.getTabId())),
-                new Budget(RateLimiter.OFFER_IP_CLASS, keyed(session, realm, "ip-class:" + ipClass(remote))),
+                        BudgetKeys.keyed(session, realm, "session:" + authSession.getParentSession().getId() + "/" + authSession.getTabId())),
+                new Budget(RateLimiter.OFFER_IP_CLASS, BudgetKeys.keyed(session, realm, "ip-class:" + BudgetKeys.ipClass(remote))),
                 new Budget(RateLimiter.OFFER_ALL, realm.getId()),
-                new Budget(RateLimiter.OFFER_ADDRESS, keyed(session, realm, "address:" + address)));
-    }
-
-    /**
-     * The network an address belongs to, as a budget key: an IPv4 address's /24, an IPv6 address's
-     * /64 (one subscriber), or {@code unknown} for anything that is not an address literal (no
-     * name is ever resolved).
-     */
-    static String ipClass(String remote) {
-        if (remote == null || remote.isBlank()) {
-            return "unknown";
-        }
-        String literal = remote.strip();
-        if (IPV4.matcher(literal).matches()) {
-            String[] octets = literal.split("\\.");
-            for (String octet : octets) {
-                if (Integer.parseInt(octet) > 255) {
-                    return "unknown";
-                }
-            }
-            return "v4:" + Integer.parseInt(octets[0]) + "." + Integer.parseInt(octets[1]) + "." + Integer.parseInt(octets[2]);
-        }
-        try {
-            // A string with a colon is only ever parsed as an IPv6 literal: no name is resolved.
-            if (literal.indexOf(':') >= 0 && IPV6.matcher(literal).matches()) {
-                InetAddress parsed = InetAddress.getByName(literal);
-                byte[] bytes = parsed.getAddress();
-                if (parsed instanceof Inet4Address) {
-                    return "v4:" + (bytes[0] & 0xff) + "." + (bytes[1] & 0xff) + "." + (bytes[2] & 0xff);
-                }
-                if (parsed instanceof Inet6Address) {
-                    return "v6:" + HexFormat.of().formatHex(bytes, 0, 8);
-                }
-            }
-        } catch (UnknownHostException malformed) {
-            return "unknown";
-        }
-        return "unknown";
-    }
-
-    /** What the budget sub-key is derived for, so the realm's signing key is never used as is. */
-    static final String BUDGET_KEY_LABEL = "sky-personal-email-limits";
-
-    /**
-     * A budget key for {@code value} in this realm: HMAC-SHA256 under a sub-key derived from the
-     * realm's active HS512 key (HMAC-SHA256 of {@value #BUDGET_KEY_LABEL} under it), a server secret
-     * Keycloak keeps in its database, the same on every node, so a stored key cannot be turned back
-     * into a /24 or an address by trying them all. Keycloak creates an HS512 key for a realm that has
-     * none ({@code fallback-HS512}); only without a key manager (unit tests) is the key a SHA-256 of
-     * the realm id and the value. Rotating the realm key only starts the budgets afresh.
-     */
-    static String keyed(KeycloakSession session, RealmModel realm, String value) {
-        byte[] input = (realm.getId() + "/" + value).getBytes(StandardCharsets.UTF_8);
-        SecretKey realmKey = realmHmacKey(session, realm);
-        try {
-            if (realmKey != null) {
-                byte[] subKey = hmac(realmKey.getEncoded(), BUDGET_KEY_LABEL.getBytes(StandardCharsets.UTF_8));
-                return "h" + HexFormat.of().formatHex(hmac(subKey, input));
-            }
-            return "s" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(input));
-        } catch (NoSuchAlgorithmException | InvalidKeyException exception) {
-            throw new IllegalStateException("HMAC-SHA256 or SHA-256 is unavailable", exception);
-        }
-    }
-
-    private static byte[] hmac(byte[] key, byte[] input) throws NoSuchAlgorithmException, InvalidKeyException {
-        Mac mac = Mac.getInstance("HmacSHA256");
-        mac.init(new SecretKeySpec(key, "HmacSHA256"));
-        return mac.doFinal(input);
-    }
-
-    private static SecretKey realmHmacKey(KeycloakSession session, RealmModel realm) {
-        if (session.keys() == null) {
-            return null;
-        }
-        KeyWrapper key = session.keys().getActiveKey(realm, KeyUse.SIG, Algorithm.HS512);
-        return key == null || key.getSecretKey() == null || key.getSecretKey().getEncoded() == null
-                ? null : key.getSecretKey();
+                new Budget(RateLimiter.OFFER_ADDRESS, BudgetKeys.keyed(session, realm, "address:" + address)));
     }
 
     /** This session's code, if one is waiting. */

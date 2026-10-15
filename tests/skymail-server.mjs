@@ -19,6 +19,7 @@ const requiredVariables = [
   "linkExpirationMinutes",
   "code",
   "codeExpirationMinutes",
+  "purpose",
   "firstName",
   "username",
   "realmDisplayName",

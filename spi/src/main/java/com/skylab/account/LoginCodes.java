@@ -15,7 +15,10 @@ import java.util.regex.Pattern;
  * records whom the code signs in and the address it was mailed to, so the sign-in can check that
  * the address is still where that person's codes go. A session that asked for a code for an
  * identifier that names nobody holds a code too, for nobody ({@code userId} and {@code address}
- * empty) and never mailed, so that the page and its tries look the same either way.
+ * empty) and never mailed, so that the page and its tries look the same either way. With
+ * Self-registration on (eskylab-login-ux 09), an e-mail address that names nobody gets a sign-up code
+ * instead ({@link #issueSignUp}): for nobody too, but mailed to that address, marked
+ * {@value #SIGN_UP_PURPOSE}; its right code proves the address. A Login code's record keeps its format.
  *
  * <p>The code's rules are {@link SingleUseCodes}': ten minutes, dead after five wrong tries, single
  * use, only a salted hash stored; a new code for the same session replaces the old one. A Login code

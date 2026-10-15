@@ -658,7 +658,6 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
     /** "Hesabı aç": the names, then the account, then the sign-in. */
     private void submitSignUp(AuthenticationFlowContext context, String typedFirstName, String typedLastName) {
         KeycloakSession session = context.getSession();
-        RealmModel realm = context.getRealm();
         AuthenticationSessionModel authSession = context.getAuthenticationSession();
         String address = provenAddress(authSession);
         if (address == null) {

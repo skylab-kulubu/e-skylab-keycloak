@@ -1584,6 +1584,85 @@ class EmailCodeAuthenticatorTest {
     }
 
     @Test
+    void anAddressThatNamesTwoPeopleOrADisabledAccountGetsNoSignUpCode() {
+        signUpOn = true;
+        person("one", "one", "shared@example.com");
+        person("two", "shared@example.com", "two@example.com");
+        UserModel disabled = person("off", "off", "off@example.com");
+        when(disabled.isEnabled()).thenReturn(false);
+
+        for (String typed : List.of("shared@example.com", "off@example.com")) {
+            Browser tab = new Browser("root-" + typed, "198.51.100.43");
+            tab.send(typed);
+            assertEquals("code", tab.stage(), typed);
+        }
+        assertTrue(mail.sent.isEmpty(), "an address that names somebody is never signed up");
+    }
+
+    // Nobody is signed in by an address that is not where their codes go (spec S4): an address that
+    // became somebody's proven Personal e-mail in the ten minutes, while their Primary is another,
+    // opens nothing and signs nobody in.
+    @Test
+    void anAddressThatBecameSomebodysSecondAddressMeanwhileSignsNobodyIn() {
+        signUpOn = true;
+        browser.send("new@example.com");
+        String code = mail.last().code();
+        person("ada", "ada", "ada@example.com", IdentityResource.PERSONAL_EMAIL_ATTRIBUTE + "=new@example.com",
+                IdentityResource.PERSONAL_EMAIL_VERIFIED_AT_ATTRIBUTE + "=2026-10-15T10:00:00Z");
+
+        browser.verify(code);
+
+        assertEquals("unavailable", browser.signUpStage());
+        assertFalse(browser.succeeded);
+        browser.carryOn();
+        assertFalse(browser.succeeded, "there is no existing stage to continue from");
+        assertTrue(opened.isEmpty());
+    }
+
+    // Spec §7.5: the sign-up's refusals name neither the IP nor the address.
+    @Test
+    void signUpRefusalsCarryNeitherTheIpNorTheAddress() {
+        signUpOn = true;
+        Browser tab = provenSignUp("root-ytu", "yeni@std.yildiz.edu.tr");
+
+        int index = tab.clonedTypes.lastIndexOf(EventType.REGISTER);
+        EventBuilder refusal = tab.failures.get(index);
+        verify(refusal).ipAddress(null);
+        verify(refusal).removeDetail(Details.USERNAME);
+        verify(refusal).error(org.keycloak.events.Errors.INVALID_REGISTRATION);
+        assertFalse(tab.failureDetails.get(index).containsValue("yeni@std.yildiz.edu.tr"));
+    }
+
+    @Test
+    void theFourthSignUpCodeToOneAddressInAQuarterHourIsNotMailed() {
+        signUpOn = true;
+        Time.setOffset(-(Time.currentTime() % (15 * 60)));
+        for (int i = 0; i < 4; i++) {
+            Browser tab = new Browser("root-q" + i, "198.51.100.8" + i);
+            tab.send("new@example.com");
+            assertEquals("code", tab.stage());
+        }
+        assertEquals(3, mail.sent.size(), "the address budget holds for sign-up codes too");
+    }
+
+    // ADR-0044's rule for a sign-up code too: it works only in the sign-in session that asked for it.
+    @Test
+    void aSignUpCodeDoesNotWorkInAnotherBrowser() {
+        signUpOn = true;
+        browser.send("new@example.com");
+        String code = mail.last().code();
+        Browser other = new Browser("root-other", "198.51.100.90");
+        other.send("other@example.com");
+
+        other.verify(code);
+
+        assertEquals("wrong_code", other.error());
+        assertNull(other.signUpStage());
+        browser.verify(code);
+        assertEquals("form", browser.signUpStage(), "the other browser's try cost this one nothing");
+    }
+
+    @Test
     void theStoreHoldsNeitherTheSignUpCodeNorTheAddressInAnyKey() {
         signUpOn = true;
         Browser tab = provenSignUp("root-new", "new@example.com");

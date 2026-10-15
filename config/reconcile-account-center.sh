@@ -115,6 +115,19 @@ EMAIL_CODE_UNGUARDED=''
 EMAIL_CODE_STEP=sky-email-code
 EMAIL_CODE_FLOW_ALIAS='sky email code'
 EMAIL_CODE_OTP_FLOW_ALIAS='sky email code conditional otp'
+# eskylab-login-ux 09 (ADR-0063 decision 1, CONTEXT "Self-registration"): with
+# KEYCLOAK_EMAIL_CODE_SIGN_UP=on the realm's sky-email-code step gets its sign-up setting (Keycloak's
+# authenticator config EMAIL_CODE_SIGN_UP_CONFIG_ALIAS, EMAIL_CODE_SIGN_UP_SETTING=true): an e-mail
+# address without an account is mailed a sign-up code and the right code opens the sign-up form (SPI
+# 1.22.0). off sets it to false (the rollback; sign-in codes are not touched). The default, keep, only
+# reports, so a full reconciliation never turns sign-up on or off. Realm by realm (sandbox first); it
+# needs the step (KEYCLOAK_EMAIL_CODE_LOGIN=on, which may run in the same call). Also part of the
+# operator step KEYCLOAK_RECONCILE_ONLY=email-code-login. Keycloak's own registration page
+# (registrationAllowed) stays off whatever this says (spec S2). In production it goes on only after
+# tickets 11 and 12 are live (spec §10).
+EMAIL_CODE_SIGN_UP=${KEYCLOAK_EMAIL_CODE_SIGN_UP:-keep}
+EMAIL_CODE_SIGN_UP_SETTING=sign-up
+EMAIL_CODE_SIGN_UP_CONFIG_ALIAS='sky email code sign-up'
 PASSKEY_OFFER_STEP=passkey-offer-authenticator
 SCOPE_NAME=account-center-account-api
 CORE_SCOPE_NAME=account-center-core-claims
@@ -315,6 +328,13 @@ case $EMAIL_CODE_LOGIN in
   keep | on | off) ;;
   *)
     printf 'KEYCLOAK_EMAIL_CODE_LOGIN must be keep (default), on or off (rollback), not %s\n' "$EMAIL_CODE_LOGIN" >&2
+    exit 1
+    ;;
+esac
+case $EMAIL_CODE_SIGN_UP in
+  keep | on | off) ;;
+  *)
+    printf 'KEYCLOAK_EMAIL_CODE_SIGN_UP must be keep (default), on or off (rollback), not %s\n' "$EMAIL_CODE_SIGN_UP" >&2
     exit 1
     ;;
 esac
@@ -1003,6 +1023,122 @@ set_email_code_requirement() {
   if [[ -n $label ]]; then
     changes+=("$label $current -> $wanted")
   fi
+}
+
+# eskylab-login-ux 09: Self-registration on the e-mail code step (see EMAIL_CODE_SIGN_UP above). The
+# step's sign-up setting lives in its Keycloak authenticator config: on creates the config
+# (EMAIL_CODE_SIGN_UP_CONFIG_ALIAS) or sets the setting to true, off sets it to false; both read the
+# config back. The step is found with the e-mail code planner, so a flow that one would refuse is
+# refused here too. keep only reports.
+reconcile_email_code_sign_up() {
+  local flow_alias flow_id built_in config_id config_file body_file status state wanted
+  flow_alias=$(kcadm_json "realms/$TARGET_REALM" --fields browserFlow | json_tool field browserFlow)
+  if [[ -z $flow_alias ]]; then
+    if [[ $EMAIL_CODE_SIGN_UP == on ]]; then
+      printf 'Realm %s has no browser flow binding\n' "$TARGET_REALM" >&2
+      return 1
+    fi
+    log "e-mail code sign-up: unchanged (realm $TARGET_REALM has no browser flow binding)"
+    return 0
+  fi
+  flow_id=$(flow_id_by_alias "$flow_alias")
+  built_in=$(kcadm_json "authentication/flows/$flow_id" -r "$TARGET_REALM" | json_tool field builtIn)
+  if [[ $built_in == true ]]; then
+    if [[ $EMAIL_CODE_SIGN_UP == on ]]; then
+      printf "Realm %s is bound to Keycloak's built-in browser flow '%s', which has no e-mail code step; nothing was changed\n" \
+        "$TARGET_REALM" "$flow_alias" >&2
+      return 1
+    fi
+    log "e-mail code sign-up of flow '$flow_alias': unchanged (Keycloak's built-in flow)"
+    return 0
+  fi
+  if [[ $EMAIL_CODE_SIGN_UP == keep ]]; then
+    if ! plan_email_code_flow "$flow_alias" 2>/dev/null; then
+      log "e-mail code sign-up of flow '$flow_alias': unchanged (the flow could not be planned; see the e-mail code sign-in line)"
+      return 0
+    fi
+  else
+    plan_email_code_flow "$flow_alias" || return 1
+  fi
+  if [[ $ECF_STEP == - ]]; then
+    if [[ $EMAIL_CODE_SIGN_UP == on ]]; then
+      printf "Flow '%s' has no %s step for the sign-up setting; KEYCLOAK_EMAIL_CODE_LOGIN=on adds it (it may run in the same call)\n" \
+        "$flow_alias" "$EMAIL_CODE_STEP" >&2
+      return 1
+    fi
+    log "e-mail code sign-up of flow '$flow_alias': unchanged (no $EMAIL_CODE_STEP step)"
+    return 0
+  fi
+  config_file=$(mktemp "$WORK_DIR/sign-up-config.XXXXXX")
+  body_file=$(mktemp "$WORK_DIR/sign-up-body.XXXXXX")
+  config_id=$(kcadm_json "authentication/executions/$ECF_STEP" -r "$TARGET_REALM" | json_tool field authenticatorConfig)
+  state=off
+  if [[ -n $config_id ]]; then
+    kcadm_json "authentication/config/$config_id" -r "$TARGET_REALM" >"$config_file"
+    if json_tool config-value "$EMAIL_CODE_SIGN_UP_SETTING" true <"$config_file" >/dev/null; then
+      state=on
+    fi
+  fi
+  case $EMAIL_CODE_SIGN_UP in
+    keep)
+      log "e-mail code sign-up of flow '$flow_alias': unchanged ($state; KEYCLOAK_EMAIL_CODE_SIGN_UP=on or off changes it)"
+      return 0
+      ;;
+    on)
+      if [[ $state == on ]]; then
+        log "e-mail code sign-up of flow '$flow_alias': unchanged (on)"
+        return 0
+      fi
+      if [[ -z $config_id ]]; then
+        kcadm create "authentication/executions/$ECF_STEP/config" -r "$TARGET_REALM" \
+          -b "{\"alias\":\"$EMAIL_CODE_SIGN_UP_CONFIG_ALIAS\",\"config\":{\"$EMAIL_CODE_SIGN_UP_SETTING\":\"true\"}}" >/dev/null
+      else
+        if json_tool config-value "$EMAIL_CODE_SIGN_UP_SETTING" true <"$config_file" >"$body_file"; then
+          status=0
+        else
+          status=$?
+        fi
+        if [[ $status != 3 ]]; then
+          printf "Could not plan the sign-up setting of %s in flow '%s' (status %s)\n" "$EMAIL_CODE_STEP" "$flow_alias" "$status" >&2
+          return 1
+        fi
+        kcadm update "authentication/config/$config_id" -r "$TARGET_REALM" -n -f "$body_file" >/dev/null
+      fi
+      ;;
+    off)
+      if [[ $state == off ]]; then
+        log "e-mail code sign-up of flow '$flow_alias': unchanged (off)"
+        return 0
+      fi
+      if json_tool config-value "$EMAIL_CODE_SIGN_UP_SETTING" false <"$config_file" >"$body_file"; then
+        status=0
+      else
+        status=$?
+      fi
+      if [[ $status != 3 ]]; then
+        printf "Could not plan the sign-up setting of %s in flow '%s' (status %s)\n" "$EMAIL_CODE_STEP" "$flow_alias" "$status" >&2
+        return 1
+      fi
+      kcadm update "authentication/config/$config_id" -r "$TARGET_REALM" -n -f "$body_file" >/dev/null
+      ;;
+  esac
+  # Read back: the setting is what was asked for.
+  config_id=$(kcadm_json "authentication/executions/$ECF_STEP" -r "$TARGET_REALM" | json_tool field authenticatorConfig)
+  if [[ -z $config_id ]]; then
+    printf "The %s step of flow '%s' has no config after the change; inspect it in the Admin Console\n" "$EMAIL_CODE_STEP" "$flow_alias" >&2
+    return 1
+  fi
+  kcadm_json "authentication/config/$config_id" -r "$TARGET_REALM" >"$config_file"
+  wanted=false
+  if [[ $EMAIL_CODE_SIGN_UP == on ]]; then
+    wanted=true
+  fi
+  if ! json_tool config-value "$EMAIL_CODE_SIGN_UP_SETTING" "$wanted" <"$config_file" >/dev/null; then
+    printf "The sign-up setting of %s in flow '%s' is not %s after the change; inspect it in the Admin Console\n" \
+      "$EMAIL_CODE_STEP" "$flow_alias" "$EMAIL_CODE_SIGN_UP" >&2
+    return 1
+  fi
+  log "e-mail code sign-up of flow '$flow_alias': updated ($state -> $EMAIL_CODE_SIGN_UP)"
 }
 
 # eskylab-login-ux 07: the realm's first broker login flow. With KEYCLOAK_YTU_FIRST_LOGIN=on the
@@ -3324,6 +3460,7 @@ if [[ $RECONCILE_ONLY == first-broker-login ]]; then
 fi
 if [[ $RECONCILE_ONLY == email-code-login ]]; then
   reconcile_email_code_login
+  reconcile_email_code_sign_up
   if [[ -n $EMAIL_CODE_UNGUARDED ]]; then
     printf 'E-mail code sign-in is reconciled except the OTP after the code (%s); run again with KEYCLOAK_EMAIL_CODE_LOGIN=on (or off), or fix the subflow in the Admin Console\n' \
       "$EMAIL_CODE_UNGUARDED" >&2
@@ -3355,6 +3492,7 @@ retire_account_center_browser_flow
 # deleted just above; the realm browser flow is the only one left to swap.
 reconcile_password_form "$BROWSER_FLOW_ALIAS"
 reconcile_email_code_login
+reconcile_email_code_sign_up
 reconcile_reset_choose_user
 reconcile_reset_otp_step
 reconcile_first_broker_login

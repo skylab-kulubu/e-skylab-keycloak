@@ -19,7 +19,8 @@ const pagesWithLoginKvkkSentence: ThemedPageId[] = [
   "login.ftl",
   "passkey-offer.ftl",
   "sky-personal-email-offer.ftl",
-  "sky-stay-signed-in.ftl"
+  "sky-stay-signed-in.ftl",
+  "sky-email-code.ftl"
 ];
 const pagesWithoutLanguageMenu: ThemedPageId[] = ["sky-handoff-failed.ftl"];
 

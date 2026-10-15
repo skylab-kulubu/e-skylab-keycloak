@@ -5,8 +5,8 @@ test("login uses semantic landmarks and preserves remember-me for passkeys", asy
 
   await expect(page.getByRole("main")).toBeVisible();
   await expect(page.getByRole("heading", { name: "SKY LAB'e Hoş Geldin!" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "YTÜ Öğrencisiyim" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "YTÜ Öğrencisi Değilim" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "YTÜ hesabınla devam et Microsoft ile" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "E-postayla devam et" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Erişim anahtarı ile giriş yap" })).toBeVisible();
   await expect(page.getByRole("contentinfo")).toContainText("e-skylab by WEBLAB");
   await expect(page.getByRole("contentinfo").getByRole("link", { name: "Developed by Yusuf Açmacı" })).toHaveAttribute(
@@ -28,7 +28,7 @@ test("login uses semantic landmarks and preserves remember-me for passkeys", asy
     "sl-legacy-logo-draw, sl-legacy-logo-fill, sl-legacy-logo-stroke-fade"
   );
 
-  await page.getByRole("button", { name: "YTÜ Öğrencisi Değilim" }).click();
+  await page.getByRole("button", { name: "E-postayla devam et" }).click();
   await expect(page.getByRole("button", { name: "Giriş yap", exact: true })).toBeVisible();
 
   const rememberMe = page.locator("#rememberMe");
@@ -54,7 +54,7 @@ test("keyboard navigation exposes the skip link and localized legacy copy", asyn
   await page.goto("/?page=login.ftl&lang=en");
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
   await expect(page.getByRole("heading", { name: "Welcome to SKY LAB!" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "I'm a YTÜ Student" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Continue with your YTÜ account via Microsoft" })).toBeVisible();
   await expect(page.getByRole("contentinfo")).toContainText("e-skylab by WEBLAB");
 });
 
@@ -194,7 +194,7 @@ test("after a reset request the confirmation is the first thing on the login car
   await expect(message).toBeFocused();
 
   // Above the sign-in choices, without opening the password form first.
-  const microsoft = page.getByRole("link", { name: "YTÜ Öğrencisiyim" });
+  const microsoft = page.getByRole("link", { name: "YTÜ hesabınla devam et Microsoft ile" });
   const messageBox = await message.boundingBox();
   const microsoftBox = await microsoft.boundingBox();
   expect(messageBox).not.toBeNull();
@@ -206,7 +206,7 @@ test("after a reset request the confirmation is the first thing on the login car
   await expect(microsoft).toBeFocused();
 
   // The message stays on the card in the password form.
-  await page.getByRole("button", { name: "YTÜ Öğrencisi Değilim" }).click();
+  await page.getByRole("button", { name: "E-postayla devam et" }).click();
   await expect(message).toBeVisible();
   await expect(page.locator("#username")).toBeFocused();
 });
@@ -214,7 +214,7 @@ test("after a reset request the confirmation is the first thing on the login car
 test("a page-wide login error is an alert on the first screen; wrong credentials stay on the fields", async ({ page }) => {
   await page.goto("/?page=login.ftl&state=idp-error");
   await expect(page.getByRole("alert")).toContainText("beklenmeyen bir sorun");
-  await expect(page.getByRole("link", { name: "YTÜ Öğrencisiyim" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "YTÜ hesabınla devam et Microsoft ile" })).toBeVisible();
 
   await page.goto("/?page=login.ftl&state=invalid-credentials");
   await expect(page.locator(".sl-legacy-alert")).toHaveCount(0);
@@ -236,7 +236,7 @@ for (const viewport of [
     await expect(firstScreenLink).toBeVisible();
     await expect(firstScreenLink).toBeInViewport();
 
-    await page.getByRole("button", { name: "YTÜ Öğrencisi Değilim" }).click();
+    await page.getByRole("button", { name: "E-postayla devam et" }).click();
     const link = page.locator("#kc-form-login").getByRole("link", { name: "Parolanı mı unuttun?" });
     await expect(link).toBeVisible();
 
@@ -267,7 +267,7 @@ for (const viewport of [
 test("fields keep a visible focus indicator in forced colors (WCAG 2.4.7)", async ({ page }) => {
   await page.emulateMedia({ forcedColors: "active" });
   await page.goto("/?page=login.ftl");
-  await page.getByRole("button", { name: "YTÜ Öğrencisi Değilim" }).click();
+  await page.getByRole("button", { name: "E-postayla devam et" }).click();
 
   const username = page.locator("#username");
   await username.focus();

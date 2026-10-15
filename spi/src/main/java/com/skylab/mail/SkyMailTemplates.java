@@ -1,5 +1,6 @@
 package com.skylab.mail;
 
+import com.skylab.account.EmailCodeAuthenticator;
 import com.skylab.account.EmailResource;
 import org.keycloak.events.EventType;
 
@@ -24,6 +25,10 @@ final class SkyMailTemplates {
     static final String UPDATE_EMAIL = "keycloak.update-email";
     static final String IDP_LINK = "keycloak.idp-link";
     static final String PERSONAL_EMAIL_CONFIRM = "keycloak.personal-email-confirm";
+    /** The Login code of "E-postayla devam et" (eskylab-login-ux 08); carries code and purpose. */
+    static final String LOGIN_CODE = "keycloak.login-code";
+    /** The operator's alarm when the realm's Login codes reach half or all of the day's budget. */
+    static final String LOGIN_CODE_ALARM = "keycloak.login-code-alarm";
     static final String GENERIC = "keycloak.generic";
 
     static final String VERIFY_EMAIL_SUBJECT_KEY = "emailVerificationSubject";
@@ -39,7 +44,8 @@ final class SkyMailTemplates {
             "email-update-confirmation.ftl", UPDATE_EMAIL,
             "identity-provider-link.ftl", IDP_LINK,
             // By the constant sky-account sends it with, so the two names cannot drift apart.
-            EmailResource.TEMPLATE.toLowerCase(Locale.ROOT), PERSONAL_EMAIL_CONFIRM);
+            EmailResource.TEMPLATE.toLowerCase(Locale.ROOT), PERSONAL_EMAIL_CONFIRM,
+            EmailCodeAuthenticator.MAIL_TEMPLATE.toLowerCase(Locale.ROOT), LOGIN_CODE);
 
     private SkyMailTemplates() {
     }

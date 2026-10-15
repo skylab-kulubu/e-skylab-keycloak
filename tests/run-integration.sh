@@ -1070,9 +1070,9 @@ stage_k5_system_mail_through_skymail() {
   json_assert "$task" '.missing_variables == []' \
     'SkyMail would render <no value>: a body variable was omitted'
   json_assert "$task" \
-    '(.body_variables | keys | sort) == ["code","codeExpirationMinutes","firstName","link","linkExpirationMinutes","realmDisplayName","subjectKey","username"]' \
-    'the mail task did not carry exactly the eight agreed body variables'
-  json_assert "$task" '.body_variables.code == "" and .body_variables.codeExpirationMinutes == ""' \
+    '(.body_variables | keys | sort) == ["code","codeExpirationMinutes","firstName","link","linkExpirationMinutes","purpose","realmDisplayName","subjectKey","username"]' \
+    'the mail task did not carry exactly the nine agreed body variables'
+  json_assert "$task" '.body_variables.code == "" and .body_variables.codeExpirationMinutes == "" and .body_variables.purpose == ""' \
     'a link mail must send the code variables empty'
   json_assert "$task" \
     '.body_variables.subjectKey == "emailVerificationSubject" and .body_variables.firstName == "Sky" and .body_variables.username == "skymail-fixture"' \
@@ -1294,18 +1294,21 @@ finish_group() {
 # The writes of the roles group's operator stages (stage_admin_panel_tokens,
 # stage_core_roles_seeded_by_operator, stage_core_service_roles_granted_by_operator), without their
 # contracts, for the groups that run later stages without them: the admin panel's forms role in its
-# scope, core's resource roles seeded to the Privileged groups, core's service roles granted to the
-# forms service account (service account only).
+# scope, core's resource roles seeded to the Privileged groups (with /UYELER/DK for the run, as the
+# core-roles stage has it, so that DK's read roles are seeded and marked too), core's service roles
+# granted to the forms service account (service account only).
 setup_operator_state() {
   CURRENT_STAGE='operator state of the roles group (group setup, no contract)'
-  local forms_uuid output
+  local forms_uuid output dk_id
   forms_uuid=$(lca_client_uuid forms)
   [[ -n $forms_uuid ]] || fail 'the core-erasure fixture did not leave the forms client'
   kcadm create "clients/$forms_uuid/roles" -r "$V2_REALM" -s "name=$AP_FORMS_ROLE" >/dev/null
   kcadm add-roles -r "$V2_REALM" --uusername "$AP_USER" --cclientid forms --rolename "$AP_FORMS_ROLE" >/dev/null
   output=$(ap_operator_reconcile "$AP_CLIENT" -e KEYCLOAK_RECONCILE_ONLY=admin-panel-client) \
     || { printf '%s\n' "$output" >&2; fail 'the admin panel step failed'; }
+  dk_id=$(kcadm create "groups/$(cr_group_id /UYELER)/children" -r "$V2_REALM" -s name=DK -i)
   output=$(cr_operator_reconcile) || { printf '%s\n' "$output" >&2; fail 'the core roles operator step failed'; }
+  kcadm delete "groups/$dk_id" -r "$V2_REALM" >/dev/null
   output=$(csr_operator) || { printf '%s\n' "$output" >&2; fail 'the service-roles operator step failed'; }
 }
 
@@ -1453,6 +1456,57 @@ stage_core_roles_after_first_reconciliation
 stage_skymail_roles_after_first_reconciliation
 stage_core_service_roles_after_first_reconciliation
 stage_event_retention_after_first_reconciliation
+
+# Retiring account-center-browser deletes it, and Keycloak deletes a flow that something still
+# points to. The reconciler must stop instead while another client or a realm flow binding still
+# uses it, and leave the flow in place. The client case runs first: the realm check comes first in
+# the reconciler and would hide it. Both cases undo their writes, so the next stages find the realm
+# as the first reconciliation left it.
+stage_legacy_flow_still_bound_stops_retirement() {
+  CURRENT_STAGE='retiring account-center-browser stops while something is still bound to it'
+  local flow_uuid holder_uuid direct_grant_before log
+  kcadm create 'authentication/flows/browser%20plus%20passkey/copy' \
+    -r e-skylab-test -s 'newName=account-center-browser' >/dev/null
+  flow_uuid=$(kcadm get authentication/flows -r e-skylab-test -c \
+    | jq -r '.[] | select(.alias == "account-center-browser") | .id')
+  [[ -n $flow_uuid ]] || fail 'the still-bound legacy flow fixture was not created'
+
+  kcadm create clients -r e-skylab-test -s clientId=legacy-flow-holder -s publicClient=true \
+    -s "authenticationFlowBindingOverrides.browser=$flow_uuid" >/dev/null
+  holder_uuid=$(kcadm get clients -r e-skylab-test -q clientId=legacy-flow-holder -c \
+    | jq -r '.[] | select(.clientId == "legacy-flow-holder") | .id')
+  [[ -n $holder_uuid ]] || fail 'the client still bound to the legacy flow was not created'
+  log="$TEST_STATE_DIR/reconcile-legacy-flow-client-bound.log"
+  if "${COMPOSE[@]}" run --rm --no-deps keycloak-config >"$log" 2>&1; then
+    fail 'reconciliation succeeded although another client is still bound to account-center-browser'
+  fi
+  grep -Fq 'Another client is still bound to account-center-browser' "$log" \
+    || { cat "$log" >&2; fail 'reconciliation did not name the client still bound to account-center-browser'; }
+  ! grep -Fq 'compressed' "$log" || fail 'a kcadm read in the reconciler combined --fields with -c'
+  kcadm get "authentication/flows/$flow_uuid" -r e-skylab-test >/dev/null \
+    || fail 'reconciliation deleted account-center-browser although a client is still bound to it'
+  kcadm delete "clients/$holder_uuid" -r e-skylab-test >/dev/null
+
+  direct_grant_before=$(kcadm get realms/e-skylab-test -c | jq -r '.directGrantFlow')
+  kcadm update realms/e-skylab-test -s directGrantFlow=account-center-browser >/dev/null
+  log="$TEST_STATE_DIR/reconcile-legacy-flow-realm-bound.log"
+  if "${COMPOSE[@]}" run --rm --no-deps keycloak-config >"$log" 2>&1; then
+    fail 'reconciliation succeeded although a realm flow binding still uses account-center-browser'
+  fi
+  grep -Fq 'A realm flow binding still uses account-center-browser' "$log" \
+    || { cat "$log" >&2; fail 'reconciliation did not name the realm flow binding that still uses account-center-browser'; }
+  kcadm get "authentication/flows/$flow_uuid" -r e-skylab-test >/dev/null \
+    || fail 'reconciliation deleted account-center-browser although a realm binding still uses it'
+  kcadm update realms/e-skylab-test -s "directGrantFlow=$direct_grant_before" >/dev/null
+  json_assert "$(kcadm get realms/e-skylab-test -c)" '.directGrantFlow == $flow' \
+    'the realm direct grant flow binding was not restored' --arg flow "$direct_grant_before"
+
+  kcadm delete "authentication/flows/$flow_uuid" -r e-skylab-test >/dev/null
+  assert_account_center_uses_the_realm_browser_flow
+}
+if group_runs login; then
+  stage_legacy_flow_still_bound_stops_retirement
+fi
 
 # Inject drift before the second pass. Reconciliation must repair the existing
 # realm, flow, scope and allowlists rather than merely treating names as success.
@@ -1671,7 +1725,7 @@ skyapp_scope_count=$(kcadm get client-scopes -r e-skylab-test -c \
 [[ $skyapp_scope_count == 1 ]] || fail "skyapp audience scope is missing or duplicated"
 
 built_in_scope_after=$(kcadm get client-scopes -r e-skylab-test -c \
-  | jq -c '[.[] | select(.name != "account-center-account-api" and .name != "account-center-core-claims" and .name != "skyapp-account-center-audience" and .name != "skyforms-forms-audience" and .name != "frontend-main-core-audience" and .name != "frontend-arge-core-audience" and .name != "skycms-audience" and .name != "skymail-api-audience" and .name != "admin-panel-api-audience") | {id, name}] | sort_by(.id)')
+  | jq -c '[.[] | select(.name != "account-center-account-api" and .name != "account-center-core-claims" and .name != "skyapp-account-center-audience" and .name != "skyforms-forms-audience" and .name != "skyforms-groups" and .name != "frontend-main-core-audience" and .name != "frontend-arge-core-audience" and .name != "skycms-audience" and .name != "skymail-api-audience" and .name != "admin-panel-api-audience") | {id, name}] | sort_by(.id)')
 [[ $built_in_scope_after == "$built_in_scope_snapshot" ]] \
   || fail "a built-in client scope id or name was mutated"
 

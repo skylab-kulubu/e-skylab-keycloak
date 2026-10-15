@@ -1,5 +1,6 @@
 package com.skylab.mail;
 
+import com.skylab.account.EmailCodeAuthenticator;
 import com.skylab.account.EmailResource;
 import org.junit.jupiter.api.Test;
 import org.keycloak.events.EventType;
@@ -27,6 +28,15 @@ class SkyMailTemplatesTest {
                 SkyMailTemplates.forBodyTemplate("text/" + EmailResource.TEMPLATE));
         assertEquals("keycloak.personal-email-confirm",
                 SkyMailTemplates.forBodyTemplate("html/" + EmailResource.TEMPLATE));
+    }
+
+    // eskylab-login-ux 08: the Login code goes through the generic overload under the name the
+    // authenticator sends it with.
+    @Test
+    void routesTheLoginCodeMailByTheNameItIsSentWith() {
+        assertEquals("keycloak.login-code", SkyMailTemplates.forBodyTemplate(EmailCodeAuthenticator.MAIL_TEMPLATE));
+        assertEquals("keycloak.login-code",
+                SkyMailTemplates.forBodyTemplate("html/" + EmailCodeAuthenticator.MAIL_TEMPLATE));
     }
 
     @Test

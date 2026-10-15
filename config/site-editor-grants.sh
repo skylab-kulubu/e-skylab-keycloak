@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Idempotent group grants of the event sites' CMS editor roles (ADR-0056, addendum of 2026-10-03;
 # CONTEXT.md "Site editor"). For each Site client frontend-<site> it grants
-#   - cms:access to the Privileged groups (ADMIN, YK, DK: each at /<NAME> and/or /UYELER/<NAME>,
+#   - cms:access to the Privileged groups ADMIN and YK (each at /<NAME> and/or /UYELER/<NAME>,
 #     whichever exist) and to the Leader groups (the direct subgroups LIDERLER and KOORDINATORLER)
 #     of the site's teams: the owning lab team and the event's organization team;
-#   - client:admin to the ADMIN and YK groups (Yusuf, 2026-10-12; never DK, which reads and does not
-#     write: a DK holder is a WARNING, like any holder outside the set).
+#   - client:admin to the ADMIN and YK groups (Yusuf, 2026-10-12);
+#   - content:read to the DK groups: DK reads and does not write (grup-yonetimi GY1, ticket 08), so it
+#     gets the site's read role instead of the editor role. A DK holding cms:access or client:admin is
+#     a WARNING, like any holder outside the set; config/dk-read-only.sh takes it away once (runbook
+#     §28).
 # Teams of each site (decision of 2026-10-03, CONTEXT.md "Site editor"):
 #   artlab     /UYELER/ARGE/AIRLAB   and  /UYELER/ORGANIZASYON/ARTLAB
 #   yildizjam  /UYELER/ARGE/GAMELAB  and  /UYELER/ORGANIZASYON/YILDIZJAM
@@ -22,11 +25,12 @@
 # Grants go to groups only, never to a person, never to /UYELER, never to a group at or above a
 # default group (a planned grant to one is a PROBLEM and is not made). Nothing is ever taken away: a group or a
 # person that holds cms:access or client:admin directly but is not in the expected set is a
-# WARNING (take it away in the SKY LAB admin panel if it is unintended). A missing team or a team
-# without Leader groups is a WARNING; the other grants are still made.
+# WARNING (take it away in the SKY LAB admin panel if it is unintended). Other holders of
+# content:read (a service account, a group given it in the panel) are not reported: it reads only.
+# A missing team or a team without Leader groups is a WARNING; the other grants are still made.
 #
 # It refuses every realm but e-skylab and e-skylab-sandbox, before it logs in; KEYCLOAK_REALM has no
-# default. The client and its cms:access and client:admin roles must exist (config/site-clients.sh,
+# default. The client and its cms:access, client:admin and content:read roles must exist (config/site-clients.sh,
 # then config/inscribed-cms-roles.sh --client frontend-<site>); a site without them is reported and
 # skipped (exit 1).
 #
@@ -63,6 +67,9 @@ PRIVILEGED_NAMES=(ADMIN YK DK)
 LEADER_GROUPS=(LIDERLER KOORDINATORLER)
 EDITOR_ROLE=cms:access
 ADMIN_ROLE=client:admin
+READER_ROLE=content:read
+# The Privileged names whose groups read and do not write (core's AUTHZ_PRIVILEGED_READER_ROOTS).
+READER_NAMES=(DK)
 
 # site_teams SITE: the site's teams, one per line: the owning lab team, then the event's
 # organization team.
@@ -254,6 +261,7 @@ default_groups=$(csv default-groups path)
 declare -A gid_of=()
 privileged=()
 admin_groups=()
+reader_groups=()
 for name in "${PRIVILEGED_NAMES[@]}"; do
   found=false
   for path in "/$name" "/UYELER/$name"; do
@@ -261,7 +269,11 @@ for name in "${PRIVILEGED_NAMES[@]}"; do
     [[ -n $id ]] || continue
     gid_of[$path]=$id
     privileged+=("$path")
-    [[ $name != ADMIN && $name != YK ]] || admin_groups+=("$path")
+    if [[ " ${READER_NAMES[*]} " == *" $name "* ]]; then
+      reader_groups+=("$path")
+    else
+      admin_groups+=("$path")
+    fi
     found=true
   done
   [[ $found == true ]] || warning "no Privileged group $name (neither /$name nor /UYELER/$name)"
@@ -295,13 +307,17 @@ grant() {
 
 # report_extra CLIENT UUID ROLE EXPECTED...: direct holders of ROLE outside EXPECTED.
 report_extra() {
-  local client=$1 uuid=$2 role=$3 holder people=''
+  local client=$1 uuid=$2 role=$3 holder people='' hint
   shift 3
   while IFS= read -r holder; do
     [[ -n $holder ]] || continue
     local expected=false item
     for item in "$@"; do [[ $item != "$holder" ]] || expected=true; done
-    [[ $expected == true ]] || warning "$client/$role is also held by the group $holder (not taken away; remove it in the SKY LAB admin panel if unintended)"
+    hint='remove it in the SKY LAB admin panel if unintended'
+    for item in ${reader_groups[@]+"${reader_groups[@]}"}; do
+      [[ $item != "$holder" ]] || hint='DK reads and does not write: config/dk-read-only.sh takes it away once, runbook §28'
+    done
+    [[ $expected == true ]] || warning "$client/$role is also held by the group $holder (not taken away; $hint)"
   done < <(csv "clients/$uuid/roles/$role/groups" path -q max=100000)
   while IFS=, read -r _ holder; do
     [[ -n $holder && $holder != service-account-* ]] || continue
@@ -320,8 +336,9 @@ for site in "${SITES[@]}"; do
   fi
   editor_id=$(csv "clients/$uuid/roles" id,name | sed -n "s/^\([^,]*\),$EDITOR_ROLE\$/\1/p")
   admin_id=$(csv "clients/$uuid/roles" id,name | sed -n "s/^\([^,]*\),$ADMIN_ROLE\$/\1/p")
-  if [[ -z $editor_id || -z $admin_id ]]; then
-    log "MISSING: $client has no $EDITOR_ROLE or $ADMIN_ROLE role; run inscribed-cms-roles.sh --client $client first (nothing granted for it)"
+  reader_id=$(csv "clients/$uuid/roles" id,name | sed -n "s/^\([^,]*\),$READER_ROLE\$/\1/p")
+  if [[ -z $editor_id || -z $admin_id || -z $reader_id ]]; then
+    log "MISSING: $client has no $EDITOR_ROLE, $ADMIN_ROLE or $READER_ROLE role; run inscribed-cms-roles.sh --client $client first (nothing granted for it)"
     missing=$((missing + 1))
     continue
   fi
@@ -332,7 +349,7 @@ for site in "${SITES[@]}"; do
     [[ ${item%%=*} == "$site" && " ${teams[*]} " != *" ${item#*=} "* ]] || continue
     teams+=("${item#*=}")
   done
-  editors=("${privileged[@]}")
+  editors=(${admin_groups[@]+"${admin_groups[@]}"})
   for team in "${teams[@]}"; do
     team_id=$(group_id "$team")
     if [[ -z $team_id ]]; then
@@ -349,11 +366,12 @@ for site in "${SITES[@]}"; do
     done
     [[ $leaders -gt 0 ]] || warning "$client: the team $team has no LIDERLER or KOORDINATORLER subgroup; its Leaders get nothing"
   done
-  log "$client: $EDITOR_ROLE for ${editors[*]:-nobody}; $ADMIN_ROLE for ${admin_groups[*]:-nobody}"
-  for path in "${editors[@]}"; do grant "$client" "$uuid" "$EDITOR_ROLE" "$editor_id" "$path"; done
-  for path in "${admin_groups[@]}"; do grant "$client" "$uuid" "$ADMIN_ROLE" "$admin_id" "$path"; done
-  report_extra "$client" "$uuid" "$EDITOR_ROLE" "${editors[@]}"
-  report_extra "$client" "$uuid" "$ADMIN_ROLE" "${admin_groups[@]}"
+  log "$client: $EDITOR_ROLE for ${editors[*]:-nobody}; $ADMIN_ROLE for ${admin_groups[*]:-nobody}; $READER_ROLE for ${reader_groups[*]:-nobody}"
+  for path in ${editors[@]+"${editors[@]}"}; do grant "$client" "$uuid" "$EDITOR_ROLE" "$editor_id" "$path"; done
+  for path in ${admin_groups[@]+"${admin_groups[@]}"}; do grant "$client" "$uuid" "$ADMIN_ROLE" "$admin_id" "$path"; done
+  for path in ${reader_groups[@]+"${reader_groups[@]}"}; do grant "$client" "$uuid" "$READER_ROLE" "$reader_id" "$path"; done
+  report_extra "$client" "$uuid" "$EDITOR_ROLE" ${editors[@]+"${editors[@]}"}
+  report_extra "$client" "$uuid" "$ADMIN_ROLE" ${admin_groups[@]+"${admin_groups[@]}"}
 done
 
 if [[ $MODE == apply ]]; then

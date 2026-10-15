@@ -40,7 +40,7 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.20.0`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.22.0`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.1.1`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
@@ -372,7 +372,7 @@ doğrulamada (`prompt=login`, `max_age`: Keycloak o oturumu olduğu gibi tutar) 
 bir kez sorulur. Olay `CUSTOM_REQUIRED_ACTION`, ayrıntı `sky_stay_signed_in` = `yes` ya da `no`.
 Parola ve geçiş anahtarı girişindeki "Beni hatırla" kutusu değişmedi. Tema sayfası
 `sky-stay-signed-in.ftl` (`theme/src/login/StaySignedIn.tsx`); temasız realm için SPI'nın yedek
-şablonu vardır. Uzlaştırıcı: `KEYCLOAK_STAY_SIGNED_IN=on` eylemi kaydeder, açar ve realm'in bütün
+şablonu vardır. SPI 1.22.0'dan sonra soru e-postaya gelen kodla girişte de çıkar (bilet 08b). Uzlaştırıcı: `KEYCLOAK_STAY_SIGNED_IN=on` eylemi kaydeder, açar ve realm'in bütün
 gerekli eylemlerinden sonraya koyar (kişisel e-posta önerisinden sonra); `off` kapatır (geri dönüş);
 varsayılan `keep` dokunmaz, sıra bozulmuşsa uyarır. Ayrıntı: runbook §24.
 
@@ -396,6 +396,47 @@ eklenmez. Harness
 `tests/microsoft-reauthentication.sh` tek başına çalışır (stok imaj, SPI jar'ı, `microsoft` tipinde
 OBS; Microsoft'a gidilmez, yalnız Keycloak'ın yönlendirmesi okunur); optimize imajda
 `run-integration.sh`'ın `login` grubu da aynı yönlendirmeye bakar.
+
+SPI 1.21.0'dan sonra "E-postayla devam et": herkes e-postasına gelen 8 haneli kodla girebilir
+(eskylab-login-ux bilet 08, ADR-0063 karar 2, CONTEXT "Login code"). Bunu SPI'daki `sky-email-code`
+(`com.skylab.account.EmailCodeAuthenticator`) yapar: kişi e-posta adresini ya da kullanıcı adını yazar,
+kod hesabın birincil e-postasına (birincili olmayan YTÜ hesabında okul adresine) gider, hangi
+tanımlayıcı yazılmış olursa olsun (parolalı girişin `LoginIdentifiers` kuralı). Adres sayfası her
+girdide aynıdır; hiçbir hesaba çıkmayan, iki kişiye çıkan ya da kapalı bir hesaba çıkan girdi de aynı
+kod sayfasını ve hiç postalanmayan bir kodu alır, posta istekten sonra arka planda gider (yanıt süresi
+aynı). Kod 8 hane (güvenlik incelemesi K2; Hesap Merkezi'nin kodu 6 hane kalır), 10 dakika, 5 yanlışta ölür, tek kullanım, yalnız isteyen giriş oturumunda (tarayıcı
+ve sekme) çalışır, yalnız tuzlu özeti saklanır (`LoginCodes`, Hesap Merkezi'nin koduyla ortak
+`SingleUseCodes`); yeni kod eskisini geçersiz kılar, "yeniden gönder" 60 saniye sonra açılır. Yanlış kod
+Keycloak'ın kaba kuvvet sayacına kişinin hatası olarak yazılır; kilitli ya da kapalı kişi doğru kodla da
+giremez. Doğru koddan sonra realm'in koşullu OTP'si gelir: TOTP'si olan kişiye TOTP yine sorulur
+(ADR-0063 S6). Gönderim sınırı: giriş oturumu başına saatte 5, IP sınıfı başına saatte 100, adres başına
+15 dakikada 3 ve günde 10, realm genelinde günde 500 (`SKY_EMAIL_CODE_DAILY_LIMIT`). Adres sınırını aşan
+istekte posta gitmez, ekran aynı kalır, oturumun eski kodu da yerini postalanmayan yeni koda bırakır
+(güvenlik incelemesi B3: kalan deneme sayısı iki tanımlayıcının aynı hesaba çıktığını söylemesin); genel sınır giriş
+kodunu durdurmaz, yarısında ve dolduğunda `/ADMIN` grubunun etkin ve adresi olan üyelerine posta
+(`SKY_EMAIL_CODE_ALARM_GROUP`, `off` ile yalnız `sky_email_code_budget` log satırı) gider. Hesap başına
+günde yaklaşık 10 yanlış kod (`SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT`, güvenlik incelemesi K2; eşzamanlı oturumlar birkaç deneme aşabilir): tavana
+ulaşan hesaba gün bitene kadar kod postalanmaz, ekran aynı kalır, önceden gönderilmiş kod artık
+denetlenmez (denemesi yanlış sayılır); günün ilk böyle hesabı aynı alarm grubuna posta, her biri
+`sky_email_code_wrong_ceiling` log satırı yazar. Sayfa hiçbir zaman "hesap yok" demez: kimseye
+postalanmamış bir kodun tutturulması süresi dolmuş kod gibi görünür (olayda `no_account`). Koddan
+sonraki OTP Admin Console'da kapatılırsa OTP'li kişi kodla giremez (`otp_unguarded`, güvenlik incelemesi
+K1). Posta SkyMail'in `keycloak.login-code` şablonuyla (SkyMail
+yoksa SPI'nın FreeMarker kopyası) çıkar: konuda kod yok, bağlantı yok. Olaylar: başarılı giriş
+Keycloak'ın `LOGIN` olayı, ayrıntısı `sky_method=email_code`; her ret `LOGIN_ERROR`, ayrıntısı
+`sky_email_code` (`wrong_code`, `rate_limited`, `rate_limited_address`, `account_locked`, …), IP'siz
+ve yazılan tanımlayıcı olmadan (olaylar jboss-logging ile sunucu günlüğüne de düşer). Uzlaştırıcı
+`KEYCLOAK_EMAIL_CODE_LOGIN=on` realm'in tarayıcı akışında parola alt akışının yanına ALTERNATIVE
+`sky email code` alt akışını kurar (`sky-email-code`, koşullu OTP, passkey önerisi), `off` onu
+DISABLED yapar (geri dönüş), varsayılan `keep` dokunmaz; operatör adımı
+`KEYCLOAK_RECONCILE_ONLY=email-code-login`. Ayrıntı, üretim sırası ve geri dönüş: runbook §29. Harness
+`tests/login-by-email-code.sh` tek başına çalışır (stok imaj, SPI jar'ı, SkyMail fixture'ı, Mailpit).
+Giriş teması (bilet 08b): ilk ekrandaki e-posta düğmesi, Keycloak adımı `auth.authenticationSelections`'ta
+sunuyorsa (`sky-email-code-display-name`) koda geçer, sunmuyorsa bugünkü parola görünümünü açar;
+`sky-email-code.ftl` sayfası (`theme/src/login/EmailCode.tsx`) adres ve kod aşamalarını, 60 saniyelik
+yeniden gönderme sayacını, `one-time-code` alanını, "Parolanla gir"i ve passkey'i taşır. SPI 1.22.0'dan
+sonra "Bu cihazda oturumum açık kalsın mı?" kodla girişte de sorulur (kod sayfasında "Beni hatırla"
+yok) ve son sayfa olduğu için `LOGIN` olayının `sky_method=email_code` ayrıntısını korur.
 
 Hesap silmede (ADR-0051) core, SkyMail, CMS ve Forms'a ayrı bir gizli service
 account istemcisinden, `core-erasure`'dan aldığı token'larla gider. Operatör
@@ -550,8 +591,9 @@ dışındaki her realm'i girişten önce reddeder. Sunucuda sky_lab_genel'deki
 core'un kaynak rollerini (ADR-0059: `event:manage`, `ticket:manage`, `certificate:manage`,
 `users:manage` gibi 11 yeni rol, var olan `url:moderator`, `url:access` ve yarışma modülünün
 `competition:manage`'ı) uzlaştırıcı her koşuda
-`core` istemcisinde var eder ve admin panelinin adımından önce koşar. Roller Privileged gruplara
-(`ADMIN`, `YK`, `DK`; `/<AD>` ya da `/UYELER/<AD>`) **bir kez** verilir; rol özniteliği
+`core` istemcisinde var eder ve admin panelinin adımından önce koşar. Yazma rolleri Privileged
+gruplardan `ADMIN` ve `YK`'ya, DK'nın okuma rolü `global:read` yalnız `DK`'ya, denetim kaydının
+`audit:read`'i üçüne (`/<AD>` ya da `/UYELER/<AD>`) **bir kez** verilir; rol özniteliği
 `skylab.seeded-group-mappings` bunu kaydeder ve sonraki koşular SKY LAB admin panelinde değişen
 eşlemelere dokunmaz, hiçbir eşlemeyi silmez. Gruba rol vermek kullanıcı yetkisi istediği için bunu
 uzlaştırıcı kimliği değil operatör yapar: `KEYCLOAK_RECONCILE_KCADM_CONFIG` +
@@ -582,7 +624,22 @@ Aynı adım SkyMail'in servis hesabına (`skymail-backend`) core'un `audience:re
 haber ve duyuru kitlesi) ve core'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`,
 `skymail:lists:read`, `skymail:lists:write` rollerini verir; SkyMail'in rollerini oluşturmaz, eksikse
 uyarır; listelenen servis istemcisinde varsayılan `roles` kapsamı yoksa ekler (runbook §20.1). `skymail:announcements:send` (haber ve duyuruyu Mail onayı olmadan gönderme)
-`skymail:system-mails:read` gibi bir kez tohumlanır ama yalnız ADMIN ve YK'ya (runbook §25).
+`skymail:system-mails:read` gibi bir kez tohumlanır ama yalnız ADMIN ve YK'ya (runbook §25). Forms'un
+salt okur rolü `skyforms:read-all` (DK her formu ve cevabı okur, yazamaz; forms-backend henüz okumuyor)
+aynı biçimde `forms` istemcisinde var edilir ve yalnız DK'ya bir kez verilir (runbook §28).
+
+DK salt okurdur (grup-yonetimi 08; Entra'nın Global Reader + Reports Reader'ı: `global:read` +
+`audit:read`). Uzlaştırıcı bir eşlemeyi hiç geri almadığı için DK'nın eskiden aldığı yazma rollerini
+(core'un 13 yazma rolü, site istemcilerinin `cms:access`'i ve benzerleri) tek seferlik operatör
+betiği `config/dk-read-only.sh` kaldırır: kuru koşu varsayılan, `--apply` yedeğin yolunu ilk satırda
+yazar, önce yedeği yazar, sonra site yazma rolünün yerine `content:read` verir ve yazma rollerini
+kaldırır; ikinci koşu 0 değişiklik; `--restore <yedek>` geri verir. Kişinin kendi uygulama rolleri
+(`url:access`: kendi kısa linkleri; Forms koltuğu `skyforms:access` ve ekran rolleri) kalır. Okuma
+rolleri yoksa (önce `core-roles`) ya da DK'nın altında varsayılan grup varsa yazmaz; DK'nın alt
+gruplarındaki ve üst gruptan gelen yazma rollerini yalnız bildirir. Forms'un yönetici rolleri
+(`skyforms:*`, `skyforms:feedback:*`) forms-backend `skyforms:read-all`'u okuyana kadar kalır; sonra
+`--forms` yalnız onları kaldırır. Uzlaştırıcının adımı değildir; Yusuf'un
+onayıyla, önce sandbox'ta koşulur (runbook §28). Harness `tests/dk-read-only.sh` tek başına çalışır.
 
 Uygulama rolü grupları `/ROLLER/<UYGULAMA>-<ROL>` (Entra'nın uygulama rolü güvenlik grupları;
 `config/role-groups.json`) ve en üst ekiplerin Leader gruplarına Forms koltuğu (`skyforms:access`) ile
@@ -606,9 +663,10 @@ yalnız raporlanır; tek istisna ana sitenin sandbox'ı: `--site main` yalnız `
 `frontend-main`'i aynı biçimde `https://sandbox.yildizskylab.com` için kurar (production'da reddedilir).
 Ardından `inscribed-cms-roles.sh --client frontend-<site>` rolleri kurar (servis
 hesabına yalnız `content:read` + `schema:sync`) ve `config/site-editor-grants.sh` `cms:access`'i
-Privileged gruplara, sahip lab takımının ve etkinliğin organizasyon takımının
+`ADMIN` ve `YK` gruplarına, sahip lab takımının ve etkinliğin organizasyon takımının
 (`/UYELER/ORGANIZASYON/<ETKİNLİK>`) `LIDERLER`/`KOORDINATORLER` gruplarına, `client:admin`'i
-yalnız `ADMIN`'e verir; kişiye vermez, hiçbir şeyi geri almaz. sky_lab_genel'deki
+`ADMIN` ve `YK`'ya, `content:read`'i `DK`'ya (DK okur, yazmaz) verir; kişiye vermez, hiçbir şeyi geri
+almaz. sky_lab_genel'deki
 `ops/wizards/site-cms-setup-wizard.sh` üçünü koşar, secret'ı OpenBao'ya taşır. Harness
 `tests/site-clients.sh` tek başına çalışır (runbook §18). `site-clients.sh --shared-scope`
 yalnız ortak `skycms-audience` kapsamını kurar ya da onarır, hiçbir site istemcisine dokunmaz

@@ -22,10 +22,15 @@
 # narrowed by the first reconciliation, the sites by the second; a real login of a person holding
 # roles of core, admin and skymail then shows the narrowed tokens. tests/login-clients.sh proves the
 # step in depth against production-shaped clients.
+#
+# skyforms also gets the groups claim from its own scope skyforms-groups (Forms' sidebar label reads
+# groups from the access token, Fatih 2026-10-15): full paths in the access token and introspection
+# only, the same shape as the sites' groups mapper (config/site-clients.sh).
 
 LCA_USER='audience-fixture'
 LCA_PASSWORD='audience-fixture-password-change-me'
 LCA_SKYFORMS_SCOPE=skyforms-forms-audience
+LCA_SKYFORMS_GROUPS_SCOPE=skyforms-groups
 LCA_FRONTEND_MAIN_SCOPE=frontend-main-core-audience
 LCA_FRONTEND_ARGE_SCOPE=frontend-arge-core-audience
 LCA_SKYFORMS_REDIRECT=https://forms.yildizskylab.com/api/auth/callback/keycloak
@@ -237,6 +242,28 @@ lca_assert_client() {
     "the $client_id ID token carries aud $audience" --arg aud "$audience"
 }
 
+# skyforms' groups scope: one Group Membership mapper (full path, access token and introspection,
+# not the ID token or userinfo), a default scope of skyforms, and a real login of a person in
+# /UYELER/YK whose access token carries the full path once.
+lca_assert_skyforms_groups() {
+  local client_uuid scope_uuid mappers
+  client_uuid=$(lca_client_uuid skyforms)
+  scope_uuid=$(lca_scope_uuids "$LCA_SKYFORMS_GROUPS_SCOPE")
+  [[ -n $scope_uuid && $scope_uuid != *$'\n'* ]] || fail "client scope $LCA_SKYFORMS_GROUPS_SCOPE is missing or duplicated"
+  mappers=$(kcadm get "client-scopes/$scope_uuid/protocol-mappers/models" -r "$V2_REALM" -c)
+  json_assert "$mappers" \
+    'length == 1 and .[0].name == "groups" and .[0].protocolMapper == "oidc-group-membership-mapper" and .[0].config["claim.name"] == "groups" and .[0].config["full.path"] == "true" and .[0].config["access.token.claim"] == "true" and .[0].config["id.token.claim"] == "false" and .[0].config["userinfo.token.claim"] == "false" and .[0].config["introspection.token.claim"] == "true"' \
+    "the mapper of $LCA_SKYFORMS_GROUPS_SCOPE differs or a foreign mapper remains"
+  json_assert "$(kcadm get "clients/$client_uuid/default-client-scopes" -r "$V2_REALM" -c)" \
+    '[.[] | select(.id == $id)] | length == 1' \
+    "$LCA_SKYFORMS_GROUPS_SCOPE is not a default scope of skyforms" --arg id "$scope_uuid"
+  lca_login skyforms "$LCA_SKYFORMS_REDIRECT" '' "$AP_USER" "$AP_PASSWORD" 'openid email profile'
+  json_assert "$LCA_ACCESS_PAYLOAD" \
+    '(.groups | type) == "array" and (.groups | index("/UYELER/YK")) != null and (.groups | length) == (.groups | unique | length) and all(.groups[]; startswith("/"))' \
+    'the skyforms access token lacks the full-path groups of the person (or repeats one)'
+  json_assert "$LCA_ID_PAYLOAD" 'has("groups") | not' 'the skyforms ID token carries groups'
+}
+
 stage_login_audiences_after_second_reconciliation() {
   CURRENT_STAGE='login client audiences: reconciled scopes and tokens'
   local log="$TEST_STATE_DIR/reconcile-second.log"
@@ -251,6 +278,7 @@ stage_login_audiences_after_second_reconciliation() {
   [[ $(lca_scope_uuids "$LCA_SKYFORMS_SCOPE") == "$LCA_HAND_MADE_SCOPE_UUID" ]] \
     || fail 'repairing the skyforms scope replaced it instead of repairing it in place'
   lca_assert_client skyforms "$LCA_SKYFORMS_SCOPE" forms-audience forms "$LCA_SKYFORMS_REDIRECT"
+  lca_assert_skyforms_groups
   lca_assert_client frontend-main "$LCA_FRONTEND_MAIN_SCOPE" core-audience core "$LCA_FRONTEND_MAIN_REDIRECT"
   lca_assert_client frontend-arge "$LCA_FRONTEND_ARGE_SCOPE" core-audience core "$LCA_FRONTEND_ARGE_REDIRECT"
 
@@ -290,7 +318,7 @@ lca_state_snapshot() {
     kcadm get "clients/$client_uuid/scope-mappings" -r "$V2_REALM" -c | jq -c '{realmMappings: ((.realmMappings // []) | sort_by(.id)), clientMappings: ((.clientMappings // {}) | map_values(.mappings | sort_by(.id)))}'
     kcadm get "clients/$client_uuid/protocol-mappers/models" -r "$V2_REALM" -c | jq -c 'sort_by(.id)'
   done
-  for scope_name in "$LCA_SKYFORMS_SCOPE" "$LCA_FRONTEND_MAIN_SCOPE" "$LCA_FRONTEND_ARGE_SCOPE" skycms-audience skymail-api-audience; do
+  for scope_name in "$LCA_SKYFORMS_SCOPE" "$LCA_SKYFORMS_GROUPS_SCOPE" "$LCA_FRONTEND_MAIN_SCOPE" "$LCA_FRONTEND_ARGE_SCOPE" skycms-audience skymail-api-audience; do
     scope_uuid=$(lca_scope_uuids "$scope_name")
     kcadm get "client-scopes/$scope_uuid" -r "$V2_REALM" -c
     kcadm get "client-scopes/$scope_uuid/protocol-mappers/models" -r "$V2_REALM" -c

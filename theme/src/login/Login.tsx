@@ -8,6 +8,7 @@ import YtuMark from "./YtuMark";
 import LegacyFrame from "./LegacyFrame";
 import PageMessage from "./PageMessage";
 import { getLegacyChromeProps, useLegacyChrome } from "./legacyChrome";
+import { chooseExecution, emailCodeExecutionId, takePasswordChoice } from "./emailCodeChoice";
 
 type LoginProps = PageProps<Extract<KcContext, { pageId: "login.ftl" }>, I18n>;
 
@@ -34,7 +35,13 @@ export default function Login(props: LoginProps) {
   // Wrong credentials belong to the fields (shown once, under them); every other message is page-wide.
   const pageMessage = hasCredentialsError ? undefined : kcContext.message;
   const resetPasswordUrl = realm.password && realm.resetPasswordAllowed ? url.loginResetCredentialsUrl : undefined;
-  const [view, setView] = useState<"choice" | "password">(hasCredentialsError ? "password" : "choice");
+  // With the e-mail code step on (eskylab-login-ux 08) the e-mail button goes there, and that page's
+  // "Parolanla gir" comes back here straight to the password view, the field filled.
+  const emailCodeExecution = emailCodeExecutionId(kcContext);
+  const [passwordChoice] = useState(takePasswordChoice);
+  const [view, setView] = useState<"choice" | "password">(
+    hasCredentialsError || passwordChoice !== undefined ? "password" : "choice"
+  );
   const [isLoginButtonDisabled, setIsLoginButtonDisabled] = useState(false);
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
 
@@ -68,7 +75,11 @@ export default function Login(props: LoginProps) {
                   <button
                     className="sl-legacy-choice sl-legacy-choice--row"
                     type="button"
-                    onClick={() => setView("password")}
+                    onClick={() =>
+                      emailCodeExecution === undefined
+                        ? setView("password")
+                        : chooseExecution(url.loginAction, emailCodeExecution)
+                    }
                   >
                     <span className="sl-legacy-choice__icon">
                       <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
@@ -150,7 +161,7 @@ export default function Login(props: LoginProps) {
                         type="text"
                         autoFocus
                         autoComplete={enableWebAuthnConditionalUI ? "username webauthn" : "username"}
-                        defaultValue={login.username ?? ""}
+                        defaultValue={login.username ?? passwordChoice?.identifier ?? ""}
                         aria-invalid={hasCredentialsError}
                         aria-describedby={hasCredentialsError ? "input-error" : undefined}
                       />

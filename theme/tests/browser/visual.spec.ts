@@ -97,6 +97,13 @@ test.describe("visual baselines", () => {
         await expect(page).toHaveScreenshot(`sky-personal-email-offer-code-${viewportName}.png`, screenshotOptions);
       });
 
+      // "E-postayla devam et": the code stage after a wrong code, the resend open (devKcContext code=wrong).
+      test("sky-email-code-code", async ({ page }) => {
+        await page.goto("/?page=sky-email-code.ftl&code=wrong");
+        await stabilise(page, "sky-email-code.ftl");
+        await expect(page).toHaveScreenshot(`sky-email-code-code-${viewportName}.png`, screenshotOptions);
+      });
+
       // Server-side states of the login page (devKcContext previewStates).
       for (const state of ["reset-email-sent", "invalid-credentials", "idp-error"] as const) {
         test(`login-${state}`, async ({ page }) => {

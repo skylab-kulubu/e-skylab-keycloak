@@ -46,6 +46,8 @@
 #   - a person with TOTP is asked for it after the code; when the OTP subflow is turned off in the
 #     Admin Console, keep warns and exits 3, the right code refuses a person with TOTP (unavailable,
 #     an otp_unguarded event and log line) but still signs in a person without, and on repairs it;
+#   - a code sign-in is asked "Bu cihazda oturumum açık kalsın mı?" (sky-stay-signed-in) and yes gives a
+#     remember-me session; the LOGIN event, written after that page, keeps sky_method=email_code;
 #   - when SkyMail refuses, the code still arrives through Keycloak's SMTP (the SPI's FreeMarker
 #     copy: the code on its own line, no link, no code in the subject) and signs the person in;
 #   - "Parolanla gir" (Keycloak's execution selection) reaches the password form, and a password
@@ -60,6 +62,11 @@
 #     adds the subflow next to the copy's forms and the login page offers the step.
 # The expiry after ten minutes, the single use of the right code, the per-session and IP class
 # budgets and the code for nobody are unit tests (EmailCodeAuthenticatorTest, LoginCodesTest).
+# With LOGIN_BY_EMAIL_CODE_THEME_JAR (theme/dist_keycloak/e-skylab-theme-*.jar, npm run
+# build-keycloak-theme; the CI job builds it) a last stage proves the SKY LAB login theme's contract
+# with the step (eskylab-login-ux 08b): the login page's kcContext lists the step among Keycloak's
+# authenticationSelections under sky-email-code-display-name, which its e-mail button switches to, and
+# the themed sky-email-code.ftl page gets the stage, the identifier, the resend wait and the errors.
 # Requirements on the host: docker, jq, curl, node. LOGIN_BY_EMAIL_CODE_TEST_PORT (default 18099),
 # LOGIN_BY_EMAIL_CODE_TEST_MAIL_PORT (default 18100), LOGIN_BY_EMAIL_CODE_TEST_CONTAINER (default
 # login-by-email-code-test-<pid>), LOGIN_BY_EMAIL_CODE_TEST_MEMORY (default 2g).
@@ -434,6 +441,13 @@ if [[ -z $SPI_JAR ]]; then
 fi
 [[ -f $SPI_JAR ]] || fail "no SPI jar at ${SPI_JAR:-(unset)}"
 SPI_JAR=$(cd -- "$(dirname -- "$SPI_JAR")" && pwd)/$(basename -- "$SPI_JAR")
+THEME_JAR=${LOGIN_BY_EMAIL_CODE_THEME_JAR:-}
+theme_mount=()
+if [[ -n $THEME_JAR ]]; then
+  [[ -f $THEME_JAR ]] || fail "no theme jar at $THEME_JAR"
+  THEME_JAR=$(cd -- "$(dirname -- "$THEME_JAR")" && pwd)/$(basename -- "$THEME_JAR")
+  theme_mount=(-v "$THEME_JAR:/opt/keycloak/providers/e-skylab-theme.jar:ro")
+fi
 spi_listing=$(unzip -l "$SPI_JAR")
 grep -q 'com/skylab/account/EmailCodeAuthenticator.class' <<<"$spi_listing" \
   || fail "the SPI jar does not hold the $STEP step"
@@ -455,7 +469,7 @@ docker run --rm -d --name "$CONTAINER" --network "$NETWORK" --memory "$MEMORY" -
   -e SKY_EMAIL_CODE_DAILY_LIMIT="$DAILY_LIMIT" -e SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT="$WRONG_CEILING" \
   -e SKY_HARNESS=1 -e SKY_MAIL_ENABLED=true -e "SKY_MAIL_BASE_URL=http://$SKYMAIL_CONTAINER:8080" \
   -e SKY_MAIL_CLIENT_ID=keycloak-mailer -e "SKY_MAIL_CLIENT_SECRET=$MAILER_SECRET" -e SKY_MAIL_TIMEOUT_MILLISECONDS=3000 \
-  -v "$SPI_JAR:/opt/keycloak/providers/e-skylab-spi.jar:ro" \
+  -v "$SPI_JAR:/opt/keycloak/providers/e-skylab-spi.jar:ro" "${theme_mount[@]}" \
   -v "$REPOSITORY_ROOT/config:/opt/keycloak/sky-config:ro" \
   "$IMAGE" start-dev --http-port "$PORT" >/dev/null
 for _ in $(seq 1 120); do
@@ -879,6 +893,27 @@ finish
 printf '    the identifier page switches to the password form; a password login works with the subflow on\n'
 
 # ---------------------------------------------------------------------------------------------------
+stage 'stay signed in after a code (sky-stay-signed-in)'
+kcadm update "realms/$REALM" -s rememberMe=true >/dev/null
+kcadm create authentication/register-required-action -r "$REALM" \
+  -b '{"providerId":"sky-stay-signed-in","name":"SKY LAB stay signed in"}' >/dev/null
+kcadm update authentication/required-actions/sky-stay-signed-in -r "$REALM" -s enabled=true >/dev/null
+ilker=$(person ilker ilker@example.invalid)
+open_code_page ilker
+ask_code ilker
+code=$(await_code ilker@example.invalid 0)
+CODES+=("$code")
+type_code "$code"
+finish
+on_form kc-stay-signed-in-form || fail "a code sign-in was not asked whether to stay signed in ($(page_summary))"
+follow "$JAR" "$(form_action kc-stay-signed-in-form)" --data-urlencode sky-stay-signed-in=yes
+[[ $LANDED == app ]] || fail "the answer did not reach the application ($(page_summary))"
+login_events "$ilker" | jq -e '.[0].details | .sky_method == "email_code" and .remember_me == "true" and .sky_stay_signed_in == "yes"' \
+  >/dev/null || fail 'the LOGIN event after the question lost sky_method or the remember-me answer'
+kcadm update authentication/required-actions/sky-stay-signed-in -r "$REALM" -s enabled=false >/dev/null
+printf '    a code sign-in is asked to stay signed in (remember-me session); the LOGIN event keeps sky_method=email_code\n'
+
+# ---------------------------------------------------------------------------------------------------
 stage 'the server log'
 remote=$(login_events "$ada" | jq -r '.[0].ipAddress // ""')
 docker logs "$CONTAINER" >"$STATE_DIR/server.log" 2>&1
@@ -887,7 +922,7 @@ for code in "${CODES[@]}"; do
 done
 for address in ada@example.invalid ytu.personal@example.invalid ytu.okul@std.yildiz.edu.tr only.okul@std.yildiz.edu.tr \
   nobody@example.invalid bea@example.invalid cem@example.invalid dila@example.invalid eda@example.invalid fikret@example.invalid \
-  skymail-fallback@example.invalid hakan@example.invalid gul@example.invalid; do
+  skymail-fallback@example.invalid hakan@example.invalid gul@example.invalid ilker@example.invalid; do
   ! grep -Fiq "$address" "$STATE_DIR/server.log" || fail 'an address of the run reached the server log'
 done
 [[ -n $remote ]] || fail 'no client IP in the LOGIN event to look for'
@@ -962,5 +997,68 @@ on_form kc-form-login || fail "the copied flow does not start at the password fo
 follow "$JAR" "$(form_action kc-form-login)" --data-urlencode "authenticationExecution=$sandbox_step"
 on_form kc-email-code-identifier-form || fail "the copied flow does not offer the e-mail code ($(page_summary))"
 printf "    built-in flow: keep reports, on refused; after copy and binding (runbook §29) on adds the subflow and the login page offers it\n"
+
+# ---------------------------------------------------------------------------------------------------
+# themed_page: the pageId and the kcContext of the SKY LAB theme's page in BODY (THEMED_PAGE_ID,
+# THEMED_CONTEXT as JSON); Keycloakify writes the context as a script literal.
+themed_page() {
+  THEMED_PAGE_ID=$(grep -Eo 'kcContext\.pageId = "[^"]+"' <<<"$BODY" | head -n 1 | sed -E 's/.*"([^"]+)"$/\1/' || true)
+  THEMED_CONTEXT=$(node -e '
+    const html = require("fs").readFileSync(0, "utf8");
+    const marker = "const kcContext = ";
+    const start = html.indexOf(marker);
+    const end = html.indexOf("kcContext.keycloakifyVersion", start);
+    if (start < 0 || end < 0) process.exit(3);
+    const literal = html.slice(start + marker.length, end).trim().replace(/;$/, "");
+    process.stdout.write(JSON.stringify(new Function("return (" + literal + ");")()));' <<<"$BODY") \
+    || fail "the page is not a SKY LAB theme page ($(page_summary))"
+}
+
+if [[ -n $THEME_JAR ]]; then
+  stage 'the SKY LAB login theme'
+  kcadm update "realms/$REALM" -s loginTheme=e-skylab-theme >/dev/null
+  JAR="$STATE_DIR/themed.cookies"
+  rm -f "$JAR"
+  follow "$JAR" "$(auth_url)"
+  themed_page
+  [[ $THEMED_PAGE_ID == login.ftl ]] || fail "the themed sign-in did not start at login.ftl ($THEMED_PAGE_ID)"
+  jq -e --arg step "$STEP_ID" --arg password "$PASSWORD_FORM_ID" '
+      [.auth.authenticationSelections[]? | {authExecId, displayName}] as $offered
+      | ($offered | any(. == {authExecId: $step, displayName: "sky-email-code-display-name"}))
+        and ($offered | any(. == {authExecId: $password, displayName: "sky-username-password-form-display-name"}))' \
+    <<<"$THEMED_CONTEXT" >/dev/null \
+    || fail "the login page's kcContext does not offer the step and the password form as the theme looks for them"
+  follow "$JAR" "$(jq -r '.url.loginAction' <<<"$THEMED_CONTEXT")" --data-urlencode "authenticationExecution=$STEP_ID"
+  themed_page
+  [[ $THEMED_PAGE_ID == sky-email-code.ftl ]] || fail "the switch did not render the themed sky-email-code.ftl ($THEMED_PAGE_ID)"
+  jq -e '.skyEmailCodeStage == "identifier" and .skyEmailCodeMinutes == "10"
+      and ([.auth.authenticationSelections[]? | .displayName] | index("sky-username-password-form-display-name")) != null' \
+    <<<"$THEMED_CONTEXT" >/dev/null || fail 'the themed identifier stage lacks its attributes or the password switch'
+  person hale hale@example.invalid >/dev/null
+  follow "$JAR" "$(jq -r '.url.loginAction' <<<"$THEMED_CONTEXT")" --data-urlencode username=hale \
+    --data-urlencode sky-email-code-action=send
+  themed_page
+  jq -e '.skyEmailCodeStage == "code" and .skyEmailCodeIdentifier == "hale" and .skyEmailCodeResendAfter == "60"
+      and (has("skyEmailCodeError") | not)' <<<"$THEMED_CONTEXT" >/dev/null \
+    || fail "the themed code stage lacks the identifier or the resend wait: $(jq -c '{skyEmailCodeStage, skyEmailCodeResendAfter}' <<<"$THEMED_CONTEXT")"
+  code=$(await_code hale@example.invalid 0)
+  follow "$JAR" "$(jq -r '.url.loginAction' <<<"$THEMED_CONTEXT")" --data-urlencode "code=$(other_code "$code")" \
+    --data-urlencode sky-email-code-action=verify
+  themed_page
+  jq -e '.skyEmailCodeError == "wrong_code" and .skyEmailCodeAttemptsLeft == "4"' <<<"$THEMED_CONTEXT" >/dev/null \
+    || fail 'the themed page does not get the wrong code and the tries left'
+  follow "$JAR" "$(jq -r '.url.loginAction' <<<"$THEMED_CONTEXT")" --data-urlencode "code=$code" \
+    --data-urlencode sky-email-code-action=verify
+  while [[ $LANDED == page ]]; do
+    themed_page
+    case $THEMED_PAGE_ID in
+      passkey-offer.ftl) follow "$JAR" "$(jq -r '.url.loginAction' <<<"$THEMED_CONTEXT")" --data-urlencode passkey-choice=no ;;
+      sky-stay-signed-in.ftl) follow "$JAR" "$(jq -r '.url.loginAction' <<<"$THEMED_CONTEXT")" --data-urlencode sky-stay-signed-in=no ;;
+      *) fail "the themed code sign-in stopped at $THEMED_PAGE_ID" ;;
+    esac
+  done
+  kcadm update "realms/$REALM" -s loginTheme= >/dev/null
+  printf '    SKY LAB theme: login.ftl offers the step under sky-email-code-display-name; the themed page gets stage, identifier, wait and errors; the code signs in\n'
+fi
 
 printf 'login-by-email-code: all checks passed\n'

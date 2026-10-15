@@ -86,6 +86,13 @@ describe("theme copy", () => {
     expect(Object.keys(translations.tr).length).toBeGreaterThan(100);
   });
 
+  it("starts no text with a space, which Keycloak's .properties bundles would drop", () => {
+    for (const lang of ["tr", "en"] as const) {
+      const leading = Object.entries(translations[lang]).filter(([, text]) => /^\s/.test(text));
+      expect(leading.map(([key]) => `${lang}: ${key}`)).toEqual([]);
+    }
+  });
+
   it("is written in Turkish first and English second", () => {
     expect(Object.keys(translations)).toEqual(["tr", "en"]);
   });

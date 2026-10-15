@@ -170,9 +170,9 @@ async function passwordLogin(page: Page): Promise<{ accessToken: string; session
   const authorization = await parAuthorizationUrl();
   await page.goto(authorization.url);
   await expect(page.locator(".sl-legacy-shell")).toBeVisible();
-  // The theme opens on a choice screen; the password form is behind "YTÜ Öğrencisi Değilim".
+  // The theme opens on a choice screen; the password form is behind "E-postayla devam et".
   // Wait for whichever renders first instead of probing visibility before hydration.
-  const passwordChoice = page.getByRole("button", { name: "YTÜ Öğrencisi Değilim" });
+  const passwordChoice = page.getByRole("button", { name: "E-postayla devam et" });
   const username = page.locator("#username");
   await expect(passwordChoice.or(username).first()).toBeVisible();
   if (await passwordChoice.isVisible()) {

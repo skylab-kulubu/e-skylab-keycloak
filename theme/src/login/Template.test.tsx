@@ -13,6 +13,13 @@ const mainIdByPage: Partial<Record<ThemedPageId, string>> = {
 };
 
 // The Web handoff failure page offers nothing to do, not even a language switch (HandoffFailed.test.tsx).
+// Pages with the login flow's KVKK sentence (legacyChrome kvkk "login"); every other page says "Bu işlemi yaparak …".
+const pagesWithLoginKvkkSentence: ThemedPageId[] = [
+  "login.ftl",
+  "passkey-offer.ftl",
+  "sky-personal-email-offer.ftl",
+  "sky-stay-signed-in.ftl"
+];
 const pagesWithoutLanguageMenu: ThemedPageId[] = ["sky-handoff-failed.ftl"];
 
 async function renderPage(pageId: ThemedPageId, languageTag: "tr" | "en" = "tr") {
@@ -59,7 +66,9 @@ describe("every Keycloak page renders inside the login page chrome", () => {
 
     const footer = container.querySelector("footer.sl-legacy-footer");
     expect(footer).toHaveAttribute("role", "contentinfo");
-    expect(footer?.querySelector('a[href="https://skyl.app/kvkk-metni"]')).toHaveTextContent("KVKK Metni");
+    expect(footer?.querySelector('a[href="https://yildizskylab.com/kvkk-metni.pdf"]')).toHaveTextContent(
+      pagesWithLoginKvkkSentence.includes(pageId) ? "KVKK Aydınlatma Metni" : "KVKK Metni"
+    );
     expect(footer).toHaveTextContent("e-skylab by WEBLAB");
     // Linked to LinkedIn, except on the Web handoff failure page, which offers as little to click as possible.
     const creditSelector =
@@ -134,7 +143,7 @@ describe("every Keycloak page renders inside the login page chrome", () => {
 
     // The login page reveals the password form (and the remember-me bridge source) on demand.
     const login = await renderPage("login.ftl");
-    fireEvent.click(login.getByRole("button", { name: "YTÜ Öğrencisi Değilim" }));
+    fireEvent.click(login.getByRole("button", { name: "E-postayla devam et" }));
     for (const selector of ["#kc-form-login", "#username", "#password", "#rememberMe", "#kc-login"]) {
       expect(login.container.querySelector(selector), `login.ftl lost ${selector}`).not.toBeNull();
     }
@@ -178,14 +187,17 @@ describe("every Keycloak page renders inside the login page chrome", () => {
   });
 
   it("keeps the login KVKK sentence on login and passkey offer, neutral wording elsewhere", async () => {
+    // "Okuyabilirsin", not "kabul ettiğinizi onaylıyorsunuz" (eskylab-login-ux spec §9).
     const login = await renderPage("login.ftl");
     expect(login.container.querySelector("footer.sl-legacy-footer p")).toHaveTextContent(
-      "Giriş yaparak KVKK Metni'ni okuduğunuzu ve kabul ettiğinizi onaylıyorsunuz."
+      "Kişisel verilerinin nasıl işlendiğini KVKK Aydınlatma Metni'nde okuyabilirsin."
     );
     login.unmount();
 
     const offer = await renderPage("passkey-offer.ftl");
-    expect(offer.container.querySelector("footer.sl-legacy-footer p")).toHaveTextContent("Giriş yaparak KVKK Metni");
+    expect(offer.container.querySelector("footer.sl-legacy-footer p")).toHaveTextContent(
+      "Kişisel verilerinin nasıl işlendiğini KVKK Aydınlatma Metni'nde okuyabilirsin."
+    );
     offer.unmount();
 
     const totp = await renderPage("login-config-totp.ftl");

@@ -8,8 +8,8 @@ import YtuMark from "../login/YtuMark";
  * happens to the school password. Rendered once at build time to static HTML; it has no state,
  * no script and no form, and it never links to the Admin Console.
  *
- * The copy follows today's login page (theme/src/login/i18n.ts: "YTÜ Öğrencisiyim",
- * "YTÜ Öğrencisi Değilim", "Erişim anahtarı ile giriş yap") and the trust copy of the login spec
+ * The copy follows today's login page (theme/src/login/i18n.ts: "YTÜ hesabınla devam et",
+ * "E-postayla devam et", "Erişim anahtarı ile giriş yap") and the trust copy of the login spec
  * (ADR-0063). When the login buttons change (e-postayla kodla giriş, kayıt), this page changes
  * with them.
  */
@@ -211,7 +211,7 @@ export default function WelcomePage() {
                 YTÜ öğrencisiysen
               </h3>
               <p>
-                <strong>YTÜ Öğrencisiyim</strong>'i seç. Microsoft'un sayfası açılır, okul hesabınla girersin. İlk girişinde
+                <strong>YTÜ hesabınla devam et</strong>'i seç. Microsoft'un sayfası açılır, okul hesabınla girersin. İlk girişinde
                 SKY LAB hesabın açılır; adını onaylaman ve e-posta adresini doğrulaman istenebilir.
               </p>
               <p>
@@ -228,7 +228,7 @@ export default function WelcomePage() {
                 Parolan varsa
               </h3>
               <p>
-                <strong>YTÜ Öğrencisi Değilim</strong>'i seç; e-posta adresini (okul ya da kişisel) ya da kullanıcı adını
+                <strong>E-postayla devam et</strong>'i seç; e-posta adresini (okul ya da kişisel) ya da kullanıcı adını
                 ve parolanı yaz. Parolanı unuttuysan aynı ekrandaki <strong>Parolanı mı unuttun?</strong> bağlantısını
                 kullan. Parolayı Hesap Merkezi'nden eklersin.
               </p>

@@ -1,13 +1,16 @@
 package com.skylab.authenticator;
 
+import com.skylab.account.EmailCodeSignUp;
 import com.skylab.account.LoginIdentifiers;
 import jakarta.ws.rs.core.MultivaluedHashMap;
 import jakarta.ws.rs.core.MultivaluedMap;
+import jakarta.ws.rs.core.Response;
 import org.keycloak.authentication.AuthenticationFlowContext;
 import org.keycloak.authentication.AuthenticationFlowError;
 import org.keycloak.authentication.FlowStatus;
 import org.keycloak.authentication.authenticators.browser.UsernamePasswordForm;
 import org.keycloak.events.Details;
+import org.keycloak.forms.login.LoginFormsProvider;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
@@ -36,20 +39,55 @@ import java.util.Set;
  *       that note, which no longer resolves, so a wrong password is counted here instead, with
  *       exactly the call Keycloak's flow makes, once.</li>
  * </ul>
+ *
+ * <p>The page also says whether the realm offers Self-registration on its "E-postayla devam et" step
+ * ({@value EmailCodeSignUp#ON_ATTRIBUTE}, eskylab-login-ux 09), so the theme can show "Hesabın yok
+ * mu? E-postayla hesap aç" only then. Keycloak's own registration link stays off
+ * ({@code registrationAllowed=false}, spec S2).
  */
 public class SkyUsernamePasswordForm extends UsernamePasswordForm {
 
     private final String ytuIdpAlias;
+    /** The request's session; null in the tests' form without the passkey helper. */
+    private final KeycloakSession session;
 
     public SkyUsernamePasswordForm(KeycloakSession session, String ytuIdpAlias) {
         super(session);
         this.ytuIdpAlias = ytuIdpAlias;
+        this.session = session;
     }
 
     /** Without the passkey (conditional UI) helper, for tests. */
     SkyUsernamePasswordForm(String ytuIdpAlias) {
         super();
         this.ytuIdpAlias = ytuIdpAlias;
+        this.session = null;
+    }
+
+    /** Keycloak's first page of the form, plus whether Self-registration is offered. */
+    @Override
+    protected Response challenge(AuthenticationFlowContext context, MultivaluedMap<String, String> formData) {
+        LoginFormsProvider forms = context.form();
+        if (!formData.isEmpty()) {
+            forms.setFormData(formData);
+        }
+        markSelfRegistration(context.getRealm(), forms);
+        return forms.createLoginUsernamePassword();
+    }
+
+    /** Keycloak's page after an error (and after a failed passkey), plus whether Self-registration is offered. */
+    @Override
+    protected Response createLoginForm(LoginFormsProvider form) {
+        if (session != null && session.getContext() != null) {
+            markSelfRegistration(session.getContext().getRealm(), form);
+        }
+        return super.createLoginForm(form);
+    }
+
+    static void markSelfRegistration(RealmModel realm, LoginFormsProvider form) {
+        if (EmailCodeSignUp.isOffered(realm)) {
+            form.setAttribute(EmailCodeSignUp.ON_ATTRIBUTE, "true");
+        }
     }
 
     @Override

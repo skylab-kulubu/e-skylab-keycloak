@@ -162,6 +162,41 @@ class LoginCodesTest {
         assertEquals(Outcome.confirmed(new Pending("", "")), codes.confirm("handle-a", code));
     }
 
+    // Self-registration (eskylab-login-ux 09): a code mailed to an address that has no account yet. It
+    // signs nobody in; the right code proves the address, so the sign-up form may open.
+    @Test
+    void aSignUpCodeProvesTheAddressItWasMailedToAndSignsNobodyIn() throws Exception {
+        String code = codes.issueSignUp("handle-a", "new@example.com");
+
+        Map<String, String> stored = store.get(LoginCodes.key("handle-a"));
+        assertEquals(java.util.Set.of("userId", "address", "purpose", "salt", "codeHash", "expiresAt", "attemptsLeft"),
+                stored.keySet());
+        assertEquals("", stored.get("userId"));
+        assertEquals("new@example.com", stored.get("address"));
+        assertEquals("signup", stored.get("purpose"));
+        assertEquals(hashOf(stored.get("salt"), code), stored.get("codeHash"));
+        assertEquals("new@example.com", codes.peek("handle-a").signUpAddress());
+        assertEquals("", codes.peek("handle-a").userId());
+
+        assertEquals(Outcome.wrongCode("", LoginCodes.MAX_ATTEMPTS - 1), codes.confirm("handle-a", other(code)));
+        Outcome confirmed = codes.confirm("handle-a", code);
+        assertEquals(Outcome.confirmed(new Pending("", "new@example.com", true)), confirmed);
+        assertTrue(confirmed.pending().signUp());
+        assertEquals(Outcome.none(), codes.confirm("handle-a", code), "a sign-up code works once too");
+    }
+
+    // The decoy for nobody and a Login code are never sign-up codes, whatever their address says.
+    @Test
+    void onlyACodeIssuedForSignUpCountsAsOne() {
+        String decoy = codes.issue("handle-a", "", "");
+        assertEquals("", codes.peek("handle-a").signUpAddress());
+        assertFalse(codes.confirm("handle-a", decoy).pending().signUp());
+
+        String login = codes.issue("handle-b", "user-a", "ada@example.com");
+        assertEquals("", codes.peek("handle-b").signUpAddress(), "a Login code's address never reaches the page");
+        assertFalse(codes.confirm("handle-b", login).pending().signUp());
+    }
+
     @Test
     void peekingShowsWhoAndHowManyTriesAreLeftWithoutTheCodeOrTheAddress() {
         String code = codes.issue("handle-a", "user-a", "ada@example.com");

@@ -2724,6 +2724,13 @@ kapanınca biten çerez). Sayfa ortak ya da başkasının bilgisayarında Hayır
 dolana kadar yaşar).
 Microsoft paylaşılan cihazı sezip soruyu gizliyor; biz sezemiyoruz, yalnız metinle uyarıyoruz.
 
+SPI 1.22.0'dan sonra (eskylab-login-ux 08b, Yusuf'un kararı 2026-10-15) soru e-postaya gelen kodla
+girişin sonunda da çıkar: kod sayfalarında "Beni hatırla" kutusu yok, Microsoft da e-posta kodundan
+sonra "Stay signed in?" sorar. `evaluateTriggers` girişin `sky-email-code` adımıyla bittiğini o adımın
+kimlik doğrulama notundan anlar. Soru son sayfa olduğu için `LOGIN` olayı onun isteğinde yazılır; eylem
+`sky_method=email_code` ayrıntısını o olaya yeniden koyar (§29 ölçümü bozulmasın). Parola ve passkey
+girişi yine sorulmaz.
+
 ### Nasıl çalışır
 
 SPI 1.19.0'daki `sky-stay-signed-in` gerekli eylemi (`com.skylab.authenticator.SkyStaySignedIn`).
@@ -3326,7 +3333,7 @@ browser plus passkey forms (ALTERNATIVE)
   CONDITIONAL adımı REQUIRED `auth-otp-form` (sıfırlama akışındaki `otp-guard` kuralı). Admin
   Console'da OTP alt akışı kapatılır, koşul ya da form değiştirilir ya da yanına başka bir koşul veya
   REQUIRED adım eklenirse, bir sonraki yayını beklemeden OTP'li kişi doğru kodla da giremez: sayfa
-  `unavailable` ("E-postayla giriş şu an kullanılamıyor. Parolanla ya da passkey ile gir.") der, olay
+  `unavailable` ("E-postayla giriş şu an kullanılamıyor. Parolanla ya da erişim anahtarınla gir.") der, olay
   `otp_unguarded`, sunucu günlüğünde `sky_email_code_otp_unguarded realm=…` ERROR satırı (kişi, adres,
   IP yok). OTP'si olmayan kişi etkilenmez. Düzeltme: `KEYCLOAK_EMAIL_CODE_LOGIN=on` (ya da `off`).
 
@@ -3343,24 +3350,24 @@ browser plus passkey forms (ALTERNATIVE)
   60 sn kilit) kilitli kişi doğru kodla da giremez (`account_locked`). Kod girişi başarılı girişte
   sayacı sıfırlamaz: Keycloak sıfırlamayı yalnız parola, OTP ve kurtarma kodu için yapar; sayaç
   `maxDeltaTimeSeconds` (12 saat) sonra kendiliğinden düşer.
-- Hesap başına yanlış kod tavanı (güvenlik incelemesi K2, Yusuf 2026-10-15): bir hesap UTC gününde en
-  çok 10 yanlış kod alır (`SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT`, 1-1000). Tavana ulaşınca o hesaba
+- Hesap başına yanlış kod tavanı (güvenlik incelemesi K2, Yusuf 2026-10-15): bir hesap UTC gününde
+  yaklaşık 10 yanlış kod alır (`SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT`, 1-1000). Tavana ulaşınca o hesaba
   gün bitene kadar kod postalanmaz; kod isteyen aynı kod sayfasını ve postalanmayan bir kodu alır
   (sahte kod yolu; olay `wrong_code_ceiling`, hata `sky_email_code_rate_limited`). O hesaba önceden
   gönderilmiş, hâlâ geçerli kodlar artık denetlenmez: deneme yazılanla karşılaştırılmadan yanlış sayılır
-  (sayfa yine `wrong_code`; olay `wrong_code_ceiling`), böylece günde 10'dan fazla tahmin olmaz. Tavana
+  (sayfa yine `wrong_code`; olay `wrong_code_ceiling`), böylece günde ancak yaklaşık 10 tahmin olur (aynı anda tahmin eden birkaç oturum, sayaç dolmadan birkaç deneme daha yapabilir). Tavana
   ulaşan her hesap `sky_email_code_wrong_ceiling accounts=N ceiling=10 realm=…` WARN satırı yazar (kişi
   yok); günün ilk hesabı alarm grubuna (`/ADMIN`) bir posta atar (SkyMail `keycloak.login-code-alarm`,
   `subjectKey=skyLoginCodeAlarmCeilingSubject`; kişi adı, adres, IP yok). Parola, passkey ve YTÜ girişi
   etkilenmez; bedeli: saldırgan 10 yanlış kodla bir hesabın o günkü kodla girişini kapatabilir (bunun
   için kurbana en az iki kod postası gider, kod başına beş deneme; saldırı görünürdür).
-  - Hesap: kod başına 5 deneme, hesap başına günde en çok 10 yanlış; 8 hanede bir tahminin tutma olasılığı
-    10⁻⁸. Hesap başına yılda en çok 10 × 365 = 3.650 tahmin, yani ≈ 3,65·10⁻⁵ ≈ **%0,004** (inceleyicinin
+  - Hesap: kod başına 5 deneme, hesap başına günde yaklaşık 10 yanlış; 8 hanede bir tahminin tutma olasılığı
+    10⁻⁸. Hesap başına yılda yaklaşık 10 × 365 = 3.650 tahmin, yani ≈ 3,65·10⁻⁵ ≈ **%0,004** (inceleyicinin
     hesabı; önceki 6 hane ve tavansız düzende günde 50 tahmin, yılda ≈ %1,8).
   - Sayaç diğer bütçelerle aynı yerde: `RateLimiter`, Keycloak'ın single-use deposu (Infinispan). Canlı
     `KC_CACHE=local`, tek replika: sayaç tutarlıdır, Keycloak yeniden başlayınca (diğer bütçeler gibi)
     sıfırlanır. Çok replikaya geçilirse sayaç, diğer bütçeler gibi, dağıtık önbellekle paylaşılır.
-  - NIST SP 800-63B: hesapta ardışık başarısız denemeyi en çok 100 ile sınırla. Uyan: günde en çok 10
+  - NIST SP 800-63B: hesapta ardışık başarısız denemeyi en çok 100 ile sınırla. Uyan: günde yaklaşık 10
     yanlış, Keycloak'ın kaba kuvvet kilidi ek olarak. Sapan: sayaç ardışık değil günlüktür ve
     başarılı girişte sıfırlanmaz; kesintisiz bir saldırı 100 ardışık başarısızlığa 10 günde ulaşır
     (yeniden başlatma da günün sayacını sıfırlar). Günlük alarm yöneticiyi ilk gün uyarır. Tam uyum için
@@ -3461,8 +3468,10 @@ ve alt akışların öncelikleri) 2026-09-21 olgularından; ilk `on`'dan önce A
 2. SkyMail şablonları (`keycloak.login-code`, `keycloak.login-code-alarm`) skymail-frontend'den
    tohumlanır. Önce `on` edilirse posta SkyMail 404 ile SMTP'ye düşer (`sky_mail_fallback
    reason=template_missing`), yine gider.
-3. Tema PR'ı (ilk ekrandaki "E-postayla devam et" ve kod sayfaları) yayımlanır. O olmadan alt akış
-   açılsa da SKY LAB temasında ona giden düğme yoktur.
+3. Tema PR'ı (ilk ekrandaki "E-postayla devam et" ve kod sayfaları, SPI 1.22.0 ile "Bu cihazda
+   oturumum açık kalsın mı?" kod girişinde de) yayımlanır. O olmadan alt akış açılsa da SKY LAB
+   temasında ona giden düğme yoktur. Tema düğmesi alt akış yokken ya da `off` iken bugünkü parola
+   görünümünü açar; tema alt akıştan önce yayımlanabilir.
 4. IP denetimi §23 1a'daki gibi (IP sınıfı bütçesi Keycloak'ın gördüğü IP kadar doğrudur).
 5. Ortam değişikliği gerekmez: alarm varsayılan olarak `/ADMIN` üyelerine gider. Başka bir grup ya da
    yalnız log isteniyorsa Dokploy → Keycloak → Environment: `SKY_EMAIL_CODE_ALARM_GROUP` (grup yolu ya

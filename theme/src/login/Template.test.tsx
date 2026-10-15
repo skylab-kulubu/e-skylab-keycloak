@@ -8,6 +8,7 @@ const mainIdByPage: Partial<Record<ThemedPageId, string>> = {
   "login.ftl": "sl-legacy-main",
   "passkey-offer.ftl": "sl-passkey-offer-main",
   "sky-personal-email-offer.ftl": "sl-personal-email-offer-main",
+  "sky-email-code.ftl": "sl-email-code-main",
   "sky-stay-signed-in.ftl": "sl-stay-signed-in-main",
   "sky-handoff-failed.ftl": "sl-handoff-failed-main"
 };
@@ -18,7 +19,8 @@ const pagesWithLoginKvkkSentence: ThemedPageId[] = [
   "login.ftl",
   "passkey-offer.ftl",
   "sky-personal-email-offer.ftl",
-  "sky-stay-signed-in.ftl"
+  "sky-stay-signed-in.ftl",
+  "sky-email-code.ftl"
 ];
 const pagesWithoutLanguageMenu: ThemedPageId[] = ["sky-handoff-failed.ftl"];
 
@@ -121,6 +123,14 @@ describe("every Keycloak page renders inside the login page chrome", () => {
           'input#sky-offer-address[name="address"]',
           'button[name="sky-offer-action"][value="send"]',
           'button[name="sky-offer-action"][value="skip"]'
+        ]
+      ],
+      [
+        "sky-email-code.ftl",
+        [
+          "#kc-email-code-identifier-form",
+          'input#username[name="username"]',
+          'button[name="sky-email-code-action"][value="send"]'
         ]
       ],
       [
@@ -242,7 +252,7 @@ describe("every Keycloak page renders inside the login page chrome", () => {
     expect(login.container.querySelectorAll(".sl-legacy-teams")).toHaveLength(2);
     login.unmount();
 
-    for (const pageId of ["login-otp.ftl", "error.ftl", "logout-confirm.ftl", "passkey-offer.ftl", "sky-personal-email-offer.ftl", "sky-stay-signed-in.ftl", "sky-handoff-failed.ftl"] as const) {
+    for (const pageId of ["login-otp.ftl", "error.ftl", "logout-confirm.ftl", "passkey-offer.ftl", "sky-personal-email-offer.ftl", "sky-email-code.ftl", "sky-stay-signed-in.ftl", "sky-handoff-failed.ftl"] as const) {
       const view = await renderPage(pageId);
       expect(view.container.querySelector(".sl-legacy-teams"), pageId).toBeNull();
       view.unmount();

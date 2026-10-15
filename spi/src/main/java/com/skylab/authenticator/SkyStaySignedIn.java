@@ -1,5 +1,6 @@
 package com.skylab.authenticator;
 
+import com.skylab.account.EmailCodeAuthenticator;
 import jakarta.ws.rs.core.MultivaluedMap;
 import org.keycloak.Config;
 import org.keycloak.authentication.AuthenticationProcessor;
@@ -20,7 +21,9 @@ import org.keycloak.sessions.AuthenticationSessionModel;
 /**
  * {@code sky-stay-signed-in}: "Bu cihazda oturumum açık kalsın mı?" once at the end of every YTÜ
  * login, the counterpart of Microsoft's "Stay signed in?" after a federated sign-in (Yusuf's
- * decision of 2026-10-12). "Evet, açık kalsın" makes the new Keycloak session a remember-me session
+ * decision of 2026-10-12), and since eskylab-login-ux 08 at the end of every Login code sign-in
+ * ("E-postayla devam et", {@link EmailCodeAuthenticator}), whose pages have no "Beni hatırla" box
+ * either (Microsoft asks after an e-mail code too). "Evet, açık kalsın" makes the new Keycloak session a remember-me session
  * (the realm's remember-me idle time and lifespan, a persistent cookie); "Hayır" leaves it an
  * ordinary one: a session cookie, and a server session that ends after the realm's idle time. The
  * page asks people on a shared computer to choose "Hayır" and sign out when done. The password and passkey sign-in keeps its own "Beni hatırla" box; this page never
@@ -30,7 +33,8 @@ import org.keycloak.sessions.AuthenticationSessionModel;
  * authenticator of the browser flow runs for a person who signs in with YTÜ again: a linked account
  * goes from the identity provider straight to the end of the login. Only the realm's required
  * actions run on every login, so this is one: {@link #evaluateTriggers} puts it on the sign-in
- * session (never on the user) when the login came through the identity provider {@value #YTU_IDP_ALIAS}.
+ * session (never on the user) when the login came through the identity provider {@value #YTU_IDP_ALIAS}
+ * or the e-mail code step signed the person in (its authentication note).
  * The answer is the {@link Details#REMEMBER_ME} authentication note, which Keycloak reads when it
  * creates the user session after the required actions
  * ({@code AuthenticationProcessor.attachSession}), as the password form's box does
@@ -84,18 +88,27 @@ public final class SkyStaySignedIn implements RequiredActionProvider, RequiredAc
     }
 
     /**
-     * Whether this sign-in should ask: it came through YTÜ, the realm has remember-me on, it is not
+     * Whether this sign-in should ask: it came through YTÜ or a Login code, the realm has remember-me on, it is not
      * SkyApp's, not passive, not an application-initiated action, and it will open a new user session.
      */
     static boolean due(KeycloakSession session, RealmModel realm, AuthenticationSessionModel authSession) {
         if (realm == null || !realm.isRememberMe()
-                || !YTU_IDP_ALIAS.equals(authSession.getUserSessionNotes().get(Details.IDENTITY_PROVIDER))
+                || !(cameThroughYtu(authSession) || signedInWithLoginCode(authSession))
                 || isSkyApp(authSession.getClient())
                 || Boolean.parseBoolean(authSession.getAuthNote(AuthenticationProcessor.FORWARDED_PASSIVE_LOGIN))
                 || !isBlank(authSession.getClientNote(Constants.KC_ACTION))) {
             return false;
         }
         return !keepsLiveSession(session, realm, authSession);
+    }
+
+    private static boolean cameThroughYtu(AuthenticationSessionModel authSession) {
+        return YTU_IDP_ALIAS.equals(authSession.getUserSessionNotes().get(Details.IDENTITY_PROVIDER));
+    }
+
+    /** The code step of "E-postayla devam et" signed the person in (eskylab-login-ux 08). */
+    private static boolean signedInWithLoginCode(AuthenticationSessionModel authSession) {
+        return EmailCodeAuthenticator.METHOD.equals(authSession.getAuthNote(EmailCodeAuthenticator.METHOD_NOTE));
     }
 
     /**
@@ -141,6 +154,11 @@ public final class SkyStaySignedIn implements RequiredActionProvider, RequiredAc
         }
         authSession.setAuthNote(ANSWERED_NOTE, Boolean.TRUE.toString());
         context.getEvent().detail(EVENT_DETAIL, choice);
+        if (signedInWithLoginCode(authSession)) {
+            // This page is the last one, so the LOGIN event is written in this request; the code
+            // step marked an earlier request's event.
+            context.getEvent().detail(EmailCodeAuthenticator.METHOD_DETAIL, EmailCodeAuthenticator.METHOD);
+        }
         context.success();
     }
 

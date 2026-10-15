@@ -40,7 +40,7 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.21.0`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.22.0`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.1.1`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
@@ -372,7 +372,7 @@ doğrulamada (`prompt=login`, `max_age`: Keycloak o oturumu olduğu gibi tutar) 
 bir kez sorulur. Olay `CUSTOM_REQUIRED_ACTION`, ayrıntı `sky_stay_signed_in` = `yes` ya da `no`.
 Parola ve geçiş anahtarı girişindeki "Beni hatırla" kutusu değişmedi. Tema sayfası
 `sky-stay-signed-in.ftl` (`theme/src/login/StaySignedIn.tsx`); temasız realm için SPI'nın yedek
-şablonu vardır. Uzlaştırıcı: `KEYCLOAK_STAY_SIGNED_IN=on` eylemi kaydeder, açar ve realm'in bütün
+şablonu vardır. SPI 1.22.0'dan sonra soru e-postaya gelen kodla girişte de çıkar (bilet 08b). Uzlaştırıcı: `KEYCLOAK_STAY_SIGNED_IN=on` eylemi kaydeder, açar ve realm'in bütün
 gerekli eylemlerinden sonraya koyar (kişisel e-posta önerisinden sonra); `off` kapatır (geri dönüş);
 varsayılan `keep` dokunmaz, sıra bozulmuşsa uyarır. Ayrıntı: runbook §24.
 
@@ -415,7 +415,7 @@ istekte posta gitmez, ekran aynı kalır, oturumun eski kodu da yerini postalanm
 (güvenlik incelemesi B3: kalan deneme sayısı iki tanımlayıcının aynı hesaba çıktığını söylemesin); genel sınır giriş
 kodunu durdurmaz, yarısında ve dolduğunda `/ADMIN` grubunun etkin ve adresi olan üyelerine posta
 (`SKY_EMAIL_CODE_ALARM_GROUP`, `off` ile yalnız `sky_email_code_budget` log satırı) gider. Hesap başına
-günde en çok 10 yanlış kod (`SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT`, güvenlik incelemesi K2): tavana
+günde yaklaşık 10 yanlış kod (`SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT`, güvenlik incelemesi K2; eşzamanlı oturumlar birkaç deneme aşabilir): tavana
 ulaşan hesaba gün bitene kadar kod postalanmaz, ekran aynı kalır, önceden gönderilmiş kod artık
 denetlenmez (denemesi yanlış sayılır); günün ilk böyle hesabı aynı alarm grubuna posta, her biri
 `sky_email_code_wrong_ceiling` log satırı yazar. Sayfa hiçbir zaman "hesap yok" demez: kimseye
@@ -431,6 +431,12 @@ ve yazılan tanımlayıcı olmadan (olaylar jboss-logging ile sunucu günlüğü
 DISABLED yapar (geri dönüş), varsayılan `keep` dokunmaz; operatör adımı
 `KEYCLOAK_RECONCILE_ONLY=email-code-login`. Ayrıntı, üretim sırası ve geri dönüş: runbook §29. Harness
 `tests/login-by-email-code.sh` tek başına çalışır (stok imaj, SPI jar'ı, SkyMail fixture'ı, Mailpit).
+Giriş teması (bilet 08b): ilk ekrandaki e-posta düğmesi, Keycloak adımı `auth.authenticationSelections`'ta
+sunuyorsa (`sky-email-code-display-name`) koda geçer, sunmuyorsa bugünkü parola görünümünü açar;
+`sky-email-code.ftl` sayfası (`theme/src/login/EmailCode.tsx`) adres ve kod aşamalarını, 60 saniyelik
+yeniden gönderme sayacını, `one-time-code` alanını, "Parolanla gir"i ve passkey'i taşır. SPI 1.22.0'dan
+sonra "Bu cihazda oturumum açık kalsın mı?" kodla girişte de sorulur (kod sayfasında "Beni hatırla"
+yok) ve son sayfa olduğu için `LOGIN` olayının `sky_method=email_code` ayrıntısını korur.
 
 Hesap silmede (ADR-0051) core, SkyMail, CMS ve Forms'a ayrı bir gizli service
 account istemcisinden, `core-erasure`'dan aldığı token'larla gider. Operatör

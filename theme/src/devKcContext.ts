@@ -84,6 +84,7 @@ const { getKcContextMock } = createGetKcContextMock({
   kcContextExtensionPerPage: {
     "passkey-offer.ftl": {},
     "sky-personal-email-offer.ftl": { skyOfferStage: "address", skyOfferCodeMinutes: "10" },
+    "sky-email-code.ftl": { skyEmailCodeStage: "identifier", skyEmailCodeMinutes: "10" },
     "sky-stay-signed-in.ftl": { skyStaySignedInIdleDays: "7", skyStaySignedInMaxDays: "30" },
     "sky-handoff-failed.ftl": { skyHandoffReason: "expired" }
   } satisfies KcContextExtensionPerPage,
@@ -433,7 +434,37 @@ export function getDevKcContext(): KcContext {
     Object.assign(kcContext, getPersonalEmailOfferPreview(offer));
   }
 
+  // `?page=sky-email-code.ftl&code=sent` previews the code stage just after the mail (resend waits);
+  // `&code=wrong` after a wrong code with the resend open.
+  const code = searchParams.get("code");
+  if (kcContext.pageId === "sky-email-code.ftl" && code !== null) {
+    Object.assign(kcContext, getEmailCodePreview(code));
+  }
+
   return kcContext;
+}
+
+/** The SPI's page attributes for one preview of "E-postayla devam et" (see getDevKcContext). */
+export function getEmailCodePreview(code: string): Record<string, string> {
+  if (code === "sent") {
+    return {
+      skyEmailCodeStage: "code",
+      skyEmailCodeIdentifier: "ada.lovelace@example.org",
+      skyEmailCodeMinutes: "10",
+      skyEmailCodeResendAfter: "60"
+    };
+  }
+  if (code === "wrong") {
+    return {
+      skyEmailCodeStage: "code",
+      skyEmailCodeIdentifier: "ada.lovelace@example.org",
+      skyEmailCodeMinutes: "10",
+      skyEmailCodeResendAfter: "0",
+      skyEmailCodeError: "wrong_code",
+      skyEmailCodeAttemptsLeft: "4"
+    };
+  }
+  return { skyEmailCodeStage: "identifier", skyEmailCodeMinutes: "10" };
 }
 
 /** The SPI's page attributes for one preview of the personal e-mail offer (see getDevKcContext). */

@@ -88,7 +88,7 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     "personalEmailOfferError.wrong_code": "Kod yanlış. {0} deneme hakkın kaldı.",
     "personalEmailOfferError.code_expired": "Kodun süresi doldu ya da kod kullanıldı. Yeni bir kod iste.",
     "personalEmailOfferError.too_many_tries": "Çok fazla yanlış deneme. Yeni bir kod iste.",
-    // "Bu cihazda oturumum açık kalsın mı?" after every YTÜ login (SPI sky-stay-signed-in)
+    // "Bu cihazda oturumum açık kalsın mı?" after every YTÜ login and every e-mail code login (SPI sky-stay-signed-in)
     staySignedInTitle: "Bu cihazda oturumum açık kalsın mı?",
     staySignedInDescription:
       "Evet dersen bu tarayıcıda {0} güne kadar yeniden giriş yapman gerekmez; {1} gün hiç kullanmazsan oturumun kapanır.",
@@ -96,6 +96,36 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
       "Ortak ya da başkasının bilgisayarındaysan (laboratuvar, kütüphane) Hayır'ı seç ve işin bitince çıkış yap. Hayır dersen oturumun bu cihazda kalıcı olmaz, bir süre kullanmadığında kendiliğinden biter.",
     staySignedInYes: "Evet, açık kalsın",
     staySignedInNo: "Hayır",
+
+    // "E-postayla devam et": sign-in with a code mailed to the account (SPI sky-email-code, eskylab-login-ux 08)
+    emailCodeTitle: "E-postayla devam et",
+    emailCodeDescription:
+      "E-posta adresini ya da kullanıcı adını yaz; hesabının e-posta adresine 8 haneli bir giriş kodu gönderelim.",
+    emailCodeCodeDescription: "E-postana gelen 8 haneli kodu yaz.",
+    emailCodeIdentifierLabel: "E-posta adresin ya da kullanıcı adın",
+    emailCodeSend: "Kod gönder",
+    emailCodePassword: "Parolanla gir",
+    emailCodeSent:
+      "Kodu gönderdik. Bu adresle bir hesabın varsa kod, hesabının birincil e-posta adresine gider. Gelen kutunu ve spam klasörünü kontrol et. Kod {0} dakika geçerli.",
+    emailCodeFor: "Yazdığın: {0}",
+    emailCodeCodeLabel: "8 haneli kod",
+    emailCodeVerify: "Giriş yap",
+    emailCodeResend: "Kodu yeniden gönder",
+    emailCodeResendIn: "Kodu {0} saniye sonra yeniden gönderebilirsin",
+    emailCodeChange: "Başka bir adres yaz",
+    "emailCodeError.invalid_identifier": "E-posta adresini ya da kullanıcı adını yaz.",
+    "emailCodeError.rate_limited": "Çok fazla kod istendi. Sayfayı yenileyip biraz sonra yeniden dene.",
+    "emailCodeError.resend_too_soon": "Yeni bir kod istemeden önce biraz bekle.",
+    "emailCodeError.malformed_code": "Kod 8 rakamdan oluşur.",
+    "emailCodeError.wrong_code": "Kod yanlış. {0} deneme hakkın kaldı.",
+    "emailCodeError.code_expired": "Kod yanlış ya da süresi dolmuş. Yeni bir kod iste.",
+    "emailCodeError.too_many_tries": "Çok fazla yanlış deneme. Yeni bir kod iste.",
+    "emailCodeError.account_disabled": "Hesabın kapalı. Kulüp yönetimine yaz.",
+    "emailCodeError.account_locked":
+      "Çok fazla yanlış deneme yüzünden hesabın birkaç dakikalığına kilitlendi. Biraz sonra yeniden dene.",
+    "emailCodeError.unavailable": "E-postayla giriş şu an kullanılamıyor. Parolanla ya da erişim anahtarınla gir.",
+    "sky-email-code-display-name": "E-postama kod gönder",
+    "sky-email-code-help-text": "E-posta adresine gelen 8 haneli kodla giriş yap.",
 
     // Web handoff failure page (SkyApp WebView, sky-handoff v1/failed): one sentence per reason
     "skyHandoffFailed.expired": "Bağlantının süresi doldu.",
@@ -417,6 +447,33 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
       "On a shared or someone else's computer (a lab, a library), choose No and sign out when you are done. With No, your session is not kept on this device and ends on its own after a while without use.",
     staySignedInYes: "Yes, stay signed in",
     staySignedInNo: "No",
+
+    emailCodeTitle: "Continue with email",
+    emailCodeDescription: "Type your email or username; we will send an 8-digit sign-in code to your account's email.",
+    emailCodeCodeDescription: "Type the 8-digit code from your email.",
+    emailCodeIdentifierLabel: "Your email or username",
+    emailCodeSend: "Send code",
+    emailCodePassword: "Sign in with your password",
+    emailCodeSent:
+      "We sent the code. If you have an account with this address, the code goes to your account's primary email. Check your inbox and spam folder. The code is valid for {0} minutes.",
+    emailCodeFor: "You typed: {0}",
+    emailCodeCodeLabel: "8-digit code",
+    emailCodeVerify: "Sign in",
+    emailCodeResend: "Send the code again",
+    emailCodeResendIn: "You can ask for a new code in {0} seconds",
+    emailCodeChange: "Use another address",
+    "emailCodeError.invalid_identifier": "Type your email or username.",
+    "emailCodeError.rate_limited": "Too many codes were requested. Reload the page and try again later.",
+    "emailCodeError.resend_too_soon": "Wait a moment before asking for a new code.",
+    "emailCodeError.malformed_code": "The code has 8 digits.",
+    "emailCodeError.wrong_code": "Wrong code. {0} tries left.",
+    "emailCodeError.code_expired": "The code is wrong or has expired. Ask for a new one.",
+    "emailCodeError.too_many_tries": "Too many wrong tries. Ask for a new code.",
+    "emailCodeError.account_disabled": "Your account is disabled. Contact the club admins.",
+    "emailCodeError.account_locked": "Too many wrong tries locked your account for a few minutes. Try again later.",
+    "emailCodeError.unavailable": "Signing in by e-mail is unavailable right now. Sign in with your password or a passkey.",
+    "sky-email-code-display-name": "Email me a code",
+    "sky-email-code-help-text": "Sign in with the eight-digit code sent to your email.",
 
     // Web handoff failure page (SkyApp WebView, sky-handoff v1/failed): one sentence per reason
     "skyHandoffFailed.expired": "This link has expired.",

@@ -172,6 +172,52 @@ class SkyStaySignedInTest {
         assertTrue(requiredActions.isEmpty(), "another identity provider");
     }
 
+    // A Login code sign-in has no "Beni hatırla" box either (eskylab-login-ux 08; Microsoft asks
+    // "Stay signed in?" after an e-mail code too): the code step leaves its note on the session.
+    @Test
+    void aLoginCodeSignInGetsTheQuestionToo() {
+        userSessionNotes.clear();
+        notes.put("sky-email-code.method", "email_code");
+
+        trigger();
+
+        assertEquals(List.of(SkyStaySignedIn.PROVIDER_ID), requiredActions);
+    }
+
+    @Test
+    void aLoginCodeSignInIsNotAskedWhereNobodyIsAsked() {
+        userSessionNotes.clear();
+        notes.put("sky-email-code.method", "email_code");
+        notes.put(AuthenticationProcessor.FORWARDED_PASSIVE_LOGIN, "true");
+        trigger();
+        assertTrue(requiredActions.isEmpty(), "a passive login");
+
+        notes.remove(AuthenticationProcessor.FORWARDED_PASSIVE_LOGIN);
+        notes.put("sky-email-code.method", "something-else");
+        trigger();
+        assertTrue(requiredActions.isEmpty(), "only the code step's own value counts");
+    }
+
+    // The question is the last page, so Keycloak writes the LOGIN event in its request: the code step's
+    // method has to be put on that event again (the code step put it on an earlier request's).
+    @Test
+    void theAnswerOfACodeSignInKeepsTheMethodOnTheLoginEvent() {
+        userSessionNotes.clear();
+        notes.put("sky-email-code.method", "email_code");
+
+        answer(SkyStaySignedIn.YES);
+
+        verify(event).detail("sky_method", "email_code");
+        verify(event).detail(SkyStaySignedIn.EVENT_DETAIL, SkyStaySignedIn.YES);
+    }
+
+    @Test
+    void theAnswerOfAYtuSignInNamesNoMethod() {
+        answer(SkyStaySignedIn.NO);
+
+        verify(event, never()).detail(org.mockito.ArgumentMatchers.eq("sky_method"), anyString());
+    }
+
     @Test
     void noQuestionWhenTheRealmHasRememberMeOff() {
         when(realm.isRememberMe()).thenReturn(false);

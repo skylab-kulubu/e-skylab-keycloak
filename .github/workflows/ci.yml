@@ -169,14 +169,27 @@ jobs:
   # stock Keycloak image in dev mode, with the SPI jar built from spi/ in the Dockerfile's Maven image,
   # production's browser flow shape, codes read from the integration harness's pinned Mailpit image
   # and real logins (password, code, code then TOTP); needs no build of this repository's image.
+  # The login theme is built too, so the last stage proves its contract with the step (08b).
   login-by-email-code:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.22.1
+          cache: npm
+          cache-dependency-path: theme/package-lock.json
+
+      - name: Build the login theme
+        working-directory: theme
+        run: |
+          npm ci --ignore-scripts
+          npm run build-keycloak-theme
+
       - name: Sign-in with an e-mail code against a throwaway Keycloak
-        run: bash tests/login-by-email-code.sh
+        run: LOGIN_BY_EMAIL_CODE_THEME_JAR=theme/dist_keycloak/e-skylab-theme-2.0.1.jar bash tests/login-by-email-code.sh
 
   # The SPI's microsoft identity provider: Keycloak's re-authentication (max_age exceeded,
   # prompt=login) goes to Microsoft as prompt=login; an ordinary first login and SSO unchanged;

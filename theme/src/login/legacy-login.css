@@ -1129,6 +1129,44 @@ textarea.sl-legacy-input {
   font-size: 0.875rem;
 }
 
+/* "E-postayla devam et" (sky-email-code.ftl): the same rhythm as the personal e-mail offer. */
+.sl-email-code__sent,
+.sl-email-code__identifier {
+  margin: 0 0 1rem;
+  color: var(--sl-legacy-label);
+  font-size: 0.875rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.sl-email-code__identifier {
+  margin-top: -0.5rem;
+}
+
+.sl-email-code__actions {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+.sl-email-code__secondary {
+  min-height: 3rem;
+  font-size: 0.875rem;
+}
+
+.sl-email-code__secondary:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* Eight digits read as cells: one field, so pasting and one-time-code autofill keep working. */
+.sl-email-code__code {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 1.5rem;
+  letter-spacing: 0.35em;
+  text-align: center;
+}
+
 .sl-stay-signed-in__warning {
   margin: 0 0 1.25rem;
   padding: 0.875rem 1rem;

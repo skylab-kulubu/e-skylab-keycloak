@@ -9,6 +9,7 @@ REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 IMAGE=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' "$REPOSITORY_ROOT/Dockerfile")
 MAILPIT_IMAGE=$(sed -n 's/^ *image: \(axllent\/mailpit:[^ ]*\)$/\1/p' "$SCRIPT_DIR/docker-compose.integration.yml")
 PG_IMAGE=${B12_PG_IMAGE:-postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24}
+PG_TMPFS=${B12_PG_TMPFS:-/var/lib/postgresql/data}
 PORT=${B12_TEST_PORT:-18131}
 MAIL_PORT=${B12_MAIL_PORT:-18132}
 BASE_URL="http://127.0.0.1:$PORT"
@@ -30,6 +31,7 @@ APP=b12-app
 APP_REDIRECT=http://127.0.0.1:9/ytu-first-login-callback
 BROWSER_REDIRECT="http://localhost:$PORT/b12-browser-callback"
 CURRENT_STAGE=startup
+B12_HARNESS_COMPLETE=0
 STATUS=''
 LOCATION=''
 BODY=''
@@ -46,7 +48,7 @@ cleanup() {
   docker network rm "$NETWORK" >/dev/null 2>&1 || true
   if [[ ${B12_KEEP_STATE:-0} != 1 ]]; then rm -rf "$STATE_DIR"; fi
 }
-trap 'status=$?; trap - EXIT; cleanup; exit "$status"' EXIT
+trap 'status=$?; trap - EXIT; if [[ $B12_HARNESS_COMPLETE != 1 && $status == 0 ]]; then status=1; fi; cleanup; exit "$status"' EXIT
 on_error() { printf 'existing-account command failed during %s at line %s\n' "$CURRENT_STAGE" "$1" >&2; }
 trap 'on_error "$LINENO"' ERR
 kcadm() {
@@ -189,7 +191,7 @@ local_person() {
 CURRENT_STAGE='fixture compile'
 SPI_JAR=${B12_SPI_JAR:?Build spi/ first and set B12_SPI_JAR to its absolute jar path}
 mkdir -p "$STATE_DIR/fixture"
-docker run --pull=never --rm --memory 512m --user "$(id -u):$(id -g)" --entrypoint bash \
+docker run --pull=never --cpus 2 --rm --memory 512m --user "$(id -u):$(id -g)" --entrypoint bash \
   -v "$SPI_JAR:/fixture/spi.jar:ro" \
   -v "$SCRIPT_DIR/fixtures/BrokerMicrosoftFixture.java:/fixture/BrokerMicrosoftFixture.java:ro" \
   -v "$SCRIPT_DIR/fixtures/BrokerLinkRuntimeProbe.java:/fixture/BrokerLinkRuntimeProbe.java:ro" \
@@ -201,14 +203,14 @@ docker run --pull=never --rm --memory 512m --user "$(id -u):$(id -g)" --entrypoi
     printf "%s\n" com.skylab.account.BrokerLinkRuntimeProbe > /out/META-INF/services/org.keycloak.services.resource.RealmResourceProviderFactory
     java -m jdk.jartool/sun.tools.jar.Main --create --file /out/fixture.jar -C /out com -C /out META-INF
   '
-CURRENT_STAGE='PostgreSQL17 and Keycloak startup'
+CURRENT_STAGE='PostgreSQL and Keycloak startup'
 docker network create "$NETWORK" >/dev/null
-docker run --pull=never --rm -d --name "$PG_CONTAINER" --network "$NETWORK" --memory 384m \
-  --tmpfs /var/lib/postgresql/data:rw,size=512m,mode=1777 \
+docker run --pull=never --cpus 2 --rm -d --name "$PG_CONTAINER" --network "$NETWORK" --memory 384m \
+  --tmpfs "$PG_TMPFS:rw,size=512m,mode=1777" \
   -e POSTGRES_USER=keycloak -e POSTGRES_PASSWORD=harness-db-password -e POSTGRES_DB=keycloak "$PG_IMAGE" >/dev/null
-docker run --pull=never --rm -d --name "$MAIL_CONTAINER" --network "$NETWORK" --memory 128m \
+docker run --pull=never --cpus 2 --rm -d --name "$MAIL_CONTAINER" --network "$NETWORK" --memory 128m \
   -p "127.0.0.1:$MAIL_PORT:8025" "$MAILPIT_IMAGE" >/dev/null
-docker run --pull=never --rm -d --name "$CONTAINER" --network "$NETWORK" --memory 2g \
+docker run --pull=never --cpus 2 --rm -d --name "$CONTAINER" --network "$NETWORK" --memory 2g \
   --tmpfs /opt/keycloak/data:rw,size=256m,mode=1777 -p "127.0.0.1:$PORT:8080" \
   -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e "KC_BOOTSTRAP_ADMIN_PASSWORD=$ADMIN_PASSWORD" \
   -e SKY_HARNESS=1 -e SKY_MAIL_ENABLED=false \
@@ -304,6 +306,12 @@ on_link_stage() { [[ $LANDED == page && $BODY == *"data-sky-existing-account-sta
 links() { kcadm get "users/$1/federated-identity" -r "$REALM" | jq 'length'; }
 
 PROBE="$BASE_URL/realms/$REALM/broker-link-probe"
+if [[ ${B24_COUNTER_ONLY:-0} == 1 ]]; then
+  source "$SCRIPT_DIR/existing-account-counter-checks.sh"
+  B12_HARNESS_COMPLETE=1
+  printf 'existing-account-counter: all checks passed (%s assertions, %ss total)\n' "$LINK_COUNTER_ASSERTIONS" "$SECONDS"
+  exit 0
+fi
 if [[ ${B12_TRANSACTION_ONLY:-0} != 1 ]]; then
 stage 'real first Microsoft login and existing-account code proof'
 existing=$(local_person existing-person primary.b12@example.invalid personalEmail=personal.b12@example.invalid personalEmailVerifiedAt=2026-10-01T00:00:00Z)
@@ -485,7 +493,7 @@ check_managed_entity() {
     || fail 'trusted-name ORM flush overwrote concurrent admin fields'
   printf '  managed callback entity: concurrent verification/username/notBefore preserved passed\n'
 }
-if [[ ${B12_ORM_ONLY:-0} == 1 ]]; then check_managed_entity; exit; fi
+if [[ ${B12_ORM_ONLY:-0} == 1 ]]; then check_managed_entity; B12_HARNESS_COMPLETE=1; exit; fi
 
 stage 'callback stale primary, disabled, factor and fixed TTL rollback'
 for scenario in primary disabled factor rotate remove ttl flow override; do
@@ -564,4 +572,5 @@ printf '  proof/native subject race: one committed owner, busy callback rolled b
 stage 'rollback removes only the new steps'
 reconcile "$ADMIN_CONFIG" 0 KEYCLOAK_EXISTING_ACCOUNT_PROMPT=off >/dev/null
 reconcile "$ADMIN_CONFIG" 0 KEYCLOAK_EXISTING_ACCOUNT_PROMPT=off >/dev/null
+B12_HARNESS_COMPLETE=1
 printf 'existing-account-link: all checks passed\n'

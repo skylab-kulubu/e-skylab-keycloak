@@ -146,6 +146,7 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
      * K2): a code that was not mailed, or a try spent without looking at the code.
      */
     static final String WRONG_CODE_CEILING = "wrong_code_ceiling";
+    static final String CONSECUTIVE_CODE_CEILING = "consecutive_code_ceiling";
     /** Self-registration's event details (ticket 09); the events carry no IP and no address. */
     static final String SIGN_UP_PAUSED = "sign_up_paused";
     static final String SCHOOL_DOMAIN = "school_domain";
@@ -197,6 +198,7 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
     private final WebAuthnConditionalUIAuthenticator webauthn;
     private final SignUpAccounts accounts;
     private final SignUpUsernames usernames;
+    private final LoginCodeFailureCounter persistentFailures;
 
     EmailCodeAuthenticator(EmailCodeSettings settings, LoginCodeMail mail, WebAuthnConditionalUIAuthenticator webauthn) {
         this(settings, mail, webauthn, new ProfileSignUpAccounts(), new SignUpUsernames());
@@ -204,11 +206,17 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
 
     EmailCodeAuthenticator(EmailCodeSettings settings, LoginCodeMail mail, WebAuthnConditionalUIAuthenticator webauthn,
             SignUpAccounts accounts, SignUpUsernames usernames) {
+        this(settings, mail, webauthn, accounts, usernames, new PersistentLoginCodeFailures());
+    }
+
+    EmailCodeAuthenticator(EmailCodeSettings settings, LoginCodeMail mail, WebAuthnConditionalUIAuthenticator webauthn,
+            SignUpAccounts accounts, SignUpUsernames usernames, LoginCodeFailureCounter persistentFailures) {
         this.settings = settings;
         this.mail = mail;
         this.webauthn = webauthn;
         this.accounts = accounts;
         this.usernames = usernames;
+        this.persistentFailures = persistentFailures;
     }
 
     @Override
@@ -335,9 +343,14 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
         String budgetAddress = PersonalEmailProof.normalise(address != null ? address : identifier);
         boolean withinBudget = claimAddressBudgets(context, budgetAddress);
         boolean mailable = user != null && address != null;
+        LoginCodeFailureCounter.Guard persistent = withinBudget && mailable
+                ? persistentFailures.lock(session, realm, user.getId()) : null;
         if (!withinBudget) {
             failure(context, user, "rate_limited_address", RATE_LIMITED_ERROR);
             signUpAddress = null;
+        } else if (mailable && (persistent == null || persistent.blocked())) {
+            failure(context, user, CONSECUTIVE_CODE_CEILING, RATE_LIMITED_ERROR);
+            mailable = false;
         } else if (mailable && pastCeiling(context, accountCeilingKey(context, user.getId()))) {
             // Security review K2: no code reaches the account for the rest of the day; the page
             // and the code that is never mailed are the ones anybody else gets.
@@ -436,37 +449,59 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
         // Past the person's ceiling of wrong codes no code is looked at: the try is spent as a
         // wrong one, so the page is the one any wrong code gets (security review K2). A sign-up
         // code has the same ceiling, per address.
-        String ceilingKey = ceilingKey(context, waiting);
-        boolean pastCeiling = ceilingKey != null && pastCeiling(context, ceilingKey);
-        LoginCodes.Outcome outcome = pastCeiling ? codes.spendTry(handle) : codes.confirm(handle, code);
+        String userId = accountAtVerification(context, waiting);
+        String signUpCeiling = isBlank(waiting.signUpAddress()) ? null
+                : signUpCeilingKey(context, waiting.signUpAddress());
+        String ceilingKey = isBlank(userId) ? signUpCeiling : accountCeilingKey(context, userId);
+        boolean pastCeiling = (ceilingKey != null && pastCeiling(context, ceilingKey))
+                || (signUpCeiling != null && pastCeiling(context, signUpCeiling));
+        LoginCodeFailureCounter.Guard persistent = isBlank(userId) ? null
+                : persistentFailures.lock(context.getSession(), context.getRealm(), userId);
+        boolean persistentBlocked = !isBlank(userId) && (persistent == null || persistent.blocked());
+        boolean suppressed = pastCeiling || persistentBlocked;
+        LoginCodes.Outcome outcome = suppressed ? codes.spendTry(handle) : codes.confirm(handle, code);
+        if (outcome.status() == LoginCodes.Outcome.Status.WRONG_CODE && !suppressed && persistent != null
+                && persistent.wrongCode()) {
+            mail.consecutiveAlarm(context, LoginCodeFailureCounter.LIMIT);
+        }
         switch (outcome.status()) {
             case NONE -> expired(context, null);
-            case WRONG_CODE -> wrongCode(context, outcome, ceilingKey, pastCeiling);
+            case WRONG_CODE -> wrongCode(context, outcome, userId, ceilingKey, signUpCeiling, suppressed, persistentBlocked);
             case CONFIRMED -> confirmed(context, outcome.pending());
         }
     }
 
-    /** The key of the ceiling a waiting code's wrong tries count toward; none for nobody. */
-    private static String ceilingKey(AuthenticationFlowContext context, LoginCodes.Waiting waiting) {
+    /** A sign-up address can acquire an account after its code was mailed, before this try. */
+    private String accountAtVerification(AuthenticationFlowContext context, LoginCodes.Waiting waiting) {
         if (!isBlank(waiting.userId())) {
-            return accountCeilingKey(context, waiting.userId());
+            return waiting.userId();
         }
-        return isBlank(waiting.signUpAddress()) ? null : signUpCeilingKey(context, waiting.signUpAddress());
+        if (!isBlank(waiting.signUpAddress()) && LoginIdentifiers.resolve(context.getSession(), context.getRealm(),
+                settings.ytuIdpAlias(), waiting.signUpAddress()) instanceof LoginIdentifiers.Person person) {
+            String address = destination(context.getSession(), context.getRealm(), person.user());
+            if (address != null && address.equalsIgnoreCase(waiting.signUpAddress())) {
+                return person.user().getId();
+            }
+        }
+        return null;
     }
 
-    private void wrongCode(AuthenticationFlowContext context, LoginCodes.Outcome outcome, String ceilingKey,
-            boolean pastCeiling) {
-        UserModel user = isBlank(outcome.userId()) ? null
-                : context.getSession().users().getUserById(context.getRealm(), outcome.userId());
+    private void wrongCode(AuthenticationFlowContext context, LoginCodes.Outcome outcome, String userId,
+            String ceilingKey, String signUpCeiling, boolean pastCeiling, boolean persistentBlocked) {
+        UserModel user = isBlank(userId) ? null
+                : context.getSession().users().getUserById(context.getRealm(), userId);
         if (user != null) {
             recordFailedLogin(context, user);
             if (!pastCeiling) {
                 countTowardTheCeiling(context, user, ceilingKey);
             }
-        } else if (ceilingKey != null && !pastCeiling) {
-            countTowardTheSignUpCeiling(context, ceilingKey);
         }
-        failure(context, user, pastCeiling ? WRONG_CODE_CEILING : Problem.WRONG_CODE.value, Errors.INVALID_CODE);
+        if (signUpCeiling != null && !pastCeiling) {
+            countTowardTheSignUpCeiling(context, signUpCeiling);
+        }
+        String reason = persistentBlocked ? CONSECUTIVE_CODE_CEILING
+                : pastCeiling ? WRONG_CODE_CEILING : Problem.WRONG_CODE.value;
+        failure(context, user, reason, Errors.INVALID_CODE);
         if (outcome.attemptsLeft() > 0) {
             context.challenge(codePage(context, Problem.WRONG_CODE, outcome.attemptsLeft()));
         } else {
@@ -545,6 +580,14 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
                     + " KEYCLOAK_EMAIL_CODE_LOGIN=on (or off)", realm.getName());
             failure(context, user, OTP_UNGUARDED, Errors.INVALID_CONFIG);
             context.challenge(identifierPage(context, identifier, Problem.UNAVAILABLE));
+            return false;
+        }
+        // A fixed proof shown on the existing-account sign-up page can outlive another session's
+        // hundredth failure. Recheck under the same user lock before dispatching that proof too.
+        LoginCodeFailureCounter.Guard persistent = persistentFailures.lock(session, realm, user.getId());
+        if (persistent == null || persistent.blocked()) {
+            clearSignUp(context);
+            expired(context, user);
             return false;
         }
         return true;

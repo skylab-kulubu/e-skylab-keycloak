@@ -34,7 +34,8 @@ public final class BrokerLinkRuntimeProbe implements RealmResourceProviderFactor
         final CountDownLatch release = new CountDownLatch(1);
         String user, subject, root, tab, pause;
         boolean proof;
-        volatile boolean waiting, inserted, guarded;
+        int barrierSeconds = 20, proofExpiresAt;
+        volatile boolean waiting, inserted, guarded, barrierTimedOut;
     }
     @Override public String getId() { return "broker-link-probe"; }
     @Override public RealmResourceProvider create(KeycloakSession session) {
@@ -61,7 +62,9 @@ public final class BrokerLinkRuntimeProbe implements RealmResourceProviderFactor
         @GET @Path("{label}")
         public Map<String, Boolean> state(@PathParam("label") String label) {
             Run run = run(label);
-            return Map.of("waiting", run.waiting, "inserted", run.inserted, "guarded", run.guarded);
+            return Map.of("waiting", run.waiting, "inserted", run.inserted, "guarded", run.guarded,
+                    "barrierTimedOut", run.barrierTimedOut,
+                    "proofLive", run.proof && run.proofExpiresAt > Time.currentTime());
         }
 
         @POST @Path("{label}/release")
@@ -72,21 +75,25 @@ public final class BrokerLinkRuntimeProbe implements RealmResourceProviderFactor
         @POST @Path("{label}/prepare")
         public Map<String, Boolean> prepare(@PathParam("label") String label, @QueryParam("user") String username,
                 @QueryParam("subject") String subject, @QueryParam("pause") String pause,
-                @QueryParam("ttl") Integer ttl, @QueryParam("native") boolean nativePath) {
+                @QueryParam("ttl") Integer ttl, @QueryParam("native") boolean nativePath,
+                @QueryParam("barrierSeconds") Integer barrierSeconds) {
             RealmModel realm = session.getContext().getRealm();
             UserModel user = session.users().getUserByUsername(realm, username);
             if (user == null || subject == null || !subject.matches("[a-z0-9-]{1,60}")) throw new IllegalArgumentException("invalid target");
             Run run = run(label); run.user = user.getId(); run.subject = subject; run.pause = pause; run.proof = !nativePath;
+            run.barrierSeconds = barrierSeconds == null ? 20 : Math.max(2, Math.min(90, barrierSeconds));
+            run.barrierTimedOut = false;
             var root = session.authenticationSessions().createRootAuthenticationSession(realm);
             AuthenticationSessionModel auth = root.createAuthenticationSession(realm.getClientByClientId("b12-app"));
             run.root = root.getId(); run.tab = auth.getTabId();
             BrokeredIdentityContext broker = broker(realm, auth, run);
             if (run.proof) {
                 String handle = BrokerLinkState.handle();
+                run.proofExpiresAt = Time.currentTime() + (ttl == null ? 120 : Math.max(2, Math.min(120, ttl)));
                 new BrokerLinkProofs(session.singleUseObjects()).issueProof(handle,
                         BrokerLinkState.binding(realm, auth, broker, user, user.getEmail()),
                         BrokerLinkState.otpSnapshot(user), "email_code",
-                        Time.currentTime() + (ttl == null ? 120 : Math.max(2, Math.min(120, ttl))));
+                        run.proofExpiresAt);
                 auth.setAuthNote(BrokerLinkState.REQUIRED, "true"); auth.setAuthNote(BrokerLinkState.PROOF, handle);
                 auth.setAuthNote(AbstractIdpAuthenticator.EXISTING_USER_INFO,
                         new org.keycloak.authentication.authenticators.broker.util.ExistingUserInfo(user.getId(), "username", user.getUsername()).serialize());
@@ -174,7 +181,10 @@ public final class BrokerLinkRuntimeProbe implements RealmResourceProviderFactor
         }
 
         private static void await(Run run) throws InterruptedException {
-            if (!run.release.await(20, TimeUnit.SECONDS)) throw new IllegalStateException("probe release timeout");
+            if (!run.release.await(run.barrierSeconds, TimeUnit.SECONDS)) {
+                run.barrierTimedOut = true;
+                throw new IllegalStateException("probe release timeout");
+            }
         }
     }
 }

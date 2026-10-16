@@ -75,6 +75,9 @@ YTU_IDP_LEGACY_FIRST_BROKER_FLOWS=('first broker login for obs' 'first broker lo
 YTU_IDP_PREVIOUS_FLOW_SETTING=skyFirstLoginFlowBeforeYtuStep
 REVIEW_PROFILE_SETTING=update.profile.on.first.login
 YTU_FIRST_LOGIN=${KEYCLOAK_YTU_FIRST_LOGIN:-keep}
+# ADR-0063 decision 4: optional first-Microsoft-login existing-account proof. Installing the image
+# never enables this flow. Explicit on/off only edits our existing first-broker-login copy.
+EXISTING_ACCOUNT_PROMPT=${KEYCLOAK_EXISTING_ACCOUNT_PROMPT:-keep}
 # eskylab-login-ux 21: once, at the end of a first YTÜ login that opened an account with the School
 # e-mail as its Primary e-mail, sky-ytu-first-login puts the SPI's required action
 # sky-personal-email-offer on the sign-in session ("Kişisel e-postanı ekle": address, code, or
@@ -308,6 +311,13 @@ case $YTU_FIRST_LOGIN in
   keep | on | off) ;;
   *)
     printf 'KEYCLOAK_YTU_FIRST_LOGIN must be keep (default), on or off (rollback), not %s\n' "$YTU_FIRST_LOGIN" >&2
+    exit 1
+    ;;
+esac
+case $EXISTING_ACCOUNT_PROMPT in
+  keep | on | off) ;;
+  *)
+    printf 'KEYCLOAK_EXISTING_ACCOUNT_PROMPT must be keep (default), on or off, not %s\n' "$EXISTING_ACCOUNT_PROMPT" >&2
     exit 1
     ;;
 esac
@@ -1315,6 +1325,103 @@ check_first_broker_login_copy_shape() {
   else
     warn "flow '$flow_alias' is not shaped like the built-in '$FIRST_BROKER_FLOW_BUILT_IN' apart from the SKY LAB edits: $(head -n 1 "$difference_file"); nothing was changed; inspect it in the Admin Console"
   fi
+}
+
+# The native create/confirm/reauthentication/OTP branches stay intact. Only their known review
+# step gets a config-preserving wrapper; a proven-link alternative runs before native creation.
+# The planner refuses any extra/moved native execution before the first mutation.
+reconcile_existing_account_prompt() {
+  local mode=$EXISTING_ACCOUNT_PROMPT flow_id bound live_file builtin_file plan_file providers_file
+  local kind id parent provider priority extra last added config_source config_body line
+  flow_id=$(optional_lookup flow_id_by_alias "$FIRST_BROKER_FLOW_COPY_ALIAS")
+  if [[ -z $flow_id ]]; then
+    if [[ $mode == on ]]; then
+      printf 'Existing-account protection requires KEYCLOAK_YTU_FIRST_LOGIN=on first; no flow was changed\n' >&2
+      return 1
+    fi
+    return 0
+  fi
+  live_file=$(mktemp "$WORK_DIR/existing-account-live.XXXXXX")
+  builtin_file=$(mktemp "$WORK_DIR/existing-account-builtin.XXXXXX")
+  plan_file=$(mktemp "$WORK_DIR/existing-account-plan.XXXXXX")
+  providers_file=$(mktemp "$WORK_DIR/existing-account-providers.XXXXXX")
+  kcadm_json "authentication/flows/$(flow_alias_path "$FIRST_BROKER_FLOW_COPY_ALIAS")/executions" -r "$TARGET_REALM" >"$live_file"
+  if [[ $mode == keep ]]; then
+    if ! grep -Eq '"providerId"[[:space:]]*:[[:space:]]*"(sky-existing-account-prompt|sky-existing-account-proven|sky-broker-review-profile)"' "$live_file"; then
+      log 'existing-account protection: unchanged (not enabled; explicit KEYCLOAK_EXISTING_ACCOUNT_PROMPT=on is required)'
+      return 0
+    fi
+    mode=on
+  fi
+  if [[ $mode == on ]]; then
+    bound=$(kcadm_json "realms/$TARGET_REALM" --fields firstBrokerLoginFlow | json_tool field firstBrokerLoginFlow)
+    if [[ $bound != "$FIRST_BROKER_FLOW_COPY_ALIAS" ]]; then
+      printf 'Existing-account protection only edits the active SKY LAB first-broker-login copy; enable the school-primary step first\n' >&2
+      return 1
+    fi
+    kcadm_json authentication/authenticator-providers -r "$TARGET_REALM" >"$providers_file"
+    json_tool existing-account-providers <"$providers_file" || return 1
+  fi
+  kcadm_json "authentication/flows/$(flow_alias_path "$FIRST_BROKER_FLOW_BUILT_IN")/executions" -r "$TARGET_REALM" >"$builtin_file"
+  json_tool existing-account-flow "$mode" "$flow_id" "$builtin_file" <"$live_file" >"$plan_file" || return 1
+  while IFS=$'\t' read -r kind id parent provider priority extra last; do
+    case $kind in
+      remove)
+        kcadm delete "authentication/executions/$id" -r "$TARGET_REALM" >/dev/null
+        log "existing-account protection: updated (removed replaced execution $id)"
+        ;;
+      review)
+        added=$id
+        if [[ $added == - ]]; then
+          added=$(kcadm create authentication/executions -r "$TARGET_REALM" -i \
+            -b "{\"parentFlow\":\"$parent\",\"authenticator\":\"$provider\",\"priority\":$priority,\"requirement\":\"REQUIRED\",\"authenticatorFlow\":false}")
+          log "existing-account protection: updated (added $provider at the native review position)"
+        fi
+        # EXTRA is the replaced review's config; LAST is the desired review's config. Never
+        # share the old config: native execution deletion may remove it too.
+        if [[ $last == - ]]; then
+          config_source=$(mktemp "$WORK_DIR/existing-review-source.XXXXXX")
+          config_body=$(mktemp "$WORK_DIR/existing-review-body.XXXXXX")
+          if [[ $extra != - ]]; then
+            kcadm_json "authentication/config/$extra" -r "$TARGET_REALM" >"$config_source"
+          else
+            printf '{}\n' >"$config_source"
+          fi
+          json_tool copy-broker-review-config "$FIRST_BROKER_FLOW_COPY_ALIAS $provider config" <"$config_source" >"$config_body"
+          kcadm create "authentication/executions/$added/config" -r "$TARGET_REALM" -f "$config_body" >/dev/null
+          log 'existing-account protection: updated (copied review config; missing fields only)'
+        fi
+        ;;
+      ensure)
+        if [[ $last == same ]]; then
+          continue
+        fi
+        added=$id
+        if [[ $added == - ]]; then
+          added=$(kcadm create authentication/executions -r "$TARGET_REALM" -i \
+            -b "{\"parentFlow\":\"$parent\",\"authenticator\":\"$provider\",\"priority\":$priority,\"requirement\":\"$extra\",\"authenticatorFlow\":false}")
+        else
+          kcadm update "authentication/flows/$(flow_alias_path "$FIRST_BROKER_FLOW_COPY_ALIAS")/executions" -r "$TARGET_REALM" -n \
+            -b "{\"id\":\"$added\",\"priority\":$priority,\"requirement\":\"$extra\"}" >/dev/null
+        fi
+        log "existing-account protection: updated ($provider $extra at priority $priority)"
+        ;;
+      *)
+        printf 'Unexpected existing-account flow plan row: %s\n' "$kind" >&2
+        return 1
+        ;;
+    esac
+  done <"$plan_file"
+  kcadm_json "authentication/flows/$(flow_alias_path "$FIRST_BROKER_FLOW_COPY_ALIAS")/executions" -r "$TARGET_REALM" >"$live_file"
+  json_tool existing-account-flow "$mode" "$flow_id" "$builtin_file" <"$live_file" >"$plan_file" || return 1
+  while IFS=$'\t' read -r kind id parent provider priority extra last; do
+    if [[ $kind == remove || $id == - || ( $kind == review && $last == - ) || ( $kind == ensure && $last != same ) ]]; then
+      printf 'Existing-account protection did not converge; inspect the flow before enabling registration\n' >&2
+      return 1
+    fi
+  done <"$plan_file"
+  json_tool same-shape "$builtin_file" "$YTU_FIRST_LOGIN_STEP" <"$live_file" || return 1
+  log "existing-account protection: reconciled ($mode; native duplicate, confirmation, reauthentication and OTP paths preserved)"
 }
 
 bind_first_broker_login_flow() {
@@ -3454,6 +3561,7 @@ if [[ $RECONCILE_ONLY == core-roles ]]; then
 fi
 if [[ $RECONCILE_ONLY == first-broker-login ]]; then
   reconcile_first_broker_login
+  reconcile_existing_account_prompt
   reconcile_personal_email_offer
   reconcile_stay_signed_in
   printf 'First broker login flow is reconciled.\n'
@@ -3497,6 +3605,7 @@ reconcile_email_code_sign_up
 reconcile_reset_choose_user
 reconcile_reset_otp_step
 reconcile_first_broker_login
+reconcile_existing_account_prompt
 reconcile_personal_email_offer
 reconcile_stay_signed_in
 reconcile_account_center_client

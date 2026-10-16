@@ -1,10 +1,14 @@
 package com.skylab.broker;
 
+import com.skylab.account.BrokerLinkCommitGuard;
 import jakarta.ws.rs.core.UriBuilder;
 import org.keycloak.OAuth2Constants;
 import org.keycloak.authentication.AuthenticatorUtil;
 import org.keycloak.broker.provider.AuthenticationRequest;
+import org.keycloak.broker.provider.BrokeredIdentityContext;
 import org.keycloak.models.KeycloakSession;
+import org.keycloak.models.RealmModel;
+import org.keycloak.models.UserModel;
 import org.keycloak.sessions.AuthenticationSessionModel;
 import org.keycloak.social.microsoft.MicrosoftIdentityProvider;
 import org.keycloak.social.microsoft.MicrosoftIdentityProviderConfig;
@@ -46,6 +50,13 @@ public class SkyMicrosoftIdentityProvider extends MicrosoftIdentityProvider {
             uriBuilder.queryParam(OAuth2Constants.PROMPT, PROMPT_LOGIN);
         }
         return uriBuilder;
+    }
+
+    @Override
+    public void updateBrokeredUser(KeycloakSession session, RealmModel realm, UserModel user,
+                                   BrokeredIdentityContext context) {
+        BrokerLinkCommitGuard.check(session, realm, user, context);
+        super.updateBrokeredUser(session, realm, user, context);
     }
 
     /**

@@ -82,6 +82,7 @@ const { getKcContextMock } = createGetKcContextMock({
     properties: { ...kcEnvDefaults }
   } satisfies KcContextExtension,
   kcContextExtensionPerPage: {
+    "sky-existing-account.ftl": { skyExistingAccountStage: "question" },
     "passkey-offer.ftl": {},
     "sky-personal-email-offer.ftl": { skyOfferStage: "address", skyOfferCodeMinutes: "10" },
     // The YTÜ stage of the sign-up page links to the YTÜ sign-in, as Keycloak's own pages do.
@@ -457,6 +458,17 @@ export function getDevKcContext(): KcContext {
   if (kcContext.pageId === "sky-email-code.ftl" && code !== null) {
     Object.assign(kcContext, getEmailCodePreview(code));
   }
+
+  const broker = searchParams.get("broker");
+  if (kcContext.pageId === "sky-existing-account.ftl" && broker !== null) {
+    if (broker === "candidate") kcContext.skyExistingAccountSchoolCandidate = true;
+    if (broker === "identifier" || broker === "code") {
+      kcContext.skyExistingAccountStage = broker;
+      kcContext.skyExistingAccountIdentifier = "ayse.yilmaz@example.org";
+      kcContext.skyExistingAccountResendAfter = "0";
+    }
+  }
+  if (broker === "proof") kcContext.skyExistingAccountEscape = true;
 
   return kcContext;
 }

@@ -5,9 +5,17 @@ import type { KcEnvName, ThemeName } from "../kc.gen";
 export type KcContextExtension = {
   themeName: ThemeName;
   properties: Record<KcEnvName, string> & {};
+  skyExistingAccountEscape?: boolean;
 };
 
 export type KcContextExtensionPerPage = {
+  "sky-existing-account.ftl": {
+    skyExistingAccountStage?: string;
+    skyExistingAccountIdentifier?: string;
+    skyExistingAccountError?: string;
+    skyExistingAccountSchoolCandidate?: boolean;
+    skyExistingAccountResendAfter?: string;
+  };
   "passkey-offer.ftl": {};
   // Rendered by the SPI's sky-personal-email-offer required action (first YTÜ login, ticket 21).
   "sky-personal-email-offer.ftl": {

@@ -40,10 +40,16 @@ public final class SkyExistingAccountPrompt implements Authenticator {
     private final EmailCodeSettings settings;
     private final LoginCodeMail mail;
     private final EmailCodeAuthenticator budgets;
+    private final LoginCodeFailureCounter failures;
 
     SkyExistingAccountPrompt(EmailCodeSettings settings, LoginCodeMail mail) {
+        this(settings, mail, new PersistentLoginCodeFailures());
+    }
+
+    SkyExistingAccountPrompt(EmailCodeSettings settings, LoginCodeMail mail, LoginCodeFailureCounter failures) {
         this.settings = settings;
         this.mail = mail;
+        this.failures = failures;
         budgets = new EmailCodeAuthenticator(settings, mail, null);
     }
 
@@ -191,6 +197,9 @@ public final class SkyExistingAccountPrompt implements Authenticator {
         String ceiling = target == null ? null : EmailCodeAuthenticator.accountCeilingKey(context, target.getId());
         boolean mailable = within && target != null && !primary.isBlank()
                 && !budgets.pastCeiling(context, ceiling);
+        LoginCodeFailureCounter.Guard persistent = mailable
+                ? failures.lock(context.getSession(), context.getRealm(), target.getId()) : null;
+        if (mailable && (persistent == null || persistent.blocked())) mailable = false;
         BrokerLinkProofs.Binding binding = BrokerLinkState.binding(context, broker(context), mailable ? target : null);
         String handle = BrokerLinkState.handle();
         String code = proofs.issueCode(handle, binding);
@@ -245,7 +254,11 @@ public final class SkyExistingAccountPrompt implements Authenticator {
         UserModel target = target(context);
         String ceiling = target == null ? null : EmailCodeAuthenticator.accountCeilingKey(context, target.getId());
         boolean pastCeiling = target != null && budgets.pastCeiling(context, ceiling);
-        SingleUseCodes.Result result = pastCeiling ? proofs.spendTry(auth.getAuthNote(BrokerLinkState.CODE))
+        LoginCodeFailureCounter.Guard persistent = target == null ? null
+                : failures.lock(context.getSession(), context.getRealm(), target.getId());
+        boolean persistentBlocked = target != null && (persistent == null || persistent.blocked());
+        boolean suppressed = pastCeiling || persistentBlocked;
+        SingleUseCodes.Result result = suppressed ? proofs.spendTry(auth.getAuthNote(BrokerLinkState.CODE))
                 : proofs.confirmCode(auth.getAuthNote(BrokerLinkState.CODE), code,
                 BrokerLinkState.binding(context, broker(context), target));
         if (result.status() == SingleUseCodes.Status.CONFIRMED && target != null) {
@@ -253,9 +266,12 @@ public final class SkyExistingAccountPrompt implements Authenticator {
             firstFactor(context, "email_code");
         } else {
             if (result.status() == SingleUseCodes.Status.WRONG_CODE && target != null) {
+                if (!suppressed && persistent != null && persistent.wrongCode()) {
+                    mail.consecutiveAlarm(context, LoginCodeFailureCounter.LIMIT);
+                }
                 if (context.getRealm().isBruteForceProtected()) context.getProtector().failedLogin(context.getRealm(),
                         target, context.getConnection(), context.getUriInfo(), null);
-                if (!pastCeiling) budgets.countTowardTheCeiling(context, target, ceiling);
+                if (!suppressed) budgets.countTowardTheCeiling(context, target, ceiling);
             }
             page(context, "code", result.status() == SingleUseCodes.Status.WRONG_CODE ? "wrong_code" : "code_expired");
         }
@@ -302,6 +318,15 @@ public final class SkyExistingAccountPrompt implements Authenticator {
         try { deadline = Integer.parseInt(auth.getAuthNote(BrokerLinkState.DEADLINE)); }
         catch (RuntimeException invalid) { page(context, "unavailable", "try_again"); return; }
         if (deadline <= Time.currentTime()) { page(context, "unavailable", "try_again"); return; }
+        if ("email_code".equals(auth.getAuthNote(BrokerLinkState.METHOD))) {
+            LoginCodeFailureCounter.Guard persistent = failures.lock(context.getSession(), context.getRealm(), selected.getId());
+            if (persistent == null || persistent.blocked()) {
+                context.clearUser();
+                auth.setAuthNote(BrokerLinkState.STAGE, "identifier");
+                page(context, "identifier", "try_again");
+                return;
+            }
+        }
         String handle = BrokerLinkState.handle();
         new BrokerLinkProofs(context.getSession().singleUseObjects()).issueProof(handle,
                 BrokerLinkState.binding(context, broker(context), selected), auth.getAuthNote(BrokerLinkState.OTP),

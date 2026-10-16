@@ -35,12 +35,15 @@ class BrokerLinkCommitGuardTest {
     private BrokeredIdentityContext broker;
     private final Query subjectClaim = mock(Query.class, RETURNS_SELF);
     private final Query subjectOwners = mock(Query.class, RETURNS_SELF);
+    private final LoginCodeFailureCounter failures = mock(LoginCodeFailureCounter.class);
+    private final LoginCodeFailureCounter.Guard persistent = mock(LoginCodeFailureCounter.Guard.class);
 
     @AfterEach
     void resetClock() { Time.setOffset(0); }
 
     @BeforeEach
     void setup() {
+        when(failures.lock(session, realm, "target")).thenReturn(persistent);
         when(session.singleUseObjects()).thenReturn(store);
         when(session.getTransactionManager()).thenReturn(tx);
         when(session.users()).thenReturn(users);
@@ -86,17 +89,54 @@ class BrokerLinkCommitGuardTest {
         return new BrokerLinkCommitGuard.Snapshot(true, "primary@example.org", null, "realm", "");
     }
 
+    private void check(BrokerLinkCommitGuard.Snapshots snapshots) {
+        BrokerLinkCommitGuard.check(session, realm, user, broker, snapshots, failures);
+    }
+
     private void proof() {
+        proof("email_code");
+    }
+
+    private void proof(String method) {
         notes.put(BrokerLinkState.REQUIRED, "true"); notes.put(BrokerLinkState.PROOF, "handle");
         new BrokerLinkProofs(store).issueProof("handle",
-                BrokerLinkState.binding(realm, auth, broker, user, "primary@example.org"), "", "email_code",
+                BrokerLinkState.binding(realm, auth, broker, user, "primary@example.org"), "", method,
                 Time.currentTime() + 600);
+    }
+
+    @Test
+    void anEmailProofCannotCommitWhenAnotherRequestHasReached100() {
+        proof();
+        when(persistent.blocked()).thenReturn(true);
+        assertThrows(IdentityBrokerException.class, () -> check((s, r, u) -> snapshot()));
+        verify(tx).setRollbackOnly();
+        verify(user, never()).setFirstName(any());
+        verify(user, never()).setLastName(any());
+    }
+
+    @Test
+    void aPasswordOrPasskeyProofRemainsAvailableForABlockedEmailAccount() {
+        proof("password_or_passkey");
+        when(persistent.blocked()).thenReturn(true);
+        assertDoesNotThrow(() -> check((s, r, u) -> snapshot()));
+        verifyNoInteractions(failures);
+        verify(user).setFirstName("Microsoft");
+        verify(tx, never()).setRollbackOnly();
+    }
+
+    @Test
+    void anUnavailableCounterRollsBackAnEmailProvenCallbackBeforeTrustedNamesAreWritten() {
+        proof();
+        when(failures.lock(session, realm, "target")).thenThrow(new IllegalStateException("fixture"));
+        assertThrows(IdentityBrokerException.class, () -> check((s, r, u) -> snapshot()));
+        verify(tx).setRollbackOnly();
+        verify(user, never()).setFirstName(any());
     }
 
     @Test
     void ordinaryLinkedLoginNativeDuplicateAndA6DoNotEnterTheGuard() {
         when(realm.getFirstBrokerLoginFlow()).thenReturn(null);
-        BrokerLinkCommitGuard.check(session, realm, user, broker, (s, r, u) -> {
+        check((s, r, u) -> {
             fail("No lock or snapshot may run outside the prompt's marked path"); return null;
         });
         verifyNoInteractions(tx, store);
@@ -105,7 +145,7 @@ class BrokerLinkCommitGuardTest {
     @Test
     void callbackConsumesProofAndUsesTrustedNamesWithoutWritingPrimaryOrVerified() {
         proof();
-        BrokerLinkCommitGuard.check(session, realm, user, broker, (s, r, u) -> snapshot());
+        check((s, r, u) -> snapshot());
         verify(user).setFirstName("Microsoft"); verify(user).setLastName("Name");
         verify(user, never()).setEmail(any()); verify(user, never()).setEmailVerified(anyBoolean());
         verify(tx, never()).setRollbackOnly();
@@ -116,7 +156,7 @@ class BrokerLinkCommitGuardTest {
     @Test
     void primaryChangingBetweenFlowAndCallbackRollsBackTheNativeLinkTransaction() {
         proof();
-        assertThrows(IdentityBrokerException.class, () -> BrokerLinkCommitGuard.check(session, realm, user, broker,
+        assertThrows(IdentityBrokerException.class, () -> check(
                 (s, r, u) -> new BrokerLinkCommitGuard.Snapshot(true, "new@example.org", null, "realm", "")));
         verify(tx).setRollbackOnly();
         verify(user, never()).setFirstName(any()); verify(user, never()).setLastName(any());
@@ -125,12 +165,12 @@ class BrokerLinkCommitGuardTest {
     @Test
     void disabledTargetAndChangedOtpCannotCommitALink() {
         proof();
-        assertThrows(IdentityBrokerException.class, () -> BrokerLinkCommitGuard.check(session, realm, user, broker,
+        assertThrows(IdentityBrokerException.class, () -> check(
                 (s, r, u) -> new BrokerLinkCommitGuard.Snapshot(false, "primary@example.org", null, "realm", "")));
         verify(tx).setRollbackOnly();
         reset(tx);
         proof();
-        assertThrows(IdentityBrokerException.class, () -> BrokerLinkCommitGuard.check(session, realm, user, broker,
+        assertThrows(IdentityBrokerException.class, () -> check(
                 (s, r, u) -> new BrokerLinkCommitGuard.Snapshot(true, "primary@example.org", null, "realm", "new-otp")));
         verify(tx).setRollbackOnly();
     }
@@ -140,7 +180,7 @@ class BrokerLinkCommitGuardTest {
         proof();
         new BrokerLinkProofs(store).consumeProof("handle");
         assertThrows(IdentityBrokerException.class,
-                () -> BrokerLinkCommitGuard.check(session, realm, user, broker, (s, r, u) -> snapshot()));
+                () -> check((s, r, u) -> snapshot()));
         verify(tx).setRollbackOnly();
     }
 
@@ -150,20 +190,20 @@ class BrokerLinkCommitGuardTest {
             notes.clear(); reset(tx);
             notes.put(BrokerLinkState.REQUIRED, malformed);
             assertThrows(IdentityBrokerException.class,
-                    () -> BrokerLinkCommitGuard.check(session, realm, user, broker, (s, r, u) -> snapshot()));
+                    () -> check((s, r, u) -> snapshot()));
             verify(tx).setRollbackOnly();
         }
         notes.clear(); reset(tx);
         notes.put(BrokerLinkState.PROOF, "orphaned-proof");
         assertThrows(IdentityBrokerException.class,
-                () -> BrokerLinkCommitGuard.check(session, realm, user, broker, (s, r, u) -> snapshot()));
+                () -> check((s, r, u) -> snapshot()));
         verify(tx).setRollbackOnly();
     }
 
     @Test
     void aProofExpiringWhileTheCallbackWaitsForTheTargetLockCannotCommit() {
         proof();
-        assertThrows(IdentityBrokerException.class, () -> BrokerLinkCommitGuard.check(session, realm, user, broker,
+        assertThrows(IdentityBrokerException.class, () -> check(
                 (s, r, u) -> {
                     Time.setOffset(BrokerLinkProofs.PROOF_TTL_SECONDS + 1);
                     return snapshot();
@@ -174,7 +214,7 @@ class BrokerLinkCommitGuardTest {
 
     @Test
     void featureOnNativeAndA6CallbacksJoinOnlyTheNarrowSubjectGuard() {
-        BrokerLinkCommitGuard.check(session, realm, user, broker, (s, r, u) -> {
+        check((s, r, u) -> {
             fail("An unmarked native callback must not take the proof target/factor locks"); return null;
         });
         verify(subjectClaim).getSingleResult(); verify(subjectOwners).getResultList();
@@ -185,19 +225,19 @@ class BrokerLinkCommitGuardTest {
     void subjectBusyOrTwoSubjectOwnersRollBackTheLinkInsteadOfWaiting() {
         when(subjectClaim.getSingleResult()).thenReturn(false);
         assertThrows(IdentityBrokerException.class,
-                () -> BrokerLinkCommitGuard.check(session, realm, user, broker, (s, r, u) -> snapshot()));
+                () -> check((s, r, u) -> snapshot()));
         verify(tx).setRollbackOnly(); verify(subjectOwners, never()).getResultList();
         reset(tx); when(subjectClaim.getSingleResult()).thenReturn(true);
         when(subjectOwners.getResultList()).thenReturn(List.of("target", "other-target"));
         assertThrows(IdentityBrokerException.class,
-                () -> BrokerLinkCommitGuard.check(session, realm, user, broker, (s, r, u) -> snapshot()));
+                () -> check((s, r, u) -> snapshot()));
         verify(tx).setRollbackOnly();
     }
 
     @Test
     void aProofExpiringAfterTheHookStillVetoesTheDatabaseCommitInThePreparePhase() {
         proof();
-        BrokerLinkCommitGuard.check(session, realm, user, broker, (s, r, u) -> snapshot());
+        check((s, r, u) -> snapshot());
         var prepare = org.mockito.ArgumentCaptor.forClass(KeycloakTransaction.class);
         verify(tx).enlistPrepare(prepare.capture());
         prepare.getValue().begin();
@@ -210,12 +250,12 @@ class BrokerLinkCommitGuardTest {
     void aPendingProofCannotSurviveOperatorOffOrAChangedEffectiveBrokerFlow() {
         proof(); when(realm.getFirstBrokerLoginFlow()).thenReturn(null);
         assertThrows(IdentityBrokerException.class,
-                () -> BrokerLinkCommitGuard.check(session, realm, user, broker, (s, r, u) -> snapshot()));
+                () -> check((s, r, u) -> snapshot()));
         verify(tx).setRollbackOnly(); reset(tx);
         AuthenticationFlowModel flow = new AuthenticationFlowModel(); flow.setId("first-broker");
         when(realm.getFirstBrokerLoginFlow()).thenReturn(flow);
         proof();
-        assertThrows(IdentityBrokerException.class, () -> BrokerLinkCommitGuard.check(session, realm, user, broker,
+        assertThrows(IdentityBrokerException.class, () -> check(
                 (s, r, u) -> new BrokerLinkCommitGuard.Snapshot(true, "primary@example.org", null, "realm", "", false)));
         verify(tx).setRollbackOnly();
     }

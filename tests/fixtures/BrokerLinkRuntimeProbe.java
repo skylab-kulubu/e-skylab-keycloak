@@ -33,7 +33,7 @@ public final class BrokerLinkRuntimeProbe implements RealmResourceProviderFactor
     private static final class Run {
         final CountDownLatch release = new CountDownLatch(1);
         String user, subject, root, tab, pause;
-        boolean proof;
+        boolean proof, counterFault;
         volatile boolean waiting, inserted, guarded;
     }
     @Override public String getId() { return "broker-link-probe"; }
@@ -72,11 +72,13 @@ public final class BrokerLinkRuntimeProbe implements RealmResourceProviderFactor
         @POST @Path("{label}/prepare")
         public Map<String, Boolean> prepare(@PathParam("label") String label, @QueryParam("user") String username,
                 @QueryParam("subject") String subject, @QueryParam("pause") String pause,
-                @QueryParam("ttl") Integer ttl, @QueryParam("native") boolean nativePath) {
+                @QueryParam("ttl") Integer ttl, @QueryParam("native") boolean nativePath,
+                @QueryParam("counterFault") boolean counterFault) {
             RealmModel realm = session.getContext().getRealm();
             UserModel user = session.users().getUserByUsername(realm, username);
             if (user == null || subject == null || !subject.matches("[a-z0-9-]{1,60}")) throw new IllegalArgumentException("invalid target");
             Run run = run(label); run.user = user.getId(); run.subject = subject; run.pause = pause; run.proof = !nativePath;
+            run.counterFault = counterFault;
             var root = session.authenticationSessions().createRootAuthenticationSession(realm);
             AuthenticationSessionModel auth = root.createAuthenticationSession(realm.getClientByClientId("b12-app"));
             run.root = root.getId(); run.tab = auth.getTabId();
@@ -92,6 +94,30 @@ public final class BrokerLinkRuntimeProbe implements RealmResourceProviderFactor
                         new org.keycloak.authentication.authenticators.broker.util.ExistingUserInfo(user.getId(), "username", user.getUsername()).serialize());
             }
             return Map.of("prepared", true);
+        }
+
+        @POST @Path("{label}/counter")
+        public Map<String, Boolean> counter(@PathParam("label") String label, @QueryParam("user") String username,
+                                            @QueryParam("amount") int amount) {
+            run(label);
+            if (amount < 0 || amount > 100) throw new IllegalArgumentException("invalid counter fixture");
+            RealmModel realm = session.getContext().getRealm();
+            UserModel user = session.users().getUserByUsername(realm, username);
+            if (user == null || new PersistentLoginCodeFailures().lock(session, realm, user.getId()) == null) {
+                throw new IllegalArgumentException("missing counter fixture account");
+            }
+            user.setSingleAttribute(PersistentLoginCodeFailures.ATTRIBUTE, Integer.toString(amount));
+            return Map.of("seeded", true);
+        }
+
+        @GET @Path("{label}/counter")
+        public Map<String, Boolean> counterState(@PathParam("label") String label, @QueryParam("user") String username) {
+            run(label);
+            RealmModel realm = session.getContext().getRealm();
+            UserModel user = session.users().getUserByUsername(realm, username);
+            if (user == null) throw new IllegalArgumentException("missing counter fixture account");
+            LoginCodeFailureCounter.Guard guard = new PersistentLoginCodeFailures().lock(session, realm, user.getId());
+            return Map.of("blocked", guard != null && guard.blocked());
         }
 
         @POST @Path("{label}/factor")
@@ -164,6 +190,10 @@ public final class BrokerLinkRuntimeProbe implements RealmResourceProviderFactor
             run.inserted = true;
             if ("insert".equals(run.pause)) await(run);
             try {
+                // This test-only DDL is in the callback's own transaction. The real counter query
+                // fails, and rollback must undo both this rename and the just-inserted native link.
+                if (run.counterFault) session.getProvider(JpaConnectionProvider.class).getEntityManager()
+                        .createNativeQuery("alter table user_attribute rename to sky_counter_fault_fixture").executeUpdate();
                 broker.getIdp().updateBrokeredUser(session, realm, user, broker);
                 run.guarded = true;
                 if ("guard".equals(run.pause)) await(run);

@@ -43,6 +43,11 @@ public final class BrokerLinkCommitGuard {
 
     static void check(KeycloakSession session, RealmModel realm, UserModel user,
                       BrokeredIdentityContext broker, Snapshots snapshots) {
+        check(session, realm, user, broker, snapshots, new PersistentLoginCodeFailures());
+    }
+
+    static void check(KeycloakSession session, RealmModel realm, UserModel user,
+                      BrokeredIdentityContext broker, Snapshots snapshots, LoginCodeFailureCounter failures) {
         AuthenticationSessionModel auth = broker.getAuthenticationSession();
         boolean marked = auth != null && (auth.getAuthNote(BrokerLinkState.REQUIRED) != null
                 || auth.getAuthNote(BrokerLinkState.PROOF) != null);
@@ -63,6 +68,12 @@ public final class BrokerLinkCommitGuard {
                     || !proof.otpCredentials().equals(fresh.otp())
                     || !proof.binding().equals(BrokerLinkState.binding(realm, auth, broker, user, fresh.primary()))
                     || !broker.getIdpConfig().isEnabled()) throw refused();
+            // The callback is a separate HTTP transaction from the code/TOTP proof. The existing
+            // target lock is held; read the same persistent counter again before accepting the link.
+            if ("email_code".equals(proof.method())) {
+                LoginCodeFailureCounter.Guard persistent = failures.lock(session, realm, user.getId());
+                if (persistent == null || persistent.blocked()) throw refused();
+            }
             BruteForceProtector protector = session.getProvider(BruteForceProtector.class);
             if (realm.isBruteForceProtected() && (protector == null
                     || protector.isTemporarilyDisabled(session, realm, user)

@@ -41,15 +41,18 @@ class SkyExistingAccountPromptTest {
     private final AuthenticationSessionModel auth = mock(AuthenticationSessionModel.class);
     private final LoginFormsProvider form = mock(LoginFormsProvider.class, RETURNS_SELF);
     private final LoginCodeMail mail = mock(LoginCodeMail.class);
+    private final LoginCodeFailureCounter failures = mock(LoginCodeFailureCounter.class);
+    private final LoginCodeFailureCounter.Guard persistent = mock(LoginCodeFailureCounter.Guard.class);
     private final Map<String, String> notes = new HashMap<>();
     private final Map<String, Object> attributes = new HashMap<>();
     private final MultivaluedMap<String, String> posted = new MultivaluedHashMap<>();
     private final AtomicReference<UserModel> current = new AtomicReference<>();
     private final SkyExistingAccountPrompt step = new SkyExistingAccountPrompt(
-            new EmailCodeSettings("OBS", 500, null, 10), mail);
+            new EmailCodeSettings("OBS", 500, null, 10), mail, failures);
 
     @BeforeEach
     void setup() {
+        when(failures.lock(session, realm, "target")).thenReturn(persistent);
         when(context.getSession()).thenReturn(session); when(context.getRealm()).thenReturn(realm);
         when(context.getAuthenticationSession()).thenReturn(auth); when(auth.getRealm()).thenReturn(realm);
         when(context.getUser()).thenAnswer(c -> current.get());
@@ -123,6 +126,39 @@ class SkyExistingAccountPromptTest {
         ArgumentCaptor<String> code = ArgumentCaptor.forClass(String.class);
         verify(mail).sendCode(eq(context), eq(target), eq("primary@example.org"), code.capture(), eq("link"));
         return code.getValue();
+    }
+
+    @Test
+    void thePersistentLimitSuppressesANewLinkMailWithoutChangingTheCodePage() {
+        when(persistent.blocked()).thenReturn(true);
+        action("send", "username", "personal@example.org");
+        assertEquals("code", attributes.get("skyExistingAccountStage"));
+        assertEquals("", notes.get(BrokerLinkState.TARGET));
+        verify(mail, never()).sendCode(any(), any(), anyString(), anyString(), anyString());
+        verify(context, never()).success();
+    }
+
+    @Test
+    void aPreviouslyIssuedCorrectLinkCodeCannotPassAt100() {
+        String code = send();
+        when(persistent.blocked()).thenReturn(true);
+        action("verify", "code", code);
+        assertEquals("wrong_code", attributes.get("skyExistingAccountError"));
+        assertNull(notes.get(BrokerLinkState.PROOF));
+        verify(context, never()).success();
+        verify(persistent, never()).wrongCode();
+        verify(mail, never()).consecutiveAlarm(any(), anyInt());
+    }
+
+    @Test
+    void aComparedWrongLinkCodeAt99SharesTheCounterAndAlarmsOnce() {
+        String code = send();
+        when(persistent.wrongCode()).thenReturn(true);
+        action("verify", "code", (code.charAt(0) == '9' ? "0" : "9") + code.substring(1));
+        verify(persistent).wrongCode();
+        verify(mail).consecutiveAlarm(context, 100);
+        assertEquals("wrong_code", attributes.get("skyExistingAccountError"));
+        verify(context, never()).success();
     }
 
     @Test

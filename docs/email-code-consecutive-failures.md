@@ -11,7 +11,11 @@ istenen kod bu hesabın sayacına tabidir. Doğrulanmış mevcut-hesap bildirimi
 da sınırı yeniden denetler; proof beklerken başka oturum 100'e ulaştıysa giriş yapılamaz.
 Kayıt kodu postalandıktan sonra adrese hesap açılırsa, sonraki karşılaştırmalar güncel hesap ve
 kod hedefi eşliğiyle bu hesabın kalıcı ve günlük sayacına katılır; adresin önceki günlük bütçesi de sürer.
-Hesabı kanıtlayıp girişe ulaştıran LINK kodu da aynı guard sözleşmesini kullanmalıdır.
+Hesabı kanıtlayıp girişe ulaştıran LINK kodu da aynı guard'ı gönderimde, karşılaştırmada ve
+TOTP sonrası proof oluşturulurken kullanır. Native bağlantıyı kaydeden ayrı HTTP callback'i,
+`proof.method=email_code` için kullanıcı kilidi altında sınırı tekrar okur. Kod kanıtı ile callback
+arasında başka istek 100'e çıkarsa bağlantı ve giriş tamamlanmaz. Parola/passkey kanıtı ile
+native YTÜ ve mevcut A6 bağlantı akışı bu e-posta sınırıyla engellenmez.
 Sudo mode bu değişikliğin kapsamına girmez.
 
 ## Kalıcılık ve eşzamanlılık
@@ -43,7 +47,8 @@ Keycloak 26.7.4, `EventBuilder.onEvent` hatalarını yutar. Bu yüzden callback 
 DB/provider/cache işi yapılmaz; listener oluşturma hatası token üretilmeden dışarı çıkar. Yalnız `rollbackOnly`, hazırlanmış HTTP
 yanıtını mutlaka hataya çevirmediğinden resetin SQL hatası prepare aşamasından dışarı taşar:
 DB ve after-completion işleri rollback edilir. Request'in daha önce rollbackOnly olması ayrı
-bir yoldur; token/oturum oluşmaması gerçek Keycloak fault testiyle doğrulanmalıdır.
+bir yoldur; bu tasarım callback'te provider çağırmayarak onu önler. Gerçek SQL reset hatasında
+Direct Grant 500/noJWT ve browser 500/noCode, onarım sonrasında kullanılabilir token doğrulanır.
 Mevcut RabbitMQ listener'ı kendi `EventListenerTransaction` işini `enlistAfterCompletion` ile
 kaydeder; bu değişiklik ona dokunmaz. Sayaç reseti JPA commit'inden önceki prepare fazında,
 RabbitMQ yayını ise yalnız başarılı DB commit'inden sonraki fazda kalır.
@@ -94,10 +99,23 @@ karşılaştırma/tek alarm, restart/gün bağımsızlığı, diğer kullanıcı
 UserProfile overwrite/omission/empty-map negatifleri ve reset-fault sonrası token reddi kanıtı.
 Bunlar doğrulanmadan yalnız birim testlerinden replika veya token güvenliği sonucu çıkarılmaz.
 
-16 Ekim baseline doğrulaması (SPI1.23 bazındaki bu sayaç değişikliği):595 birim testi ve
-`tests/login-code-persistent.sh` gerçek PostgreSQL18 + iki Keycloak26.7.4 koşusunda70 assertion,
-149 saniye, exit0. İki replika/tek alarm/izolasyon; KC+PG process restart; başarılı parola/e-posta/TOTP
-resetleri; event deposu/listener listesi kapalı global reset; browser kodu redeem200; gerçek Account
-ve Admin UserProfile pozitif/negatifleri; SQL reset hatasında DirectGrant500/noJWT ve browser500/noCode;
-onarım sonrası200/reset ve exact bakım SQL'i geçti. Bu koşu B12LINK adapter'ını içermez; onun yeni
-kaynağı ayrıca test edilmeden LINK ve yayın kapısı tamamlanmış sayılmaz. CI ayrıca zorunludur.
+16 Ekim baseline doğrulaması (SPI 1.23 bazındaki bu sayaç değişikliği): 595 birim testi ve
+`tests/login-code-persistent.sh` gerçek PostgreSQL 18 + iki Keycloak 26.7.4 koşusunda 70 assertion,
+149 saniye, exit 0. İki replika/tek alarm/izolasyon; KC+PG process restart; başarılı parola/e-posta/TOTP
+resetleri; event deposu/listener listesi kapalı global reset; browser kodu redeem 200; gerçek Account
+ve Admin UserProfile pozitif/negatifleri; SQL reset hatasında Direct Grant 500/noJWT ve browser 500/noCode;
+onarım sonrası 200/reset ve exact bakım SQL'i geçti. Bu koşu B12 LINK adapter'ını içermez.
+
+B12'nin donmuş kodu normal merge edildikten sonraki SPI **1.26.0**: 64 suite / 640 birim testi.
+`tests/existing-account-counter.sh` gerçek PostgreSQL 18 + Keycloak 26.7.4 üzerinde 19 assertion ve
+bir native passkey browser testiyle 118 saniyede exit 0 tamamlandı. LINK gönderim/karşılaştırma 100
+reddi, 99→100 tek alarm, doğru kodun 100'de reddi, TOTP bekleyen kanıtın yeniden kontrolü ve ayrı
+callback'te 100/gerçek SQL hatası nedeniyle native insert rollback'i geçti. Başarılı kod, parola,
+passkey, native YTÜ ve mevcut A6 LOGIN yolları reseti doğruladı. Passkey testinde 100, credential
+kaydından **sonra** yazılır; yanlış hedef denemesi 100'ü korur, doğru LOGIN sıfırlar. Test-only
+callback/probe sınıfları üretim JAR'ına girmez.
+
+CI'daki ayrı `email-code-persistent-counter` işi, yeni 1.26 JAR'ıyla hem 70 temel assertion'ı hem
+LINK paketini tekrar çalıştırır; eski tam login/B12 regresyonlarının kontrolleri korunur. Yerel
+baseline ve 1.26 LINK kanıtları ayrı tutulur. Bu yeni CI işi, optimize imaj derlemesi ve bağımsız
+inceleme yeşil olmadan yayın kapısı tamamlanmış sayılmaz. Bu değişiklik henüz canlıya yayımlanmadı.

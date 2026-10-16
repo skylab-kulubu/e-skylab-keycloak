@@ -8,6 +8,7 @@ const config = JSON.parse(readFileSync(configPath, "utf8")) as {
   baseUrl: string; realm: string; clientId: string; callbackUrl: string;
   username: string; otherUsername: string; password: string;
   mockUsername: string; secondMockUsername: string; mockPassword: string;
+  counterSeedUrl?: string;
 };
 
 function authorization(parameters: Record<string, string>): string {
@@ -42,6 +43,10 @@ test("native passkey proof links only the explicitly selected existing account",
   await page.locator("#registerWebAuthn, #authenticateWebAuthnButton").first().click();
   await page.waitForURL(url => url.origin + url.pathname === config.callbackUrl);
   expect(new URL(page.url()).searchParams.get("kc_action_status")).toBe("success");
+  if (config.counterSeedUrl) {
+    expect((await context.request.post(config.counterSeedUrl)).ok()).toBe(true);
+    expect(await (await context.request.get(config.counterSeedUrl)).json()).toEqual({ blocked: true });
+  }
 
   async function chooseTarget(mock: string, target: string) {
     await context.clearCookies();
@@ -61,6 +66,9 @@ test("native passkey proof links only the explicitly selected existing account",
   await chooseTarget(config.mockUsername, config.otherUsername);
   await expect(page.locator('[data-sky-existing-account-stage="identifier"]')).toBeVisible();
   expect(new URL(page.url()).pathname).not.toBe(new URL(config.callbackUrl).pathname);
+  if (config.counterSeedUrl) {
+    expect(await (await context.request.get(config.counterSeedUrl)).json()).toEqual({ blocked: true });
+  }
 
   await chooseTarget(config.secondMockUsername, config.username);
   await page.waitForURL(url => url.origin + url.pathname === config.callbackUrl);

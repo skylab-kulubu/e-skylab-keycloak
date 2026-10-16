@@ -36,6 +36,8 @@ theme_entries=$(unzip -Z1 "$THEME_JAR")
   || fail 'the first-login personal e-mail offer page (sky-personal-email-offer) is missing or duplicated'
 [[ $(grep -c '^theme/e-skylab-theme/login/sky-email-code-sign-up.ftl$' <<<"$theme_entries") == 1 ]] \
   || fail 'the sign-up page after the right sign-up code (sky-email-code-sign-up) is missing or duplicated'
+[[ $(grep -c '^theme/e-skylab-theme/login/sky-existing-account.ftl$' <<<"$theme_entries") == 1 ]] \
+  || fail 'the first-Microsoft-login existing-account page (sky-existing-account) is missing or duplicated'
 [[ $(grep -c '^theme/e-skylab-theme/login/sky-stay-signed-in.ftl$' <<<"$theme_entries") == 1 ]] \
   || fail 'the stay signed in page after a YTÜ login (sky-stay-signed-in) is missing or duplicated'
 [[ $(grep -c '^theme/e-skylab-theme/login/sky-email-code.ftl$' <<<"$theme_entries") == 1 ]] \
@@ -61,6 +63,10 @@ for required_token in \
   'Kişisel e-postanı ekle.' \
   skyStaySignedInMaxDays \
   skySignUpStage \
+  skyExistingAccountStage \
+  skyExistingAccountEscape \
+  sky-existing-account-action \
+  'Zaten bir SKY LAB hesabın var mı?' \
   'Bu adresle zaten hesabın vardı, giriş yaptın.' \
   skyEmailCodeResendAfter \
   sky-email-code-display-name \

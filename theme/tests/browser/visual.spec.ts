@@ -91,6 +91,21 @@ test.describe("visual baselines", () => {
       });
 
       // The first-login personal e-mail offer's code stage after a wrong code (devKcContext offer=code).
+      for (const broker of ["candidate", "identifier", "code"] as const) {
+        test(`sky-existing-account-${broker}`, async ({ page }) => {
+          await page.goto(`/?page=sky-existing-account.ftl&broker=${broker}`);
+          await stabilise(page, "sky-existing-account.ftl");
+          await expect(page).toHaveScreenshot(`sky-existing-account-${broker}-${viewportName}.png`, screenshotOptions);
+        });
+      }
+      for (const pageId of ["login.ftl", "login-otp.ftl"] as const) {
+        test(`broker-proof-${pageId}`, async ({ page }) => {
+          await page.goto(`/?page=${pageId}&broker=proof`);
+          await stabilise(page, pageId);
+          await expect(page).toHaveScreenshot(`broker-proof-${pageId}-${viewportName}.png`, screenshotOptions);
+        });
+      }
+
       test("sky-personal-email-offer-code", async ({ page }) => {
         await page.goto("/?page=sky-personal-email-offer.ftl&offer=code");
         await stabilise(page, "sky-personal-email-offer.ftl");

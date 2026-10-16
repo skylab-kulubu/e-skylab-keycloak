@@ -141,6 +141,7 @@ FRONTEND_ARGE_CLIENT_ID=frontend-arge
 FRONTEND_ARGE_SCOPE_NAME=frontend-arge-core-audience
 SKYFORMS_CLIENT_ID=skyforms
 SKYFORMS_SCOPE_NAME=skyforms-forms-audience
+SKYFORMS_GROUPS_SCOPE_NAME=skyforms-groups
 # Login clients whose token is narrowed to the APIs their app calls (ADR-0058, ADR-0059; see
 # reconcile_login_clients). skycms-audience is the realm scope that puts inscribed's audience into
 # the Site clients' tokens: the event sites' clients (site-clients.sh) and skyapp
@@ -3512,6 +3513,13 @@ reconcile_skyapp_audience
 reconcile_login_clients
 reconcile_login_client_audience "$SKYFORMS_CLIENT_ID" "$SKYFORMS_SCOPE_NAME" \
   "$CONFIG_DIR/skyforms-forms-audience-mappers.json"
+# Forms' sidebar label reads the person's groups from the skyforms access token (Fatih, 2026-10-15;
+# realm roles go with the role clean-up): full paths, as core and inscribed read them, in the access
+# token and introspection only (not the ID token Auth.js keeps in its cookie, not userinfo). Its own
+# source-controlled default scope, kept like the audience scope above; a realm scope "groups" that
+# also reaches skyforms adds nothing (Keycloak merges a multivalued claim without repeating a path).
+reconcile_login_client_audience "$SKYFORMS_CLIENT_ID" "$SKYFORMS_GROUPS_SCOPE_NAME" \
+  "$CONFIG_DIR/skyforms-groups-mappers.json"
 reconcile_account_center_client_scopes "$scope_uuid" "$core_scope_uuid"
 reconcile_account_scope_mappings
 verify_mailer_client

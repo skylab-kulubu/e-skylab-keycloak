@@ -82,9 +82,26 @@ Only the two original brand image assets were carried forward.
   password form's page carries `skyEmailCodeSignUp=true` while a realm offers it, and the
   code step takes `sky-email-code-intent=sign-up` with Keycloak's execution switch for
   "Hesap aç": the link on the first screen is the next theme change (after 08b).
+- `sky-email-code.ftl` is "E-postayla devam et", the SPI's sky-email-code step
+  (eskylab-login-ux 08). The SPI hands over `skyEmailCodeStage` (`identifier` or
+  `code`), `skyEmailCodeIdentifier` (what was typed), `skyEmailCodeError` (a code from
+  `src/login/emailCodeChoice.ts`), `skyEmailCodeAttemptsLeft`, `skyEmailCodeMinutes`,
+  `skyEmailCodeResendAfter` (seconds until "Kodu yeniden gönder" opens; the page
+  counts down) and, on the identifier stage, Keycloak's conditional passkey data;
+  `EmailCode.tsx` only words them and never says where a code went. One form posts
+  `sky-email-code-action` = `send` (with `username`), `verify` (with `code`), `resend`
+  or `change`; the field ids and `data-sky-email-code-error` match the SPI's fallback
+  template, which the harness drives. The code field is one input styled as eight
+  cells (pasting and `autocomplete="one-time-code"` keep working). The login page's
+  e-mail button switches to the step when Keycloak lists it in
+  `auth.authenticationSelections` (display name `sky-email-code-display-name`) and
+  keeps opening the password view otherwise; "Parolanla gir" switches to the password
+  form the same way and the login page then opens on its password view with the
+  field filled (one session-storage entry, read once). `tests/login-by-email-code.sh`
+  proves this contract against a real Keycloak with the built theme.
 - `sky-stay-signed-in.ftl` is the SPI's "Bu cihazda oturumum açık kalsın mı?" at
-  the end of every YTÜ login (required action `sky-stay-signed-in`, Microsoft's
-  "Stay signed in?"). The SPI hands over the realm's remember-me idle time and
+  the end of every YTÜ login and every e-mail code login (required action
+  `sky-stay-signed-in`, Microsoft's "Stay signed in?"). The SPI hands over the realm's remember-me idle time and
   lifespan in whole days (`skyStaySignedInIdleDays`, `skyStaySignedInMaxDays`);
   `StaySignedIn.tsx` words them and warns against "Evet" on a shared computer. One
   form posts `sky-stay-signed-in` = `yes` ("Evet, açık kalsın", a remember-me
@@ -132,7 +149,8 @@ Only the two original brand image assets were carried forward.
   serves realistic Turkish mock data for each of them at `?page=<id>.ftl`
   (`&lang=en` switches locale; `&reason=<code>` picks the Web handoff failure
   reason of `sky-handoff-failed.ftl`; `&offer=code|taken` previews the code stage
-  or a taken address of `sky-personal-email-offer.ftl`; `&state=<name>` previews a server-side
+  or a taken address of `sky-personal-email-offer.ftl`; `&code=sent|wrong` previews the
+  code stage of `sky-email-code.ftl` just after the mail or after a wrong code; `&state=<name>` previews a server-side
   state from `previewStates`: `login.ftl` `reset-email-sent`,
   `invalid-credentials`, `idp-error`; `login-reset-password.ftl`
   `missing-username`).

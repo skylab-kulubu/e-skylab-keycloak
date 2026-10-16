@@ -26,6 +26,7 @@ entegrasyon testi bunu doğrular.
 | `account-center-account-api` kapsamı | `account-api-audience` (`account`), `account-api-core-audience` (`core`), `account-api-manage-account`, `account-api-view-profile`, `account-api-manage-account-links` (sabit roller), `account-api-roles` (`resource_access.account.roles`), `account-api-sky-authorization` (SPI mapper'ı `sky-authorization-mapper`: `sky_authorization.<istemci>.roles`, yalnız access token ve introspection; ID token/userinfo'da yok; `realm-management`, `broker`, `account`, `account-console`, `security-admin-console`, `admin-cli`, `*-realm` hariç; sıralı; 64 istemci / 256 rol sınırı; rol yoksa claim yok). Audience-resolve mapper yoktur; `aud` tam olarak `["account","core"]` kalır. |
 | `account-center-core-claims` kapsamı (`account-center-core-claims-mappers.json`) | `sub`, `auth_time`, `sky_session_lifetime` (`sky_session_started`/`sky_session_expires`), `sky_embed` (ayrıntı `docs/sky-handoff-api.md`) ve C2'den beri `university`, `department` (`oidc-usermodel-attribute-mapper`, aynı adlı kullanıcı özniteliğinden, `jsonType.label=String`, `multivalued=false`: realm'in `department_ve_university_to_jwt` kapsamıyla aynı biçim, düz metin; yalnız access token ve introspection; ID token/userinfo'da yok; öznitelik yoksa claim yok). core bu iki claim'i taşıyan her token'da kişinin üniversite, bölüm ve fakültesini yeniler ve `ytu_linked` yapar (§9). Kapsamdaki diğer mapper'lar silinir. |
 | `frontend-main-core-audience`, `frontend-arge-core-audience` ve `skyforms-forms-audience` kapsamları | `frontend-main`, `frontend-arge` ve `skyforms` giriş istemcilerinin varsayılan kapsamları; access token'ın `aud`'una `core`, `core` ve `forms` ekler. Üretimde elle kuruldular, uzlaştırıcı adlarıyla devralır. İstemci realm'de yoksa uyarı yazılır ve o kalem atlanır (§0.1). |
+| `skyforms-groups` kapsamı (`config/skyforms-groups-mappers.json`) | `skyforms`'un varsayılan kapsamı; tek mapper `groups` (Group Membership, `claim.name=groups`, `full.path=true`, `multivalued=true`; yalnız access token ve introspection, ID token/userinfo'da yok). Forms kenar çubuğundaki rol etiketi kişinin tam yollu gruplarını (`/UYELER/YK` gibi; core ve inscribed'ın okuduğu biçim) access token'dan okur (Fatih, 2026-10-15). Realm'in `groups` kapsamı da `skyforms`'a ulaşıyorsa Keycloak çok değerli claim'i birleştirir, yol tekrarlanmaz. İstemci yoksa uyarı yazılır ve atlanır. |
 | Giriş istemcilerinin dar token'ı (`frontend-main`, `frontend-arge`, `skymail`; ADR-0058, ADR-0059; §21) | Elle kurulmuş istemciler yerinde daraltılır: audience'lar varsayılan kapsamlardaki sabit mapper'lardan (sitelerde kendi `core` kapsamı ve ortak `skycms-audience`, SkyMail'de `skymail-api-audience`), rol kapsamında realm rolü ve başka istemcinin rolü yok, `fullScopeAllowed=false`. Siteler tam yollu `groups`'u tutar; `groups` yazan kapsamlar yalnız `skymail`'den ayrılır, `skymail`'in grup mapper'ı silinir. İstemci yoksa uyarı yazılır ve atlanır. |
 | Admin panelinin istemcisi (`admin`, sandbox'ta `superadmin`; ADR-0058) | Elle kurulmuş gizli istemci yerinde daraltılır: `fullScopeAllowed=false`, `standard.token.exchange.enabled=true`, `client.session.max.lifespan=28800` (panelin istemci oturumu beni-hatırla olsa da başladığından en çok 8 saat sonra biter; istemci değeri realm'in ve beni-hatırlanın önüne geçer), rol kapsamında yalnız `core` ve `forms`'un her rolü, varsayılan kapsam `admin-panel-api-audience` (sabit `core`, `forms`, `skycms` audience'ı). Adım en son koşar. İstemci yoksa uyarı; public ise koşu ona yazmadan hata verir (§16). |
 | core'un kaynak rolleri (ADR-0059, §19) | `core` istemcisinde 16 rol her koşuda var edilir (yoksa açıklamasıyla oluşturulur; varsa dokunulmaz). Yazma rolleri `ADMIN` ve `YK`'ya, `global:read` `DK`'ya, `audit:read` üçüne (`/<AD>` ya da `/UYELER/<AD>`, hangileri varsa; grup-yonetimi 08, §28) **bir kez** verilir ve rol özniteliği `skylab.seeded-group-mappings` bunu kaydeder; işaretli role sonraki koşular eşleme eklemez, hiçbir koşu eşleme ya da rol silmez. Gruba rol vermek kullanıcı yetkisi ister: uzlaştırıcı kimliği yalnız rolleri oluşturur ve işaretsiz rolleri uyarıyla bildirir; tohumlamayı operatör `KEYCLOAK_RECONCILE_ONLY=core-roles` ile yapar. `competition:manage` (`competitor:manage`'ın yeni adı, ADR-0068) Privileged gruplara değil, eski rolün bulunduğu her yere bir kez verilir (§19.1). Adım admin panelinin adımından önce koşar. |
@@ -2724,6 +2725,13 @@ kapanınca biten çerez). Sayfa ortak ya da başkasının bilgisayarında Hayır
 dolana kadar yaşar).
 Microsoft paylaşılan cihazı sezip soruyu gizliyor; biz sezemiyoruz, yalnız metinle uyarıyoruz.
 
+SPI 1.22.0'dan sonra (eskylab-login-ux 08b, Yusuf'un kararı 2026-10-15) soru e-postaya gelen kodla
+girişin sonunda da çıkar: kod sayfalarında "Beni hatırla" kutusu yok, Microsoft da e-posta kodundan
+sonra "Stay signed in?" sorar. `evaluateTriggers` girişin `sky-email-code` adımıyla bittiğini o adımın
+kimlik doğrulama notundan anlar. Soru son sayfa olduğu için `LOGIN` olayı onun isteğinde yazılır; eylem
+`sky_method=email_code` ayrıntısını o olaya yeniden koyar (§29 ölçümü bozulmasın). Parola ve passkey
+girişi yine sorulmaz.
+
 ### Nasıl çalışır
 
 SPI 1.19.0'daki `sky-stay-signed-in` gerekli eylemi (`com.skylab.authenticator.SkyStaySignedIn`).
@@ -3326,7 +3334,7 @@ browser plus passkey forms (ALTERNATIVE)
   CONDITIONAL adımı REQUIRED `auth-otp-form` (sıfırlama akışındaki `otp-guard` kuralı). Admin
   Console'da OTP alt akışı kapatılır, koşul ya da form değiştirilir ya da yanına başka bir koşul veya
   REQUIRED adım eklenirse, bir sonraki yayını beklemeden OTP'li kişi doğru kodla da giremez: sayfa
-  `unavailable` ("E-postayla giriş şu an kullanılamıyor. Parolanla ya da passkey ile gir.") der, olay
+  `unavailable` ("E-postayla giriş şu an kullanılamıyor. Parolanla ya da erişim anahtarınla gir.") der, olay
   `otp_unguarded`, sunucu günlüğünde `sky_email_code_otp_unguarded realm=…` ERROR satırı (kişi, adres,
   IP yok). OTP'si olmayan kişi etkilenmez. Düzeltme: `KEYCLOAK_EMAIL_CODE_LOGIN=on` (ya da `off`).
 
@@ -3343,24 +3351,24 @@ browser plus passkey forms (ALTERNATIVE)
   60 sn kilit) kilitli kişi doğru kodla da giremez (`account_locked`). Kod girişi başarılı girişte
   sayacı sıfırlamaz: Keycloak sıfırlamayı yalnız parola, OTP ve kurtarma kodu için yapar; sayaç
   `maxDeltaTimeSeconds` (12 saat) sonra kendiliğinden düşer.
-- Hesap başına yanlış kod tavanı (güvenlik incelemesi K2, Yusuf 2026-10-15): bir hesap UTC gününde en
-  çok 10 yanlış kod alır (`SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT`, 1-1000). Tavana ulaşınca o hesaba
+- Hesap başına yanlış kod tavanı (güvenlik incelemesi K2, Yusuf 2026-10-15): bir hesap UTC gününde
+  yaklaşık 10 yanlış kod alır (`SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT`, 1-1000). Tavana ulaşınca o hesaba
   gün bitene kadar kod postalanmaz; kod isteyen aynı kod sayfasını ve postalanmayan bir kodu alır
   (sahte kod yolu; olay `wrong_code_ceiling`, hata `sky_email_code_rate_limited`). O hesaba önceden
   gönderilmiş, hâlâ geçerli kodlar artık denetlenmez: deneme yazılanla karşılaştırılmadan yanlış sayılır
-  (sayfa yine `wrong_code`; olay `wrong_code_ceiling`), böylece günde 10'dan fazla tahmin olmaz. Tavana
+  (sayfa yine `wrong_code`; olay `wrong_code_ceiling`), böylece günde ancak yaklaşık 10 tahmin olur (aynı anda tahmin eden birkaç oturum, sayaç dolmadan birkaç deneme daha yapabilir). Tavana
   ulaşan her hesap `sky_email_code_wrong_ceiling accounts=N ceiling=10 realm=…` WARN satırı yazar (kişi
   yok); günün ilk hesabı alarm grubuna (`/ADMIN`) bir posta atar (SkyMail `keycloak.login-code-alarm`,
   `subjectKey=skyLoginCodeAlarmCeilingSubject`; kişi adı, adres, IP yok). Parola, passkey ve YTÜ girişi
   etkilenmez; bedeli: saldırgan 10 yanlış kodla bir hesabın o günkü kodla girişini kapatabilir (bunun
   için kurbana en az iki kod postası gider, kod başına beş deneme; saldırı görünürdür).
-  - Hesap: kod başına 5 deneme, hesap başına günde en çok 10 yanlış; 8 hanede bir tahminin tutma olasılığı
-    10⁻⁸. Hesap başına yılda en çok 10 × 365 = 3.650 tahmin, yani ≈ 3,65·10⁻⁵ ≈ **%0,004** (inceleyicinin
+  - Hesap: kod başına 5 deneme, hesap başına günde yaklaşık 10 yanlış; 8 hanede bir tahminin tutma olasılığı
+    10⁻⁸. Hesap başına yılda yaklaşık 10 × 365 = 3.650 tahmin, yani ≈ 3,65·10⁻⁵ ≈ **%0,004** (inceleyicinin
     hesabı; önceki 6 hane ve tavansız düzende günde 50 tahmin, yılda ≈ %1,8).
   - Sayaç diğer bütçelerle aynı yerde: `RateLimiter`, Keycloak'ın single-use deposu (Infinispan). Canlı
     `KC_CACHE=local`, tek replika: sayaç tutarlıdır, Keycloak yeniden başlayınca (diğer bütçeler gibi)
     sıfırlanır. Çok replikaya geçilirse sayaç, diğer bütçeler gibi, dağıtık önbellekle paylaşılır.
-  - NIST SP 800-63B: hesapta ardışık başarısız denemeyi en çok 100 ile sınırla. Uyan: günde en çok 10
+  - NIST SP 800-63B: hesapta ardışık başarısız denemeyi en çok 100 ile sınırla. Uyan: günde yaklaşık 10
     yanlış, Keycloak'ın kaba kuvvet kilidi ek olarak. Sapan: sayaç ardışık değil günlüktür ve
     başarılı girişte sıfırlanmaz; kesintisiz bir saldırı 100 ardışık başarısızlığa 10 günde ulaşır
     (yeniden başlatma da günün sayacını sıfırlar). Günlük alarm yöneticiyi ilk gün uyarır. Tam uyum için
@@ -3461,8 +3469,10 @@ ve alt akışların öncelikleri) 2026-09-21 olgularından; ilk `on`'dan önce A
 2. SkyMail şablonları (`keycloak.login-code`, `keycloak.login-code-alarm`) skymail-frontend'den
    tohumlanır. Önce `on` edilirse posta SkyMail 404 ile SMTP'ye düşer (`sky_mail_fallback
    reason=template_missing`), yine gider.
-3. Tema PR'ı (ilk ekrandaki "E-postayla devam et" ve kod sayfaları) yayımlanır. O olmadan alt akış
-   açılsa da SKY LAB temasında ona giden düğme yoktur.
+3. Tema PR'ı (ilk ekrandaki "E-postayla devam et" ve kod sayfaları, SPI 1.22.0 ile "Bu cihazda
+   oturumum açık kalsın mı?" kod girişinde de) yayımlanır. O olmadan alt akış açılsa da SKY LAB
+   temasında ona giden düğme yoktur. Tema düğmesi alt akış yokken ya da `off` iken bugünkü parola
+   görünümünü açar; tema alt akıştan önce yayımlanabilir.
 4. IP denetimi §23 1a'daki gibi (IP sınıfı bütçesi Keycloak'ın gördüğü IP kadar doğrudur).
 5. Ortam değişikliği gerekmez: alarm varsayılan olarak `/ADMIN` üyelerine gider. Başka bir grup ya da
    yalnız log isteniyorsa Dokploy → Keycloak → Environment: `SKY_EMAIL_CODE_ALARM_GROUP` (grup yolu ya

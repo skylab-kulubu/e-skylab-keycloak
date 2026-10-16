@@ -38,6 +38,8 @@ theme_entries=$(unzip -Z1 "$THEME_JAR")
   || fail 'the sign-up page after the right sign-up code (sky-email-code-sign-up) is missing or duplicated'
 [[ $(grep -c '^theme/e-skylab-theme/login/sky-stay-signed-in.ftl$' <<<"$theme_entries") == 1 ]] \
   || fail 'the stay signed in page after a YTÜ login (sky-stay-signed-in) is missing or duplicated'
+[[ $(grep -c '^theme/e-skylab-theme/login/sky-email-code.ftl$' <<<"$theme_entries") == 1 ]] \
+  || fail 'the e-mail code page of "E-postayla devam et" (sky-email-code) is missing or duplicated'
 
 theme_metadata=$(unzip -p "$THEME_JAR" META-INF/keycloak-themes.json)
 jq -e '.themes == [{"name":"e-skylab-theme","types":["login"]}]' <<<"$theme_metadata" >/dev/null \
@@ -60,6 +62,9 @@ for required_token in \
   skyStaySignedInMaxDays \
   skySignUpStage \
   'Bu adresle zaten hesabın vardı, giriş yaptın.' \
+  skyEmailCodeResendAfter \
+  sky-email-code-display-name \
+  'E-postayla devam et' \
   'Bu cihazda oturumum açık kalsın mı?' \
   data-skylab-logo-animation \
   mediation; do

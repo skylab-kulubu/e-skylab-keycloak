@@ -32,6 +32,24 @@ export type KcContextExtensionPerPage = {
       providers?: { alias: string; displayName: string; providerId: string; loginUrl: string }[];
     };
   };
+  // Rendered by the SPI's sky-email-code step ("E-postayla devam et", eskylab-login-ux 08); on the
+  // identifier stage also Keycloak's conditional passkey data (WebAuthnConditionalUIAuthenticator).
+  "sky-email-code.ftl": {
+    skyEmailCodeStage?: string;
+    skyEmailCodeIdentifier?: string;
+    skyEmailCodeError?: string;
+    skyEmailCodeAttemptsLeft?: string;
+    skyEmailCodeMinutes?: string;
+    skyEmailCodeResendAfter?: string;
+    enableWebAuthnConditionalUI?: boolean;
+    isUserIdentified?: string | boolean;
+    challenge?: string;
+    userVerification?: string;
+    rpId?: string;
+    createTimeout?: string | number;
+    mediation?: string;
+    authenticatorAttachment?: string;
+  };
   // Rendered by the SPI's sky-stay-signed-in required action (after every YTÜ login): the
   // remember-me idle time and lifespan in whole days.
   "sky-stay-signed-in.ftl": {

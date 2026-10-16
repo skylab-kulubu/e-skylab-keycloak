@@ -67,6 +67,7 @@ sessions_login() {
 
 stage() {
   CURRENT_STAGE=$1
+  if [[ ${B10_AFTER_SIGN_UP_ONLY:-0} == 1 ]]; then printf '  [B10 stage] %s\n' "$CURRENT_STAGE"; fi
   sessions_login
 }
 

@@ -32,6 +32,7 @@ b10_flag() { kcadm get "realms/$REALM" --fields attributes | jq -r '.attributes.
 stage 'B10 native fixture and production-shaped email flow'
 kcadm update identity-provider/instances/OBS -r "$REALM" -s providerId=microsoft >/dev/null
 kcadm update "realms/$REALM" -s loginTheme=e-skylab-theme -s internationalizationEnabled=true \
+  -s attributes.b10KeepSentinel=retained \
   -s 'supportedLocales=["tr","en"]' -s rememberMe=true -s 'passwordPolicy=length(12) and digits(1)' \
   -s webAuthnPolicyPasswordlessRpId=localhost -s webAuthnPolicyPasswordlessPasskeysEnabled=true \
   -s webAuthnPolicyPasswordlessResidentKey=required -s webAuthnPolicyPasswordlessUserVerificationRequirement=required >/dev/null
@@ -57,6 +58,10 @@ old_password_shape=$(b10_flow 'password flow' | jq -Sc 'map({id,providerId,requi
 output=$(b10_reconcile 0 KEYCLOAK_AFTER_SIGN_UP=on)
 [[ $(b10_flag) == true ]] || fail 'B10 on did not activate after readback'
 b10_pass
+[[ $(kcadm get "realms/$REALM" --fields 'attributes(*)' | jq -r '.attributes.b10KeepSentinel') == retained ]] \
+  || fail 'B10 flag write removed an unrelated realm attribute'
+b10_pass
+printf '  B10 ON: actual realm flag/readback and unrelated realm attributes preserved\n'
 first_shape=$(b10_flow "$FLOW" | jq -Sc .)
 output=$(b10_reconcile 0 KEYCLOAK_AFTER_SIGN_UP=on)
 [[ $output == *'registration continuation: unchanged (on; native action order verified)'* \
@@ -72,6 +77,7 @@ jq -e 'first(.[]|select(.alias=="sky-sign-up-credentials")) as $offer |
   all(.[]|select(.alias=="UPDATE_PASSWORD" or .alias=="webauthn-register-passwordless" or .alias=="sky-stay-signed-in"); .priority>$offer.priority)' <<<"$actions" >/dev/null \
   || fail 'session credential/native/stay order is wrong'
 b10_pass
+printf '  B10 ON/KEEP: stable flow IDs, ordinary password branch and native RA order preserved\n'
 
 stage 'B10 actual disabled half-swap recovery and duplicate refusal'
 output=$(b10_reconcile 0 KEYCLOAK_AFTER_SIGN_UP=off)
@@ -98,6 +104,7 @@ kcadm delete "authentication/executions/$duplicate" -r "$REALM" >/dev/null
 output=$(b10_reconcile 0 KEYCLOAK_AFTER_SIGN_UP=on)
 [[ $(b10_flow 'password flow' | jq -Sc 'map({id,providerId,requirement,priority})') == "$old_password_shape" ]] || fail 'repair changed password login'
 b10_pass
+printf '  B10 closed half-swap repair and duplicate refusal passed\n'
 
 stage 'B10 native Microsoft fixtures and browser package'
 mock_person b10-linked@std.yildiz.edu.tr 'Fizik'

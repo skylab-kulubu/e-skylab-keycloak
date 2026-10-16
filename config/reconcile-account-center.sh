@@ -1052,7 +1052,8 @@ set_email_code_requirement() {
 # a cut leaves it closed. Rerun with EMAIL_CODE_LOGIN=on to complete a cut/disabled swap explicitly.
 after_sign_up_flag() {
   local attributes
-  attributes=$(kcadm_json "realms/$TARGET_REALM" --fields attributes | json_tool field attributes)
+  # kcadm --fields attributes projects an EMPTY map. The wildcard keeps every existing key.
+  attributes=$(kcadm_json "realms/$TARGET_REALM" --fields 'attributes(*)' | json_tool field attributes)
   [[ -n $attributes ]] || attributes='{}'
   json_tool field "$AFTER_SIGN_UP_ATTRIBUTE" <<<"$attributes"
 }
@@ -1060,7 +1061,7 @@ after_sign_up_flag() {
 set_after_sign_up_flag() {
   local wanted=$1 live_file="$WORK_DIR/after-sign-up-realm.json" body="$WORK_DIR/after-sign-up-write.json"
   [[ $(after_sign_up_flag) != "$wanted" ]] || return 0
-  kcadm_json "realms/$TARGET_REALM" --fields attributes >"$live_file"
+  kcadm_json "realms/$TARGET_REALM" --fields 'attributes(*)' >"$live_file"
   json_tool realm-attribute "$AFTER_SIGN_UP_ATTRIBUTE" "$wanted" <"$live_file" >"$body"
   kcadm update "realms/$TARGET_REALM" -n -f "$body" >/dev/null
   [[ $(after_sign_up_flag) == "$wanted" ]] || { printf 'Registration continuation flag readback failed\n' >&2; return 1; }

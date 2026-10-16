@@ -1,2 +1,3 @@
 com.skylab.account.PersonalEmailOffer
 com.skylab.authenticator.SkyStaySignedIn
+com.skylab.passkey.SignUpCredentialsRequiredAction

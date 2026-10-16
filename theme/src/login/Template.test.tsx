@@ -247,12 +247,14 @@ describe("every Keycloak page renders inside the login page chrome", () => {
     }
   });
 
-  it("shows the team strips on the login page only, like the brand panel", async () => {
-    const login = await renderPage("login.ftl");
-    expect(login.container.querySelectorAll(".sl-legacy-teams")).toHaveLength(2);
-    login.unmount();
+  it("shows the team strips on the login and e-mail code pages", async () => {
+    for (const pageId of ["login.ftl", "sky-email-code.ftl"] as const) {
+      const view = await renderPage(pageId);
+      expect(view.container.querySelectorAll(".sl-legacy-teams")).toHaveLength(2);
+      view.unmount();
+    }
 
-    for (const pageId of ["login-otp.ftl", "error.ftl", "logout-confirm.ftl", "passkey-offer.ftl", "sky-personal-email-offer.ftl", "sky-email-code.ftl", "sky-stay-signed-in.ftl", "sky-handoff-failed.ftl"] as const) {
+    for (const pageId of ["login-otp.ftl", "error.ftl", "logout-confirm.ftl", "passkey-offer.ftl", "sky-personal-email-offer.ftl", "sky-stay-signed-in.ftl", "sky-handoff-failed.ftl"] as const) {
       const view = await renderPage(pageId);
       expect(view.container.querySelector(".sl-legacy-teams"), pageId).toBeNull();
       view.unmount();

@@ -23,7 +23,7 @@
 # browser flow in production's shape ('browser plus passkey': forms holds the 'password flow' subflow
 # (SKY LAB password form, conditional OTP, passkey offer) and passwordless WebAuthn, both
 # ALTERNATIVE). SKY_EMAIL_CODE_DAILY_LIMIT and SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT are small here so
-# the operator alarms fire within the run. Login codes have eight digits.
+# the operator alarms fire within the run. Login codes have six digits.
 #
 # What it proves:
 #   - keep adds nothing; on, under an identity with exactly the reconciler's realm-management roles,
@@ -344,7 +344,7 @@ await_code() {
   task=$(skymail_records | jq -s -c --arg to "$1" \
     '[.[] | select(.event == "mail_task" and .template_key == "keycloak.login-code" and .recipient_email == $to)] | last')
   jq -e '.body_variables | .purpose == "login" and .link == "" and .codeExpirationMinutes == "10"
-      and .subjectKey == "skyLoginCodeSubject" and (.code | test("^[0-9]{8}$"))' <<<"$task" >/dev/null \
+      and .subjectKey == "skyLoginCodeSubject" and (.code | test("^[0-9]{6}$"))' <<<"$task" >/dev/null \
     || fail 'the Login code mail task does not carry the code, purpose=login and the ten minutes without a link'
   jq -e '.missing_variables == [] and (.roles | index("skymail:mails:send")) != null' <<<"$task" >/dev/null \
     || fail 'the Login code mail task lacks a variable or the send role'
@@ -366,15 +366,15 @@ await_smtp_code() {
   message=$(curl -fsS "$MAIL_URL/api/v1/message/$id")
   jq -e '((.Text // "") + (.HTML // "")) | test("https?://[^ ]*(login-actions|action-token)") | not' <<<"$message" >/dev/null \
     || fail 'the code mail carries a link'
-  code=$(jq -r '.Text // "" | split("\n")[] | select(test("^\\s*[0-9]{8}\\s*$")) | gsub("\\s"; "")' <<<"$message" | head -n 1)
-  [[ $code =~ ^[0-9]{8}$ ]] || fail 'the code mail carries no eight-digit code'
+  code=$(jq -r '.Text // "" | split("\n")[] | select(test("^\\s*[0-9]{6}\\s*$")) | gsub("\\s"; "")' <<<"$message" | head -n 1)
+  [[ $code =~ ^[0-9]{6}$ ]] || fail 'the code mail carries no six-digit code'
   subject=$(jq -r '.Subject // ""' <<<"$message")
   [[ $subject != *"$code"* ]] || fail 'the code is in the subject line'
   printf '%s\n' "$code"
 }
 
 other_code() {
-  [[ $1 == 00000000 ]] && printf '00000001\n' || printf '00000000\n'
+  [[ $1 == 000000 ]] && printf '000001\n' || printf '000000\n'
 }
 
 # token_claims: redeems APP_CODE and prints the access token's claims that must not depend on how

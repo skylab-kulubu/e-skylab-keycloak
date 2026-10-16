@@ -110,6 +110,15 @@ SPI/image'a bu fixture'lar girmez. Gerçek native parola politikası, passkey, c
 iptal/conflict, flow readback/half-swap recovery ve yarış kapıları bu paketle doğrulanmalıdır.
 CI'da ayrı `after-sign-up-native` işi, mevcut tam login/B12/B24 gruplarıyla birlikte korunur.
 
-Gerçek runtime, Linux görsel karşılaştırmaları, final exact-head CI ve bağımsız son inceleme henüz
-beklemededir; hazır/yayın GO iddiası yoktur. Fiziksel Touch ID bu otomasyonla doğrulanmaz; sanal
-resident authenticator kanıtı ayrı cihaz uyumluluğu sınırıdır, yeni bir insan onayı sorusu değildir.
+Sekiz yeni Linux masaüstü/mobil baseline güncellemesi ve sekiz karşılaştırma geçti. SPI/tema
+birim ve görsel kanıtları, bileşen kaynakları değişmediği doğrulanan 24cd007 checkpoint'ine bağlıdır.
+Gerçek CLI turu realm attribute projection kusurunu gösterdi: düz `attributes` boş nesne döndürdüğü
+için iki ürün okuması `attributes(*)` yapıldı; realm haritası bütünüyle korunur. Sonraki gerçek turda
+ON/KEEP idempotency, unrelated attribute korunumu, native action sırası, eski parola dalı ve kapalı
+yarım-swap onarımı/duplicate refusal geçti.
+
+Tarayıcı paketi henüz **geçmedi**: ilk senaryo İngilizce sayfada Türkçe locator bekleyerek durdu;
+0 başarılı, 1 başarısız, 1 kesilmiş, 7 çalışmamış senaryo. Test isteği açık Türkçe locale kullanacak
+şekilde düzeltildi; bunun yeni gerçek koşusu, final exact-head CI ve bağımsız son inceleme açıktır.
+Hazır/yayın GO iddiası yoktur. Fiziksel Touch ID bu otomasyonla doğrulanmaz; sanal resident
+authenticator kanıtı ayrı cihaz uyumluluğu sınırıdır, yeni bir insan onayı sorusu değildir.

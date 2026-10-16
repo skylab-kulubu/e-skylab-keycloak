@@ -19,17 +19,16 @@ import java.util.regex.Pattern;
  *
  * <p>The code's rules are {@link SingleUseCodes}': ten minutes, dead after five wrong tries, single
  * use, only a salted hash stored; a new code for the same session replaces the old one. A Login code
- * has {@value #DIGITS} digits, not ADR-0044's six (security review K2, Yusuf's decision of
- * 2026-10-15): it signs a person in, also a person without a password, so a guess is worth more,
- * and eight digits make it a hundred times harder.
+ * has {@value #DIGITS} digits (Yusuf's decision of 2026-10-16, replacing the earlier eight-digit
+ * choice). The per-account wrong-code ceiling and all sending budgets remain in force.
  */
 final class LoginCodes {
 
     static final int TTL_SECONDS = SingleUseCodes.TTL_SECONDS;
     static final int MAX_ATTEMPTS = SingleUseCodes.MAX_ATTEMPTS;
-    static final int DIGITS = 8;
+    static final int DIGITS = 6;
     static final Pattern CODE = SingleUseCodes.pattern(DIGITS);
-    /** Longer input is refused before it is looked at: eight digits with a space between each. */
+    /** Longer input is refused before it is looked at: six digits with a space between each. */
     static final int MAX_CODE_INPUT_LENGTH = 2 * DIGITS + 8;
 
     private static final String KEY_PREFIX = "sky-email-code:";

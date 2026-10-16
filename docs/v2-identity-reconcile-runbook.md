@@ -3287,7 +3287,7 @@ token'ında yalnız `content:read` vardır ve editör kapısı kapalıdır.
 
 ## 29. "E-postayla devam et": e-postaya gelen kodla giriş (eskylab-login-ux 08, ADR-0063)
 
-ADR-0063 karar 2 (Yusuf, 2026-10-04): herkes e-postasına gelen 8 haneli kodla girebilir; TOTP'si
+ADR-0063 karar 2 (Yusuf, 2026-10-04): herkes e-postasına gelen 6 haneli kodla girebilir; TOTP'si
 olana koddan sonra TOTP yine sorulur. Kayıt (bilet 09) bu adımın "hesap yok" dalına gelir ve kapalıdır:
 bugün kod yalnız var olan hesaba gider.
 
@@ -3340,12 +3340,17 @@ browser plus passkey forms (ALTERNATIVE)
 
 ### Kod, sınırlar ve olaylar
 
-- Kod: CONTEXT "Login code" (`LoginCodes`, Hesap Merkezi'nin koduyla ortak `SingleUseCodes`): 8 hane
-  (güvenlik incelemesi K2, Yusuf 2026-10-15; Hesap Merkezi'nin ADR-0044 kodu 6 hane kalır; kutu
-  `inputmode=numeric`, `autocomplete=one-time-code`, boşluklu yazım kabul, en çok 24 karakter),
+- Kod: CONTEXT "Login code" (`LoginCodes`, Hesap Merkezi'nin koduyla ortak `SingleUseCodes`): 6 hane
+  (Yusuf 2026-10-16; önceki 8 hane kararının yerine; kutu
+  `inputmode=numeric`, `autocomplete=one-time-code`, boşluklu yazım kabul, en çok 20 karakter),
   10 dakika, 5 yanlışta ölür, tek kullanım, yalnız isteyen giriş oturumunda (tarayıcı ve sekme)
   çalışır, depoda yalnız tuzlu SHA-256 özeti. Kayıt, oturumun kimlik doğrulama notundaki rastgele bir
   tutamağa bağlıdır; yeni kod eskisini geçersiz kılar.
+- **SPI 1.22.1 geçişi:** yayın öncesinde gönderilmiş 8 haneli kod yeni sürümde kabul edilmez. Kişi
+  "Kodu yeniden gönder" ile bir kez yeni 6 haneli kod ister (mevcut 60 saniye bekleme ve bütçeler
+  korunur); eski kod bir deneme tüketmez. Kod sayfası hesaplı/hesapsız adres için aynı biçimde
+  6 hane ister. Ortak imaj tek sürüme geçmelidir; eski/yeni replika karışımıyla rollout yapılmaz.
+  En uzun açık kod 10 dakikada sona erer; kalıcı veri göçü veya realm bayrağı değişikliği yoktur.
 - Yanlış kod Keycloak'ın kaba kuvvet sayacına kişinin hatası olarak yazılır (kategorisiz
   `failedLogin`; parola gibi sayılır). Realm ayarıyla (§ kaba kuvvet: 10 hata, 1 sn içinde iki hata
   60 sn kilit) kilitli kişi doğru kodla da giremez (`account_locked`). Kod girişi başarılı girişte
@@ -3362,9 +3367,10 @@ browser plus passkey forms (ALTERNATIVE)
   `subjectKey=skyLoginCodeAlarmCeilingSubject`; kişi adı, adres, IP yok). Parola, passkey ve YTÜ girişi
   etkilenmez; bedeli: saldırgan 10 yanlış kodla bir hesabın o günkü kodla girişini kapatabilir (bunun
   için kurbana en az iki kod postası gider, kod başına beş deneme; saldırı görünürdür).
-  - Hesap: kod başına 5 deneme, hesap başına günde yaklaşık 10 yanlış; 8 hanede bir tahminin tutma olasılığı
-    10⁻⁸. Hesap başına yılda yaklaşık 10 × 365 = 3.650 tahmin, yani ≈ 3,65·10⁻⁵ ≈ **%0,004** (inceleyicinin
-    hesabı; önceki 6 hane ve tavansız düzende günde 50 tahmin, yılda ≈ %1,8).
+  - Hesap: kod başına 5 deneme, hesap başına günde yaklaşık 10 yanlış; 6 hanede bir tahminin tutma olasılığı
+    10⁻⁶. Hesap başına yılda yaklaşık 10 × 365 = 3.650 tahmin; bir yılda en az bir isabet olasılığı
+    1 − (1 − 10⁻⁶)³⁶⁵⁰ ≈ **%0,364**. Yusuf 2026-10-16 kullanılabilirlik için altı haneyi seçti;
+    günlük tavan ve diğer korumalar korunur (önceki 8 haneli düzende yaklaşık %0,004).
   - Sayaç diğer bütçelerle aynı yerde: `RateLimiter`, Keycloak'ın single-use deposu (Infinispan). Canlı
     `KC_CACHE=local`, tek replika: sayaç tutarlıdır, Keycloak yeniden başlayınca (diğer bütçeler gibi)
     sıfırlanır. Çok replikaya geçilirse sayaç, diğer bütçeler gibi, dağıtık önbellekle paylaşılır.

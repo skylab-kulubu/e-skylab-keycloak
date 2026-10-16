@@ -30,15 +30,15 @@ const errorKey = {
   unavailable: "emailCodeError.unavailable"
 } as const satisfies Record<EmailCodeError, string>;
 
-/** What the SPI takes at most (LoginCodes.MAX_CODE_INPUT_LENGTH): eight digits with spaces between. */
-const CODE_INPUT_MAX_LENGTH = 24;
+/** What the SPI takes at most (LoginCodes.MAX_CODE_INPUT_LENGTH): six digits with spaces between. */
+const CODE_INPUT_MAX_LENGTH = 20;
 
 const webAuthnButtonId = "authenticateWebAuthnButton";
 
 /**
  * "E-postayla devam et" (the SPI's sky-email-code step, eskylab-login-ux 08). Two stages share one
  * page: the address or username ("Kod gönder", "Parolanla gir", the passkey as on the login page)
- * and the code (eight digits, "Giriş yap", "Kodu yeniden gönder" once its minute is up, "Başka bir
+ * and the code (six digits, "Giriş yap", "Kodu yeniden gönder" once its minute is up, "Başka bir
  * adres yaz"). The SPI decides the stage, the error and how long a resend waits; the page is the same
  * whether or not the address belongs to an account, and never says where the code went.
  */
@@ -73,6 +73,7 @@ export default function EmailCode(props: EmailCodeProps) {
   return (
     <LegacyFrame
       {...getLegacyChromeProps(i18n)}
+      teams
       mainId="sl-email-code-main"
       titleId="sl-email-code-title"
       title={title}

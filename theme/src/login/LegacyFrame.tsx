@@ -46,7 +46,7 @@ type LegacyFrameProps = {
   languageMenu?: LegacyFrameLanguageMenu;
   mainId: string;
   skipToContent: string;
-  /** The team logo strips above and below the card; the login page only, like `brand`. */
+  /** The team logo strips above and below the card; the login page and the e-mail code page. */
   teams?: boolean;
   title: ReactNode;
   titleId: string;

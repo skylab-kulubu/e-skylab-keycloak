@@ -21,7 +21,7 @@
                 <div class="${properties.kcFormGroupClass!}">
                     <label for="sky-email-code" class="${properties.kcLabelClass!}">${msg("emailCodeCodeLabel")}</label>
                     <input id="sky-email-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code"
-                           maxlength="24" class="${properties.kcInputClass!}" autofocus/>
+                           maxlength="20" class="${properties.kcInputClass!}" autofocus/>
                 </div>
                 <div class="${properties.kcFormButtonsWrapperClass!}">
                     <button type="submit" name="sky-email-code-action" value="verify"

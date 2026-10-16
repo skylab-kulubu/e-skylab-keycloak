@@ -18,6 +18,10 @@ const animatedSkyLabLogo = skyLabLogoSource
     return `<path pathLength="1" style="--sl-logo-path-index: ${currentPathIndex}" `;
   });
 
+// React replaces innerHTML when this prop object changes, even when the SVG text is identical.
+// Keep the same object so countdowns and form updates preserve the paths and their animation clock.
+const logoMarkup = { __html: animatedSkyLabLogo };
+
 export default function AnimatedSkyLabLogo() {
   return (
     <div
@@ -25,7 +29,7 @@ export default function AnimatedSkyLabLogo() {
       data-skylab-logo-animation="draw"
       role="img"
       aria-label="SKY LAB"
-      dangerouslySetInnerHTML={{ __html: animatedSkyLabLogo }}
+      dangerouslySetInnerHTML={logoMarkup}
     />
   );
 }

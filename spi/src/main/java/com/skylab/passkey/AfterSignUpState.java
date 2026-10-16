@@ -1,6 +1,8 @@
 package com.skylab.passkey;
 
 import com.skylab.account.EmailCodeSignUp;
+import com.skylab.broker.SkyMicrosoftIdentityProvider;
+import org.keycloak.services.resources.IdentityBrokerService;
 import java.util.Set;
 import java.util.List;
 import java.util.HexFormat;
@@ -9,6 +11,7 @@ import java.util.function.LongSupplier;
 import org.keycloak.common.util.SecretGenerator;
 import org.keycloak.common.util.Base64Url;
 import org.keycloak.models.AccountRoles;
+import org.keycloak.models.AuthenticationExecutionModel;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.IdentityProviderModel;
 import org.keycloak.models.KeycloakSession;
@@ -113,11 +116,36 @@ final class AfterSignUpState {
     static boolean nativeLinkSupported(KeycloakSession session, RealmModel realm, AuthenticationSessionModel auth, UserModel user) {
         if (session == null || !supportedRelyingParty(realm, auth, user) || !actionEnabled(realm, "idp_link")) return false;
         IdentityProviderModel provider = session.identityProviders().getByAlias(YTU_ALIAS);
-        if (provider == null || !provider.isEnabled()) return false;
+        if (provider == null || !provider.isEnabled() || !"microsoft".equals(provider.getProviderId())
+                || !nativeProtectionActive(realm, provider) || !guardedMicrosoftProvider(session, provider)) return false;
         ClientModel account = realm.getClientByClientId("account");
         if (account == null) return false;
         return hasRoleAndScope(account.getRole(AccountRoles.MANAGE_ACCOUNT), user, auth.getClient())
                 || hasRoleAndScope(account.getRole(AccountRoles.MANAGE_ACCOUNT_LINKS), user, auth.getClient());
+    }
+
+    /** Accept only the B12 root shape: the one prompt is a direct REQUIRED child, never a nested leaf. */
+    private static boolean nativeProtectionActive(RealmModel realm, IdentityProviderModel provider) {
+        var root = realm.getFirstBrokerLoginFlow();
+        if (root == null) return false;
+        String override = provider.getFirstBrokerLoginFlowId();
+        if (override != null && !root.getId().equals(override)) return false;
+        var prompts = realm.getAuthenticationExecutionsStream(root.getId())
+                .filter(execution -> "sky-existing-account-prompt".equals(execution.getAuthenticator())).toList();
+        return prompts.size() == 1 && !prompts.getFirst().isAuthenticatorFlow()
+                && prompts.getFirst().getRequirement() == AuthenticationExecutionModel.Requirement.REQUIRED;
+    }
+
+    private static boolean guardedMicrosoftProvider(KeycloakSession session, IdentityProviderModel provider) {
+        // Use Keycloak's selected factory order, not a second factory-selection algorithm.
+        try {
+            var active = IdentityBrokerService.getIdentityProvider(session, provider, SkyMicrosoftIdentityProvider.class);
+            if (active == null) return false;
+            active.close();
+            return true;
+        } catch (RuntimeException unavailable) {
+            return false;
+        }
     }
 
     static boolean actionEnabled(RealmModel realm, String alias) {

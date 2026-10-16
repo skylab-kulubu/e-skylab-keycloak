@@ -121,6 +121,41 @@ class AfterSignUpStateTest {
         assertNull(AfterSignUpState.begin(f.session,f.realm,f.auth,f.user,f.now::get));
         assertFalse(f.authNotes.containsKey(AfterSignUpState.NOTE));
     }
+
+    @ParameterizedTest @ValueSource(strings={"missing-root","foreign-override","disabled","conditional","nested","nested-disabled","nested-conditional","duplicate","blank-override","space-override","oidc","stock-provider","missing-factory","stock-selected-first"})
+    void nativeLinkNeedsEffectiveProtectedObsRoot(String changed) {
+        var f=new AfterSignUpFixture();
+        switch(changed) {
+            case "missing-root"->when(f.realm.getFirstBrokerLoginFlow()).thenReturn(null);
+            case "foreign-override"->f.session.identityProviders().getByAlias("OBS").setFirstBrokerLoginFlowId("other-root");
+            case "disabled"->f.brokerPrompt.setRequirement(AuthenticationExecutionModel.Requirement.DISABLED);
+            case "conditional"->f.brokerPrompt.setRequirement(AuthenticationExecutionModel.Requirement.CONDITIONAL);
+            case "nested", "nested-disabled", "nested-conditional"->{var parent=new AuthenticationExecutionModel();parent.setAuthenticatorFlow(true);parent.setFlowId("nested-flow");parent.setRequirement(changed.equals("nested-disabled")?AuthenticationExecutionModel.Requirement.DISABLED:changed.equals("nested-conditional")?AuthenticationExecutionModel.Requirement.CONDITIONAL:AuthenticationExecutionModel.Requirement.REQUIRED);when(f.realm.getAuthenticationExecutionsStream("broker-root")).thenAnswer(i->Stream.of(parent));when(f.realm.getAuthenticationExecutionsStream("nested-flow")).thenAnswer(i->Stream.of(f.brokerPrompt));}
+            case "duplicate"->when(f.realm.getAuthenticationExecutionsStream("broker-root")).thenAnswer(i->Stream.of(f.brokerPrompt,f.brokerPrompt));
+            case "blank-override"->f.session.identityProviders().getByAlias("OBS").setFirstBrokerLoginFlowId("");
+            case "space-override"->f.session.identityProviders().getByAlias("OBS").setFirstBrokerLoginFlowId(" ");
+            case "oidc"->f.session.identityProviders().getByAlias("OBS").setProviderId("oidc");
+            case "stock-provider"->when(f.microsoftFactory.create(eq(f.session),any())).thenReturn(mock(org.keycloak.social.microsoft.MicrosoftIdentityProvider.class));
+            case "missing-factory"->when(f.session.getKeycloakSessionFactory().getProviderFactoriesStream(org.keycloak.broker.social.SocialIdentityProvider.class)).thenAnswer(i->Stream.empty());
+            case "stock-selected-first"->{var stock=mock(org.keycloak.social.microsoft.MicrosoftIdentityProviderFactory.class);when(stock.getId()).thenReturn("microsoft");when(stock.create(eq(f.session),any())).thenReturn(mock(org.keycloak.social.microsoft.MicrosoftIdentityProvider.class));when(f.session.getKeycloakSessionFactory().getProviderFactoriesStream(org.keycloak.broker.provider.IdentityProvider.class)).thenAnswer(i->Stream.of(stock));}
+        }
+        assertFalse(AfterSignUpState.nativeLinkSupported(f.session,f.realm,f.auth,f.user),changed);
+        assertTrue(AfterSignUpState.supportedRelyingParty(f.realm,f.auth,f.user));
+    }
+    @Test void sameProtectedObsOverrideIsAllowedWithoutWideningScope() {
+        var f=new AfterSignUpFixture();f.session.identityProviders().getByAlias("OBS").setFirstBrokerLoginFlowId("broker-root");
+        assertTrue(AfterSignUpState.nativeLinkSupported(f.session,f.realm,f.auth,f.user));
+        when(f.client.hasScope(f.role)).thenReturn(false);assertFalse(AfterSignUpState.nativeLinkSupported(f.session,f.realm,f.auth,f.user));
+    }
+
+    @Test void otherRequiredB12RootStepsDoNotDisableTheProtectedPrompt() {
+        var f=new AfterSignUpFixture();
+        var school=new AuthenticationExecutionModel();school.setAuthenticator("sky-ytu-first-login");school.setRequirement(AuthenticationExecutionModel.Requirement.REQUIRED);
+        var review=new AuthenticationExecutionModel();review.setAuthenticator("sky-broker-review-profile");review.setRequirement(AuthenticationExecutionModel.Requirement.REQUIRED);
+        var create=new AuthenticationExecutionModel();create.setAuthenticatorFlow(true);create.setFlowId("create-or-link");create.setRequirement(AuthenticationExecutionModel.Requirement.REQUIRED);
+        when(f.realm.getAuthenticationExecutionsStream("broker-root")).thenAnswer(i->Stream.of(school,f.brokerPrompt,review,create));
+        assertTrue(AfterSignUpState.nativeLinkSupported(f.session,f.realm,f.auth,f.user));
+    }
     @Test void featureRequiresExplicitTrue() {
         var f=new AfterSignUpFixture();
         when(f.realm.getAttribute(AfterSignUpState.FEATURE_ATTRIBUTE)).thenReturn(null,"TRUE","true");
@@ -137,6 +172,10 @@ final class AfterSignUpFixture {
     final AfterSignUpMemoryStore store=new AfterSignUpMemoryStore();
     final KeycloakSession session=mock(KeycloakSession.class,RETURNS_DEEP_STUBS);
     final RealmModel realm=mock(RealmModel.class);
+    final AuthenticationFlowModel brokerFlow=new AuthenticationFlowModel();
+    final AuthenticationExecutionModel brokerPrompt=new AuthenticationExecutionModel();
+    final com.skylab.broker.SkyMicrosoftIdentityProviderFactory microsoftFactory=mock(com.skylab.broker.SkyMicrosoftIdentityProviderFactory.class);
+    final com.skylab.broker.SkyMicrosoftIdentityProvider microsoftProvider=mock(com.skylab.broker.SkyMicrosoftIdentityProvider.class);
     final AuthenticationSessionModel auth=mock(AuthenticationSessionModel.class,RETURNS_DEEP_STUBS);
     final ClientModel client=mock(ClientModel.class),account=mock(ClientModel.class);
     final RoleModel role=mock(RoleModel.class);
@@ -152,6 +191,10 @@ final class AfterSignUpFixture {
     AfterSignUpFixture() {
         when(session.singleUseObjects()).thenReturn(store);
         when(realm.getId()).thenReturn("realm");
+        brokerFlow.setId("broker-root");brokerFlow.setAlias("sky first broker login");brokerFlow.setTopLevel(true);
+        brokerPrompt.setId("prompt");brokerPrompt.setAuthenticator("sky-existing-account-prompt");brokerPrompt.setRequirement(AuthenticationExecutionModel.Requirement.REQUIRED);
+        when(realm.getFirstBrokerLoginFlow()).thenReturn(brokerFlow);
+        when(realm.getAuthenticationExecutionsStream("broker-root")).thenAnswer(i->Stream.of(brokerPrompt));
         when(realm.getAttribute(AfterSignUpState.FEATURE_ATTRIBUTE)).thenReturn("true");
         when(user.getId()).thenReturn("user");when(user.isEnabled()).thenReturn(true);
         when(user.getFirstName()).thenReturn("İpek");when(user.getLastName()).thenReturn("Öğrenci");
@@ -173,7 +216,10 @@ final class AfterSignUpFixture {
         when(realm.getClientByClientId("account")).thenReturn(account);
         when(account.getRole(anyString())).thenReturn(role);when(user.hasRole(role)).thenReturn(true);
         when(client.hasScope(role)).thenReturn(true);
-        var idp=new IdentityProviderModel();idp.setAlias("OBS");idp.setEnabled(true);
+        var idp=new IdentityProviderModel();idp.setAlias("OBS");idp.setProviderId("microsoft");idp.setEnabled(true);
+        when(microsoftFactory.getId()).thenReturn("microsoft");when(microsoftFactory.create(session,idp)).thenReturn(microsoftProvider);
+        when(session.getKeycloakSessionFactory().getProviderFactoriesStream(org.keycloak.broker.provider.IdentityProvider.class)).thenAnswer(i->Stream.empty());
+        when(session.getKeycloakSessionFactory().getProviderFactoriesStream(org.keycloak.broker.social.SocialIdentityProvider.class)).thenAnswer(i->Stream.of(microsoftFactory));
         when(session.identityProviders().getByAlias("OBS")).thenReturn(idp);
         for(String alias:List.of("idp_link",SignUpCredentialsRequiredAction.PROVIDER_ID,"webauthn-register-passwordless","UPDATE_PASSWORD")) {
             var model=new RequiredActionProviderModel();model.setAlias(alias);model.setProviderId(alias);model.setEnabled(true);

@@ -39,7 +39,7 @@ Only the two original brand image assets were carried forward.
   on the left, a brand panel on the right (the logo, what one account gives,
   a faint watermark in its corner). Every other page keeps one column with
   the logo on top, as every page does on a phone.
-- Team strips: on the login page only (with the brand panel),
+- Team strips: on the login page (with the brand panel) and both stages of "E-postayla devam et",
   `TeamMarquee.tsx` runs two slow rows of SKY LAB team logos
   above and below the card (one row on a phone; still with reduced motion,
   hidden in forced colors, `aria-hidden`). Which teams, in what order, comes
@@ -91,13 +91,14 @@ Only the two original brand image assets were carried forward.
   `EmailCode.tsx` only words them and never says where a code went. One form posts
   `sky-email-code-action` = `send` (with `username`), `verify` (with `code`), `resend`
   or `change`; the field ids and `data-sky-email-code-error` match the SPI's fallback
-  template, which the harness drives. The code field is one input styled as eight
+  template, which the harness drives. The code field is one input styled as six
   cells (pasting and `autocomplete="one-time-code"` keep working). The login page's
   e-mail button switches to the step when Keycloak lists it in
   `auth.authenticationSelections` (display name `sky-email-code-display-name`) and
   keeps opening the password view otherwise; "Parolanla gir" switches to the password
   form the same way and the login page then opens on its password view with the
-  field filled (one session-storage entry, read once). `tests/login-by-email-code.sh`
+  field filled (one session-storage entry, read once). The shared logo keeps one stable SVG markup
+  object across re-renders, so the resend countdown never restarts its drawing animation. `tests/login-by-email-code.sh`
   proves this contract against a real Keycloak with the built theme.
 - `sky-stay-signed-in.ftl` is the SPI's "Bu cihazda oturumum açık kalsın mı?" at
   the end of every YTÜ login and every e-mail code login (required action

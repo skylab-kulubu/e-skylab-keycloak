@@ -1159,7 +1159,7 @@ textarea.sl-legacy-input {
   opacity: 0.6;
 }
 
-/* Eight digits read as cells: one field, so pasting and one-time-code autofill keep working. */
+/* Six digits read as cells: one field, so pasting and one-time-code autofill keep working. */
 .sl-email-code__code {
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   font-size: 1.5rem;

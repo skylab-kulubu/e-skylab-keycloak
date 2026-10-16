@@ -66,11 +66,11 @@ describe("E-postayla devam et (sky-email-code.ftl)", () => {
     expect(code).toHaveAttribute("name", "code");
     expect(code).toHaveAttribute("autocomplete", "one-time-code");
     expect(code).toHaveAttribute("inputmode", "numeric");
-    // Eight digits (security review K2), with the spaces people keep when they copy them; the SPI
-    // takes 24 characters at most (LoginCodes.MAX_CODE_INPUT_LENGTH).
-    expect(code).toHaveAttribute("maxlength", "24");
-    expect(container.querySelector('label[for="sky-email-code"]')).toHaveTextContent("8 haneli kod");
-    expect(container.textContent).not.toMatch(/6 haneli/);
+    // Six digits (Yusuf 2026-10-16), with the spaces people keep when they copy them; the SPI
+    // takes 20 characters at most (LoginCodes.MAX_CODE_INPUT_LENGTH).
+    expect(code).toHaveAttribute("maxlength", "20");
+    expect(container.querySelector('label[for="sky-email-code"]')).toHaveTextContent("6 haneli kod");
+    expect(container.textContent).not.toMatch(/8 haneli/);
     expect(container.querySelector('button[value="verify"]')).toHaveTextContent("Giriş yap");
     expect(container.querySelector('button[value="change"]')).toHaveTextContent("Başka bir adres yaz");
     expect(container.querySelector('button[value="change"]')).toHaveAttribute("formnovalidate");

@@ -28,7 +28,7 @@ import org.keycloak.sessions.AuthenticationSessionModel;
 /**
  * {@code sky-email-code}: "E-postayla devam et", sign-in with a Login code (ADR-0063 decision 2,
  * CONTEXT "Login code", eskylab-login-ux 08). The person types an e-mail address or a username and
- * asks for a code; an eight-digit code goes to the account's Primary e-mail (its School e-mail when it
+ * asks for a code; a six-digit code goes to the account's Primary e-mail (its School e-mail when it
  * has no Primary e-mail and is a Verified YTÜ account; spec S4), whichever identifier was typed;
  * the code typed on the next page signs the person in. The realm's browser flow runs it as the first
  * step of its own ALTERNATIVE subflow, followed by Keycloak's conditional OTP (a person with TOTP is
@@ -58,7 +58,7 @@ import org.keycloak.sessions.AuthenticationSessionModel;
  * through "Hesap aç" ({@value EmailCodeSignUp#INTENT_PARAM}) and has an account is signed in by the
  * Login code and told so once.
  *
- * <p>The code follows CONTEXT's Login code ({@link LoginCodes}): eight digits, ten minutes, dead after
+ * <p>The code follows CONTEXT's Login code ({@link LoginCodes}): six digits, ten minutes, dead after
  * five wrong tries, single use, valid only in the sign-in session (browser and tab) that asked for
  * it, only a salted hash stored; a new code replaces the old one. A wrong code counts toward the
  * person's brute-force lock (Keycloak's protector, as a wrong password does), and a locked or

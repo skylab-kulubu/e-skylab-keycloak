@@ -668,7 +668,7 @@ class EmailCodeAuthenticatorTest {
         person("ada", "ada", "ada@example.com");
         browser.send("ada");
 
-        for (String malformed : new String[] {"12a4", "123456", mail.last().code().substring(0, 6), "1234-5678"}) {
+        for (String malformed : new String[] {"12a4", "12345678", mail.last().code().substring(0, 5), "123-456"}) {
             browser.verify(malformed);
 
             assertEquals("code", browser.stage());
@@ -1743,9 +1743,9 @@ class EmailCodeAuthenticatorTest {
 
     // ------------------------------------------------------------------------------- helpers
 
-    /** An eight-digit code that is certainly not {@code code}. */
+    /** A six-digit code that is certainly not {@code code}. */
     private static String other(String code) {
-        return code.equals("00000000") ? "00000001" : "00000000";
+        return code.equals("000000") ? "000001" : "000000";
     }
 
     /** Keycloak's single-use store: atomic remove and putIfAbsent, lifespans ignored (Time drives expiry). */

@@ -397,16 +397,18 @@ eklenmez. Harness
 OBS; Microsoft'a gidilmez, yalnız Keycloak'ın yönlendirmesi okunur); optimize imajda
 `run-integration.sh`'ın `login` grubu da aynı yönlendirmeye bakar.
 
-SPI 1.21.0'dan sonra "E-postayla devam et": herkes e-postasına gelen 8 haneli kodla girebilir
+SPI 1.21.0'dan sonra "E-postayla devam et": herkes e-postasına gelen 6 haneli kodla girebilir
 (eskylab-login-ux bilet 08, ADR-0063 karar 2, CONTEXT "Login code"). Bunu SPI'daki `sky-email-code`
 (`com.skylab.account.EmailCodeAuthenticator`) yapar: kişi e-posta adresini ya da kullanıcı adını yazar,
 kod hesabın birincil e-postasına (birincili olmayan YTÜ hesabında okul adresine) gider, hangi
 tanımlayıcı yazılmış olursa olsun (parolalı girişin `LoginIdentifiers` kuralı). Adres sayfası her
 girdide aynıdır; hiçbir hesaba çıkmayan, iki kişiye çıkan ya da kapalı bir hesaba çıkan girdi de aynı
 kod sayfasını ve hiç postalanmayan bir kodu alır, posta istekten sonra arka planda gider (yanıt süresi
-aynı). Kod 8 hane (güvenlik incelemesi K2; Hesap Merkezi'nin kodu 6 hane kalır), 10 dakika, 5 yanlışta ölür, tek kullanım, yalnız isteyen giriş oturumunda (tarayıcı
+aynı). Kod 6 hane (Yusuf, 2026-10-16; önceki 8 hane kararının yerine), 10 dakika, 5 yanlışta ölür, tek kullanım, yalnız isteyen giriş oturumunda (tarayıcı
 ve sekme) çalışır, yalnız tuzlu özeti saklanır (`LoginCodes`, Hesap Merkezi'nin koduyla ortak
-`SingleUseCodes`); yeni kod eskisini geçersiz kılar, "yeniden gönder" 60 saniye sonra açılır. Yanlış kod
+`SingleUseCodes`); yeni kod eskisini geçersiz kılar, "yeniden gönder" 60 saniye sonra açılır.
+SPI 1.22.1'e geçişte önceki sürümden kalan 8 haneli kodlar kabul edilmez; kişi "Kodu yeniden gönder"
+ile bir kez yeni kod ister. Hata hesabın varlığına göre değişmez. Yanlış kod
 Keycloak'ın kaba kuvvet sayacına kişinin hatası olarak yazılır; kilitli ya da kapalı kişi doğru kodla da
 giremez. Doğru koddan sonra realm'in koşullu OTP'si gelir: TOTP'si olan kişiye TOTP yine sorulur
 (ADR-0063 S6). Gönderim sınırı: giriş oturumu başına saatte 5, IP sınıfı başına saatte 100, adres başına

@@ -31,7 +31,7 @@ final class PendingEmailChanges {
 
     static final int TTL_SECONDS = SingleUseCodes.TTL_SECONDS;
     static final int MAX_ATTEMPTS = SingleUseCodes.MAX_ATTEMPTS;
-    /** ADR-0044's code: six digits (the Login code has eight, {@link LoginCodes#DIGITS}). */
+    /** ADR-0044's code: six digits, with its own key space beside {@link LoginCodes}. */
     static final int DIGITS = 6;
     static final Pattern CODE = SingleUseCodes.pattern(DIGITS);
 

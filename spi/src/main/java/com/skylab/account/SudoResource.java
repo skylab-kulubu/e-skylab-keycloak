@@ -8,6 +8,11 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import org.keycloak.WebAuthnConstants;
+import org.jboss.logging.Logger;
+import org.keycloak.email.EmailException;
+import org.keycloak.email.EmailTemplateProvider;
+import org.keycloak.common.util.Time;
+import java.util.HashMap;
 import org.keycloak.authentication.authenticators.util.AuthenticatorUtils;
 import org.keycloak.credential.CredentialModel;
 import org.keycloak.events.Details;
@@ -55,10 +60,100 @@ public final class SudoResource {
     private static final String ID_TOKEN_FIELD = "idToken";
     private static final Pattern OTP_CODE = Pattern.compile("^[0-9]{4,10}$");
 
+    /** Public so the SkyMail decorator routes this to the existing code template with purpose=sudo. */
+    public static final String MAIL_TEMPLATE = "sky-sudo-code.ftl";
+    private static final Logger LOG = Logger.getLogger(SudoResource.class);
     private final AccountRequest request;
+    private final EmailCodeMail emailCodeMail;
+
+    @FunctionalInterface
+    interface EmailCodeMail {
+        void send(Caller caller, String address, String code) throws EmailException;
+    }
 
     SudoResource(AccountRequest request) {
         this.request = request;
+        this.emailCodeMail = (caller, address, code) -> {
+            Map<String, Object> attributes = new HashMap<>();
+            attributes.put("code", code);
+            attributes.put("codeExpiration", SudoEmailCodes.TTL_SECONDS / 60);
+            attributes.put("purpose", "sudo");
+            request.session().getProvider(EmailTemplateProvider.class)
+                    .setRealm(request.realm()).setUser(caller.user())
+                    .send("skySudoCodeSubject", List.of(), MAIL_TEMPLATE, attributes, address);
+        };
+    }
+
+    SudoResource(AccountRequest request, EmailCodeMail emailCodeMail) {
+        this.request = request;
+        this.emailCodeMail = emailCodeMail;
+    }
+
+    @POST
+    @Path("email-code/send")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces({MediaType.APPLICATION_JSON, Problem.MEDIA_TYPE})
+    public Response sendEmailCode(String body) {
+        return request.execute(() -> {
+            Caller caller = request.authenticate();
+            RequestBody.parse(body, Set.of());
+            SudoEmailCodes codes = new SudoEmailCodes(request.session().singleUseObjects());
+            String address = requireEmailCodeEligibility(caller, codes);
+            requireNotLockedOut(caller, PasswordCredentialModel.TYPE);
+            request.limit(RateLimiter.SUDO_EMAIL_SEND, caller);
+            long expiresAt = Time.currentTime() + SudoEmailCodes.TTL_SECONDS;
+            String code = codes.issue(request.realm().getId(), caller.user().getId(), caller.userSession().getId(), address);
+            try {
+                emailCodeMail.send(caller, address, code);
+            } catch (EmailException | RuntimeException exception) {
+                codes.discard(request.realm().getId(), caller.user().getId(), caller.userSession().getId());
+                // Sender exceptions may contain the address/code, so never attach them to logs.
+                LOG.warn("sky-account could not send a sudo e-mail code");
+                throw Problems.emailNotSent().exception();
+            }
+            ObjectNode response = JsonSerialization.mapper.createObjectNode();
+            response.put("expiresAt", AccountRequest.isoSeconds(expiresAt));
+            return AccountRequest.ok(202, response);
+        });
+    }
+
+    @POST
+    @Path("email-code/verify")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces({MediaType.APPLICATION_JSON, Problem.MEDIA_TYPE})
+    public Response withEmailCode(String body) {
+        return request.execute(() -> {
+            Caller caller = request.authenticate();
+            request.limit(RateLimiter.SUDO, caller);
+            String code = RequestBody.parse(body, Set.of("code")).requireTrimmedString("code", 6, 20).replace(" ", "");
+            if (!SingleUseCodes.pattern(6).matcher(code).matches()) throw Problems.invalidRequest("code").exception();
+            SudoEmailCodes codes = new SudoEmailCodes(request.session().singleUseObjects());
+            String address = requireEmailCodeEligibility(caller, codes);
+            requireNotLockedOut(caller, PasswordCredentialModel.TYPE);
+            SingleUseCodes.Result result = codes.confirm(request.realm().getId(), caller.user().getId(),
+                    caller.userSession().getId(), address, code);
+            if (result.status() == SingleUseCodes.Status.NONE) throw Problems.noPendingSudoEmailCode().exception();
+            if (result.status() == SingleUseCodes.Status.WRONG_CODE) {
+                // Keycloak 26.7.4 counts only password/otp categories. No password is checked here;
+                // reporting in the password bucket makes the realm's existing lockout effective.
+                recordFailedAttempt(caller, PasswordCredentialModel.TYPE);
+                throw Problems.invalidSudoEmailCode(result.attemptsLeft()).exception();
+            }
+            recordSuccessfulAttempt(caller, PasswordCredentialModel.TYPE);
+            SudoTokens.Issued issued = request.issueSudo(caller, SudoTokens.Method.EMAIL_CODE);
+            recordSudoSuccess(request.event(caller), SudoTokens.Method.EMAIL_CODE);
+            return issuedResponse(issued);
+        });
+    }
+
+    private String requireEmailCodeEligibility(Caller caller, SudoEmailCodes codes) {
+        boolean hasFactor = SudoEmailEligibility.hasFactor(caller.user());
+        String address = SudoEmailEligibility.destination(request.session(), caller.user());
+        if (hasFactor || address == null) {
+            codes.discard(request.realm().getId(), caller.user().getId(), caller.userSession().getId());
+            throw (hasFactor ? Problems.sudoEmailNotAllowed() : Problems.sudoEmailUnavailable()).exception();
+        }
+        return address;
     }
 
     @POST

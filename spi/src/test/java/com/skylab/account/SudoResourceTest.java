@@ -33,7 +33,7 @@ class SudoResourceTest {
             inOrder.verify(event).success();
             verify(event, never()).error(anyString());
         }
-        assertEquals(List.of("password", "totp", "passkey", "authentication"),
+        assertEquals(List.of("password", "totp", "email-code", "passkey", "authentication"),
                 Arrays.stream(SudoTokens.Method.values()).map(SudoTokens.Method::auditName).toList());
     }
 

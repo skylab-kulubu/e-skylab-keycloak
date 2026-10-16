@@ -3,7 +3,7 @@
 # ADR-0063 decision 2, CONTEXT "Login code"): the SPI step sky-email-code and the reconciler's e-mail
 # code step (config/reconcile-account-center.sh, KEYCLOAK_RECONCILE_ONLY=email-code-login and
 # KEYCLOAK_EMAIL_CODE_LOGIN). Stand-alone like tests/ytu-first-login.sh: the stock Keycloak image
-# this repository builds on (the Dockerfile's KEYCLOAK_IMAGE) in dev mode with docker run --rm and no
+# this repository builds on (the Dockerfile's KEYCLOAK_IMAGE) in dev mode with docker run "${pull_arguments[@]}" --rm and no
 # volume, this repository's SPI jar in /opt/keycloak/providers and config/ mounted read-only. No
 # SKY LAB theme runs here: the pages are Keycloak's own and the SPI's fallback templates, driven
 # with curl. Mail leaves as in production, through SkyMail: the integration harness's SkyMail
@@ -70,6 +70,8 @@
 # Requirements on the host: docker, jq, curl, node. LOGIN_BY_EMAIL_CODE_TEST_PORT (default 18099),
 # LOGIN_BY_EMAIL_CODE_TEST_MAIL_PORT (default 18100), LOGIN_BY_EMAIL_CODE_TEST_CONTAINER (default
 # login-by-email-code-test-<pid>), LOGIN_BY_EMAIL_CODE_TEST_MEMORY (default 2g).
+# tests/login-code-persistent.sh reuses only the pinned bootstrap/fixtures for a separate PostgreSQL
+# counter regression; it never substitutes for any assertion of this full login regression.
 # shellcheck disable=SC2016  # jq programs name jq variables
 set -Eeuo pipefail
 
@@ -77,6 +79,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 IMAGE=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' "$REPOSITORY_ROOT/Dockerfile")
 MAVEN_IMAGE=$(sed -n 's/^FROM \(maven:[^ ]*\) AS providers$/\1/p' "$REPOSITORY_ROOT/Dockerfile")
+POSTGRES_IMAGE=${LOGIN_BY_EMAIL_CODE_POSTGRES_IMAGE:-}
 MAILPIT_IMAGE=$(sed -n 's/^ *image: \(axllent\/mailpit:[^ ]*\)$/\1/p' "$SCRIPT_DIR/docker-compose.integration.yml")
 NODE_IMAGE=$(sed -n 's/^ARG NODE_IMAGE=//p' "$REPOSITORY_ROOT/Dockerfile")
 PORT=${LOGIN_BY_EMAIL_CODE_TEST_PORT:-18099}
@@ -87,6 +90,12 @@ CONTAINER=${LOGIN_BY_EMAIL_CODE_TEST_CONTAINER:-login-by-email-code-test-$$}
 MAIL_CONTAINER="$CONTAINER-mail"
 SKYMAIL_CONTAINER="$CONTAINER-skymail"
 NETWORK="$CONTAINER-net"
+DB_CONTAINER="$CONTAINER-db"
+REPLICA_CONTAINER="$CONTAINER-replica"
+SECOND_PORT=$((PORT + 2))
+DB_PASSWORD=harness-postgres-password
+PERSISTENT_ONLY=${LOGIN_BY_EMAIL_CODE_PERSISTENT_ONLY:-0}
+pull_arguments=("--pull=${LOGIN_BY_EMAIL_CODE_TEST_PULL:-missing}")
 MEMORY=${LOGIN_BY_EMAIL_CODE_TEST_MEMORY:-2g}
 STATE_DIR=$(mktemp -d)
 ADMIN_PASSWORD=harness-admin-password
@@ -111,6 +120,7 @@ DAILY_LIMIT=6
 WRONG_CEILING=6
 ALARM_TO=ops@example.invalid
 CURRENT_STAGE=startup
+HARNESS_COMPLETE=0
 STATUS=''
 LOCATION=''
 BODY=''
@@ -124,11 +134,11 @@ fail() {
   exit 1
 }
 cleanup() {
-  docker rm -fv "$CONTAINER" "$MAIL_CONTAINER" "$SKYMAIL_CONTAINER" >/dev/null 2>&1 || true
+  docker rm -fv "$CONTAINER" "$MAIL_CONTAINER" "$SKYMAIL_CONTAINER" "$DB_CONTAINER" "$REPLICA_CONTAINER" >/dev/null 2>&1 || true
   docker network rm "$NETWORK" >/dev/null 2>&1 || true
   rm -rf "$STATE_DIR"
 }
-trap 'status=$?; trap - EXIT; cleanup; exit "$status"' EXIT
+trap 'status=$?; trap - EXIT; if [[ $HARNESS_COMPLETE != 1 && $status == 0 ]]; then status=1; fi; cleanup; exit "$status"' EXIT
 on_error() {
   local status=$?
   printf 'login-by-email-code command failed during %s (line %s)\n' "$CURRENT_STAGE" "$1" >&2
@@ -331,11 +341,12 @@ code_count() {
     '[.[] | select(.event == "mail_task" and .template_key == "keycloak.login-code" and .recipient_email == $to)] | length'
 }
 
-# await_code ADDRESS BEFORE: waits for a Login code mail task to the address beyond BEFORE (the code
+# await_code ADDRESS BEFORE [PURPOSE]: waits for a code mail task beyond BEFORE (the code
 # leaves after the request, in the background) and prints its code. The task must carry the code,
 # purpose=login, the ten minutes and no link. Nothing is printed on failure.
 await_code() {
-  local task code
+  local task code purpose=${3:-login} subject_key=skyLoginCodeSubject
+  [[ $purpose != signup ]] || subject_key=skySignUpCodeSubject
   for _ in $(seq 1 30); do
     (($(code_count "$1") > $2)) && break
     sleep 1
@@ -343,9 +354,10 @@ await_code() {
   (($(code_count "$1") > $2)) || fail 'no code reached SkyMail for the address'
   task=$(skymail_records | jq -s -c --arg to "$1" \
     '[.[] | select(.event == "mail_task" and .template_key == "keycloak.login-code" and .recipient_email == $to)] | last')
-  jq -e '.body_variables | .purpose == "login" and .link == "" and .codeExpirationMinutes == "10"
-      and .subjectKey == "skyLoginCodeSubject" and (.code | test("^[0-9]{6}$"))' <<<"$task" >/dev/null \
-    || fail 'the Login code mail task does not carry the code, purpose=login and the ten minutes without a link'
+  jq -e --arg purpose "$purpose" --arg subject "$subject_key" '.body_variables | .purpose == $purpose
+      and .link == "" and .codeExpirationMinutes == "10" and .subjectKey == $subject
+      and (.code | test("^[0-9]{6}$"))' <<<"$task" >/dev/null \
+    || fail 'the code mail task does not carry the expected purpose, subject and ten minutes without a link'
   jq -e '.missing_variables == [] and (.roles | index("skymail:mails:send")) != null' <<<"$task" >/dev/null \
     || fail 'the Login code mail task lacks a variable or the send role'
   code=$(jq -r '.body_variables.code' <<<"$task")
@@ -435,7 +447,7 @@ SPI_JAR=${LOGIN_BY_EMAIL_CODE_SPI_JAR:-}
 if [[ -z $SPI_JAR ]]; then
   [[ -n $MAVEN_IMAGE ]] || fail 'Dockerfile has no Maven providers stage'
   mkdir -p "$STATE_DIR/spi"
-  docker run --rm -v "$REPOSITORY_ROOT/spi:/src:ro" -v "$STATE_DIR/spi:/out" "$MAVEN_IMAGE" \
+  docker run "${pull_arguments[@]}" --rm -v "$REPOSITORY_ROOT/spi:/src:ro" -v "$STATE_DIR/spi:/out" "$MAVEN_IMAGE" \
     sh -ec 'cp -R /src /build && cd /build && mvn --batch-mode --no-transfer-progress -q -DskipTests package && cp target/e-skylab-spi-*.jar /out/' >&2
   SPI_JAR=$(find "$STATE_DIR/spi" -name 'e-skylab-spi-*.jar' | head -n 1)
 fi
@@ -457,21 +469,46 @@ CURRENT_STAGE='Keycloak start'
 [[ -n $MAILPIT_IMAGE ]] || fail 'tests/docker-compose.integration.yml has no Mailpit image'
 docker network create "$NETWORK" >/dev/null
 [[ -n $NODE_IMAGE ]] || fail 'Dockerfile has no ARG NODE_IMAGE'
-docker run --rm -d --name "$MAIL_CONTAINER" --network "$NETWORK" --memory 256m -p "127.0.0.1:$MAIL_PORT:8025" \
+docker run "${pull_arguments[@]}" --rm -d --name "$MAIL_CONTAINER" --network "$NETWORK" --memory 256m -p "127.0.0.1:$MAIL_PORT:8025" \
   "$MAILPIT_IMAGE" >/dev/null
-docker run --rm -d --name "$SKYMAIL_CONTAINER" --network "$NETWORK" --memory 128m --read-only \
+docker run "${pull_arguments[@]}" --rm -d --name "$SKYMAIL_CONTAINER" --network "$NETWORK" --memory 128m --read-only \
   -e SKYMAIL_HTTP_PORT=8080 -e SKYMAIL_SMTP_PORT=1025 \
   -v "$SCRIPT_DIR/skymail-server.mjs:/fixture/skymail-server.mjs:ro" \
   "$NODE_IMAGE" node /fixture/skymail-server.mjs >/dev/null
+# PostgreSQL is shared by the separate counter regression's two independent Keycloak instances.
+database_arguments=()
+if [[ $PERSISTENT_ONLY == 1 ]]; then
+  [[ -n $POSTGRES_IMAGE ]] || fail 'the persistent counter entrypoint has no pinned PostgreSQL image'
+  docker run "${pull_arguments[@]}" --rm -d --name "$DB_CONTAINER" --network "$NETWORK" --memory 512m \
+    --tmpfs /var/lib/postgresql:rw,size=512m \
+    -e POSTGRES_DB=keycloak -e POSTGRES_USER=keycloak -e "POSTGRES_PASSWORD=$DB_PASSWORD" \
+    --entrypoint /bin/sh "$POSTGRES_IMAGE" -ec '
+      docker-entrypoint.sh postgres &
+      # Keep PID 1 alive when pg_ctl restarts the postgres child; tmpfs stays mounted.
+      while :; do sleep 60 & wait $! || true; done' >/dev/null
+  for _ in $(seq 1 60); do
+    docker exec "$DB_CONTAINER" pg_isready -U keycloak -d keycloak >/dev/null 2>&1 && break
+    sleep 1
+  done
+  docker exec "$DB_CONTAINER" pg_isready -U keycloak -d keycloak >/dev/null || fail 'PostgreSQL did not start'
+  database_arguments=(--cache=local --db=postgres "--db-url=jdbc:postgresql://$DB_CONTAINER:5432/keycloak"
+    --db-username=keycloak "--db-password=$DB_PASSWORD")
+fi
+
 # No SKY_MAIL_TOKEN_URL: as in production, the token endpoint comes from the request's issuer.
-docker run --rm -d --name "$CONTAINER" --network "$NETWORK" --memory "$MEMORY" -p "127.0.0.1:$PORT:$PORT" \
-  -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
-  -e SKY_EMAIL_CODE_DAILY_LIMIT="$DAILY_LIMIT" -e SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT="$WRONG_CEILING" \
-  -e SKY_HARNESS=1 -e SKY_MAIL_ENABLED=true -e "SKY_MAIL_BASE_URL=http://$SKYMAIL_CONTAINER:8080" \
-  -e SKY_MAIL_CLIENT_ID=keycloak-mailer -e "SKY_MAIL_CLIENT_SECRET=$MAILER_SECRET" -e SKY_MAIL_TIMEOUT_MILLISECONDS=3000 \
-  -v "$SPI_JAR:/opt/keycloak/providers/e-skylab-spi.jar:ro" "${theme_mount[@]}" \
-  -v "$REPOSITORY_ROOT/config:/opt/keycloak/sky-config:ro" \
-  "$IMAGE" start-dev --http-port "$PORT" >/dev/null
+# The second instance deliberately has its own local user/code cache; counter decisions must use DB.
+start_keycloak() {
+  local instance=$1 port=$2
+  docker run "${pull_arguments[@]}" --rm -d --name "$instance" --network "$NETWORK" --memory "$MEMORY" -p "127.0.0.1:$port:$port" \
+    -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+    -e SKY_EMAIL_CODE_DAILY_LIMIT="$DAILY_LIMIT" -e SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT="$WRONG_CEILING" \
+    -e SKY_HARNESS=1 -e SKY_MAIL_ENABLED=true -e "SKY_MAIL_BASE_URL=http://$SKYMAIL_CONTAINER:8080" \
+    -e SKY_MAIL_CLIENT_ID=keycloak-mailer -e "SKY_MAIL_CLIENT_SECRET=$MAILER_SECRET" -e SKY_MAIL_TIMEOUT_MILLISECONDS=3000 \
+    -v "$SPI_JAR:/opt/keycloak/providers/e-skylab-spi.jar:ro" ${theme_mount[@]+"${theme_mount[@]}"} \
+    -v "$REPOSITORY_ROOT/config:/opt/keycloak/sky-config:ro" \
+    "$IMAGE" start-dev --http-port "$port" ${database_arguments[@]+"${database_arguments[@]}"} >/dev/null
+}
+start_keycloak "$CONTAINER" "$PORT"
 for _ in $(seq 1 120); do
   curl -fsS "$BASE_URL/realms/master" >/dev/null 2>&1 && break
   sleep 2
@@ -551,6 +588,18 @@ kcadm add-roles -r "$REALM" --uid "$operator_id" --cclientid realm-management \
 SCOPED_READY=1
 sessions_login
 printf '    e-skylab with the production login settings, User Profile and browser flow shape\n'
+
+# A separate CI job runs every persistent-counter gate without extending the 75-minute full job.
+# The normal path below retains all existing keep/on/TOTP/budget/theme assertions.
+if [[ $PERSISTENT_ONLY == 1 ]]; then
+  reconcile "$SCOPED_CONFIG" 0 KEYCLOAK_EMAIL_CODE_LOGIN=on >/dev/null
+  STEP_ID=$(exec_id "$STEP")
+  PASSWORD_FORM_ID=$(exec_id sky-username-password-form)
+  source "$SCRIPT_DIR/login-code-persistent-checks.sh"
+  HARNESS_COMPLETE=1
+  printf 'login-code-persistent: all checks passed (%s assertions, %ss total)\n' "$COUNTER_ASSERTIONS" "$SECONDS"
+  exit 0
+fi
 
 # ---------------------------------------------------------------------------------------------------
 stage 'reconciler: keep, then on'
@@ -1061,4 +1110,5 @@ if [[ -n $THEME_JAR ]]; then
   printf '    SKY LAB theme: login.ftl offers the step under sky-email-code-display-name; the themed page gets stage, identifier, wait and errors; the code signs in\n'
 fi
 
+HARNESS_COMPLETE=1
 printf 'login-by-email-code: all checks passed\n'

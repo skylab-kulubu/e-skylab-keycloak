@@ -41,4 +41,7 @@ interface LoginCodeMail {
      * the {@code accounts}-th today (security review K2). No person, no address. Never throws.
      */
     void ceilingAlarm(AuthenticationFlowContext context, int ceiling, int accounts);
+
+    /** One account reached the persistent consecutive limit; deliver only after this transaction commits. */
+    void consecutiveAlarm(AuthenticationFlowContext context, int limit);
 }

@@ -40,7 +40,7 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.25.0`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.26.0`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.1.1`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
@@ -324,6 +324,13 @@ realm bağlamasını görmez; uzlaştırıcı kimliği IdP okuyamadığı için 
 yapılmış `first broker login for obs` geçersiz kılması da yalnız biçimi yerleşik akışla aynıysa
 kaldırılır (adı OBS'ye not edilir, akış silinmez); `off` onu geri yazar (bilet 22). Ayrıntı, üretim sırası ve geri dönüş: runbook §22. Harness
 `tests/ytu-first-login.sh` tek başına çalışır (stok imaj, SPI jar'ı, taklit YTÜ kiracısı).
+
+SPI 1.26.0, e-posta giriş ve mevcut hesaba bağlama kodlarında hesap başına kalıcı ardışık yanlış
+kod sayacını ekler: 100 sınırı gün değişiminde ve yeniden başlatmada korunur; gerçek başarılı LOGIN
+sıfırlar. Genel ekran/HTTP, günlük bütçeler ve TOTP koşulları korunur. Bakım reseti, UserProfile
+API yerine aynı kullanıcı kilitli SQL ile yapılır. Mimari, test ve yayın sırası:
+[Kalıcı e-posta kodu hata sınırı](docs/email-code-consecutive-failures.md). Kayıt açılmadan önce
+tüm örnekler yeni SPI'ye geçmeli ve yeni alarm şablonu seed edilmiş olmalıdır.
 
 SPI 1.25.0, yeni Microsoft hesabını mevcut SKY LAB hesabına kanıtla bağlamak için
 `sky-existing-account-prompt` ekler (bilet 12). `KEYCLOAK_EXISTING_ACCOUNT_PROMPT=on` yalnız etkin

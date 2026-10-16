@@ -7,6 +7,7 @@ import type { I18n } from "./i18n";
 import YtuMark from "./YtuMark";
 import LegacyFrame from "./LegacyFrame";
 import PageMessage from "./PageMessage";
+import BrokerLinkEscape from "./BrokerLinkEscape";
 import { getLegacyChromeProps, useLegacyChrome } from "./legacyChrome";
 import { chooseExecution, emailCodeExecutionId, takePasswordChoice } from "./emailCodeChoice";
 
@@ -36,15 +37,17 @@ export default function Login(props: LoginProps) {
     (authenticators !== undefined && authenticators.authenticators.length > 0);
   const microsoftProvider = social?.providers?.find(provider => provider.providerId === "microsoft");
   const hasCredentialsError = messagesPerField.existsError("username", "password");
+  const isBrokerProof = kcContext.skyExistingAccountEscape === true;
   // Wrong credentials belong to the fields (shown once, under them); every other message is page-wide.
   const pageMessage = hasCredentialsError ? undefined : kcContext.message;
-  const resetPasswordUrl = realm.password && realm.resetPasswordAllowed ? url.loginResetCredentialsUrl : undefined;
+  const resetPasswordUrl = !isBrokerProof && realm.password && realm.resetPasswordAllowed
+    ? url.loginResetCredentialsUrl : undefined;
   // With the e-mail code step on (eskylab-login-ux 08) the e-mail button goes there, and that page's
   // "Parolanla gir" comes back here straight to the password view, the field filled.
   const emailCodeExecution = emailCodeExecutionId(kcContext);
   const [passwordChoice] = useState(takePasswordChoice);
   const [view, setView] = useState<"choice" | "password">(
-    hasCredentialsError || passwordChoice !== undefined ? "password" : "choice"
+    hasCredentialsError || passwordChoice !== undefined || isBrokerProof ? "password" : "choice"
   );
   const [isLoginButtonDisabled, setIsLoginButtonDisabled] = useState(false);
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
@@ -151,7 +154,7 @@ export default function Login(props: LoginProps) {
 
             {view === "password" && (
               <div className="sl-legacy-password-view">
-                <button
+                {!isBrokerProof && <button
                   className="sl-legacy-back"
                   type="button"
                   onClick={() => setView("choice")}
@@ -166,7 +169,7 @@ export default function Login(props: LoginProps) {
                     />
                   </svg>
                   {msgStr("goBack")}
-                </button>
+                </button>}
 
                 <form
                   id="kc-form-login"
@@ -235,9 +238,9 @@ export default function Login(props: LoginProps) {
                   )}
 
                   {/* Directly below the password field: remember me on the left, the reset link on the right. */}
-                  {((realm.rememberMe && !usernameHidden) || resetPasswordUrl !== undefined) && (
+                  {((realm.rememberMe && !usernameHidden && !isBrokerProof) || resetPasswordUrl !== undefined) && (
                     <div className="sl-legacy-form-options">
-                      {realm.rememberMe && !usernameHidden && (
+                      {realm.rememberMe && !usernameHidden && !isBrokerProof && (
                         <label className="sl-legacy-remember" htmlFor="rememberMe">
                           <input
                             id="rememberMe"
@@ -279,7 +282,7 @@ export default function Login(props: LoginProps) {
                   (eskylab-login-ux 09) is live, this block becomes "Hesabın yok mu? E-postayla hesap aç"
                   into the "E-postayla devam et" door.
                 */}
-                {microsoftProvider !== undefined && (
+                {microsoftProvider !== undefined && !isBrokerProof && (
                   <div className="sl-legacy-no-account">
                     <p className="sl-legacy-no-account__title">{msgStr("noAccount")}</p>
                     <p>
@@ -292,6 +295,7 @@ export default function Login(props: LoginProps) {
             )}
 
             <p className="sl-legacy-domain">{msgStr("skylabDomainNotice")}</p>
+            <BrokerLinkEscape kcContext={kcContext} i18n={i18n} />
 
             {hasPasskey && (
               <>

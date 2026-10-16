@@ -16,6 +16,20 @@ import type { ThemeName } from "../kc.gen";
  */
 const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCustomTranslations({
   tr: {
+    existingAccountTitle: "Zaten bir SKY LAB hesabın var mı?",
+    existingAccountLinkTitle: "Giriş yap ve YTÜ hesabını bağla",
+    existingAccountDescription: "Daha önce e-postayla SKY LAB hesabı açtıysan buradan bağla; iki ayrı hesabın olmasın. Emin değilsen e-postanı yaz, hesabın varsa kod gelir.",
+    existingAccountSchoolCandidate: "Bu okul adresi bir SKY LAB hesabında kayıtlı görünüyor; giriş yap ve bağla.",
+    existingAccountYes: "Evet, giriş yap ve bağla",
+    existingAccountNo: "Hayır, yeni hesap aç",
+    existingAccountEscape: "Bağlanamadım, yeni hesap aç",
+    existingAccountIdentifier: "Hesabının e-posta adresi ya da kullanıcı adı",
+    existingAccountPassword: "Parola ya da erişim anahtarıyla gir",
+    existingAccountCodeSent: "Kodu gönderdik. Hesabın varsa kod, hesabının şu anki birincil e-posta adresine gider. Kod 10 dakika geçerli.",
+    existingAccountVerify: "Doğrula ve bağla",
+    existingAccountTryAgain: "Hesap bağlanamadı. Bilgilerini kontrol edip yeniden dene ya da yeni hesap aç.",
+    existingAccountWrongCode: "Kod yanlış. Yeniden dene; beş yanlış denemeden sonra yeni kod istemen gerekir.",
+    existingAccountRateLimited: "Çok sık denedin. Biraz bekleyip yeniden dene.",
     // Login page and shared chrome
     skylabTitle: "SKY LAB'e Hoş Geldin!",
     skylabDesc: "YTÜ öğrencisiysen okul hesabınla, SKY LAB parolan varsa e-postanla gir.",
@@ -395,6 +409,20 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     identityProviderAlreadyLinkedMessage: "Bu YTÜ hesabı zaten başka bir SKY LAB hesabına bağlı."
   },
   en: {
+    existingAccountTitle: "Do you already have a SKY LAB account?",
+    existingAccountLinkTitle: "Sign in and link your YTU account",
+    existingAccountDescription: "If you created a SKY LAB account with email, sign in here to link it and keep one account. Unsure? Enter your email; if you have an account, a code will arrive.",
+    existingAccountSchoolCandidate: "This school address appears on a SKY LAB account. Sign in to link it.",
+    existingAccountYes: "Yes, sign in and link",
+    existingAccountNo: "No, create a new account",
+    existingAccountEscape: "I could not link it; create a new account",
+    existingAccountIdentifier: "Your account email address or username",
+    existingAccountPassword: "Use a password or passkey",
+    existingAccountCodeSent: "We sent the code. If you have an account, the code goes to its current primary email address. It is valid for 10 minutes.",
+    existingAccountVerify: "Verify and link",
+    existingAccountTryAgain: "The account could not be linked. Check your details and try again, or create a new account.",
+    existingAccountWrongCode: "The code is incorrect. Try again; after five wrong attempts, request a new code.",
+    existingAccountRateLimited: "Too many attempts. Wait a little and try again.",
     // Login page and shared chrome
     skylabTitle: "Welcome to SKY LAB!",
     skylabDesc: "Sign in with your YTÜ account, or with your email if you have a SKY LAB password.",

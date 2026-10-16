@@ -220,6 +220,52 @@ jobs:
       - name: Sign-up with an e-mail code against a throwaway Keycloak
         run: bash tests/sign-up-by-email-code.sh
 
+  # First Microsoft login: explicit account choice, target-bound native proof and the
+  # callback transaction guard, including real PG locks/rollback and a resident passkey.
+  # The Microsoft transport/barrier fixtures are compiled into a separate test-only JAR.
+  existing-account-link:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      B12_PG_IMAGE: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.22.1
+          cache: npm
+          cache-dependency-path: theme/package-lock.json
+
+      - name: Build and test the providers
+        run: MAVEN_OPTS=-Xmx768m mvn -B -f spi/pom.xml -DargLine=-Xmx512m -DforkCount=1 verify
+
+      - name: Install the native passkey test browser
+        working-directory: theme
+        run: |
+          npm ci --ignore-scripts
+          npx --no-install playwright install --with-deps chromium
+
+      - name: Cache the pinned disposable runtime images
+        run: |
+          keycloak_image=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' Dockerfile)
+          mailpit_image=$(sed -n 's/^ *image: \(axllent\/mailpit:[^ ]*\)$/\1/p' tests/docker-compose.integration.yml)
+          docker pull "$keycloak_image"
+          docker pull "$mailpit_image"
+          docker pull "$B12_PG_IMAGE"
+
+      - name: Existing-account proof and callback races against PostgreSQL and Keycloak
+        run: |
+          B12_SPI_JAR=$(find "$PWD/spi/target" -maxdepth 1 -name 'e-skylab-spi-*.jar' -print -quit)
+          export B12_SPI_JAR
+          bash tests/existing-account-link.sh
+
   # config/site-clients.sh and config/site-editor-grants.sh (the event sites' Site clients, with
   # inscribed-cms-roles.sh between them) against the stock Keycloak image in dev mode, with a real
   # authorization code flow (PKCE); needs no build of this repository's image.

@@ -3579,13 +3579,14 @@ alan `sign-up`). Yürütme ve ayar realm'e özel olduğu için sandbox ve canlı
 - Doğru kayıt kodu SPI'nın ayrı sayfasını açar: `sky-email-code-sign-up.ftl` (SKY LAB teması:
   `theme/src/login/EmailCodeSignUp.tsx`). Aşamalar (`skySignUpStage`):
   - `form` "Hesabını oluşturalım": adres salt okunur, Ad ve Soyad, KVKK yalnız bilgilendirir (onay kutusu
-    yok, spec §9), [Hesabı aç], [Başka bir adres yaz]. Kanıt 30 dakika geçerlidir.
+    yok, spec §9), [Hesabı aç], [Başka bir adres yaz]. Kanıt 30 dakika geçerlidir; sayfayı yenilemek süreyi uzatmaz.
   - `ytu`: adres YTÜ alan adındaysa (`yildiz.edu.tr` ve alt alan adları) hesap açılmaz; "Okul adresinle
     YTÜ hesabınla devam et" ve OBS girişine bağlantı (spec S3). Olay `REGISTER_ERROR`, `school_domain`.
   - `existing`: tema "Hesap aç"ı yürütme seçimiyle birlikte `sky-email-code-intent=sign-up` göndererek
     açtıysa ve adres bir hesaba çıkıyorsa giriş kodu birincile gider; koddan sonra "Bu adresle zaten
     hesabın vardı, giriş yaptın." ve [Devam et]; kişi denetimler (kapalı, kilit, kod adresi, OTP)
-    yeniden yapılarak girer, ikinci hesap açılmaz. Niyet olmadan hesabı olan kişi doğrudan girer.
+    yeniden yapılarak girer, ikinci hesap açılmaz. Ara sayfa aynı sabit 30 dakikalık kanıt süresini korur;
+    formdan bu aşamaya geçmek ya da sayfayı yenilemek süreyi uzatmaz. Niyet olmadan hesabı olan kişi doğrudan girer.
   - `unavailable`: adres bir hesapta kodla girişe çıkmayan biçimde duruyor (ör. kanıtsız kişisel adres,
     bağlantısız okul adresi) ya da ayar bu arada kapandı. Olay `sign_up_taken` ya da `sign_up_off`.
 - [Hesabı aç]: ad ve soyad Hesap Merkezi'nin kuralıyla (boşluklar sadeleşir, en çok 64, Keycloak'ın
@@ -3612,6 +3613,16 @@ alan `sign-up`). Yürütme ve ayar realm'e özel olduğu için sandbox ve canlı
   e-postası. Kod doğrulanınca ya da form gönderilince adres bir hesaba çıkıyor ve o hesabın kod adresiyse
   hesap açılmaz, o hesapla girilir (`existing` aşaması); başka bir kayıt aynı anda yazıyorsa form
   "birkaç saniye sonra yeniden dene" der. Kullanıcı adı da seçilince bir dakika tutulur.
+- Kayıt, Hesap Merkezi'nin son e-posta doğrulaması/birincil değişimi ve ilk YTÜ girişindeki kişisel
+  e-posta teklifinin doğrulaması ayrıca realm satırında aynı **veritabanı transaction kilidini** alır
+  (`EmailAddressOwnership`, `PESSIMISTIC_WRITE`). Kilit ilk sahiplik yazımından önce alınır ve
+  commit/rollback'e kadar kalır; altında posta ya da Graph çağrısı yapılmaz. Kilit sonrası scalar ID
+  sorgusu birincil adresi, kullanıcı adını, kişisel ve okul adresi özniteliklerini taze veritabanından
+  denetler; Keycloak'ın eski kullanıcı önbelleği olumsuz sonucu yeni sahibin üstünü örtemez. DB'nin
+  tekil `email` kuralı tek başına `personalEmail` özniteliğini korumaz. Kilit hatası yazımı durdurur ve
+  rollback işaretler; timeout ipucu sürücüye bağlıdır. Bu koruma ürün yolları içindir: yönetici
+  Admin REST/import ve eski adres devralma gibi bakım yazıları aynı kilidi kullanmaz, adres sahipliği
+  bakımında ürün mutasyonları durdurulur.
 - Parola formu sayfası (`login.ftl`) kaydın açık olduğunu `skyEmailCodeSignUp=true` ile söyler; tema
   "Hesabın yok mu? E-postayla hesap aç" bağlantısını yalnız o zaman gösterir (tema işi, aşağıda).
 - Olaylar: `REGISTER` (başarı) ve `REGISTER_ERROR` (`sky_email_code` = `school_domain`, `sign_up_taken`,

@@ -167,6 +167,7 @@ class PersonalEmailOfferTest {
         when(keycloakContext.getRealm()).thenReturn(realm);
         when(realm.getSmtpConfig()).thenReturn(Map.of());
         when(realm.getId()).thenReturn("realm-id");
+        EmailAddressOwnershipTest.mockDatabase(session, realm);
         RequiredActionProviderModel model = new RequiredActionProviderModel();
         model.setAlias(PersonalEmailOffer.PROVIDER_ID);
         model.setProviderId(PersonalEmailOffer.PROVIDER_ID);

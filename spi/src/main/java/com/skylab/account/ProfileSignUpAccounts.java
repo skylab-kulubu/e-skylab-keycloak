@@ -32,6 +32,9 @@ final class ProfileSignUpAccounts implements SignUpAccounts {
     @Override
     public UserModel open(KeycloakSession session, RealmModel realm, String username, String address,
             String firstName, String lastName) throws Refused {
+        if (EmailAddressOwnership.isTakenAfterLock(session, realm, null, address)) {
+            throw new Refused(Refused.Reason.ADDRESS_TAKEN);
+        }
         Map<String, List<String>> attributes = new LinkedHashMap<>();
         attributes.put(UserModel.USERNAME, List.of(username));
         attributes.put(UserModel.EMAIL, List.of(address));

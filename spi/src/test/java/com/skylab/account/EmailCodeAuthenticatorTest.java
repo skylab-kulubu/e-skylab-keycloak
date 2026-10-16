@@ -1416,6 +1416,42 @@ class EmailCodeAuthenticatorTest {
         assertEquals("account_disabled", browser.error());
     }
 
+    @Test
+    void theExistingNoteExpiresFromTheProofEvenAfterReloads() {
+        signUpOn = true;
+        person("ada", "ada", "ada@example.com");
+        browser.choose(true);
+        browser.send("ada");
+        browser.verify(mail.last().code());
+        assertEquals("existing", browser.signUpStage());
+
+        Time.setOffset(EmailCodeSignUp.PROOF_SECONDS - 1);
+        browser.open();
+        assertEquals("existing", browser.signUpStage());
+        Time.setOffset(EmailCodeSignUp.PROOF_SECONDS + 1);
+        browser.carryOn();
+
+        assertFalse(browser.succeeded);
+        assertEquals("identifier", browser.stage());
+    }
+
+    @Test
+    void movingFromTheFormToAnExistingAccountDoesNotRenewTheProof() {
+        signUpOn = true;
+        Browser tab = provenSignUp("root-new", "new@example.com");
+        Time.setOffset(EmailCodeSignUp.PROOF_SECONDS - 1);
+        person("meanwhile", "meanwhile", "new@example.com");
+        tab.signUp("Ayşe", "Yılmaz");
+        assertEquals("existing", tab.signUpStage());
+
+        Time.setOffset(EmailCodeSignUp.PROOF_SECONDS + 1);
+        tab.open();
+        tab.carryOn();
+
+        assertFalse(tab.succeeded);
+        assertEquals("identifier", tab.stage());
+    }
+
     // The race (ticket 09): the address got an account meanwhile; the code signs the person in to it.
     @Test
     void anAccountOpenedForTheAddressSinceTheCodeIsSignedInNotDuplicated() {

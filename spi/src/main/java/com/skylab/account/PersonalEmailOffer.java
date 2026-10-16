@@ -308,7 +308,7 @@ public final class PersonalEmailOffer implements RequiredActionProvider, Require
         }
         // Ten minutes passed: somebody else may have taken the address meanwhile (Account center
         // checks again at this point too).
-        if (PersonalEmailVerification.isTakenByAnother(context.getSession(), context.getRealm(), user, address)) {
+        if (EmailAddressOwnership.isTakenAfterLock(context.getSession(), context.getRealm(), user, address)) {
             discardCode(context);
             event(context, "address_taken").error(Errors.EMAIL_IN_USE);
             context.challenge(page(context, Stage.ADDRESS, address, Problem.TAKEN, null));

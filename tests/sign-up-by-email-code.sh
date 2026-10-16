@@ -51,6 +51,8 @@
 #   - the server log holds no code, no address of the run and not the client's IP;
 #   - off: the setting false, an address that names nobody is mailed nothing again, the accounts
 #     opened stay and sign in.
+# The harness also proves transaction-level ownership exclusion (commit and rollback) with a
+# separate test-only provider jar; it never enters the production SPI or image.
 # The ceilings, the overall budget pause, the race windows, the proof's lifetime and the stages'
 # reloads are unit tests (EmailCodeAuthenticatorTest, SignUpUsernamesTest, EmailCodeSignUpTest).
 # Requirements on the host: docker, jq, curl. SIGN_UP_BY_EMAIL_CODE_TEST_PORT (default 18101),
@@ -411,6 +413,24 @@ SPI_JAR=$(cd -- "$(dirname -- "$SPI_JAR")" && pwd)/$(basename -- "$SPI_JAR")
 spi_listing=$(unzip -l "$SPI_JAR")
 grep -q 'com/skylab/account/EmailCodeSignUp.class' <<<"$spi_listing" || fail 'the SPI jar does not hold the sign-up branch'
 grep -q 'theme-resources/templates/sky-email-code-sign-up.ftl' <<<"$spi_listing" || fail 'the SPI jar has no sign-up page'
+if grep -q 'EmailAddressOwnershipProbe' <<<"$spi_listing"; then
+  fail 'the test-only ownership probe leaked into the production SPI jar'
+fi
+
+# A separate test-only jar exposes deterministic transaction barriers. It never enters spi/ or the
+# production image: only this throwaway Keycloak mounts it, and it additionally requires SKY_HARNESS.
+CURRENT_STAGE='ownership probe jar'
+mkdir -p "$STATE_DIR/ownership-probe"
+docker run --rm --memory 512m --entrypoint bash \
+  -v "$SPI_JAR:/fixture/spi.jar:ro" \
+  -v "$SCRIPT_DIR/fixtures/EmailAddressOwnershipProbe.java:/fixture/EmailAddressOwnershipProbe.java:ro" \
+  -v "$STATE_DIR/ownership-probe:/out" "$IMAGE" -ec '
+    jars=(/opt/keycloak/lib/lib/main/*.jar); IFS=:
+    java -m jdk.compiler/com.sun.tools.javac.Main -cp "/fixture/spi.jar:${jars[*]}" -d /out /fixture/EmailAddressOwnershipProbe.java
+    mkdir -p /out/META-INF/services
+    printf "%s\n" com.skylab.account.EmailAddressOwnershipProbe > /out/META-INF/services/org.keycloak.services.resource.RealmResourceProviderFactory
+    java -m jdk.jartool/sun.tools.jar.Main --create --file /out/probe.jar -C /out com -C /out META-INF
+  '
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='Keycloak start'
@@ -428,6 +448,7 @@ docker run --rm -d --name "$CONTAINER" --network "$NETWORK" --memory "$MEMORY" -
   -e SKY_HARNESS=1 -e SKY_MAIL_ENABLED=true -e "SKY_MAIL_BASE_URL=http://$SKYMAIL_CONTAINER:8080" \
   -e SKY_MAIL_CLIENT_ID=keycloak-mailer -e "SKY_MAIL_CLIENT_SECRET=$MAILER_SECRET" -e SKY_MAIL_TIMEOUT_MILLISECONDS=3000 \
   -v "$SPI_JAR:/opt/keycloak/providers/e-skylab-spi.jar:ro" \
+  -v "$STATE_DIR/ownership-probe/probe.jar:/opt/keycloak/providers/ownership-probe.jar:ro" \
   -v "$REPOSITORY_ROOT/config:/opt/keycloak/sky-config:ro" \
   "$IMAGE" start-dev --http-port "$PORT" >/dev/null
 for _ in $(seq 1 120); do
@@ -507,6 +528,40 @@ STEP_ID=$(exec_id "$STEP")
 kcadm get "authentication/executions/$STEP_ID" -r "$REALM" | jq -e '(.authenticatorConfig // "") == ""' >/dev/null \
   || fail 'the sign-in step came with a config'
 printf '    keep reports no step, then off; on without the step is refused with nothing written\n'
+
+# ---------------------------------------------------------------------------------------------------
+stage 'ownership writes: database transactions'
+probe_base="$BASE_URL/realms/$REALM/email-ownership-probe"
+for slot in personal email username school signup rollback; do
+  label="commit-$slot"
+  probe_slot=$slot
+  rollback=false
+  expected=true
+  if [[ $slot == rollback ]]; then probe_slot=personal; rollback=true; expected=false; fi
+  if [[ $slot != signup ]]; then person "ownership-$label" "original-$label@example.invalid" >/dev/null; fi
+  curl -fsS -X POST "$probe_base/$label/hold?slot=$probe_slot&rollback=$rollback" >"$STATE_DIR/$label.holder" &
+  holder_pid=$!
+  for _ in $(seq 1 50); do
+    curl -fsS "$probe_base/$label" | jq -e '.locked' >/dev/null && break
+    sleep 0.1
+  done
+  curl -fsS "$probe_base/$label" | jq -e '.locked and (.finished | not)' >/dev/null \
+    || fail 'the holder did not reach its uncommitted write'
+  curl -fsS -X POST "$probe_base/$label/check" >"$STATE_DIR/$label.waiter" &
+  waiter_pid=$!
+  for _ in $(seq 1 50); do
+    curl -fsS "$probe_base/$label" | jq -e '.waiting' >/dev/null && break
+    sleep 0.1
+  done
+  curl -fsS "$probe_base/$label" | jq -e '.waiting and (.finished | not)' >/dev/null \
+    || fail 'another transaction passed the ownership lock before commit/rollback'
+  curl -fsS -X POST "$probe_base/$label/release" >/dev/null
+  wait "$holder_pid" || fail 'the holder transaction failed'
+  wait "$waiter_pid" || fail 'the waiting transaction failed'
+  jq -e --argjson expected "$expected" '.before == false and .after == $expected' "$STATE_DIR/$label.waiter" >/dev/null \
+    || fail 'the fresh ownership check did not see exactly the committed state'
+done
+printf '    real independent transactions: wait through uncommitted personal/email/username/school/signup writes; fresh check sees committed holder despite old model; rollback releases lock and leaves address free\n'
 
 # ---------------------------------------------------------------------------------------------------
 stage 'off: nobody is mailed'

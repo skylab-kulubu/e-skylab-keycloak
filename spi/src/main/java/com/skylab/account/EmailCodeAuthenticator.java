@@ -773,8 +773,9 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
         AuthenticationSessionModel authSession = context.getAuthenticationSession();
         String userId = authSession.getAuthNote(EmailCodeSignUp.EXISTING_USER_NOTE);
         String address = authSession.getAuthNote(EmailCodeSignUp.EXISTING_ADDRESS_NOTE);
-        if (userId == null || address == null) {
-            authenticate(context);
+        if (userId == null || address == null || !proofIsFresh(authSession)) {
+            clearSignUp(context);
+            expired(context, null);
             return;
         }
         String identifier = identifierOf(context);
@@ -792,8 +793,11 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
     }
 
     private void showExisting(AuthenticationFlowContext context, UserModel user, String address) {
-        clearSignUp(context);
         AuthenticationSessionModel authSession = context.getAuthenticationSession();
+        String provenAt = authSession.getAuthNote(EmailCodeSignUp.PROVEN_AT_NOTE);
+        clearSignUp(context);
+        authSession.setAuthNote(EmailCodeSignUp.PROVEN_AT_NOTE,
+                provenAt == null ? Integer.toString(Time.currentTime()) : provenAt);
         authSession.setAuthNote(EmailCodeSignUp.STAGE_NOTE, EmailCodeSignUp.Stage.EXISTING.value);
         authSession.setAuthNote(EmailCodeSignUp.EXISTING_USER_NOTE, user.getId());
         authSession.setAuthNote(EmailCodeSignUp.EXISTING_ADDRESS_NOTE, address);
@@ -821,7 +825,7 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
         String address = stage == EmailCodeSignUp.Stage.EXISTING
                 ? authSession.getAuthNote(EmailCodeSignUp.EXISTING_ADDRESS_NOTE)
                 : stage == null ? provenAddress(authSession) : authSession.getAuthNote(EmailCodeSignUp.ADDRESS_NOTE);
-        if (address == null) {
+        if (address == null || (stage == EmailCodeSignUp.Stage.EXISTING && !proofIsFresh(authSession))) {
             clearSignUp(context);
             return false;
         }
@@ -834,14 +838,21 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
     /** The address the sign-up form may open an account for: proven in this session, recently. */
     private static String provenAddress(AuthenticationSessionModel authSession) {
         String address = authSession.getAuthNote(EmailCodeSignUp.ADDRESS_NOTE);
+        return address != null && authSession.getAuthNote(EmailCodeSignUp.STAGE_NOTE) == null && proofIsFresh(authSession)
+                ? address : null;
+    }
+
+    /** Fixed lifetime from the code proof; reloading or changing stages never renews it. */
+    private static boolean proofIsFresh(AuthenticationSessionModel authSession) {
         String provenAt = authSession.getAuthNote(EmailCodeSignUp.PROVEN_AT_NOTE);
-        if (address == null || provenAt == null || authSession.getAuthNote(EmailCodeSignUp.STAGE_NOTE) != null) {
-            return null;
+        if (provenAt == null) {
+            return false;
         }
         try {
-            return Integer.parseInt(provenAt) + EmailCodeSignUp.PROOF_SECONDS >= Time.currentTime() ? address : null;
+            long age = (long) Time.currentTime() - Long.parseLong(provenAt);
+            return age >= 0 && age <= EmailCodeSignUp.PROOF_SECONDS;
         } catch (NumberFormatException malformed) {
-            return null;
+            return false;
         }
     }
 

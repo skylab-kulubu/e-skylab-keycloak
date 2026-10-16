@@ -2,6 +2,7 @@ package com.skylab.mail;
 
 import com.skylab.account.EmailCodeAuthenticator;
 import com.skylab.account.EmailResource;
+import com.skylab.account.SudoResource;
 import org.keycloak.events.EventType;
 
 import java.util.Locale;
@@ -45,7 +46,8 @@ final class SkyMailTemplates {
             "identity-provider-link.ftl", IDP_LINK,
             // By the constant sky-account sends it with, so the two names cannot drift apart.
             EmailResource.TEMPLATE.toLowerCase(Locale.ROOT), PERSONAL_EMAIL_CONFIRM,
-            EmailCodeAuthenticator.MAIL_TEMPLATE.toLowerCase(Locale.ROOT), LOGIN_CODE);
+            EmailCodeAuthenticator.MAIL_TEMPLATE.toLowerCase(Locale.ROOT), LOGIN_CODE,
+            SudoResource.MAIL_TEMPLATE.toLowerCase(Locale.ROOT), LOGIN_CODE);
 
     private SkyMailTemplates() {
     }

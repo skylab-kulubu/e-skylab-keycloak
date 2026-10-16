@@ -264,6 +264,7 @@ public final class IdentityResource {
         body.put("primary", primaryOf(user.getEmail(), schoolEmail, personalEmail));
         body.put("verifiedYtu", verifiedYtu);
         body.put("nameLocked", verifiedYtu);
+        body.put("sudoEmailCodeAvailable", SudoEmailEligibility.available(request.session(), user));
         body.put("usernameChangeAvailableAt",
                 usernameAvailableAt == null ? null : AccountRequest.isoSeconds(usernameAvailableAt));
 

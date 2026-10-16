@@ -28,6 +28,7 @@ public final class RateLimiter {
     public record Limit(String name, int maxAttempts, int windowSeconds) {
     }
 
+    static final Limit SUDO_EMAIL_SEND = new Limit("sudo-email-send", 3, 60 * 60);
     static final Limit SUDO = new Limit("sudo", 10, 15 * 60);
     /** Passkey assertions cannot be guessed, so they have their own budget instead of eating the password/TOTP one. */
     static final Limit SUDO_PASSKEY = new Limit("sudo-passkey", 10, 15 * 60);

@@ -17,10 +17,18 @@ interface LoginCodeMail {
 
     /**
      * Mails {@code code} to {@code address} for {@code user}. {@code purpose} is what the code is
-     * for ({@code login} here; {@code signup} and {@code link} in later tickets), so the mail can
-     * say it. Never throws: a mail that cannot be sent is logged by user id only.
+     * for ({@code login} here; {@code link} in a later ticket; {@code signup} is
+     * {@link #sendSignUpCode}), so the mail can say it. Never throws: a mail that cannot be sent is
+     * logged by user id only.
      */
     void sendCode(AuthenticationFlowContext context, UserModel user, String address, String code, String purpose);
+
+    /**
+     * Mails a sign-up code (Self-registration, eskylab-login-ux 09) to {@code address}, which has no
+     * account: purpose {@code signup}, in the language of the request that asked for it. Never
+     * throws: a mail that cannot be sent is logged with a fixed word only.
+     */
+    void sendSignUpCode(AuthenticationFlowContext context, String address, String code);
 
     /**
      * Tells the operator that the realm's Login codes reached {@code level} ({@link #HALF} or

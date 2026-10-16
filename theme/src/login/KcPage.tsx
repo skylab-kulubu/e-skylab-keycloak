@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import DefaultPage from "keycloakify/login/DefaultPage";
 import type { ClassKey } from "keycloakify/login";
 import type { KcContext } from "./KcContext";
+import EmailCodeSignUp from "./EmailCodeSignUp";
 import EmailCode from "./EmailCode";
 import HandoffFailed from "./HandoffFailed";
 import Login from "./Login";
@@ -65,6 +66,14 @@ export default function KcPage(props: { kcContext: KcContext }) {
     return (
       <Suspense fallback={<main className="sl-loading" aria-live="polite">{i18n.msgStr("skylabLoading")}</main>}>
         <PersonalEmailOffer kcContext={kcContext} i18n={i18n} />
+      </Suspense>
+    );
+  }
+
+  if (kcContext.pageId === "sky-email-code-sign-up.ftl") {
+    return (
+      <Suspense fallback={<main className="sl-loading" aria-live="polite">{i18n.msgStr("skylabLoading")}</main>}>
+        <EmailCodeSignUp kcContext={kcContext} i18n={i18n} />
       </Suspense>
     );
   }

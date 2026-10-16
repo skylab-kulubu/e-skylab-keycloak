@@ -3288,8 +3288,8 @@ token'ında yalnız `content:read` vardır ve editör kapısı kapalıdır.
 ## 29. "E-postayla devam et": e-postaya gelen kodla giriş (eskylab-login-ux 08, ADR-0063)
 
 ADR-0063 karar 2 (Yusuf, 2026-10-04): herkes e-postasına gelen 6 haneli kodla girebilir; TOTP'si
-olana koddan sonra TOTP yine sorulur. Kayıt (bilet 09) bu adımın "hesap yok" dalına gelir ve kapalıdır:
-bugün kod yalnız var olan hesaba gider.
+olana koddan sonra TOTP yine sorulur. Kayıt (bilet 09) bu adımın "hesap yok" dalıdır, realm başına
+ayarla açılır ve varsayılan kapalıdır (§30): kapalıyken kod yalnız var olan hesaba gider.
 
 ### Nasıl çalışır
 
@@ -3321,8 +3321,8 @@ browser plus passkey forms (ALTERNATIVE)
   istekten sonra arka planda, kendi Keycloak oturumunda gider (`BackgroundLoginCodeMail`, yürütücü
   `sky-email-code`); yanıt süresi posta yüzünden değişmez. Sayfa hiçbir zaman "hesap yok" demez
   (#103 incelemesi): kimseye postalanmamış bir kodun tutturulması (pratikte olmaz) süresi dolmuş kodun
-  sayfasını alır (`code_expired`); yalnız yöneticinin okuduğu olay `no_account` der. Kayıt (bilet 09)
-  bu dalı, kayıt için postalanmış bir kodda kayıt formuna çevirecek.
+  sayfasını alır (`code_expired`); yalnız yöneticinin okuduğu olay `no_account` der. Kayıt açıksa
+  (§30) hesabı olmayan e-posta adresine kayıt kodu gider ve doğru kayıt kodu kayıt formunu açar.
 - Doğru kodda: kilit (kaba kuvvet) ve kapalı hesap denetlenir, kodun gittiği adres hâlâ kişinin kod
   adresi mi bakılır (10 dakikada birincil değiştiyse kod çalışmaz), birincil doğrulanmamışsa
   doğrulanır (Keycloak'ın sıfırlama bağlantısı gibi; `VERIFY_EMAIL` eylemi kalkar), sonra koşullu OTP
@@ -3554,3 +3554,157 @@ reddedilir, `keep` aynı akışta uyarır ve 3 ile çıkar; OTP alt akışı Adm
 uyarır ve 3 ile çıkar, TOTP'li kişi doğru kodla `unavailable` alır (`otp_unguarded` olayı ve günlük
 satırı), TOTP'siz kişi girer, `on` onarır ve TOTP yeniden sorulur. Süre dolumu, tek kullanım, oturum ve IP sınıfı bütçeleri, hesapsız girdinin kodu ve
 passkey yolu birim testindedir (`EmailCodeAuthenticatorTest`, `LoginCodesTest`, `RateLimiterTest`).
+
+## 30. E-postayla kayıt: aynı kapıdan hesap açma (eskylab-login-ux 09, ADR-0063)
+
+ADR-0063 karar 1 (Yusuf, 2026-10-04): YTÜ hesabı olmayan kişi kişisel e-postası ve e-postasına gelen
+kodla hesap açar, parola istenmez (CONTEXT "Self-registration"). Kayıt §29'daki "E-postayla devam et"
+kapısının hesap yok dalıdır (spec S1); Keycloak'ın hazır kayıt sayfası (`registrationAllowed`) kapalı
+kalır (S2). Realm başına, varsayılan kapalı. **Canlıda bilet 11 (Sudo e-posta kodu) ve 12 (çift hesap
+koruması) canlıda olmadan açılmaz** (spec S8, §10).
+
+### Nasıl çalışır
+
+SPI 1.23.0. Ayar, realm'in `sky-email-code` yürütmesinin Keycloak yapılandırmasındadır (Admin Console →
+Authentication → `browser plus passkey` → `sky-email-code` → ayar dişlisi; ad `sky email code sign-up`,
+alan `sign-up`). Yürütme ve ayar realm'e özel olduğu için sandbox ve canlı ayrı açılır.
+
+- Adres sayfası (§29) aynı. Ayar açıkken hiçbir hesaba çıkmayan (`LoginIdentifiers`: kullanıcı adı,
+  birincil, YTÜ bağlı hesabın okul adresi, kanıtlı kişisel adres) ve geçerli bir e-posta adresi olan
+  girdiye **kayıt kodu** gider: yazılan adrese, küçük harfle, SkyMail `keycloak.login-code`
+  (`purpose=signup`, `subjectKey=skySignUpCodeSubject`, konu "SKY LAB hesap açma kodun"). Kullanıcı adı
+  biçimindeki ya da e-posta olmayan girdiye yine hiçbir şey gitmez. Kod sayfası her durumda aynıdır;
+  hesabın olup olmadığı ancak doğru koddan sonra belli olur (spec §7.4).
+- Kod kuralları Login code'unkidir (6 hane, 10 dakika, 5 yanlış, tek kullanım, yalnız isteyen oturumda).
+  Bütçeler aynı: oturum, IP sınıfı, adres (15 dakikada 3, günde 10). Genel günlük bütçe
+  (`SKY_EMAIL_CODE_DAILY_LIMIT`) dolunca **yalnız kayıt kodları durur** (spec §7.2; olay `sign_up_paused`),
+  giriş kodları sürer. Yanlış kayıt kodları adres başına aynı günlük tavana sayılır
+  (`SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT`; tavanda o adrese kayıt kodu gitmez, eski kod denetlenmez;
+  `sky_email_code_sign_up_wrong_ceiling` WARN satırı, alarm postası yok: hesap yok). Kaba kuvvet sayacına
+  yazılmaz (kişi yok).
+- Doğru kayıt kodu SPI'nın ayrı sayfasını açar: `sky-email-code-sign-up.ftl` (SKY LAB teması:
+  `theme/src/login/EmailCodeSignUp.tsx`). Aşamalar (`skySignUpStage`):
+  - `form` "Hesabını oluşturalım": adres salt okunur, Ad ve Soyad, KVKK yalnız bilgilendirir (onay kutusu
+    yok, spec §9), [Hesabı aç], [Başka bir adres yaz]. Kanıt 30 dakika geçerlidir; sayfayı yenilemek süreyi uzatmaz.
+  - `ytu`: adres YTÜ alan adındaysa (`yildiz.edu.tr` ve alt alan adları) hesap açılmaz; "Okul adresinle
+    YTÜ hesabınla devam et" ve OBS girişine bağlantı (spec S3). Olay `REGISTER_ERROR`, `school_domain`.
+  - `existing`: tema "Hesap aç"ı yürütme seçimiyle birlikte `sky-email-code-intent=sign-up` göndererek
+    açtıysa ve adres bir hesaba çıkıyorsa giriş kodu birincile gider; koddan sonra "Bu adresle zaten
+    hesabın vardı, giriş yaptın." ve [Devam et]; kişi denetimler (kapalı, kilit, kod adresi, OTP)
+    yeniden yapılarak girer, ikinci hesap açılmaz. Ara sayfa aynı sabit 30 dakikalık kanıt süresini korur;
+    formdan bu aşamaya geçmek ya da sayfayı yenilemek süreyi uzatmaz. Niyet olmadan hesabı olan kişi doğrudan girer.
+  - `unavailable`: adres bir hesapta kodla girişe çıkmayan biçimde duruyor (ör. kanıtsız kişisel adres,
+    bağlantısız okul adresi) ya da ayar bu arada kapandı. Olay `sign_up_taken` ya da `sign_up_off`.
+- [Hesabı aç]: ad ve soyad Hesap Merkezi'nin kuralıyla (boşluklar sadeleşir, en çok 64, Keycloak'ın
+  `person-name-prohibited-characters`'ı), sonra realm'in User Profile'ı (yönetici bağlamı `USER_API`:
+  realm ad ve adresi kişiye salt okunur tuttuğu için Keycloak'ın kayıt bağlamı bunları reddederdi; değerleri
+  kişi değil SPI yazar). Hesap:
+  - `email` = adres, `emailVerified=true`; `personalEmail` = adres, `personalEmailVerifiedAt` = an
+    (`PersonalEmailProof`, Hesap Merkezi'nin kanıtıyla aynı kayıt);
+  - kullanıcı adı formdaki **Ad ve Soyad** alanlarından `ad.soyad` (`SignUpUsernames`, Yusuf 2026-10-15):
+    Türkçe ve aksanlı harfler ASCII'ye, boşluk ve ayırıcılar noktaya; Hesap Merkezi alfabesi
+    `[a-z0-9._]{3,30}`. Uzun adlarda iki alandan da parça korunur. ASCII'ye dönmeyen geçerli Unicode
+    adlarda kullanılabilen bölüm, hiçbiri dönmezse nötr `uye` kullanılır; e-posta hiçbir zaman girdi
+    olmaz. Çakışmada `ada.lovelace2`, `ada.lovelace3`…; 100 denemeden sonra rastgele 6 rakam.
+    Ayrı kullanıcı adı sorusu yok; kişi Hesap Merkezi'nden değiştirebilir. İsimleri kabul eden son
+    merci realm'in User Profile doğrulamalarıdır;
+  - parola, TOTP, passkey yok; grup yok; rol yalnız realm varsayılanı (`default-roles-e-skylab`);
+  - `REGISTER` olayı (`register_method=email_code`, `sky_method=email_code`, kullanıcı adı ve adres:
+    Keycloak'ın kendi kaydı gibi); kişi girer, `LOGIN` olayı `sky_method=email_code`. Oturum notu
+    `sky-email-code.signed-up=true` bilet 10'un kayıt sonrası soruları içindir. Bilet 10 gelene kadar
+    kayıttan sonra bugünkü passkey önerisi çıkar.
+  - Core, kişiyi ilk token'da açar (JIT: `sub`, `email`, `given_name`, `family_name`,
+    `preferred_username`; `school_email` yok) ve hoş geldin postasını yollar (bilet 13).
+- Yarış: adres başına bir dakikalık kilit (single-use deposu, düğümler arası) ve veritabanının tekil
+  e-postası. Kod doğrulanınca ya da form gönderilince adres bir hesaba çıkıyor ve o hesabın kod adresiyse
+  hesap açılmaz, o hesapla girilir (`existing` aşaması); başka bir kayıt aynı anda yazıyorsa form
+  "birkaç saniye sonra yeniden dene" der. Kullanıcı adı da seçilince bir dakika tutulur.
+- Kayıt, Hesap Merkezi'nin son e-posta doğrulaması/birincil değişimi ve ilk YTÜ girişindeki kişisel
+  e-posta teklifinin doğrulaması ayrıca realm satırında aynı **veritabanı transaction kilidini** alır
+  (`EmailAddressOwnership`, `PESSIMISTIC_WRITE`). Kilit ilk sahiplik yazımından önce alınır ve
+  commit/rollback'e kadar kalır; altında posta ya da Graph çağrısı yapılmaz. Kilit sonrası scalar ID
+  sorgusu birincil adresi, kullanıcı adını, kişisel ve okul adresi özniteliklerini taze veritabanından
+  denetler; Keycloak'ın eski kullanıcı önbelleği olumsuz sonucu yeni sahibin üstünü örtemez. DB'nin
+  tekil `email` kuralı tek başına `personalEmail` özniteliğini korumaz. Kilit hatası yazımı durdurur ve
+  rollback işaretler; timeout ipucu sürücüye bağlıdır. Bu koruma ürün yolları içindir: yönetici
+  Admin REST/import ve eski adres devralma gibi bakım yazıları aynı kilidi kullanmaz, adres sahipliği
+  bakımında ürün mutasyonları durdurulur.
+- Parola formu sayfası (`login.ftl`) kaydın açık olduğunu `skyEmailCodeSignUp=true` ile söyler; tema
+  "Hesabın yok mu? E-postayla hesap aç" bağlantısını yalnız o zaman gösterir (tema işi, aşağıda).
+- Olaylar: `REGISTER` (başarı) ve `REGISTER_ERROR` (`sky_email_code` = `school_domain`, `sign_up_taken`,
+  `sign_up_off`, `sign_up_paused`, `wrong_code_ceiling`), IP'siz ve adressiz. Ölçüm (spec §11):
+
+```bash
+kcadm.sh get events -r e-skylab -q type=REGISTER -q max=10000 \
+  | jq '[.[] | .details.register_method // "?"] | group_by(.) | map({(.[0]): length}) | add'
+```
+
+### Uzlaştırıcı
+
+`reconcile_email_code_sign_up`, `reconcile_email_code_login`'den hemen sonra koşar; operatör adımı
+aynı: `KEYCLOAK_RECONCILE_ONLY=email-code-login`. Bayrak `KEYCLOAK_EMAIL_CODE_SIGN_UP`: `keep`
+(varsayılan) yalnız bildirir; `on` adımın yapılandırmasını kurar ya da `sign-up=true` yapar; `off`
+`sign-up=false` yapar (geri dönüş). Her yazım geri okunur. Adım yoksa `on` hiçbir şey yazmadan reddedilir
+(aynı çağrıda `KEYCLOAK_EMAIL_CODE_LOGIN=on` önce adımı kurar). Yerleşik akışa bağlı realm'de `on`
+reddedilir. Uzlaştırıcı kimliğinin `manage-realm` rolü yeter; kcadm'de `-c` ile `--fields` birlikte
+kullanılmaz. Satırlar:
+
+- `[reconcile] e-mail code sign-up of flow 'browser plus passkey': unchanged (no sky-email-code step)`
+- `[reconcile] e-mail code sign-up of flow 'browser plus passkey': unchanged (off; KEYCLOAK_EMAIL_CODE_SIGN_UP=on or off changes it)` (`keep`)
+- `[reconcile] e-mail code sign-up of flow 'browser plus passkey': updated (off -> on)` (`on`)
+- `[reconcile] e-mail code sign-up of flow 'browser plus passkey': unchanged (on)` (ikinci `on`)
+- `[reconcile] e-mail code sign-up of flow 'browser plus passkey': updated (on -> off)` (`off`)
+- `Flow 'browser plus passkey' has no sky-email-code step for the sign-up setting; KEYCLOAK_EMAIL_CODE_LOGIN=on adds it (it may run in the same call)` (çıkış 1)
+
+### Üretim sırası
+
+1. SPI 1.23.0'ı taşıyan imaj yayımlanır (`main` → `production`, Touch ID kapısı). Ayar kapalı olduğu için
+   hiçbir şey değişmez.
+2. Tema: ilk ekrandaki "Hesabın yok mu? E-postayla hesap aç" bağlantısı ve adres sayfasının "Hesap aç"
+   başlığı (bilet 08b'nin `emailCodeChoice.ts`'ine `sky-email-code-intent=sign-up` eklenir; parola formu
+   `skyEmailCodeSignUp`'ı, kod sayfası `skyEmailCodeSignUp` ve `skyEmailCodeIntent`'i taşır). Bu PR'da yok
+   (08b ile çakışmasın diye); 08b birleştikten sonra küçük bir tema PR'ı. O olmadan da kayıt çalışır:
+   "E-postayla devam et"e hesabı olmayan adres yazan kişi formu görür.
+3. Bilet 11 ve 12 canlıda olmalı (yukarıda). Bilet 10 (kayıt sonrası sorular), 13 (hoş geldin postası)
+   ve 24 (ardışık yanlış kod sayacı) de açılış bağımlılığıdır. Kayıt bu bağımlılıklar bitmeden açılmaz.
+4. Sandbox önce, §22'deki operatör oturumuyla (production sunucusunda; sandbox realm'inde e-posta kodu
+   alt akışı §29'daki gibi kurulu olmalı):
+
+   ```bash
+   docker exec -e KEYCLOAK_ADMIN_URL=http://127.0.0.1:8080 -e KEYCLOAK_REALM=e-skylab-sandbox \
+     -e KEYCLOAK_RECONCILE_ONLY=email-code-login -e KEYCLOAK_RECONCILE_KCADM_CONFIG=/tmp/fbl-kcadm.config \
+     -e KEYCLOAK_EMAIL_CODE_SIGN_UP=on "$kc" /opt/keycloak/config/reconcile-account-center.sh
+   ```
+
+5. Sandbox yürüyüşü (bilet 09; Yusuf ve iki gönüllü, biri Gmail biri Outlook): kayıt, hemen ardından
+   çıkış, kodla yeniden giriş; YTÜ adresiyle deneme (YTÜ aşaması); var olan adresle "Hesap aç".
+6. Bir hafta "Hesap aç" bağlantısı yalnız sandbox'ta, sonra canlı: aynı komut `KEYCLOAK_REALM=e-skylab`
+   ile; sonra `docker exec "$kc" rm -f /tmp/fbl-kcadm.config`. 7 gün sonra spec §11'in sayıları
+   (`REGISTER` `email_code`, doğrulanmayan kayıt kodu oranı: SkyMail `purpose=signup` gönderimleri ile
+   `REGISTER` + `school_domain` karşılaştırması; Turnstile eşikleri spec §8).
+
+### Geri dönüş
+
+`KEYCLOAK_EMAIL_CODE_SIGN_UP=off` (aynı komut): hesabı olmayan adrese yeniden hiçbir şey gitmez; o anda
+formda bekleyen kişi `unavailable` görür. Açılmış hesaplar kalır ve kodla girer. Acil yol: Admin Console
+→ Authentication → `browser plus passkey` → `sky-email-code` ayarı → `sign-up` kapalı. 1.23.0'dan eski bir
+imaja dönülecekse önce `off` (eski imaj ayarı tanımaz ama yapılandırma zararsızdır; `off` yine de temiz
+bırakır). §29'un `off`'u (alt akış DISABLED) kaydı da kapatır.
+
+### Harness
+
+`tests/sign-up-by-email-code.sh` (CI'da `sign-up-by-email-code` işi), §29'un harness'ı gibi: stok imaj
+dev kipinde, SPI jar'ı, production'ın akış biçimi ve User Profile'ı, SkyMail fixture'ı ve Mailpit. Sınananlar:
+`keep` adımsızken ve kapalıyken bildirir; adımsız `on` yazmadan reddedilir; `on` uzlaştırıcı kimliğiyle
+ayarı kurar, ikinci `on` değiştirmez, `registrationAllowed` kapalı kalır; kapalıyken hesapsız adrese posta
+yok; yeni adres: kayıt kodu SkyMail'e (`purpose=signup`, bağlantısız), form, hesap (doğrulanmış birincil ve
+kanıtlı kişisel adres, `ayse.yilmaz` kullanıcı adı, kimlik bilgisi, grup ve ek rol yok, `REGISTER` ve `LOGIN`
+olayları, core JIT'in okuduğu claim'ler), sonra kodla yeniden giriş; dolu kullanıcı adına sayı eklenir;
+yasak karakterli ad formu tutar, hesap açmaz; hesaplı ve hesapsız adreste kod sayfası aynı (süreler
+yazdırılır: ilk yerel koşuda medyan 17,7 ms ve 14,2 ms); "Hesap aç" + var olan hesap: giriş kodu,
+`existing`, [Devam et] ile giriş, ikinci hesap yok; YTÜ adresi: `ytu` aşaması, OBS bağlantısı, hesap yok,
+`REGISTER_ERROR school_domain`; aynı adresin iki kaydı aynı anda: tek hesap, sunucu hatası yok; SkyMail
+reddedince kayıt kodu SMTP'den kayıt metniyle, sayfanın dilinde (Türkçe ya da İngilizce); sunucu
+günlüğünde kod, adres ve istemci IP'si yok; `off` sonrası posta yok, açılan hesaplar girer. Tavanlar,
+genel bütçe duraklaması, yarış pencereleri, kanıtın ömrü ve sayfa yenileme birim testindedir
+(`EmailCodeAuthenticatorTest`, `SignUpUsernamesTest`, `EmailCodeSignUpTest`).

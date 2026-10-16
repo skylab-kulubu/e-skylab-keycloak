@@ -67,10 +67,32 @@ class EmailCodeSettingsTest {
                         AuthenticationExecutionModel.Requirement.ALTERNATIVE,
                         AuthenticationExecutionModel.Requirement.DISABLED),
                 List.of(factory.getRequirementChoices()));
-        assertFalse(factory.isConfigurable());
         assertFalse(factory.isUserSetupAllowed());
         factory.init(null);
         assertEquals(500, factory.settings().dailyLimit());
+    }
+
+    // Self-registration (eskylab-login-ux 09) is the execution's one setting, per realm, off by default.
+    @Test
+    void selfRegistrationIsTheStepsOneSettingAndOffByDefault() {
+        EmailCodeAuthenticatorFactory factory = new EmailCodeAuthenticatorFactory();
+
+        assertTrue(factory.isConfigurable());
+        assertEquals(List.of("sign-up"), factory.getConfigProperties().stream().map(property -> property.getName()).toList());
+        assertEquals("boolean", factory.getConfigProperties().get(0).getType());
+        assertEquals("false", factory.getConfigProperties().get(0).getDefaultValue());
+        assertFalse(EmailCodeSignUp.isOn((org.keycloak.models.AuthenticatorConfigModel) null));
+        for (String value : List.of("", "false", "off", "yes", "1")) {
+            assertFalse(EmailCodeSignUp.isOn(config(value)), value);
+        }
+        assertTrue(EmailCodeSignUp.isOn(config("true")));
+        assertTrue(EmailCodeSignUp.isOn(config(" TRUE ")));
+    }
+
+    private static org.keycloak.models.AuthenticatorConfigModel config(String signUp) {
+        org.keycloak.models.AuthenticatorConfigModel config = new org.keycloak.models.AuthenticatorConfigModel();
+        config.setConfig(Map.of("sign-up", signUp));
+        return config;
     }
 
     // The overall alarm mail names only the realm and the counts.

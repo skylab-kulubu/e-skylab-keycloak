@@ -41,6 +41,41 @@ import static org.mockito.Mockito.when;
 
 class SkyUsernamePasswordFormTest {
 
+    // eskylab-login-ux 09: the page says whether the realm offers Self-registration, so the theme shows
+    // "Hesabın yok mu? E-postayla hesap aç" only then; nothing else on the page changes.
+    @Test
+    void theFirstPageSaysWhetherSelfRegistrationIsOffered() {
+        AuthenticationFlowContext context = mock(AuthenticationFlowContext.class);
+        RealmModel realm = mock(RealmModel.class);
+        org.keycloak.forms.login.LoginFormsProvider forms = mock(org.keycloak.forms.login.LoginFormsProvider.class,
+                org.mockito.Mockito.RETURNS_SELF);
+        when(context.form()).thenReturn(forms);
+        when(context.getRealm()).thenReturn(realm);
+        org.keycloak.models.AuthenticationFlowModel browser = new org.keycloak.models.AuthenticationFlowModel();
+        browser.setId("browser");
+        when(realm.getBrowserFlow()).thenReturn(browser);
+        AuthenticationExecutionModel step = new AuthenticationExecutionModel();
+        step.setAuthenticator("sky-email-code");
+        step.setRequirement(AuthenticationExecutionModel.Requirement.REQUIRED);
+        step.setAuthenticatorConfig("config");
+        when(realm.getAuthenticationExecutionsStream("browser")).thenAnswer(call -> java.util.stream.Stream.of(step));
+        org.keycloak.models.AuthenticatorConfigModel config = new org.keycloak.models.AuthenticatorConfigModel();
+        when(realm.getAuthenticatorConfigById("config")).thenReturn(config);
+        SkyUsernamePasswordForm form = new SkyUsernamePasswordForm("OBS");
+
+        config.setConfig(java.util.Map.of("sign-up", "false"));
+        form.challenge(context, new MultivaluedHashMap<>());
+        verify(forms, never()).setAttribute(any(), any());
+        verify(forms).createLoginUsernamePassword();
+
+        config.setConfig(java.util.Map.of("sign-up", "true"));
+        MultivaluedHashMap<String, String> hint = new MultivaluedHashMap<>();
+        hint.putSingle("username", "ada");
+        form.challenge(context, hint);
+        verify(forms).setAttribute("skyEmailCodeSignUp", "true");
+        verify(forms).setFormData(hint);
+    }
+
     private static final String ATTEMPTED = AbstractUsernameFormAuthenticator.ATTEMPTED_USERNAME;
 
     @Test

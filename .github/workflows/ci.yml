@@ -205,6 +205,21 @@ jobs:
       - name: Re-authentication forwarded to Microsoft against a throwaway Keycloak
         run: bash tests/microsoft-reauthentication.sh
 
+  # Self-registration on "E-postayla devam et" (eskylab-login-ux 09): the sign-up branch of the SPI's
+  # sky-email-code step and the reconciler's sign-up setting (KEYCLOAK_EMAIL_CODE_SIGN_UP) against the
+  # stock Keycloak image in dev mode, with the SPI jar built from spi/ in the Dockerfile's Maven image,
+  # production's browser flow shape and User Profile, the SkyMail fixture and Mailpit; real sign-ups,
+  # a YTÜ address, "Hesap aç" with an account and two sign-ups of one address at once. Needs no build of
+  # this repository's image.
+  sign-up-by-email-code:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Sign-up with an e-mail code against a throwaway Keycloak
+        run: bash tests/sign-up-by-email-code.sh
+
   # config/site-clients.sh and config/site-editor-grants.sh (the event sites' Site clients, with
   # inscribed-cms-roles.sh between them) against the stock Keycloak image in dev mode, with a real
   # authorization code flow (PKCE); needs no build of this repository's image.

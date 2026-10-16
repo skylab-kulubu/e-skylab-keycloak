@@ -268,13 +268,14 @@ describe("login page: sign-in choices and trust copy (eskylab-login-ux 05)", () 
     expect(view.container).not.toHaveTextContent("Öğrencisi");
   });
 
-  it("keeps the description short and sends only people with a SKY LAB password to the e-mail way", async () => {
-    const { container } = await renderPage("login.ftl");
-
-    // Accounts opened by a YTÜ sign-in or by an admin have no password, so "hesabın varsa" would be wrong.
-    expect(container.querySelector(".sl-legacy-intro p")?.textContent).toBe(
-      "YTÜ öğrencisiysen okul hesabınla, SKY LAB parolan varsa e-postanla gir."
-    );
+  it.each([
+    { language: "tr" as const, text: "YTÜ hesabınla ya da e-posta adresinle devam et." },
+    { language: "en" as const, text: "Continue with your YTÜ account or email address." }
+  ])("describes both entry methods without a password prerequisite ($language)", async ({ language, text }) => {
+    const kcContext = getDevKcContextForPage("login.ftl", language);
+    const { container } = render(<KcPage kcContext={kcContext} />);
+    await waitFor(() => expect(container.querySelector(".sl-legacy-shell")).toHaveAttribute("data-sl-translations", "ready"));
+    expect(container.querySelector(".sl-legacy-intro p")?.textContent).toBe(text);
   });
 
   it("says in one sentence under the choices that the school password stays with Microsoft", async () => {
@@ -349,7 +350,7 @@ describe("login page: no account yet (password form)", () => {
     // After the form: the sign-in fields and the submit button come first.
     expect(view.container.querySelector("#kc-login")?.compareDocumentPosition(help)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(within(help).getByText("Hesabın yok mu?")).toBeInTheDocument();
-    expect(help.querySelectorAll("p")[1]?.textContent).toBe("YTÜ öğrencisiysen YTÜ hesabınla devam et.");
+    expect(help.querySelectorAll("p")[1]?.textContent).toBe("YTÜ hesabın varsa YTÜ hesabınla devam et.");
     expect(within(help).getByRole("link", { name: "YTÜ hesabınla devam et" })).toHaveAttribute(
       "href",
       loginContext().social?.providers?.[0]?.loginUrl

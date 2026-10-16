@@ -82,6 +82,7 @@ export default function EmailCodeSignUp(props: EmailCodeSignUpProps) {
   return (
     <LegacyFrame
       {...getLegacyChromeProps(i18n)}
+      teams
       mainId="sl-email-code-sign-up-main"
       titleId="sl-email-code-sign-up-title"
       title={title}

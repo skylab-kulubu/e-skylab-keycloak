@@ -3658,13 +3658,15 @@ kullanılmaz. Satırlar:
 
 ### Üretim sırası
 
-1. SPI 1.23.0'ı taşıyan imaj yayımlanır (`main` → `production`, Touch ID kapısı). Ayar kapalı olduğu için
-   hiçbir şey değişmez.
-2. Tema: ilk ekrandaki "Hesabın yok mu? E-postayla hesap aç" bağlantısı ve adres sayfasının "Hesap aç"
-   başlığı (bilet 08b'nin `emailCodeChoice.ts`'ine `sky-email-code-intent=sign-up` eklenir; parola formu
-   `skyEmailCodeSignUp`'ı, kod sayfası `skyEmailCodeSignUp` ve `skyEmailCodeIntent`'i taşır). Bu PR'da yok
-   (08b ile çakışmasın diye); 08b birleştikten sonra küçük bir tema PR'ı. O olmadan da kayıt çalışır:
-   "E-postayla devam et"e hesabı olmayan adres yazan kişi formu görür.
+1. SPI 1.27.0 veya tüm açılış bağımlılıklarını içeren daha yeni **entegre** imaj yayımlanır (`main` → `production`).
+   Yalnız sürüm numarası yeterli değildir: B11 Sudo e-posta (#110), B12, B24, B10 ve hoş geldin postası
+   bağımlılıkları gerçekten yayımlanmış olmalıdır. Kayıt ve kayıt sonrası sorular varsayılan kapalı kalır.
+   Sanal passkey otomasyonu fiziksel Touch ID davranışını kanıtlamaz; cihaz yürüyüşü ayrı kanıttır.
+2. Tema: ilk ekrandaki ve parola görünümündeki “E-postayla hesap aç” bağlantısı, “Hesap aç” başlığı,
+   kayıt ve bağlama ekranlarında ekip arka planı; B10 okul/credential sayfaları ve native link onayı
+   yayımlanan tema JAR'ında doğrulanır. B24 alarm şablonu önce seed edilmeli, bütün KC örnekleri yeni
+   kalıcı sayaç sürümünde olmalıdır. Sandbox'ta kayıt sonrası sorular önce hazırlanır (§32), kayıt
+   bayrağı bütün önkoşullar doğrulanınca en son açılır.
 3. Bilet 11 ve 12 canlıda olmalı (yukarıda). Bilet 10 (kayıt sonrası sorular), 13 (hoş geldin postası)
    ve 24 (ardışık yanlış kod sayacı) de açılış bağımlılığıdır. Kayıt bu bağımlılıklar bitmeden açılmaz.
 4. Sandbox önce, §22'deki operatör oturumuyla (production sunucusunda; sandbox realm'inde e-posta kodu
@@ -3708,3 +3710,60 @@ reddedince kayıt kodu SMTP'den kayıt metniyle, sayfanın dilinde (Türkçe ya 
 günlüğünde kod, adres ve istemci IP'si yok; `off` sonrası posta yok, açılan hesaplar girer. Tavanlar,
 genel bütçe duraklaması, yarış pencereleri, kanıtın ömrü ve sayfa yenileme birim testindedir
 (`EmailCodeAuthenticatorTest`, `SignUpUsernamesTest`, `EmailCodeSignUpTest`).
+
+## 31. İlk Microsoft girişinde mevcut hesabı kanıtla bağlama (eskylab-login-ux 12)
+
+SPI 1.25.0 `sky-existing-account-prompt`, `sky-broker-review-profile` ve
+`sky-existing-account-proven` adımlarını taşır. Yeni Microsoft kimliği, mevcut SKY LAB hesabına
+yalnız current-primary'ye gelen altı haneli `Purpose=link` kodu veya native parola/passkey ve varsa
+native TOTP kanıtıyla bağlanır. Primary ve doğrulama durumu korunur. Microsoft'un kanıtladığı okul
+adresi başka hesabın kanıtlı `personalEmail`'iyse yalnız o okul adresi aday olarak önerilir; bu bir
+link kanıtı değildir. Bilinmeyen hedef aynı kod ekranını görür, posta almaz. Yeni hesap açmak ayrı,
+açık kullanıcı kararıdır. Normal bağlı hesap ve A6 ilk giriş sorusunu görmez.
+
+Bayrak `KEYCLOAK_EXISTING_ACCOUNT_PROMPT=keep|on|off`, varsayılan `keep`; ilk kurulumda hiçbir adım
+açılmaz. `on` yalnız §22 ile kurulmuş etkin SKY LAB first-broker-login kopyasını değiştirir. Native
+duplicate/confirm/reauth/OTP yolları korunur ve e-postayla link doğrulama kapalı kalır. `off` yeni
+adımları geri alır, orijinal native review config'ini korur ve pending B12 kanıtlarını iptal eder.
+Browser akışının veya realm'in global bağlamasını B12 değiştirmez. PostgreSQL gerekir; üretim
+hedefi PG17'dir. FeatureON ortak subject guard, normal native/A6 Microsoft callback'lerinde de
+aynı external subject'in iki yerel hesaba bağlanmasını önler; kilit doluysa kısa güvenli hata ve
+yeniden deneme gerekir. OFF bu ek guard'ı çalıştırmaz.
+
+Uygulama, callback transaction sınırı, NOWAIT/try-lock sırası, kanıtın sabit süresi ve geri dönüş
+ayrıntıları [broker-existing-account.md](broker-existing-account.md) içindedir. IdP alias kaynağı
+`SKY_ACCOUNT_YTU_IDP_ALIAS`, varsayılan `OBS`; bu özellikte ayrı component alias yoktur.
+
+Yayın sırası kayıt altyapısı → Sudo e-posta koruması → çift hesap korumasıdır. Bilet 10/13/24,
+fiziksel Touch ID ve sandbox yürüyüşü tamamlanmadan §30'daki kayıt canlıda açılmaz. Sürüm etiketi
+özelliğin canlıda açıldığı anlamına gelmez. Önce sandbox'ta kişisel hesap aç → çıkış → ilk YTÜ
+girişi → Evet → primary kodu → tek hesap ve değişmeyen primary doğrulanır; normal bağlı giriş ve
+A6 da denenir. Canlı değişiklik ayrı yayın/onay kapısına tabidir.
+
+`tests/existing-account-link.sh` ve CI `existing-account-link` işi gerçek Keycloak26.7.4/PG17'de
+üretim User Profile'ını kullanır. Ayrı fixture JAR'ı yalnız local Microsoft transport ve transaction
+barrier sağlar; üretim SPI/JAR'ına girmez. Gerçek kod, personalEmail parola alias'ı ve native BF,
+TOTP yanlış/doğru, virtual resident passkey target binding (explicit mediation), A6/defaultOFF,
+primary/factor/disabled/config drift, proof replay, callback/prepare TTL, managed entity refresh,
+snapshot sonrası OTP row lock ve aynı Microsoft subject yarışları sınanır. Fiziksel Touch ID ve
+platformun gerçek conditional UI'si bu fixture'ın kapsamı değildir. Güvenli test özeti yalnız
+sonuç/sınıf/sayı içerir; kod, adres, IP veya token yazdırılmaz.
+
+
+## 32. E-posta kaydından sonra isteğe bağlı giriş yolları (eskylab-login-ux 10)
+
+SPI 1.27.0, `sky-after-login` ve session-only `sky-sign-up-credentials` action'ını taşır.
+`KEYCLOAK_AFTER_SIGN_UP=keep` varsayılandır; `email-code-login` operatör adımında açık `on` yeni
+soruları kurar, `off` eski email-code passkey offer'ına döner. `on` native credential action'ları
+önceden enabled/non-default ister, kendi RA/provider/priority'sini ve offer leaf'ini geri okur;
+realm flag en son açılır. `off` flag'i ilk kapatır. Parola branch'i ve TOTP adımları değiştirilmez.
+Kesilmiş swap DISABLED child bırakır; açık `KEYCLOAK_EMAIL_CODE_LOGIN=on` ve
+`KEYCLOAK_AFTER_SIGN_UP=on` birlikte yeniden çalıştırılınca tamamlanır. Aynı realm'e flow yazımları
+seridir; drift duplicate/foreign leaf ile örtülmez. Ayrıntı: [Kayıt sonrası seçenekler](after-sign-up-credentials.md).
+
+Native YTÜ rol/scope/provider yetkisi olmayan RP'ye yeni grant verilmez; okul bağlama açıklaması ve
+“Devam et” normal credential sayfasına gider. Yetkili RP native idp_link success/cancel sonrası
+ikinci sayfaya döner; terminal conflict/error ekranı atlanmaz. İlk kayıt ad/soyadı korunur; Graph adı
+senkronizasyonu eklenmez. Parola/passkey isteğe bağlıdır, hepsini atlayınca kodla giriş sürer.
+Özgün RP callback/state/nonce/PKCE korunur; genel AC redirect'i yoktur. Bu bölüm canlı açılış yetkisi
+vermez; §30'daki bütün kayıt bağımlılıkları ve sandbox doğrulaması ayrıca tamamlanmalıdır.

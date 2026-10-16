@@ -41,8 +41,11 @@ export function passwordFormExecutionId(kcContext: KcContext): string | undefine
   return selections(kcContext).find(selection => PASSWORD_FORM_DISPLAY_NAMES.includes(selection.displayName))?.authExecId;
 }
 
-/** Switches the sign-in to another step of the flow, as Keycloak's "try another way" list does. */
-export function chooseExecution(action: string, executionId: string): void {
+/**
+ * Switches steps as Keycloak's "try another way" list does. "Hesap aç" uses the same e-mail
+ * code step with its existing SPI intent; ordinary sign-in switches carry no registration intent.
+ */
+export function chooseExecution(action: string, executionId: string, intent?: "sign-up"): void {
   const form = document.createElement("form");
   form.method = "post";
   form.action = action;
@@ -52,6 +55,13 @@ export function chooseExecution(action: string, executionId: string): void {
   input.name = "authenticationExecution";
   input.value = executionId;
   form.appendChild(input);
+  if (intent === "sign-up") {
+    const signUp = document.createElement("input");
+    signUp.type = "hidden";
+    signUp.name = "sky-email-code-intent";
+    signUp.value = intent;
+    form.appendChild(signUp);
+  }
   document.body.appendChild(form);
   form.submit();
 }

@@ -90,7 +90,45 @@ test.describe("visual baselines", () => {
         await expect(page).toHaveScreenshot(`login-password-view-${viewportName}.png`, screenshotOptions);
       });
 
+      test("after-sign-up-school-deferred", async ({ page }) => {
+        await page.goto("/?page=sky-after-sign-up-school.ftl&school=deferred");
+        await stabilise(page, "sky-after-sign-up-school.ftl");
+        await expect(page.locator('[name="sky-sign-up-school-choice"][value="link"]')).toHaveCount(0);
+        await expect(page).toHaveScreenshot(`after-sign-up-school-deferred-${viewportName}.png`, screenshotOptions);
+      });
+
+      test("login-registration-entry", async ({ page }) => {
+        await page.goto("/?page=login.ftl&registration=on");
+        await stabilise(page, "login.ftl");
+        await expect(page.getByRole("button", { name: "E-postayla hesap aç", exact: true })).toBeVisible();
+        await expect(page).toHaveScreenshot(`login-registration-entry-${viewportName}.png`, screenshotOptions);
+      });
+
+      for (const stage of ["identifier", "code"] as const) {
+        test(`email-registration-${stage}`, async ({ page }) => {
+          await page.goto(`/?page=sky-email-code.ftl&registration=sign-up${stage === "code" ? "&code=wrong" : ""}`);
+          await stabilise(page, "sky-email-code.ftl");
+          await expect(page.getByRole("heading", { name: "Hesap aç", exact: true })).toBeVisible();
+          await expect(page).toHaveScreenshot(`email-registration-${stage}-${viewportName}.png`, screenshotOptions);
+        });
+      }
+
       // The first-login personal e-mail offer's code stage after a wrong code (devKcContext offer=code).
+      for (const broker of ["candidate", "identifier", "code"] as const) {
+        test(`sky-existing-account-${broker}`, async ({ page }) => {
+          await page.goto(`/?page=sky-existing-account.ftl&broker=${broker}`);
+          await stabilise(page, "sky-existing-account.ftl");
+          await expect(page).toHaveScreenshot(`sky-existing-account-${broker}-${viewportName}.png`, screenshotOptions);
+        });
+      }
+      for (const pageId of ["login.ftl", "login-otp.ftl"] as const) {
+        test(`broker-proof-${pageId}`, async ({ page }) => {
+          await page.goto(`/?page=${pageId}&broker=proof`);
+          await stabilise(page, pageId);
+          await expect(page).toHaveScreenshot(`broker-proof-${pageId}-${viewportName}.png`, screenshotOptions);
+        });
+      }
+
       test("sky-personal-email-offer-code", async ({ page }) => {
         await page.goto("/?page=sky-personal-email-offer.ftl&offer=code");
         await stabilise(page, "sky-personal-email-offer.ftl");

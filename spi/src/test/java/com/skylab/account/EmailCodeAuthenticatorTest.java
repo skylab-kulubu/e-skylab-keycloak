@@ -74,6 +74,22 @@ class EmailCodeAuthenticatorTest {
     private final UserProvider users = mock(UserProvider.class);
     private final BruteForceProtector protector = mock(BruteForceProtector.class);
     private final RecordingMail mail = new RecordingMail();
+    private final Map<String, Integer> consecutive = new HashMap<>();
+    private final LoginCodeFailureCounter persistentFailures = new LoginCodeFailureCounter() {
+        public void prepare(KeycloakSession ignored) { }
+        public void reset(KeycloakSession ignored, RealmModel realm, String userId) { consecutive.remove(userId); }
+        public Guard lock(KeycloakSession ignored, RealmModel realm, String userId) {
+            return new Guard() {
+                public boolean blocked() { return consecutive.getOrDefault(userId, 0) >= LIMIT; }
+                public boolean wrongCode() {
+                    if (blocked()) return false;
+                    int next = consecutive.getOrDefault(userId, 0) + 1;
+                    consecutive.put(userId, next);
+                    return next == LIMIT;
+                }
+            };
+        }
+    };
     private final Map<String, UserModel> byId = new HashMap<>();
     private final Set<String> lockedOut = new HashSet<>();
     private final Set<String> linkedToYtu = new HashSet<>();
@@ -143,6 +159,11 @@ class EmailCodeAuthenticatorTest {
         @Override
         public void ceilingAlarm(AuthenticationFlowContext context, int ceiling, int accounts) {
             alarms.add("ceiling/" + ceiling + "/" + accounts);
+        }
+
+        @Override
+        public void consecutiveAlarm(AuthenticationFlowContext context, int limit) {
+            alarms.add("consecutive/" + limit);
         }
 
         Sent last() {
@@ -373,7 +394,122 @@ class EmailCodeAuthenticatorTest {
     private EmailCodeAuthenticator authenticator(int dailyLimit, WebAuthnConditionalUIAuthenticator webauthn,
             int wrongCodesPerAccount) {
         return new EmailCodeAuthenticator(new EmailCodeSettings(YTU, dailyLimit, null, wrongCodesPerAccount), mail, webauthn,
-                accounts, new SignUpUsernames());
+                accounts, new SignUpUsernames(), persistentFailures);
+    }
+
+    @Test
+    void thePersistentLimitStopsSendingAndCheckingAPreviouslyMailedRightCode() {
+        person("ada", "ada", "ada@example.com");
+        browser.send("ada");
+        String right = mail.last().code();
+        consecutive.put("ada", 100);
+        Browser second = new Browser("root-persistent", "203.0.113.8");
+        second.send("ada");
+        assertEquals(1, mail.sent.size());
+        assertEquals("code", second.stage());
+        browser.verify(right);
+        assertFalse(browser.succeeded);
+        assertEquals("wrong_code", browser.error());
+        assertEquals(100, consecutive.get("ada"));
+        assertEquals("consecutive_code_ceiling", browser.lastFailure().get(EmailCodeAuthenticator.EVENT_DETAIL));
+        assertTrue(mail.alarms.isEmpty(), "an already blocked account does not alarm again");
+    }
+
+    @Test
+    void oneComparedWrongCodeAt99Reaches100AndAlarmsOnceWithoutAffectingAnotherAccount() {
+        person("ada", "ada", "ada@example.com");
+        person("bob", "bob", "bob@example.com");
+        consecutive.put("ada", 99);
+        browser.send("ada");
+        String right = mail.last().code();
+        browser.verify(other(right));
+        assertEquals(100, consecutive.get("ada"));
+        assertEquals(List.of("consecutive/100"), mail.alarms);
+        browser.verify(right);
+        assertEquals(100, consecutive.get("ada"));
+        assertEquals(List.of("consecutive/100"), mail.alarms);
+        Browser second = new Browser("root-other", "203.0.113.8");
+        second.send("bob");
+        second.verify(mail.last().code());
+        assertTrue(second.succeeded);
+    }
+
+    @Test
+    void aRightCodeDoesNotResetThePersistentCountBeforeTotpAndTheActualLogin() {
+        person("ada", "ada", "ada@example.com");
+        consecutive.put("ada", 42);
+        browser.send("ada");
+        browser.verify(mail.last().code());
+        assertTrue(browser.succeeded);
+        assertEquals(42, consecutive.get("ada"), "only the eventual LOGIN transaction resets it");
+    }
+
+    @Test
+    void anExistingAccountProofCannotContinueAfterAnotherSessionReaches100() {
+        signUpOn = true;
+        person("ada", "ada", "ada@example.com");
+        consecutive.put("ada", 99);
+        browser.choose(true);
+        browser.send("ada@example.com");
+        browser.verify(mail.last().code());
+        assertEquals("existing", browser.signUpStage());
+        consecutive.put("ada", 100);
+        browser.carryOn();
+        assertFalse(browser.succeeded);
+        assertEquals(100, consecutive.get("ada"));
+    }
+
+    @Test
+    void aSignUpCodeStartsCountingWhenItsAddressGetsAnAccountBeforeTheTry() {
+        signUpOn = true;
+        browser.send("new@example.com");
+        String right = mail.last().code();
+        browser.verify(other(right));
+        assertTrue(consecutive.isEmpty(), "an unknown address has no account counter");
+        person("meanwhile", "meanwhile", "new@example.com");
+        consecutive.put("meanwhile", 99);
+
+        browser.verify(other(right));
+
+        assertEquals(100, consecutive.get("meanwhile"));
+        assertEquals(List.of("consecutive/100"), mail.alarms);
+        browser.verify(right);
+        assertFalse(browser.succeeded);
+        assertEquals("wrong_code", browser.error());
+        assertNull(browser.signUpStage());
+        assertTrue(opened.isEmpty());
+    }
+
+    @Test
+    void aLateAccountAlsoGetsTheExistingDailyAccountCeiling() {
+        signUpOn = true;
+        authenticator = authenticator(1_000, null, 2);
+        browser.send("new@example.com");
+        String right = mail.last().code();
+        person("meanwhile", "meanwhile", "new@example.com");
+        browser.verify(other(right));
+        browser.verify(other(right));
+        assertEquals(2, consecutive.get("meanwhile"));
+
+        Browser next = new Browser("root-late-account", "203.0.113.8");
+        next.send("meanwhile");
+        assertEquals(1, mail.sent.size(), "the account daily ceiling blocks another code");
+        assertFalse(next.succeeded);
+        assertTrue(opened.isEmpty());
+    }
+
+    @Test
+    void thePersistentBlockOutlivesTheDailyBudgetsAndSessionExpiry() {
+        person("ada", "ada", "ada@example.com");
+        consecutive.put("ada", 100);
+        Time.setOffset(86_400);
+
+        Browser tomorrow = new Browser("root-next-day", "203.0.113.8");
+        tomorrow.send("ada");
+
+        assertEquals("code", tomorrow.stage());
+        assertTrue(mail.sent.isEmpty());
+        assertEquals(100, consecutive.get("ada"));
     }
 
     /** A person of the realm; attributes are name=value pairs. */

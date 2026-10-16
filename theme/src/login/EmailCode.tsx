@@ -45,7 +45,9 @@ const webAuthnButtonId = "authenticateWebAuthnButton";
 export default function EmailCode(props: EmailCodeProps) {
   const { kcContext, i18n } = props;
   const { msgStr } = i18n;
-  const title = msgStr("emailCodeTitle");
+  const signUpIntent = (kcContext.skyEmailCodeSignUp === "true" || kcContext.skyEmailCodeSignUp === true)
+    && kcContext.skyEmailCodeIntent === "sign-up";
+  const title = msgStr(signUpIntent ? "emailCodeSignUpTitle" : "emailCodeTitle");
   const stage = kcContext.skyEmailCodeStage === "code" ? "code" : "identifier";
   const error = toEmailCodeError(kcContext.skyEmailCodeError);
   const identifier = kcContext.skyEmailCodeIdentifier ?? "";
@@ -77,7 +79,8 @@ export default function EmailCode(props: EmailCodeProps) {
       mainId="sl-email-code-main"
       titleId="sl-email-code-title"
       title={title}
-      description={msgStr(stage === "code" ? "emailCodeCodeDescription" : "emailCodeDescription")}
+      description={msgStr(stage === "code" ? "emailCodeCodeDescription"
+        : signUpIntent ? "emailCodeSignUpDescription" : "emailCodeDescription")}
     >
       <form
         id={stage === "code" ? "kc-email-code-form" : "kc-email-code-identifier-form"}

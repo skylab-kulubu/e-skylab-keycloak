@@ -72,7 +72,24 @@ public final class EmailAddressOwnershipProbe implements RealmResourceProviderFa
         @Path("{label}")
         public Map<String, Boolean> state(@PathParam("label") String label) {
             Run run = run(label);
-            return Map.of("locked", run.locked, "waiting", run.waiting, "finished", run.finished);
+            return Map.of("locked", run.locked, "waiting", run.waiting, "finished", run.finished, "blocked", databaseWaiterIsBlocked());
+        }
+
+        private boolean databaseWaiterIsBlocked() {
+            return session.getProvider(JpaConnectionProvider.class).getEntityManager()
+                    .unwrap(org.hibernate.Session.class).doReturningWork(connection -> {
+                        String product = connection.getMetaData().getDatabaseProductName();
+                        String sql = switch (product) {
+                            case "H2" -> "select count(*) from information_schema.sessions where blocker_id > 0";
+                            case "PostgreSQL" -> "select count(*) from pg_stat_activity where datname = current_database()"
+                                    + " and wait_event_type = 'Lock' and pid <> pg_backend_pid()";
+                            default -> throw new IllegalStateException("unsupported probe database");
+                        };
+                        try (var statement = connection.createStatement(); var rows = statement.executeQuery(sql)) {
+                            rows.next();
+                            return rows.getInt(1) > 0;
+                        }
+                    });
         }
 
         @POST

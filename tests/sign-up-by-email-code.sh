@@ -550,10 +550,10 @@ for slot in personal email username school signup rollback; do
   curl -fsS -X POST "$probe_base/$label/check" >"$STATE_DIR/$label.waiter" &
   waiter_pid=$!
   for _ in $(seq 1 50); do
-    curl -fsS "$probe_base/$label" | jq -e '.waiting' >/dev/null && break
+    curl -fsS "$probe_base/$label" | jq -e '.waiting and .blocked' >/dev/null && break
     sleep 0.1
   done
-  curl -fsS "$probe_base/$label" | jq -e '.waiting and (.finished | not)' >/dev/null \
+  curl -fsS "$probe_base/$label" | jq -e '.waiting and .blocked and (.finished | not)' >/dev/null \
     || fail 'another transaction passed the ownership lock before commit/rollback'
   curl -fsS -X POST "$probe_base/$label/release" >/dev/null
   wait "$holder_pid" || fail 'the holder transaction failed'

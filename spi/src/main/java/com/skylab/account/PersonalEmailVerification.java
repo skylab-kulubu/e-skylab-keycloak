@@ -103,9 +103,11 @@ public final class PersonalEmailVerification {
      * or as their School or Personal e-mail attribute. The attributes are
      * compared ignoring case, as the login form compares them ({@link LoginIdentifiers}): Microsoft
      * writes {@code schoolEmail} as Graph returns it, this extension stores {@code personalEmail}
-     * lowercased.
+     * lowercased. With {@code user} null (an account about to be opened by Self-registration) every
+     * holder is another.
      */
     static boolean isTakenByAnother(KeycloakSession session, RealmModel realm, UserModel user, String address) {
+        String userId = user == null ? null : user.getId();
         UserProvider users = session.users();
         UserModel byEmail;
         UserModel byUsername;
@@ -115,10 +117,10 @@ public final class PersonalEmailVerification {
         } catch (ModelDuplicateException duplicate) {
             return true;
         }
-        if (byEmail != null && !byEmail.getId().equals(user.getId())) {
+        if (byEmail != null && !byEmail.getId().equals(userId)) {
             return true;
         }
-        if (byUsername != null && !byUsername.getId().equals(user.getId())) {
+        if (byUsername != null && !byUsername.getId().equals(userId)) {
             return true;
         }
         for (String attribute : List.of(
@@ -128,7 +130,7 @@ public final class PersonalEmailVerification {
                             UserModel.EXACT, Boolean.TRUE.toString(),
                             UserModel.INCLUDE_SERVICE_ACCOUNT, Boolean.FALSE.toString()),
                     0, 2)
-                    .anyMatch(other -> !other.getId().equals(user.getId()));
+                    .anyMatch(other -> !other.getId().equals(userId));
             if (taken) {
                 return true;
             }

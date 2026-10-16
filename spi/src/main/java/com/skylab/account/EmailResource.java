@@ -154,7 +154,7 @@ public final class EmailResource {
             if (PersonalEmailVerification.isSchoolDomain(address)) {
                 throw Problems.emailSchoolDomain().exception();
             }
-            requireFreeAddress(user, address);
+            requireFreeAddressForWrite(user, address);
 
             EventBuilder event = request.event(caller)
                     .event(EventType.UPDATE_PROFILE)
@@ -322,6 +322,7 @@ public final class EmailResource {
         if (address.equalsIgnoreCase(previous) && user.isEmailVerified()) {
             return;
         }
+        requireFreeAddressForWrite(user, address);
         EventBuilder event = request.event(caller)
                 .event(EventType.UPDATE_EMAIL)
                 .detail(Details.CONTEXT, PROFILE_CONTEXT)
@@ -341,6 +342,13 @@ public final class EmailResource {
             throw Problems.emailTaken().exception();
         }
         event.success();
+    }
+
+    /** A final ownership check under the transaction lock, before the first ownership write. */
+    private void requireFreeAddressForWrite(UserModel user, String address) {
+        if (EmailAddressOwnership.isTakenAfterLock(request.session(), request.realm(), user, address)) {
+            throw Problems.emailTaken().exception();
+        }
     }
 
     /**

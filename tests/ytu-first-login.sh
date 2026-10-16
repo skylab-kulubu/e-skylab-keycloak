@@ -346,9 +346,9 @@ grep -q 'com/skylab/authenticator/SkyStaySignedIn.class' <<<"$spi_listing" \
 CURRENT_STAGE='Keycloak start'
 [[ -n $MAILPIT_IMAGE ]] || fail 'tests/docker-compose.integration.yml has no Mailpit image'
 docker network create "$NETWORK" >/dev/null
-docker run --rm -d --name "$MAIL_CONTAINER" --network "$NETWORK" --memory 256m -p "127.0.0.1:$MAIL_PORT:8025" \
+docker run --rm -d --name "$MAIL_CONTAINER" --network "$NETWORK" --memory 256m --tmpfs /tmp:rw,size=64m,mode=1777 -p "127.0.0.1:$MAIL_PORT:8025" \
   "$MAILPIT_IMAGE" >/dev/null
-docker run --rm -d --name "$CONTAINER" --network "$NETWORK" --memory "$MEMORY" -p "127.0.0.1:$PORT:8080" \
+docker run --rm -d --name "$CONTAINER" --network "$NETWORK" --memory "$MEMORY" --tmpfs /opt/keycloak/data:rw,size=512m,mode=1777 -p "127.0.0.1:$PORT:8080" \
   -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
   -v "$SPI_JAR:/opt/keycloak/providers/e-skylab-spi.jar:ro" \
   -v "$REPOSITORY_ROOT/config:/opt/keycloak/sky-config:ro" \

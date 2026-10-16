@@ -65,6 +65,23 @@ Only the two original brand image assets were carried forward.
   `verify` (with `code`), `change` or `skip`; the field ids `sky-offer-address`,
   `sky-offer-code` and the error's `data-sky-offer-error` match the SPI's own
   fallback template, which the harness drives.
+- `sky-email-code-sign-up.ftl` is the SPI's Self-registration page on "E-postayla
+  devam et" (step `sky-email-code`, eskylab-login-ux 09), shown only after the right
+  sign-up code proved the address. The SPI decides the stage (`skySignUpStage`: `form`,
+  `ytu`, `existing`, `unavailable`; anything else is the form) and hands over
+  `skySignUpAddress`, `skySignUpError` (a code from `src/login/signUpStages.ts`),
+  `skySignUpFirstName`/`skySignUpLastName` (what was typed) and `skySignUpYtuAlias`;
+  `EmailCodeSignUp.tsx` only words them. The form posts `sky-email-code-action` = `sign-up`
+  (with `firstName`, `lastName`) or `change`; the existing stage posts `continue`; the YTÜ
+  stage links to the provider in `social.providers` whose alias is `skySignUpYtuAlias`. The
+  address is read-only and not posted, there is no password field and no consent box (the
+  KVKK footer only informs). Form ids (`kc-email-code-sign-up-form`, `…-ytu-form`,
+  `…-existing-form`, `…-unavailable-form`) and `data-sky-sign-up-stage` /
+  `data-sky-sign-up-error` match the SPI's own fallback template, which the harness drives.
+  Previews: `?page=sky-email-code-sign-up.ftl&signup=ytu|existing|unavailable|error`. The
+  password form's page carries `skyEmailCodeSignUp=true` while a realm offers it, and the
+  code step takes `sky-email-code-intent=sign-up` with Keycloak's execution switch for
+  "Hesap aç": the link on the first screen is the next theme change (after 08b).
 - `sky-email-code.ftl` is "E-postayla devam et", the SPI's sky-email-code step
   (eskylab-login-ux 08). The SPI hands over `skyEmailCodeStage` (`identifier` or
   `code`), `skyEmailCodeIdentifier` (what was typed), `skyEmailCodeError` (a code from

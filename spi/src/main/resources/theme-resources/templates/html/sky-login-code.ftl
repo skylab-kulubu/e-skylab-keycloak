@@ -9,7 +9,7 @@
         </tr>
         <tr>
           <td style="font-size:15px;line-height:22px;padding-bottom:24px;">
-            ${msg("skyLoginCodeIntro", realmName)}
+            <#if (purpose!"") == "signup">${msg("skySignUpCodeIntro", realmName)}<#else>${msg("skyLoginCodeIntro", realmName)}</#if>
           </td>
         </tr>
         <tr>
@@ -29,7 +29,7 @@
         </tr>
         <tr>
           <td style="font-size:13px;line-height:20px;color:#5b6170;">
-            ${msg("skyLoginCodeIgnore")}
+            <#if (purpose!"") == "signup">${msg("skySignUpCodeIgnore")}<#else>${msg("skyLoginCodeIgnore")}</#if>
           </td>
         </tr>
       </table>

@@ -15,7 +15,10 @@ import java.util.regex.Pattern;
  * records whom the code signs in and the address it was mailed to, so the sign-in can check that
  * the address is still where that person's codes go. A session that asked for a code for an
  * identifier that names nobody holds a code too, for nobody ({@code userId} and {@code address}
- * empty) and never mailed, so that the page and its tries look the same either way.
+ * empty) and never mailed, so that the page and its tries look the same either way. With
+ * Self-registration on (eskylab-login-ux 09), an e-mail address that names nobody gets a sign-up code
+ * instead ({@link #issueSignUp}): for nobody too, but mailed to that address, marked
+ * {@value #SIGN_UP_PURPOSE}; its right code proves the address. A Login code's record keeps its format.
  *
  * <p>The code's rules are {@link SingleUseCodes}': ten minutes, dead after five wrong tries, single
  * use, only a salted hash stored; a new code for the same session replaces the old one. A Login code
@@ -34,13 +37,26 @@ final class LoginCodes {
     private static final String KEY_PREFIX = "sky-email-code:";
     private static final String USER_ID_NOTE = "userId";
     private static final String ADDRESS_NOTE = "address";
+    /** Only on a sign-up code ({@link #issueSignUp}); a Login code's record keeps the 08 format. */
+    private static final String PURPOSE_NOTE = "purpose";
+    static final String SIGN_UP_PURPOSE = "signup";
 
-    /** Whom a code signs in and where it was mailed; both empty for nobody. */
-    record Pending(String userId, String address) {
+    /**
+     * Whom a code signs in and where it was mailed; both empty for nobody. A sign-up code
+     * ({@code signUp}) signs nobody in: its address is the one the right code proves.
+     */
+    record Pending(String userId, String address, boolean signUp) {
+
+        Pending(String userId, String address) {
+            this(userId, address, false);
+        }
     }
 
-    /** What a session waits for, as the page may know it: never the code, its hash or the address. */
-    record Waiting(String userId, int expiresAt, int attemptsLeft) {
+    /**
+     * What a session waits for, as the step may know it: never the code or its hash; the address
+     * only of a sign-up code ({@code signUpAddress}, what the person typed; empty otherwise).
+     */
+    record Waiting(String userId, String signUpAddress, int expiresAt, int attemptsLeft) {
     }
 
     /** What an attempt with a code came to. {@code userId} is whom the code was for (empty for nobody). */
@@ -79,11 +95,28 @@ final class LoginCodes {
         return codes.issue(key(handle), Map.of(USER_ID_NOTE, userId, ADDRESS_NOTE, address));
     }
 
+    /**
+     * Stores a sign-up code (Self-registration, eskylab-login-ux 09) for this session's handle: for
+     * nobody, mailed to {@code address}, which the right code proves. Replaces any earlier code.
+     */
+    String issueSignUp(String handle, String address) {
+        return codes.issue(key(handle), Map.of(USER_ID_NOTE, "", ADDRESS_NOTE, address, PURPOSE_NOTE, SIGN_UP_PURPOSE));
+    }
+
     /** What this session's handle waits for, without consuming it, or {@code null}. */
     Waiting peek(String handle) {
         SingleUseCodes.Entry entry = handle == null ? null : codes.peek(key(handle));
         return entry == null ? null
-                : new Waiting(entry.payload().get(USER_ID_NOTE), entry.expiresAt(), entry.attemptsLeft());
+                : new Waiting(entry.payload().get(USER_ID_NOTE), signUpAddress(entry.payload()), entry.expiresAt(),
+                        entry.attemptsLeft());
+    }
+
+    private static boolean isSignUp(Map<String, String> payload) {
+        return SIGN_UP_PURPOSE.equals(payload.get(PURPOSE_NOTE));
+    }
+
+    private static String signUpAddress(Map<String, String> payload) {
+        return isSignUp(payload) ? payload.get(ADDRESS_NOTE) : "";
     }
 
     /** Drops this session's code, so it never works. */
@@ -104,7 +137,7 @@ final class LoginCodes {
         SingleUseCodes.Result result = codes.confirm(key(handle), code);
         return switch (result.status()) {
             case CONFIRMED -> Outcome.confirmed(new Pending(
-                    result.payload().get(USER_ID_NOTE), result.payload().get(ADDRESS_NOTE)));
+                    result.payload().get(USER_ID_NOTE), result.payload().get(ADDRESS_NOTE), isSignUp(result.payload())));
             case WRONG_CODE -> Outcome.wrongCode(result.payload().get(USER_ID_NOTE), result.attemptsLeft());
             case NONE -> Outcome.none();
         };

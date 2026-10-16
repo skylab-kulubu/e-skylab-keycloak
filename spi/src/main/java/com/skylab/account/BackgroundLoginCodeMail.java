@@ -17,10 +17,12 @@ import org.keycloak.models.KeycloakSessionFactory;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.utils.KeycloakModelUtils;
+import org.keycloak.storage.adapter.InMemoryUserAdapter;
 
 import java.security.cert.X509Certificate;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.Executor;
 
@@ -43,6 +45,7 @@ final class BackgroundLoginCodeMail implements LoginCodeMail {
 
     static final String EXECUTOR = "sky-email-code";
     static final String SUBJECT_KEY = "skyLoginCodeSubject";
+    static final String SIGN_UP_SUBJECT_KEY = "skySignUpCodeSubject";
     static final String ALARM_HALF_SUBJECT_KEY = "skyLoginCodeAlarmHalfSubject";
     static final String ALARM_FULL_SUBJECT_KEY = "skyLoginCodeAlarmFullSubject";
     static final String ALARM_CEILING_SUBJECT_KEY = "skyLoginCodeAlarmCeilingSubject";
@@ -73,6 +76,45 @@ final class BackgroundLoginCodeMail implements LoginCodeMail {
                     .setUser(recipient)
                     .send(SUBJECT_KEY, List.of(), EmailCodeAuthenticator.MAIL_TEMPLATE, attributes, address);
         });
+    }
+
+    /**
+     * The sign-up code (eskylab-login-ux 09) goes to an address that has no account, so Keycloak's
+     * template providers, which render for a person, get a stand-in that exists only in memory: its
+     * address, and the language the sign-in page was shown in (the background session has no
+     * request headers to resolve it from). Nothing of it is stored.
+     */
+    @Override
+    public void sendSignUpCode(AuthenticationFlowContext context, String address, String code) {
+        String language = requestLanguage(context);
+        run(context, "sky_email_code_send_failed purpose=" + EmailCodeSignUp.SIGN_UP, (session, realm) -> {
+            UserModel recipient = new InMemoryUserAdapter(session, realm, SIGN_UP_RECIPIENT_ID);
+            recipient.setEmail(address);
+            if (language != null) {
+                recipient.setSingleAttribute(UserModel.LOCALE, language);
+            }
+            Map<String, Object> attributes = new HashMap<>();
+            attributes.put("code", code);
+            attributes.put("codeExpiration", LoginCodes.TTL_SECONDS / 60);
+            attributes.put("purpose", LoginCodes.SIGN_UP_PURPOSE);
+            session.getProvider(EmailTemplateProvider.class)
+                    .setRealm(realm)
+                    .setUser(recipient)
+                    .send(SIGN_UP_SUBJECT_KEY, List.of(), EmailCodeAuthenticator.MAIL_TEMPLATE, attributes, address);
+        });
+    }
+
+    /** The id of the in-memory stand-in a sign-up code is rendered for; never a stored account. */
+    static final String SIGN_UP_RECIPIENT_ID = "sky-email-code-sign-up";
+
+    /** The sign-in page's language, resolved in the request thread; null when it cannot be. */
+    private static String requestLanguage(AuthenticationFlowContext context) {
+        try {
+            Locale locale = context.getSession().getContext().resolveLocale(null);
+            return locale == null ? null : locale.toLanguageTag();
+        } catch (RuntimeException unresolvable) {
+            return null;
+        }
     }
 
     /**

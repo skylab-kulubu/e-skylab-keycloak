@@ -11,6 +11,8 @@ WORKDIR /build/spi
 COPY spi/pom.xml ./pom.xml
 RUN --mount=type=cache,target=/root/.m2 mvn --batch-mode --no-transfer-progress dependency:go-offline
 COPY spi/src ./src
+# Planner tests compile the same reconciler source used by the runtime operator.
+COPY config/ReconcileJson.java ../config/ReconcileJson.java
 RUN --mount=type=cache,target=/root/.m2 mvn --batch-mode --no-transfer-progress verify
 
 WORKDIR /build/rabbitmq-provider

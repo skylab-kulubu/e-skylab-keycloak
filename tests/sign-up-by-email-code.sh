@@ -327,7 +327,7 @@ await_code() {
   task=$(skymail_records | jq -s -c --arg to "$1" \
     '[.[] | select(.event == "mail_task" and .template_key == "keycloak.login-code" and .recipient_email == $to)] | last')
   jq -e --arg purpose "$3" --arg subject "$subject_key" '.body_variables | .purpose == $purpose and .link == ""
-      and .codeExpirationMinutes == "10" and .subjectKey == $subject and (.code | test("^[0-9]{8}$"))' <<<"$task" >/dev/null \
+      and .codeExpirationMinutes == "10" and .subjectKey == $subject and (.code | test("^[0-9]{6}$"))' <<<"$task" >/dev/null \
     || fail "the code mail task does not carry the code, purpose=$3, $subject_key and the ten minutes without a link"
   jq -e '.missing_variables == [] and (.roles | index("skymail:mails:send")) != null' <<<"$task" >/dev/null \
     || fail 'the code mail task lacks a variable or the send role'
@@ -351,8 +351,8 @@ await_smtp_code() {
     || fail "the fallback mail does not say '$3'"
   jq -e '((.Text // "") + (.HTML // "")) | test("https?://[^ ]*(login-actions|action-token)") | not' <<<"$message" >/dev/null \
     || fail 'the code mail carries a link'
-  code=$(jq -r '.Text // "" | split("\n")[] | select(test("^\\s*[0-9]{8}\\s*$")) | gsub("\\s"; "")' <<<"$message" | head -n 1)
-  [[ $code =~ ^[0-9]{8}$ ]] || fail 'the code mail carries no eight-digit code'
+  code=$(jq -r '.Text // "" | split("\n")[] | select(test("^\\s*[0-9]{6}\\s*$")) | gsub("\\s"; "")' <<<"$message" | head -n 1)
+  [[ $code =~ ^[0-9]{6}$ ]] || fail 'the code mail carries no six-digit code'
   subject=$(jq -r '.Subject // ""' <<<"$message")
   [[ $subject != *"$code"* ]] || fail 'the code is in the subject line'
   printf '%s\n' "$code"
@@ -437,13 +437,13 @@ CURRENT_STAGE='Keycloak start'
 [[ -n $MAILPIT_IMAGE ]] || fail 'tests/docker-compose.integration.yml has no Mailpit image'
 [[ -n $NODE_IMAGE ]] || fail 'Dockerfile has no ARG NODE_IMAGE'
 docker network create "$NETWORK" >/dev/null
-docker run --rm -d --name "$MAIL_CONTAINER" --network "$NETWORK" --memory 256m -p "127.0.0.1:$MAIL_PORT:8025" \
+docker run --rm -d --name "$MAIL_CONTAINER" --network "$NETWORK" --memory 256m --tmpfs /tmp:rw,size=64m,mode=1777 -p "127.0.0.1:$MAIL_PORT:8025" \
   "$MAILPIT_IMAGE" >/dev/null
 docker run --rm -d --name "$SKYMAIL_CONTAINER" --network "$NETWORK" --memory 128m --read-only \
   -e SKYMAIL_HTTP_PORT=8080 -e SKYMAIL_SMTP_PORT=1025 \
   -v "$SCRIPT_DIR/skymail-server.mjs:/fixture/skymail-server.mjs:ro" \
   "$NODE_IMAGE" node /fixture/skymail-server.mjs >/dev/null
-docker run --rm -d --name "$CONTAINER" --network "$NETWORK" --memory "$MEMORY" -p "127.0.0.1:$PORT:$PORT" \
+docker run --rm -d --name "$CONTAINER" --network "$NETWORK" --memory "$MEMORY" --tmpfs /opt/keycloak/data:rw,size=512m,mode=1777 -p "127.0.0.1:$PORT:$PORT" \
   -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
   -e SKY_HARNESS=1 -e SKY_MAIL_ENABLED=true -e "SKY_MAIL_BASE_URL=http://$SKYMAIL_CONTAINER:8080" \
   -e SKY_MAIL_CLIENT_ID=keycloak-mailer -e "SKY_MAIL_CLIENT_SECRET=$MAILER_SECRET" -e SKY_MAIL_TIMEOUT_MILLISECONDS=3000 \
@@ -562,6 +562,74 @@ for slot in personal email username school signup rollback; do
     || fail 'the fresh ownership check did not see exactly the committed state'
 done
 printf '    real independent transactions: wait through uncommitted personal/email/username/school/signup writes; fresh check sees committed holder despite old model; rollback releases lock and leaves address free\n'
+
+# ---------------------------------------------------------------------------------------------------
+stage 'Account center ownership writes'
+# A test-only account-center client gets a real session bearer. The production client remains PAR
+# only; this local fixture allows direct grants to keep these focused API regressions independent.
+account_center_id=$(kcadm create clients -r "$REALM" -i -s clientId=account-center -s publicClient=true \
+  -s directAccessGrantsEnabled=true -s standardFlowEnabled=false)
+kcadm create "clients/$account_center_id/protocol-mappers/models" -r "$REALM" -f - >/dev/null <<'JSON'
+{"name":"fixture-account-audience","protocol":"openid-connect","protocolMapper":"oidc-audience-mapper",
+ "config":{"included.client.audience":"account","access.token.claim":"true","id.token.claim":"false"}}
+JSON
+kcadm create "clients/$account_center_id/protocol-mappers/models" -r "$REALM" -f - >/dev/null <<'JSON'
+{"name":"fixture-account-role","protocol":"openid-connect","protocolMapper":"oidc-hardcoded-role-mapper",
+ "config":{"role":"account.manage-account","access.token.claim":"true","id.token.claim":"false"}}
+JSON
+person ownership-api api-original@example.invalid >/dev/null
+api_token=$(curl -fsS "$BASE_URL/realms/$REALM/protocol/openid-connect/token" \
+  --data-urlencode grant_type=password --data-urlencode client_id=account-center \
+  --data-urlencode username=ownership-api --data-urlencode "password=$PASSWORD" | jq -er '.access_token')
+api_base="$BASE_URL/realms/$REALM/sky-account/v1"
+api_sudo=''
+api_call() {
+  local path=$1 data=$2 expected_status=$3 actual_status
+  actual_status=$(curl -sS -X POST "$api_base/$path" -H "Authorization: Bearer $api_token" \
+    -H "X-Sky-Sudo: $api_sudo" -H 'Content-Type: application/json' --data "$data" \
+    -o "$STATE_DIR/api.body" -w '%{http_code}')
+  [[ $actual_status == "$expected_status" ]] || fail "Account center $path returned HTTP $actual_status, expected $expected_status"
+}
+api_personal_code() {
+  local address=$1 task
+  for _ in $(seq 1 30); do
+    task=$(skymail_records | jq -s -c --arg to "$address" \
+      '[.[] | select(.event == "mail_task" and .template_key == "keycloak.personal-email-confirm" and .recipient_email == $to)] | last')
+    [[ $task == null ]] || break
+    sleep 1
+  done
+  [[ $task != null ]] || fail 'the personal e-mail code did not arrive'
+  jq -er '.body_variables.code | select(test("^[0-9]{6}$"))' <<<"$task"
+}
+api_call sudo/password "{\"password\":\"$PASSWORD\"}" 200
+api_sudo=$(jq -er '.sudoToken' "$STATE_DIR/api.body")
+api_call email/change-request '{"address":"api-personal@example.invalid","makePrimary":false}' 202
+personal_code=$(api_personal_code api-personal@example.invalid)
+CODES+=("$personal_code")
+ADDRESSES+=(api-personal@example.invalid)
+api_call email/confirm "{\"code\":\"$personal_code\"}" 200
+jq -e '.personalEmail == "api-personal@example.invalid" and .personalEmailVerified == true and .email == "api-original@example.invalid"' \
+  "$STATE_DIR/api.body" >/dev/null || fail 'a personal-only confirmation changed the primary address'
+api_call email/primary '{"which":"personal"}' 200
+jq -e '.primary == "personal" and .email == "api-personal@example.invalid" and .emailVerified == true' \
+  "$STATE_DIR/api.body" >/dev/null || fail 'the primary address could not be chosen under the ownership lock'
+api_call email/change-request '{"address":"api-replaced@example.invalid","makePrimary":true}' 202
+personal_code=$(api_personal_code api-replaced@example.invalid)
+CODES+=("$personal_code")
+ADDRESSES+=(api-replaced@example.invalid)
+api_call email/confirm "{\"code\":\"$personal_code\"}" 200
+jq -e '.primary == "personal" and .email == "api-replaced@example.invalid" and .personalEmail == "api-replaced@example.invalid"' \
+  "$STATE_DIR/api.body" >/dev/null || fail 'confirmation plus primary replacement could not reenter the transaction lock'
+api_call email/change-request '{"address":"api-race@example.invalid","makePrimary":false}' 202
+personal_code=$(api_personal_code api-race@example.invalid)
+CODES+=("$personal_code")
+ADDRESSES+=(api-race@example.invalid)
+# This conflicting holder is committed between the change request and its final confirmation.
+person ownership-api-race api-race@example.invalid >/dev/null
+api_call email/confirm "{\"code\":\"$personal_code\"}" 409
+jq -e '.code == "email_taken"' "$STATE_DIR/api.body" >/dev/null || fail 'a final ownership conflict did not return email_taken'
+unset api_token api_sudo personal_code
+printf '    real Account center bearer+sudo: personal-only confirm, choose primary, nested confirm+primary replacement; final ownership conflict refused with 409\n'
 
 # ---------------------------------------------------------------------------------------------------
 stage 'off: nobody is mailed'
@@ -805,7 +873,7 @@ sleep 4
 (($(code_count nobody-off-again@example.invalid) == 0)) || fail 'a sign-up code was mailed after off'
 open_code_page yeni-after-off
 before=$(code_count yeni.kisi@example.invalid)
-ask_code yeni.kisi
+ask_code ayse.yilmaz
 code=$(await_code yeni.kisi@example.invalid "$before" login)
 type_code "$code"
 finish

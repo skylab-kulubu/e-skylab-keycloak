@@ -3575,7 +3575,7 @@ alan `sign-up`). Yürütme ve ayar realm'e özel olduğu için sandbox ve canlı
   (`purpose=signup`, `subjectKey=skySignUpCodeSubject`, konu "SKY LAB hesap açma kodun"). Kullanıcı adı
   biçimindeki ya da e-posta olmayan girdiye yine hiçbir şey gitmez. Kod sayfası her durumda aynıdır;
   hesabın olup olmadığı ancak doğru koddan sonra belli olur (spec §7.4).
-- Kod kuralları Login code'unkidir (8 hane, 10 dakika, 5 yanlış, tek kullanım, yalnız isteyen oturumda).
+- Kod kuralları Login code'unkidir (6 hane, 10 dakika, 5 yanlış, tek kullanım, yalnız isteyen oturumda).
   Bütçeler aynı: oturum, IP sınıfı, adres (15 dakikada 3, günde 10). Genel günlük bütçe
   (`SKY_EMAIL_CODE_DAILY_LIMIT`) dolunca **yalnız kayıt kodları durur** (spec §7.2; olay `sign_up_paused`),
   giriş kodları sürer. Yanlış kayıt kodları adres başına aynı günlük tavana sayılır

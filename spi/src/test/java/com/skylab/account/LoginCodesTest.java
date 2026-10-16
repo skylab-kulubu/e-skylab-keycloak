@@ -167,6 +167,7 @@ class LoginCodesTest {
     @Test
     void aSignUpCodeProvesTheAddressItWasMailedToAndSignsNobodyIn() throws Exception {
         String code = codes.issueSignUp("handle-a", "new@example.com");
+        assertTrue(code.matches("^[0-9]{6}$"), "sign-up shares the six-digit Login code contract");
 
         Map<String, String> stored = store.get(LoginCodes.key("handle-a"));
         assertEquals(java.util.Set.of("userId", "address", "purpose", "salt", "codeHash", "expiresAt", "attemptsLeft"),

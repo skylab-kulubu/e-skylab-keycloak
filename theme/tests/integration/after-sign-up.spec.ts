@@ -116,9 +116,70 @@ async function nativeConfirmation(page: Page) {
   await expect(page.locator("#kc-stay-signed-in-form")).toHaveCount(0);
 }
 
+// Project only static controls when a browser assertion fails; never include the URL,
+// input values, HTML body, cookies, or protocol/session values in CI diagnostics.
+async function failureShape(page: Page) {
+  const snapshot = page.evaluate(() => {
+    const clean = (text: string) => text.replace(/https?:\/\/\S+/g, "[url]")
+      .replace(/[\w.+-]+@[\w.-]+/g, "[address]").replace(/\b[0-9]{6}\b/g, "[redacted]").slice(0, 160);
+    const identifier = (text: string) => /^[a-zA-Z0-9_.:-]{0,80}$/.test(text) ? text : "[dynamic]";
+    return {
+      heading: clean(document.querySelector("h1")?.textContent?.trim() ?? ""),
+      forms: Array.from(document.forms).map(form => identifier(form.id)),
+      controls: Array.from(document.querySelectorAll<HTMLElement>("button,input,select"))
+        .filter(element => element.getClientRects().length > 0)
+        .map(element => ({ tag: element.tagName, id: identifier(element.id),
+          name: identifier(element.getAttribute("name") ?? ""), type: identifier(element.getAttribute("type") ?? "") }))
+    };
+  });
+  const shape = await Promise.race([snapshot, new Promise<null>(resolve => setTimeout(() => resolve(null), 500))]);
+  console.log("B10 synthetic failure controls:", JSON.stringify(shape));
+}
+
+async function withCleanup(page: Page, body: () => Promise<void>, cleanups: (() => Promise<unknown>)[]) {
+  let bodyFailed = false, primary: unknown;
+  try { await body(); } catch (error) {
+    bodyFailed = true; primary = error;
+    try { await failureShape(page); } catch { /* A closed browser must not replace the first failure. */ }
+  }
+  let cleanupFailed = false, cleanupError: unknown;
+  for (const cleanup of cleanups) {
+    try { await cleanup(); } catch (error) {
+      if (!cleanupFailed) { cleanupFailed = true; cleanupError = error; }
+    }
+  }
+  if (bodyFailed) throw primary;
+  if (cleanupFailed) throw cleanupError;
+}
+
+async function beginNativeLink(page: Page) {
+  await test.step("Native school link is offered and selected", async () => {
+    const link = page.locator('[name="sky-sign-up-school-choice"][value="link"]');
+    await expect(link).toBeVisible();
+    await link.click();
+  });
+  await test.step("Native account-link confirmation", () => nativeConfirmation(page));
+}
+
+async function counterBlocked(context: BrowserContext, username: string, label: string) {
+  const response = await context.request.get(`${config.baseUrl}/realms/${config.realm}/broker-link-probe/b10-${label}/counter?user=${encodeURIComponent(username)}`);
+  expect(response.ok()).toBe(true);
+  return (await response.json()).blocked as boolean;
+}
+
+function refusedCallback(landed: URL, auth: Auth) {
+  expect(landed.origin + landed.pathname).toBe(config.callbackUrl);
+  expect(landed.searchParams.getAll("state").length).toBe(1);
+  expect(landed.searchParams.get("state") === auth.state).toBe(true);
+  expect(landed.searchParams.getAll("error").length).toBe(1);
+  expect(landed.searchParams.get("error")).toBe("access_denied");
+  for (const parameter of ["code", "access_token", "id_token"]) expect(landed.searchParams.has(parameter)).toBe(false);
+  expect(landed.hash === "").toBe(true);
+}
+
 test("generic RP defers school link, requires names, skips optional credentials and returns original PKCE callback", async ({ browser }) => {
   const { context, page } = await fixture(browser, false);
-  try {
+  await withCleanup(page, async () => {
     const { email, auth } = await signup(page, context, "deferred");
     await expect(page.getByText("Okul hesabını daha sonra Hesap Merkezi’nden bağlayabilirsin.")).toBeVisible();
     await expect(page.locator('[value="link"][name="sky-sign-up-school-choice"]')).toHaveCount(0);
@@ -135,12 +196,12 @@ test("generic RP defers school link, requires names, skips optional credentials 
     expect(stored.firstName).toBe(name.firstName); expect(stored.lastName).toBe(name.lastName);
     expect(stored.emailVerified).toBe(true); expect(stored.links).toBe(0);
     expect(stored.credentials).toEqual([]); expect(stored.requiredActions).toEqual([]);
-  } finally { await context.close(); }
+  }, [() => context.close()]);
 });
 
 test("native password policy rejects weak input; success and later password/email logins preserve legacy 30-day offer", async ({ browser }) => {
   const { context, page } = await fixture(browser, false);
-  try {
+  await withCleanup(page, async () => {
     const { email, auth } = await signup(page, context, "password");
     await credentials(page);
     await page.locator('[name="sky-sign-up-credential-choice"][value="password"]').click();
@@ -166,15 +227,14 @@ test("native password policy rejects weak input; success and later password/emai
     await context.clearCookies(); login = authorization();
     await emailCode(page, context, email, login, false);
     await callback(page, context, login); // The delegated offer obeys the same 30-day suppression.
-  } finally { await context.close(); }
+  }, [() => context.close()]);
 });
 
 test("native YTU success keeps personal primary and entered names, then credentials precede StaySignedIn", async ({ browser }) => {
   const { context, page } = await fixture(browser, true);
-  try {
+  await withCleanup(page, async () => {
     const { email, auth } = await signup(page, context, "native");
-    await page.locator('[name="sky-sign-up-school-choice"][value="link"]').click();
-    await nativeConfirmation(page); await page.locator("#kc-continue").click();
+    await beginNativeLink(page); await page.locator("#kc-continue").click();
     await page.locator("#username").fill(config.linkedMock); await page.locator("#password").fill(config.mockPassword);
     await page.locator("#kc-login").click();
     await expect(page.locator("#kc-after-sign-up-credentials-form")).toBeVisible();
@@ -189,35 +249,33 @@ test("native YTU success keeps personal primary and entered names, then credenti
     await page.locator('[name="sky-stay-signed-in"][value="no"]').click();
     await callback(page, context, auth);
     expect((await person(context, email)).requiredActions).toEqual([]);
-  } finally { await context.close(); }
+  }, [() => context.close()]);
 });
 
 test("native link can be cancelled before Microsoft; deferred credentials still finish the original RP", async ({ browser }) => {
   const { context, page } = await fixture(browser, true);
-  try {
+  await withCleanup(page, async () => {
     const { email, auth } = await signup(page, context, "cancel");
-    await page.locator('[name="sky-sign-up-school-choice"][value="link"]').click();
-    await nativeConfirmation(page); await page.locator("#kc-cancel").click();
+    await beginNativeLink(page); await page.locator("#kc-cancel").click();
     await expect(page.locator("#kc-after-sign-up-credentials-form")).toBeVisible();
     expect((await person(context, email)).links).toBe(0);
     await page.locator('[name="sky-sign-up-credential-choice"][value="skip"]').click();
     await callback(page, context, auth);
-  } finally { await context.close(); }
+  }, [() => context.close()]);
 });
 
 test("a Microsoft identity linked to another account cannot create a false linked result", async ({ browser }) => {
   const { context, page } = await fixture(browser, true);
-  try {
+  await withCleanup(page, async () => {
     const { email } = await signup(page, context, "conflict");
-    await page.locator('[name="sky-sign-up-school-choice"][value="link"]').click();
-    await nativeConfirmation(page); await page.locator("#kc-continue").click();
+    await beginNativeLink(page); await page.locator("#kc-continue").click();
     await page.locator("#username").fill(config.conflictMock); await page.locator("#password").fill(config.mockPassword);
     await page.locator("#kc-login").click();
     await expect(page.locator('#kc-error-message, [role="alert"]')).not.toHaveCount(0);
     expect(new URL(page.url()).pathname).not.toBe(new URL(config.callbackUrl).pathname);
     expect((await person(context, email)).links).toBe(0);
     expect((await person(context, "b10.holder@example.invalid")).links).toBe(1);
-  } finally { await context.close(); }
+  }, [() => context.close()]);
 });
 
 test("optional native passkey registration and later resident sign-in work without onboarding again", async ({ browser }) => {
@@ -229,7 +287,7 @@ test("optional native passkey registration and later resident sign-in work witho
     isUserVerified: true, automaticPresenceSimulation: true
   } });
   page.on("dialog", dialog => dialog.accept("B10 virtual passkey"));
-  try {
+  await withCleanup(page, async () => {
     const { email, auth } = await signup(page, context, "passkey");
     await credentials(page);
     await page.locator('[name="sky-sign-up-credential-choice"][value="passkey"]').click();
@@ -240,30 +298,48 @@ test("optional native passkey registration and later resident sign-in work witho
     const login = authorization(); await page.goto(login.url);
     await page.locator("#authenticateWebAuthnButton").click();
     await callback(page, context, login);
-  } finally {
-    await cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId }); await context.close();
-  }
+  }, [() => cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId }), () => context.close()]);
 });
 
 for (const mode of ["expire", "wrong-tab"] as const) {
   test(`server capsule ${mode} cannot schedule a native credential action`, async ({ browser }) => {
     const { context, page } = await fixture(browser, false);
-    try {
-      const { email } = await signup(page, context, mode);
+    await withCleanup(page, async () => {
+      const { email, auth } = await signup(page, context, mode);
       await credentials(page);
+      const before = await person(context, email);
+      expect(before.found).toBe(true); expect(before.credentials).toEqual([]);
+      expect(before.links).toBe(0); expect(before.obsLinked).toBe(false);
+      const blockedBefore = await counterBlocked(context, before.username, mode);
       const tab = new URL(page.url()).searchParams.get("tab_id"); expect(Boolean(tab)).toBe(true);
       expect((await context.request.post(`${probe}/continuation?tab=${tab}&mode=${mode}`)).status()).toBe(204);
       await page.locator('[name="sky-sign-up-credential-choice"][value="password"]').click();
+      // Capture durable effects before the terminal assertions, so an unexpected redirect
+      // cannot hide a new credential/link. Native tab cleanup and LOGIN counter reset are
+      // observed separately; their values are not assumed to be unchanged.
+      const after = await person(context, email);
+      const continuation = await (await context.request.get(`${probe}/continuation?tab=${tab}`)).json();
+      const blockedAfter = await counterBlocked(context, after.username, mode);
+      console.log("B10 invalid capsule effects:", JSON.stringify({ mode,
+        credentialsBefore: before.credentials.length, credentialsAfter: after.credentials.length,
+        linksBefore: before.links, linksAfter: after.links, obsBefore: before.obsLinked, obsAfter: after.obsLinked,
+        userActionsBefore: before.requiredActions.length, userActionsAfter: after.requiredActions.length,
+        authSessionFound: continuation.found, blockedBefore, blockedAfter }));
+      expect(after.credentials).toEqual([]);
+      expect(after.credentials).toEqual(before.credentials);
+      expect(after.links).toBe(before.links); expect(after.obsLinked).toBe(before.obsLinked);
       await expect(page.locator("#kc-passwd-update-form")).toHaveCount(0);
-      expect(new URL(page.url()).pathname).not.toBe(new URL(config.callbackUrl).pathname);
-      expect((await person(context, email)).credentials).toEqual([]);
-    } finally { await context.close(); }
+      await page.waitForURL(url => url.origin + url.pathname === config.callbackUrl);
+      refusedCallback(new URL(page.url()), auth);
+      // Keycloak OIDCLoginProtocol.sendError removes this authentication-session tab.
+      expect(continuation.found).toBe(false);
+    }, [() => context.close()]);
   });
 }
 
 test("parallel different credential choices produce at most one native challenge and cannot reopen DONE", async ({ browser }) => {
   const { context, page } = await fixture(browser, false);
-  try {
+  await withCleanup(page, async () => {
     const { email } = await signup(page, context, "race");
     await credentials(page);
     const action = await page.locator("#kc-after-sign-up-credentials-form").getAttribute("action");
@@ -280,5 +356,5 @@ test("parallel different credential choices produce at most one native challenge
     const replay = await context.request.post(action!, { form: { "sky-sign-up-credential-choice": "password" }, maxRedirects: 0 });
     expect((await replay.text()).includes('"sky-after-sign-up-credentials.ftl"')).toBe(false);
     expect((await person(context, email)).credentials).toEqual([]);
-  } finally { await context.close(); }
+  }, [() => context.close()]);
 });

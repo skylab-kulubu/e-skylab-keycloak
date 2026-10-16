@@ -71,6 +71,15 @@ Claim sonrası publish/cache hatasında claim geri açılmaz; belirsiz ikinci ey
 kalır. Kişi yeni giriş başlatabilir, hesabı ve adları korunur. Başlatılmış native AIA/credential action
 kendi Keycloak yaşam döngüsünü sürdürür; B10 kapsülü onun yerine geçen bir Sudo/bearer proof değildir.
 
+Credential seçim POST'unda geçersiz kapsül `RequiredActionContext.failure(INVALID_REQUEST)`
+üretir. Keycloak 26.7.4 `LoginActionsService.interruptionResponse` bunu `CONSENT_DENIED` ile OIDC
+`sendError` yoluna taşır: özgün RP ve o auth-session'ın state'iyle `access_denied`, code/token olmadan
+dönüş; ilgili authentication-session tab'ı kaldırılır. Bu nedenle callback pathname'i tek başına
+başarı veya güvenlik açığı kanıtı değildir. Test özgün RP/state/error yanıtını, code/token yokluğunu
+ve yeni credential/OBS/federated link oluşmadığını birlikte doğrulamalıdır. Kalıcı user required-action
+ve LOGIN sayacının hiç değişmeyeceği varsayılmaz; native tab cleanup'ı ile mevcut LOGIN resetinin
+kişisiz önce/sonra gözlemi ayrı tutulur. Bu beklenti kaynak sözleşmesidir; yeni gerçek koşu sonucu değildir.
+
 ## Uzlaştırıcı ve geri dönüş
 
 Aynı `KEYCLOAK_RECONCILE_ONLY=email-code-login` operatör adımı; yeni
@@ -117,12 +126,19 @@ için iki ürün okuması `attributes(*)` yapıldı; realm haritası bütünüyl
 ON/KEEP idempotency, unrelated attribute korunumu, native action sırası, eski parola dalı ve kapalı
 yarım-swap onarımı/duplicate refusal geçti.
 
-Tarayıcı paketi henüz **geçmedi**. İlk turdaki İngilizce sayfa/Türkçe locator kusuru test isteğinde
-locale belirtilerek düzeltildi. Son tur gerçek kayıt → okul bağlantısını ertele → credential atla →
-mevcut StaySignedIn sorusuna ulaştı; callback yardımcısı bu soruyu tamamlamayı atladığı için durdu.
-Bu turda da 0 başarılı, 1 başarısız, 1 kesilmiş, 7 çalışmamış senaryo vardır; callback/token başarısı
-iddia edilmez. Yardımcı şimdi özgün callback veya mevcut Stay sorusunu bekler, yalnız Stay çıkarsa
-Hayır ile tamamlar; OIDC/state/nonce/PKCE/token kontrolleri korunur. Yeni gerçek koşu, final exact-head
-CI ve bağımsız son inceleme açıktır.
+Tarayıcı paketi henüz **geçmedi**. İlk yerel turlardaki locale ve mevcut StaySignedIn sorusunu
+tamamlamayan callback yardımcısı test kusurları düzeltildi; bu eski 0 başarılı / 1 başarısız / 1 kesilmiş /
+7 çalışmamış turlar korunur. Exact `8b900922` CI turu 9 senaryoda **4 başarılı / 5 başarısız** verdi:
+generic kayıt/ertele/atla/özgün PKCE dönüşü, native parola politikası ve sonraki giriş, sanal resident
+passkey ve çift seçim/tekrar koruması geçti. YTÜ success/cancel/conflict senaryolarında `finally`
+cleanup hatası ilk hatayı örttüğünden asıl neden henüz bilinmiyor. Expire/wrong-tab testleri callback
+pathname beklentisinde durdu; o koşuda error/state/code/token ve sonraki DB durumu ölçülmedi.
+
+Yeni yalnız-test adayı ilk body hatasını korur; yalnız cleanup başarısızsa test yine başarısızdır ve
+bütün cleanup'lar denenir. Hata tanısı URL, input değeri, tam HTML veya protocol/session değeri yerine
+sentetik sayfanın heading ve görünen control kimliklerini yazar. Süre/tab testleri yukarıdaki OIDC hata
+terminalini, credential/link değişmediğini ve tab cleanup'ını ölçer; user-action sayıları ve counter
+blocked durumu yalnız ayrı gözlemdir. Hafif kaynak probları bu test yardımcısını doğrular; **yeni gerçek
+koşu yapılmadı**, mevcut 4/5 sonucu değişmedi. Final exact-head CI ve bağımsız son inceleme açıktır.
 Hazır/yayın GO iddiası yoktur. Fiziksel Touch ID bu otomasyonla doğrulanmaz; sanal resident
 authenticator kanıtı ayrı cihaz uyumluluğu sınırıdır, yeni bir insan onayı sorusu değildir.

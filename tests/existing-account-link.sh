@@ -192,18 +192,32 @@ CURRENT_STAGE='fixture compile'
 SPI_JAR=${B12_SPI_JAR:?Build spi/ first and set B12_SPI_JAR to its absolute jar path}
 mkdir -p "$STATE_DIR/fixture"
 docker run --pull=never --cpus 2 --rm --memory 512m --user "$(id -u):$(id -g)" --entrypoint bash \
+  -e B10_NATIVE_FIXTURE="${B10_AFTER_SIGN_UP_ONLY:-0}" \
   -v "$SPI_JAR:/fixture/spi.jar:ro" \
   -v "$SCRIPT_DIR/fixtures/BrokerMicrosoftFixture.java:/fixture/BrokerMicrosoftFixture.java:ro" \
   -v "$SCRIPT_DIR/fixtures/BrokerLinkRuntimeProbe.java:/fixture/BrokerLinkRuntimeProbe.java:ro" \
+  -v "$SCRIPT_DIR/fixtures/AfterSignUpMicrosoftFixture.java:/fixture/AfterSignUpMicrosoftFixture.java:ro" \
+  -v "$SCRIPT_DIR/fixtures/AfterSignUpRuntimeProbe.java:/fixture/AfterSignUpRuntimeProbe.java:ro" \
   -v "$STATE_DIR/fixture:/out" "$IMAGE" -ec '
     jars=(/opt/keycloak/lib/lib/main/*.jar); IFS=:
-    java -m jdk.compiler/com.sun.tools.javac.Main -proc:none -cp "/fixture/spi.jar:${jars[*]}" -d /out /fixture/BrokerMicrosoftFixture.java /fixture/BrokerLinkRuntimeProbe.java
+    sources=(/fixture/BrokerMicrosoftFixture.java /fixture/BrokerLinkRuntimeProbe.java)
+    if [[ $B10_NATIVE_FIXTURE == 1 ]]; then sources+=(/fixture/AfterSignUpMicrosoftFixture.java /fixture/AfterSignUpRuntimeProbe.java); fi
+    java -m jdk.compiler/com.sun.tools.javac.Main -proc:none -cp "/fixture/spi.jar:${jars[*]}" -d /out "${sources[@]}"
     mkdir -p /out/META-INF/services
     printf "%s\n" com.skylab.broker.BrokerMicrosoftFixture > /out/META-INF/services/org.keycloak.broker.social.SocialIdentityProviderFactory
     printf "%s\n" com.skylab.account.BrokerLinkRuntimeProbe > /out/META-INF/services/org.keycloak.services.resource.RealmResourceProviderFactory
+    if [[ $B10_NATIVE_FIXTURE == 1 ]]; then
+      printf "%s\n" com.skylab.broker.AfterSignUpMicrosoftFixture >> /out/META-INF/services/org.keycloak.broker.social.SocialIdentityProviderFactory
+      printf "%s\n" com.skylab.passkey.AfterSignUpRuntimeProbe >> /out/META-INF/services/org.keycloak.services.resource.RealmResourceProviderFactory
+    fi
     java -m jdk.jartool/sun.tools.jar.Main --create --file /out/fixture.jar -C /out com -C /out META-INF
   '
 CURRENT_STAGE='PostgreSQL and Keycloak startup'
+theme_mount=()
+if [[ ${B10_AFTER_SIGN_UP_ONLY:-0} == 1 ]]; then
+  [[ -f ${B10_THEME_JAR:-} ]] || fail 'B10_THEME_JAR must name the built login theme'
+  theme_mount=(-v "$B10_THEME_JAR:/opt/keycloak/providers/e-skylab-theme.jar:ro")
+fi
 docker network create "$NETWORK" >/dev/null
 docker run --pull=never --cpus 2 --rm -d --name "$PG_CONTAINER" --network "$NETWORK" --memory 384m \
   --tmpfs "$PG_TMPFS:rw,size=512m,mode=1777" \
@@ -217,6 +231,7 @@ docker run --pull=never --cpus 2 --rm -d --name "$CONTAINER" --network "$NETWORK
   -v "$SPI_JAR:/opt/keycloak/providers/e-skylab-spi.jar:ro" \
   -v "$STATE_DIR/fixture/fixture.jar:/opt/keycloak/providers/broker-fixture.jar:ro" \
   -v "$REPOSITORY_ROOT/config:/opt/keycloak/sky-config:ro" \
+  ${theme_mount[@]+"${theme_mount[@]}"} \
   "$IMAGE" start-dev --db=postgres --db-url-host="$PG_CONTAINER" --db-username=keycloak --db-password=harness-db-password >/dev/null
 for _ in $(seq 1 90); do
   curl -fsS "$BASE_URL/realms/master" >/dev/null 2>&1 && break
@@ -306,6 +321,12 @@ on_link_stage() { [[ $LANDED == page && $BODY == *"data-sky-existing-account-sta
 links() { kcadm get "users/$1/federated-identity" -r "$REALM" | jq 'length'; }
 
 PROBE="$BASE_URL/realms/$REALM/broker-link-probe"
+if [[ ${B10_AFTER_SIGN_UP_ONLY:-0} == 1 ]]; then
+  source "$SCRIPT_DIR/after-sign-up-checks.sh"
+  B12_HARNESS_COMPLETE=1
+  printf 'after-sign-up: all checks passed (%s configuration assertions + browser package, %ss total)\n' "$AFTER_SIGN_UP_ASSERTIONS" "$SECONDS"
+  exit 0
+fi
 if [[ ${B24_COUNTER_ONLY:-0} == 1 ]]; then
   source "$SCRIPT_DIR/existing-account-counter-checks.sh"
   B12_HARNESS_COMPLETE=1

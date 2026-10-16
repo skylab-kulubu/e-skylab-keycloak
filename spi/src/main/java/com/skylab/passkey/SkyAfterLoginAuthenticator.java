@@ -109,7 +109,7 @@ public final class SkyAfterLoginAuthenticator implements Authenticator {
                 context.getAuthenticationSession(), context.getUser());
         var form = context.form().setAttribute(LINK_AVAILABLE, available)
                 .setAttribute(LINK_DEFERRED, available ? "" : DEFERRED_COPY);
-        if (error) form.setError(available ? "Lütfen tercihini yeniden seç." : DEFERRED_COPY);
+        if (error) form.setError(available ? "afterSignUpChooseAgain" : "afterSignUpSchoolDeferred");
         context.challenge(form.createForm(TEMPLATE));
     }
 

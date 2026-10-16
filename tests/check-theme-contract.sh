@@ -38,6 +38,10 @@ theme_entries=$(unzip -Z1 "$THEME_JAR")
   || fail 'the sign-up page after the right sign-up code (sky-email-code-sign-up) is missing or duplicated'
 [[ $(grep -c '^theme/e-skylab-theme/login/sky-existing-account.ftl$' <<<"$theme_entries") == 1 ]] \
   || fail 'the first-Microsoft-login existing-account page (sky-existing-account) is missing or duplicated'
+for signup_page in sky-after-sign-up-school sky-after-sign-up-credentials link-idp-action; do
+  [[ $(grep -c "^theme/e-skylab-theme/login/$signup_page.ftl$" <<<"$theme_entries") == 1 ]] \
+    || fail "the native signup continuation page $signup_page is missing or duplicated"
+done
 [[ $(grep -c '^theme/e-skylab-theme/login/sky-stay-signed-in.ftl$' <<<"$theme_entries") == 1 ]] \
   || fail 'the stay signed in page after a YTÜ login (sky-stay-signed-in) is missing or duplicated'
 [[ $(grep -c '^theme/e-skylab-theme/login/sky-email-code.ftl$' <<<"$theme_entries") == 1 ]] \

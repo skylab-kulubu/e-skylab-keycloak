@@ -75,7 +75,7 @@ public final class SignUpCredentialsRequiredAction implements RequiredActionProv
         else if ("password".equals(choice)) nextAction = "UPDATE_PASSWORD";
         else if ("skip".equals(choice)) nextAction = null;
         else {
-            context.challenge(context.form().setError("Lütfen tercihini yeniden seç.").createForm(TEMPLATE));
+            context.challenge(context.form().setError("afterSignUpChooseAgain").createForm(TEMPLATE));
             return;
         }
         if (nextAction != null && !AfterSignUpState.actionEnabled(context.getRealm(), nextAction)) {

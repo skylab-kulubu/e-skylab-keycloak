@@ -10,6 +10,8 @@ const mainIdByPage: Partial<Record<ThemedPageId, string>> = {
   "sky-personal-email-offer.ftl": "sl-personal-email-offer-main",
   "sky-email-code.ftl": "sl-email-code-main",
   "sky-existing-account.ftl": "sl-existing-account-main",
+  "sky-after-sign-up-school.ftl": "sl-after-sign-up-school-main",
+  "sky-after-sign-up-credentials.ftl": "sl-after-sign-up-credentials-main",
   "sky-stay-signed-in.ftl": "sl-stay-signed-in-main",
   "sky-email-code-sign-up.ftl": "sl-email-code-sign-up-main",
   "sky-handoff-failed.ftl": "sl-handoff-failed-main"
@@ -24,7 +26,9 @@ const pagesWithLoginKvkkSentence: ThemedPageId[] = [
   "sky-email-code-sign-up.ftl",
   "sky-stay-signed-in.ftl",
   "sky-email-code.ftl",
-  "sky-existing-account.ftl"
+  "sky-existing-account.ftl",
+  "sky-after-sign-up-school.ftl",
+  "sky-after-sign-up-credentials.ftl"
 ];
 const pagesWithoutLanguageMenu: ThemedPageId[] = ["sky-handoff-failed.ftl"];
 

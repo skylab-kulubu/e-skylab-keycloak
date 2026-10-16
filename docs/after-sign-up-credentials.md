@@ -1,68 +1,115 @@
-# Kayıt sonrası sorular: kapalı backend hazırlığı
+# Kayıt sonrası isteğe bağlı YTÜ, erişim anahtarı ve parola (bilet 10)
 
-Bu çalışma B10'un ortak backend hazırlığıdır; temel onboarding genel OIDC RP'lerde, anında native YTÜ linki ise ayrı capability ile çalışır. **Henüz canlı açılmaz.** Varsayılan `skyAfterSignUpEnabled` realm attribute'u yoktur; yalnız tam `true` değeri yeni kayıt dalını etkinleştirir. Bu değişiklik attribute'u ayarlamaz, akış execution'ı değiştirmez, istemci rol/scope'u vermez. Authenticator service registry, tema, mesajlar, uzlaştırma, sürüm ve CI/browser entegrasyonu bu parçanın kapsamında değildir.
+SPI **1.27.0** kayıt sonrası iki soruyu ekler: önce okul hesabı, sonra “Girişini kolaylaştır”.
+Ad ve soyad, hesabı açan e-posta kayıt formunda zorunludur (#106); bu ekranlar yeniden isim istemez.
+Parola ve erişim anahtarı isteğe bağlıdır. Özellik varsayılan **OFF**; bu kaynak değişikliği yayın,
+realm ayarı, kayıt açılışı veya rol/scope grant'i yapmaz.
 
-## Kapsam
+## Akış ve özgün uygulamaya dönüş
 
-- `sky-after-login` normal girişte mevcut `PasskeyOfferAuthenticator` sınıfına delege eder. 30 günlük susturma, mevcut passkey kontrolü, account-center/AIA atlaması ve girişteki yes/no işleyicisi korunur.
-- Kayıt dalı yalnız #106'nın gerçekten hesap açtıktan sonra yazdığı `sky-email-code.signed-up=true` server auth note'undan başlayabilir. Yeni kapsül yazılınca bu başlangıç notu tüketilir. Ad ve soyad boşsa onboarding başlamaz. #106'nın ad/soyad User Profile doğrulaması, Unicode temizlemesi ve kullanıcı adı üretimi değişmez.
-- Temel onboarding enabled, standard browser flow açık `openid-connect` RP istemcilerinde gerçek signup kapsülüyle çalışır; yeni credentials RA realm'de etkin kayıtlı olmalıdır. Normal generic RP kullanıcısının passkey/parola/skip seçebilmesi için Account API rolü veya scope'u gerekmez. Keycloak 26.7.4 native UpdatePassword/WebAuthnRegister kaynakları böyle bir rol/scope istemez; native policy ve authenticatedUser kullanılır. Bozuk/expired/kopyalanmış signup kapsülü, disabled/non-browser/non-OIDC istemci veya aktif başka AIA failclosed kalır.
-- **Yalnız anında native YTÜ bağlantısı** gerçek kullanıcı `account.manage-account` veya `manage-account-links` rolü **ve aynı rol için gerçek client scope**, enabled OBS ve enabled native `idp_link` ister. Başka AIA'nın üstüne yazılmaz. Bu capability yoksa okul sayfası `skyYtuLinkAvailable=false` ve `skyYtuLinkDeferredMessage="Okul hesabını daha sonra Hesap Merkezi’nden bağlayabilirsin."` alır; tema native yes seçeneğini sunmamalı ve normal devam/skip göstermelidir. Yine de gönderilen link POST'u state'i değiştirmeden sayfada kalır; skip→page2 çalışır. Sahte bağlı sonucu, çapraz AC redirect veya yeni scope grant yoktur. İlk faz kısıtı: bu RP'lerde okul bağlantısı kayıt içinde hemen yapılamaz, sonradan Hesap Merkezi'ndeki mevcut A6 yolu kullanılır.
-- `SCHOOL → LINK_PENDING → CREDENTIALS → DONE` veya `SCHOOL → CREDENTIALS → DONE`: tek server auth-session notunda kapalı enum. Kapsül realm/sub/root-session/tab/client'e ve server-generated 32-byte nonce'a bağlı ve başlangıçtan itibaren **sabit 10 dakika** geçerlidir; stage değişimi süreyi uzatmaz. Yeni signup sırasında henüz SSO UserSession/sid bağlı değildir; root-session ID doğal native auth-session bağıdır. Keycloak bütün required action'lar bittikten sonra SSO oturumunu bağlar.
-- Eksik, bozuk, yanlış tipli, bilinmeyen alanlı, süresi dolmuş, başka kullanıcı/sekme/istemciye kopyalanmış kapsül yeni AIA veya credential action'ı üretmez. Devre dışı kullanıcı veya service account kabul edilmez. Bu kapsül bir bearer token/Sudo token değildir.
-- Okul sayfasında `sky-sign-up-school-choice=link|skip`, tek değer kabul edilir. Link yalnız native client notes `kc_action=idp_link`, `kc_action_parameter=OBS` yazar. `idp_link` required-action listesine **eklenmez**; aksi durumda Keycloak AIA'yı enforced yapıp iptali bastırır.
-- `SignUpCredentialsRequiredAction.evaluateTriggers`, sadece aynı geçerli LINK_PENDING kapsülü ve bitmiş native AIA'nın kapalı success/cancelled/error status'u ile page2'yi sonradan ekler. Page2 önceden eklenirse Keycloak onu AIA'dan önce çalıştırır. B10'nun bitmiş native status/parameter notları tüketilir; özgün OIDC state/nonce/PKCE/redirectURI değiştirilmez. Native broker conflict/error ekranı terminal kalır; bu backend onu atlamaz.
-- Page2 formu `sky-sign-up-credential-choice=passkey|password|skip` kabul eder. **Parola isteğe bağlıdır.** Passkey önerilir; şimdilik geçilebilir ve kişi e-posta koduyla girmeyi sürdürür. Seçim sadece session'a hazır `webauthn-register-passwordless` veya `UPDATE_PASSWORD` ekler; kalıcı user required action, yeni parola alanı/hash/endpoint yoktur. Hazır parola eylemi realm'in mevcut parola politikasını uygular.
-- Yeni credentials action AIA ile doğrudan istenemez (`NOT_SUPPORTED`); kayıt kapsülü olmadan veya başka AIA varken POST ile credential eylemi eklenmez. Seçimden sonra DONE kapsülü aynı kayıt oturumunda çift öneriyi önler. Yeni oturumda signup notu/kapsülü olmadığı için eski giriş davranışı devam eder.
+`sky-after-login`, yalnız e-posta kodu child flow'undaki eski `passkey-offer-authenticator` yerine
+konur. Normal girişte değiştirilmemiş `PasskeyOfferAuthenticator` sınıfına delege eder: mevcut
+passkey, 30 günlük susturma, Account Center/AIA atlaması ve yes/no davranışı korunur. Parola
+branch'indeki eski offer execution'ına dokunulmaz.
 
-## Tek seçim ve hata sonrası davranış
+Yeni kayıt dalı yalnız hesabı gerçekten açan #106'nın server
+`sky-email-code.signed-up=true` notundan başlar. Kapsül bu notu bir kez tüketir. Sayfalar:
 
-Geçiş önce supplied capsule'ın halen güncel server note olduğuna bakar. Sonra `SingleUseObjectProvider.putIfAbsent` üzerinde purpose/realm/sub/root/tab/client/server-nonce/source-stage bağlı SHA-256 anahtarını atomik claim eder. TTL yalnız kapsülün kalan absolute süresidir; sonraki stage onu uzatmaz. Claim sonrası deadline/current-note tekrar kontrol edilir. Yalnız kazanan request stage'i yayımlar ve native AIA/credential action'ını ekler. Bozuk değer veya native-unavailable yes hiçbir stage claim'ini tüketmez. İki authenticate'ın farklı nonce kapsüllerini üst üste başlatmasını engellemek için başlangıç binding'inde tek init claim vardır.
+1. `sky-after-sign-up-school.ftl`: gerçek native yetki varsa “YTÜ hesabımı bağla” ve “Şimdi değil”.
+   Yetki yoksa bağlama düğmesi gösterilmez; “Okul hesabını daha sonra Hesap Merkezi’nden
+   bağlayabilirsin” açıklaması ve “Devam et” ikinci sayfaya geçirir. Desteklenmeyen forged link
+   POST'u da sahte başarı veya 403 çıkmazı üretmez; aynı sayfada kalır, skip kullanılabilir.
+2. `sky-after-sign-up-credentials.ftl`: önerilen erişim anahtarı, native parola belirleme veya
+   “Şimdilik geç”. Sadece bu authentication-session'a hazır `webauthn-register-passwordless`
+   ya da `UPDATE_PASSWORD` eklenir; kalıcı user required action, özel parola formu/hash/endpoint yoktur.
+   Parola politikasını ve WebAuthn törenini Keycloak yürütür. Kodla giriş kullanılmaya devam eder.
 
-Bu, auth-note get/set API'sinin CAS olduğu iddiası değildir. Keycloak 26.7.4 gerçek InfinispanSingleUseObjectProvider.putIfAbsent doğrudan cache.putIfAbsent çağırır; Java unit adapter'ı da ConcurrentHashMap putIfAbsent kullanır. Stale snapshot, iki worker overlap ve reentrant iki farklı credential seçimi unit'te bir kazanana iner; gerçek HTTP/cluster davranışı ağır harness'te ayrıca doğrulanmalıdır.
+Özgün RP/client, redirect_uri, state, nonce ve S256 PKCE korunur. Bütün uygulamalar Account
+Center'a yönlendirilmez; OIDC code/state başka uygulamaya taşınmaz. Generic RP'deki YTÜ bağlantısı
+ilk fazda sonraya bırakılabilir; bu durum parola/passkey/skip seçeneklerini kapatmaz.
 
-Claim ile state/action yayımlanması arasında hata olursa claim geri açılmaz. Belirsiz cache hatası veya kısmi auth-note publish sonrası ikinci bir farklı eylem üretmek yerine mevcut işlem failclosed kalır; kişi yeni bir giriş başlatabilir, hesabı ve adları korunur, e-posta koduyla kullanımı sürer. Native eylem/session'a zaten yazıldıysa Keycloak kendi normal devamını yürütür. Bu optional teklif bir kurtarma veya Sudo token'ı değildir.
+## Native YTÜ kapısı ve sıralama
 
-## Eksik entegrasyon ve rollback sınırı
+Temel iki ekran enabled, standard browser flow açık `openid-connect` RP'de geçerli signup kapsülü
+ve etkin `sky-sign-up-credentials` action'ı ister. Native credential action'lar Account API rol/scope
+kapısını paylaşmaz.
 
-Beklenen template'ler `sky-after-sign-up-school.ftl` ve `sky-after-sign-up-credentials.ftl`; ürün formu/metinleri bu parçada yoktur. Authenticator registry ve execution henüz ekli değildir. RA service registry yalnız factory keşfini sağlar; default action/realm flag açmaz. Flag'in kapatılması yeni continuation/credential eylemlerini durdurur. Önceden başlatılmış native idp_link kendi Keycloak yaşam süresi/iptal kurallarıyla tamamlanabilir; B10'un 10 dakikalık kapsülü native broker oturumunun yerine geçen bir proof değildir. Süresi dolan B10 kapsülü page2 eylemi başlatmaz.
+Anında native YTÜ linki ayrıca aynı account rolü için gerçek `user.hasRole` **ve** `client.hasScope`
+(`manage-account` veya `manage-account-links`), enabled `OBS`, enabled native `idp_link` ister.
+OBS gerçek `microsoft` provider'ı olmalı; Keycloak 26.7.4'ün kendi factory seçimi
+`SkyMicrosoftIdentityProvider` üretmelidir. First-broker override yalnız null veya realm default
+root'un tam ID'si olabilir; root'ta tek doğrudan REQUIRED existing-account prompt gerekir.
+Nested/disabled/duplicate prompt veya stock/missing factory native bağlantıyı kapatır. Yeni grant,
+recursive validator veya global provider/commit-guard değişikliği yoktur; B12/B24 korumaları sürer.
 
-`next=ytu-link` şu an genel çalışan bir fallback değildir. Generic RP'de temel onboarding/credential teklifi bu yüzden durdurulmaz; okul bağlaması açıkça sonraya bırakılıp page2'ye geçilir. Diğer istemcilerin özgün callback'i yerine AC'ye code/state taşınmaz; rol/scope genişletilmez. Merkezi kayıt sonu/özgün uygulamaya dönüş ürün kararı halen açıktır. Kullanıcının zorunlu ad+soyad ve isteğe bağlı parola tercihi, bu yönlendirme kararını seçtiği anlamına gelmez.
+YTÜ seçimi yalnız `kc_action=idp_link` ve `kc_action_parameter=OBS` client notes'unda yürür;
+`idp_link` session required-action listesine eklenmez, enforced yapılmaz. İkinci sayfa önceden
+planlanmaz. `SignUpCredentialsRequiredAction.evaluateTriggers`, native AIA bittikten ve kendi
+success/cancelled/error durumunu yazdıktan sonra ikinci sayfayı ekler; yalnız B10'un terminal
+status/OBS parameter notları tüketilir. Terminal broker conflict/error ekranı atlanmaz, bağlı sonucu
+uydurulmaz. Sayfa2/native credential action'lar en sondaki SkyStaySignedIn sorusundan önce çalışır.
 
-B12'nin native callback subject guard'ı sonraki entegrasyon bağımlılığıdır. `sky-existing-account.*` proof/marker notları burada üretilmez. Provider, factory, guard ve hareketli ortak dosyalar bu değişiklikte düzenlenmedi.
+Mevcut girilmiş ad/soyad ve kişisel primary korunur. Graph adını güncelleyen yeni hook yoktur;
+“adın doğrulanır” sözü verilmez. OBS linki nedeniyle ad alanının kilitlenmesi, adın Graph'tan
+alındığına dair yeni bir kanıt sayılmaz.
 
-## İsim kaynağı ve henüz yapılmayan hook
+## Kapsül, tekrar ve hata
 
-Domain kaynağı `e-skylab` origin/main `e3a0d11b3df94cc9e1a5b0bd57685b6ea626e620`: CONTEXT Verified YTÜ'yü OBS federated link varlığı olarak tanımlar ve ad/schoolEmail'i kilitler. Bu tanım **adın Microsoft'tan alındığını ayrıca kanıtlamaz**. ADR-0063 yeni kişisel kayıtta önce ad+soyadı zorunlu alır; YTÜ bağlanınca kilidin geldiğini söyler. Mevcut signup adları korunur; bu parça `setFirstName`/`setLastName` çağırmaz ve "adın doğrulanır" metni eklemez.
+`SCHOOL → LINK_PENDING → CREDENTIALS → DONE` veya `SCHOOL → CREDENTIALS → DONE`; realm/sub/
+root-session/tab/client ve server-generated 32-byte nonce bağlı server auth note'u. Sabit 600 saniye;
+stage değişimi TTL'yi uzatmaz. Strict enum/JSON tipi/alanları ve 2048 karakter sınırı vardır.
+Bozuk, expired, başka binding'e kopyalanmış kapsül; disabled/service-account kullanıcı; aktif başka
+AIA yeni credential action'ı üretemez. Yeni action doğrudan AIA ile istenemez (`NOT_SUPPORTED`).
 
-Keycloak 26.7.4 Microsoft provider Graph profilindeki gerçek `givenName`/`surname` alanlarını broker context'e koyar; displayName veya yerel kullanıcı adı bu alanların yedeği değildir. Native broker LEGACY callback'inde temel ad/soyad sync yapılmaz; o kod FORCE koşulundadır. B12 yeni proof marker yolunda kanıtlı adları yazar, markerless native A6 yalnız subject guard'dan geçer. Dolayısıyla signup→native link kişinin önceden yazdığı adı kilitleyebilir. Henüz bu native yolda verified-name iddiası yapılamaz.
+Geçiş supplied capsule ile güncel server note'u karşılaştırır, purpose+binding+nonce+source-stage
+SHA-256 anahtarını Keycloak `SingleUseObjectProvider.putIfAbsent` ile yalnız kalan TTL için claim
+eder, deadline/current note'u tekrar kontrol eder. Farklı password/passkey seçimleri aynı stage
+claim'inde tek kazanana iner; stale DONE eski sayfayı yeniden açamaz. Başlangıç için ayrı binding
+claim'i iki authenticate'ın farklı nonce yazmasını önler. Auth-note API'sinin CAS olduğu iddia edilmez.
 
-Gelecekte dar B10 hook seçilirse:
+Claim sonrası publish/cache hatasında claim geri açılmaz; belirsiz ikinci eylem yerine failclosed
+kalır. Kişi yeni giriş başlatabilir, hesabı ve adları korunur. Başlatılmış native AIA/credential action
+kendi Keycloak yaşam döngüsünü sürdürür; B10 kapsülü onun yerine geçen bir Sudo/bearer proof değildir.
 
-1. B12 freeze sonrası provider'ın mevcut subject guard'ı korunur; B10 helper çağrısı onun ardından, aynı native callback transaction'ında ayrı incelemeyle eklenir. B12 proof notları kullanılmaz.
-2. Yalnız aktif feature + aynı realm/sub/root/tab/client bağlı, süresi dolmamış B10 LINK_PENDING evresi + native OBS link + actual callback external-subject/current-user link-owner eşleşmesi kabul edilir. Yeni signup sırasında henüz sid yoktur; dışarıdan sid icat edilmez. Native auth-session bağları esas alınır.
-3. **Yalnız `setFirstName`/`setLastName` eklemek güvenli sayılmaz:** Keycloak UserEntity'nin stale managed alanları flush sırasında primary/emailVerified/username/notBefore gibi diğer kolonları da eski değerle yazabilir. B12 native/A6 markerless yolu otomatik target-row lock + managed-entity refresh sağlamaz. B10 name write için dar target lock, fresh scalar kontrolleri ve managed-entity refresh gereksinimi bağımsız actual ORM race fixture ile kanıtlanmalı. Bu parça bu korumayı kurmaz ve atomik DB garantisi iddia etmez.
-4. Remote alanlar mevcut name-normalization ve prohibited-character/uzunluk kurallarıyla doğrulanır; iki ad da tamam olmadan eski adlar değiştirilmez. Primary veya emailVerified yazılmaz. Başarılı name sync için ayrı sabit enum evresi (`LINK_PROVEN`) kullanılıp native success→page2 bu evreye bağlanabilir; cancel/error name sync istemez. Auth note tek başına verified name kanıtı olmaz; gerçek link/owner sonucu da aranır. Sabit TTL commit öncesinde yeniden kontrol edilir.
-5. **Öneri:** Şimdiki güvenli hazırlıkta ad+soyad zorunlu toplanır, eski adlar korunur ve verified-name iddiası yoktur. Authoritative Microsoft adı yazan hook ürün olarak seçilip ORM güvenliği kanıtlandığında, eksik/bozuk Graph adı için B10 link transaction'ını rollback etmek daha tutarlıdır: yanlış bir adı kilitlemez, mevcut hesabı/adları silmez, kişi e-posta koduyla kullanmaya ve skip/retry yapmaya devam eder. Yeni form açılmaz. Eski adı koruyup linki yine kabul etme seçeneği daha az engelleyicidir ama verified-name metni kullanılamaz ve hatalı eski ad kilitlenebilir; açık ürün tercihi gerektirir.
+## Uzlaştırıcı ve geri dönüş
 
-## Kanıt
+Aynı `KEYCLOAK_RECONCILE_ONLY=email-code-login` operatör adımı; yeni
+`KEYCLOAK_AFTER_SIGN_UP=keep|on|off`. Varsayılan keep B10 için hiçbir yazım yapmaz. ON olan bir
+konfigürasyondaki factory/flow/action drift'ini sessizce sağlıklı saymaz. E-posta planner'ı child
+flow'da eski/yeni offer'dan tam birini tanır; duplicate, foreign leaf ve yanlış sıra reddedilir.
 
-TDD kırmızı derleme kanıtı ve son unit logları hub scratch `b10-native-link-prototype/` altındadır. Mac, mevcut cache ve tek fork:
+- `on`: mevcut email-code flow, native parola/passkey enabled/non-default ve doğru provider
+  sözleşmesini doğrular. Yeni RA enabled/non-default kaydedilir, priority native credential'lardan
+  önceye konur; açık StaySignedIn en sonda tutulur. Yalnız email child kapatılır, offer değiştirilip
+  geri okunur, child önceki requirement'a döner. `skyAfterSignUpEnabled=true` **en son** yazılır.
+  Uygun mevcut ON konfigürasyonu tekrar ON/KEEP'te yazım yapmaz.
+- `off`: `skyAfterSignUpEnabled=false` **ilk** yazılır; yalnız email child'ın offer'ı eskiye döner,
+  yeni RA en son kapatılır. Başlatılmış native AIA Keycloak'ın normal tamamlanma/iptal yolunu korur.
+- Kesilmiş swap child'ı DISABLED bırakır; flag açılmaz. Tek başına B10 ON bunu sessizce açmaz.
+  Açık operatör tercihiyle `KEYCLOAK_EMAIL_CODE_LOGIN=on` + `KEYCLOAK_AFTER_SIGN_UP=on` yeniden
+  çalıştırılarak eksik leaf tamamlanır ve bütün readback'ler geçince feature açılır. Yeni durable
+  migration/continuation framework'ü yoktur. Aynı realm'de uzlaştırıcı/manuel flow yazımları seridir.
 
-```bash
-JAVA_HOME=/Users/yusssss/Library/Java/JavaVirtualMachines/corretto-21.0.9/Contents/Home MAVEN_OPTS=-Xmx512m mvn -q -o -f spi/pom.xml -DforkCount=1 -DargLine=-Xmx512m test
-```
+Native yetki yokluğu feature ON'u engellemez: o RP açıklama+skip yolunu kullanır. Önce sandbox;
+kayıt canlı bayrağı diğer tüm 10/11/12/13/24 önkoşulları ve yürüyüş tamamlandıktan **sonra** açılır.
+Bu B10 yığını B24/B12/#106 içerir, B11 #110 içermez; yalnız 1.27 numarası kayıt açılışı izni değildir.
 
-Hedefli testler state TTL/binding/JSON/stage, stale DONE geri açılma, nonce/init ve atomik stage claim yarışları, gerçek Keycloak scheduler ile native başarı+iptal sırası, unsupported client/bozuk marker failclosed, native capability yokken deferred skip ve role/scope olmadan generic RP credential seçimleri, bir kez gösterim, hazır session credential action'ları ve mevcut 30 günlük passkey offer delegasyonunu kapsar. Gerçek browser/MS/DB/WebAuthn roundtrip'i bu parçada koşulmadı; Docker/ağır slot kullanılmadı. Yeni page2 ve ardından seçilen native credential RA, mevcut en son sıradaki SkyStaySignedIn'den önce kayıt/priority ile yerleştirilip gerçek scheduler/browser akışıyla kanıtlanmalıdır. B12'nin hareketli reconcile/CI/theme dosyaları bu aşamada değiştirilmedi. Tema/activation ve B12 entegrasyonu olmadan üretim GO değildir.
+## Doğrulama ve açık kapılar
 
-Phase1 yerel sonucu: tüm SPI **650 test, 0 failure, 0 error, 0 skip**; yeni testler + mevcut PasskeyOffer hedef kümesi **81 test**. Bu hazırlık `698573244c11158a9679d6e0845a68412e3bc216` yerel commit'inde kayıtlıdır; PR/CI/gerçek browser runtime henüz yoktur.
+Önceki 255 checkpoint'inin native SDK 18 / hedef 91 ve phase1 650 sonuçları hazırlık kanıtıdır.
+Son 1.27 kaynak: 68 suite / 735 SPI testi, 214 tema testi, TypeScript, gerçek Java flow planner,
+sürüm/shell/YAML kontrolü geçti. Bağımsız hafif shell lifecycle probu keep/idempotency, alias/provider/
+factory/native-action drift refusal, flag-last/flag-first, kontrollü create failure ve closed retry'ı
+ayrı doğrular; bu bir gerçek HTTP/DB/browser kanıtı değildir.
 
-## Phase2 ara kontrol noktası
+`tests/after-sign-up.sh`, aynı pinned PostgreSQL18/Keycloak26.7.4/Mailpit bootstrap'ını kullanır.
+`AfterSignUpMicrosoftFixture` yalnız transport'u taklit eder, gerçek protected provider türünü ve
+native callback guard'ını korur. `AfterSignUpRuntimeProbe` yalnız SKY_HARNESS fixture JAR'ındadır;
+credential sayıları ve mevcut stage'i gözler, test için expired/wrong-tab kapsülü kurar. Üretim
+SPI/image'a bu fixture'lar girmez. Gerçek native parola politikası, passkey, callback/token,
+iptal/conflict, flow readback/half-swap recovery ve yarış kapıları bu paketle doğrulanmalıdır.
+CI'da ayrı `after-sign-up-native` işi, mevcut tam login/B12/B24 gruplarıyla birlikte korunur.
 
-B12 `7776929773f6efb2c7d6e062b2bf2076bcc64a0c` ve kayıt giriş ekranı kaynak checkpoint'i `4077a2dd667c8103aa52d8920b3f075dde85e370`, ayrı normal merge'lerle bu dala alınmıştır. SPI sürümü şimdilik B12'nin 1.25.0 değerinde kalır; sürüm dosyaları, CI, root README ve diğer yazarlardaki ekranlar değiştirilmez.
-
-Native YTÜ seçeneği ayrıca gerçek B12 korumasını dar biçimde doğrular: OBS'nin providerId'si `microsoft` olmalı ve Keycloak'ın kendi `IdentityBrokerService.getIdentityProvider` seçim sırası gerçekten `SkyMicrosoftIdentityProvider` üretmelidir. Yalnız factory adı veya realm'de prompt bulunması yeterli değildir. OBS first-broker override'ı yalnız `null` veya realm default first-broker root'unun tam ID'si olabilir; boş/whitespace ya da başka flow kabul edilmez. Root altında aynı prompt provider'ından tam bir doğrudan REQUIRED execution bulunmalıdır; diğer gerekli B12 adımları korunur. Nested/disabled/conditional prompt, eksik/yanlış provider veya eksik factory halinde yalnız anında okul bağlantısı kapalıdır; generic RP credential seçenekleri bu gate'e bağlanmaz. Provider/factory/guard kaynakları değiştirilmez.
-
-Bu kontrol noktasında registry, reconcile/flag activation, tema sayfaları ve route/type/i18n bağları henüz uygulanmadı. Gerçek signup→native yes/cancel→page2, native parola politikası/passkey/skip, ordinary-login 30 günlük davranış ve HTTP once-only yarışları için runtime kanıtı; B12/B24 entegrasyonu, final sürüm, PR ve exact-head CI kapıları açıktır. Feature default OFF kalır ve bu ara kayıt üretim GO değildir. Kaynak yazımı burada durdurulmuştur.
-
-Son kaynakta üç hedef unit sınıfı **91 test, 0 failure, 0 error, 0 skip** verdi (`AfterSignUpStateTest`:41, `SkyAfterLoginAuthenticatorTest`:23, `SignUpCredentialsRequiredActionTest`:27). Komut yukarıdaki Maven çağrısına `-Dtest=AfterSignUpStateTest,SkyAfterLoginAuthenticatorTest,SignUpCredentialsRequiredActionTest` ekler; log hub scratch `b10-native-link-prototype/b10-phase2-native-gate-unit.log` altındadır. Phase2'de bütün SPI paketi yeniden koşulmadı; 650 test sonucu önceki phase1 kaynak kontrol noktasına aittir.
+Gerçek runtime, Linux görsel karşılaştırmaları, final exact-head CI ve bağımsız son inceleme henüz
+beklemededir; hazır/yayın GO iddiası yoktur. Fiziksel Touch ID bu otomasyonla doğrulanmaz; sanal
+resident authenticator kanıtı ayrı cihaz uyumluluğu sınırıdır, yeni bir insan onayı sorusu değildir.

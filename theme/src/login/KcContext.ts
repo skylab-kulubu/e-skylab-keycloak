@@ -11,6 +11,11 @@ export type KcContextExtension = {
 };
 
 export type KcContextExtensionPerPage = {
+  "sky-after-sign-up-school.ftl": {
+    skyYtuLinkAvailable?: boolean | string;
+    skyYtuLinkDeferredMessage?: string;
+  };
+  "sky-after-sign-up-credentials.ftl": {};
   "sky-existing-account.ftl": {
     skyExistingAccountStage?: string;
     skyExistingAccountIdentifier?: string;

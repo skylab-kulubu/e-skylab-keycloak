@@ -90,6 +90,13 @@ test.describe("visual baselines", () => {
         await expect(page).toHaveScreenshot(`login-password-view-${viewportName}.png`, screenshotOptions);
       });
 
+      test("after-sign-up-school-deferred", async ({ page }) => {
+        await page.goto("/?page=sky-after-sign-up-school.ftl&school=deferred");
+        await stabilise(page, "sky-after-sign-up-school.ftl");
+        await expect(page.locator('[name="sky-sign-up-school-choice"][value="link"]')).toHaveCount(0);
+        await expect(page).toHaveScreenshot(`after-sign-up-school-deferred-${viewportName}.png`, screenshotOptions);
+      });
+
       test("login-registration-entry", async ({ page }) => {
         await page.goto("/?page=login.ftl&registration=on");
         await stabilise(page, "login.ftl");

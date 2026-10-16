@@ -421,12 +421,12 @@ fi
 # production image: only this throwaway Keycloak mounts it, and it additionally requires SKY_HARNESS.
 CURRENT_STAGE='ownership probe jar'
 mkdir -p "$STATE_DIR/ownership-probe"
-docker run --rm --memory 512m --entrypoint bash \
+docker run --rm --memory 512m --user "$(id -u):$(id -g)" --entrypoint bash \
   -v "$SPI_JAR:/fixture/spi.jar:ro" \
   -v "$SCRIPT_DIR/fixtures/EmailAddressOwnershipProbe.java:/fixture/EmailAddressOwnershipProbe.java:ro" \
   -v "$STATE_DIR/ownership-probe:/out" "$IMAGE" -ec '
     jars=(/opt/keycloak/lib/lib/main/*.jar); IFS=:
-    java -m jdk.compiler/com.sun.tools.javac.Main -cp "/fixture/spi.jar:${jars[*]}" -d /out /fixture/EmailAddressOwnershipProbe.java
+    java -m jdk.compiler/com.sun.tools.javac.Main -proc:none -cp "/fixture/spi.jar:${jars[*]}" -d /out /fixture/EmailAddressOwnershipProbe.java
     mkdir -p /out/META-INF/services
     printf "%s\n" com.skylab.account.EmailAddressOwnershipProbe > /out/META-INF/services/org.keycloak.services.resource.RealmResourceProviderFactory
     java -m jdk.jartool/sun.tools.jar.Main --create --file /out/probe.jar -C /out com -C /out META-INF

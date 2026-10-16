@@ -32,7 +32,7 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     existingAccountRateLimited: "Çok sık denedin. Biraz bekleyip yeniden dene.",
     // Login page and shared chrome
     skylabTitle: "SKY LAB'e Hoş Geldin!",
-    skylabDesc: "YTÜ öğrencisiysen okul hesabınla, SKY LAB parolan varsa e-postanla gir.",
+    skylabDesc: "YTÜ hesabınla ya da e-posta adresinle devam et.",
     microsoft: "YTÜ hesabınla devam et",
     microsoftHint: "Microsoft ile",
     // Opens today's password form; the e-mail code page once eskylab-login-ux 08 is live.
@@ -428,7 +428,7 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     existingAccountRateLimited: "Too many attempts. Wait a little and try again.",
     // Login page and shared chrome
     skylabTitle: "Welcome to SKY LAB!",
-    skylabDesc: "Sign in with your YTÜ account, or with your email if you have a SKY LAB password.",
+    skylabDesc: "Continue with your YTÜ account or email address.",
     microsoft: "Continue with your YTÜ account",
     microsoftHint: "via Microsoft",
     continueWithEmail: "Continue with email",

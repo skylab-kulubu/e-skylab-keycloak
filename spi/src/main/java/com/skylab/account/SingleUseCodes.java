@@ -16,7 +16,7 @@ import java.util.function.Predicate;
 import java.util.regex.Pattern;
 
 /**
- * The mailed codes of ADR-0044 (six digits) and CONTEXT's Login code (eight digits), kept in
+ * The mailed codes of ADR-0044 (six digits) and CONTEXT's Login code (six digits), kept in
  * Keycloak's single-use object store so they are shared across cluster nodes and expire on their
  * own. Every code this extension mails is one of these: Account center's Personal e-mail proof and
  * the first-login offer's ({@link PendingEmailChanges}) and the Login code ({@link LoginCodes});

@@ -23,7 +23,9 @@ b10_reconcile() {
   local environment=(-e KEYCLOAK_ADMIN_URL=http://localhost:8080 -e "KEYCLOAK_REALM=$REALM"
     -e KEYCLOAK_RECONCILE_ONLY=email-code-login -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$ADMIN_CONFIG")
   for assignment in "$@"; do environment+=(-e "$assignment"); done
+  trap - ERR
   output=$(docker exec "${environment[@]}" "$CONTAINER" bash /opt/keycloak/sky-config/reconcile-account-center.sh 2>&1) || result=$?
+  trap 'on_error "$LINENO"' ERR
   [[ $result == "$wanted" ]] || { printf '%s\n' "$output" >&2; fail "B10 reconcile exited$result, expected$wanted"; }
   printf '%s\n' "$output"
 }
@@ -111,7 +113,11 @@ mock_person b10-linked@std.yildiz.edu.tr 'Fizik'
 linked_mock=$MOCK_USERNAME
 mock_person b10-conflict@std.yildiz.edu.tr 'Fizik'
 conflict_mock=$MOCK_USERNAME
-holder=$(local_person b10-holder b10.holder@example.invalid)
+# This account only owns the conflicting identity; it needs no password. Create it directly so
+# failure is checked by the caller rather than hidden by a multi-command substitution helper.
+holder=$(kcadm create users -r "$REALM" -i -s username=b10-holder -s enabled=true \
+  -s firstName=Yerel -s lastName=Kişi -s email=b10.holder@example.invalid -s emailVerified=true)
+[[ -n $holder ]] || fail 'no holder account was created for the conflict fixture'
 kcadm create "users/$holder/federated-identity/OBS" -r "$REALM" \
   -b "{\"identityProvider\":\"OBS\",\"userId\":\"$MOCK_ID\",\"userName\":\"$MOCK_USERNAME\"}" >/dev/null
 jq -n --arg baseUrl "http://localhost:$PORT" --arg mailUrl "$MAIL_URL" --arg realm "$REALM" \

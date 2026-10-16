@@ -16,7 +16,7 @@ function authorization() {
   const verifier = randomBytes(32).toString("base64url");
   const state = randomBytes(16).toString("hex"), nonce = randomBytes(16).toString("hex");
   const query = new URLSearchParams({ client_id: config.clientId, response_type: "code", scope: "openid profile email",
-    redirect_uri: config.callbackUrl, state, nonce, code_challenge_method: "S256",
+    redirect_uri: config.callbackUrl, state, nonce, ui_locales: "tr", code_challenge_method: "S256",
     code_challenge: createHash("sha256").update(verifier).digest("base64url"), prompt: "login" });
   return { verifier, state, nonce, url: `${config.baseUrl}/realms/${config.realm}/protocol/openid-connect/auth?${query}` };
 }

@@ -459,6 +459,23 @@ export function getDevKcContext(): KcContext {
     Object.assign(kcContext, getEmailCodePreview(code));
   }
 
+  // Registration is off in the normal preview, just as on a realm without the operator switch.
+  // ?registration=on offers its entry; on the code page ?registration=sign-up also carries the
+  // intent the SPI would put there after the entry's execution-switch POST.
+  const registration = searchParams.get("registration");
+  if (registration === "on" || registration === "sign-up") {
+    kcContext.skyEmailCodeSignUp = "true";
+    if (kcContext.pageId === "login.ftl") {
+      Object.assign(kcContext.auth, { authenticationSelections: [
+        { authExecId: "preview-password", displayName: "sky-username-password-form-display-name" },
+        { authExecId: "preview-email-code", displayName: "sky-email-code-display-name" }
+      ] });
+    }
+    if (kcContext.pageId === "sky-email-code.ftl" && registration === "sign-up") {
+      kcContext.skyEmailCodeIntent = "sign-up";
+    }
+  }
+
   const broker = searchParams.get("broker");
   if (kcContext.pageId === "sky-existing-account.ftl" && broker !== null) {
     if (broker === "candidate") kcContext.skyExistingAccountSchoolCandidate = true;

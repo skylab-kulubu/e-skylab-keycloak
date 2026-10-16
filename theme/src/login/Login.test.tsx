@@ -349,7 +349,7 @@ describe("login page: no account yet (password form)", () => {
     // After the form: the sign-in fields and the submit button come first.
     expect(view.container.querySelector("#kc-login")?.compareDocumentPosition(help)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(within(help).getByText("Hesabın yok mu?")).toBeInTheDocument();
-    expect(help.querySelectorAll("p")[1]?.textContent).toBe("YTÜ öğrencisiysen YTÜ hesabınla devam et.");
+    expect(help.querySelectorAll("p")[1]?.textContent).toBe("YTÜ hesabın varsa YTÜ hesabınla devam et.");
     expect(within(help).getByRole("link", { name: "YTÜ hesabınla devam et" })).toHaveAttribute(
       "href",
       loginContext().social?.providers?.[0]?.loginUrl

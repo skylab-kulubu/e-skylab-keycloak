@@ -35,6 +35,13 @@ describe("Self-registration after the right sign-up code (sky-email-code-sign-up
     cleanup();
   });
 
+  it.each(["form", "ytu", "existing", "unavailable"])("keeps the team backdrop on the %s stage without a wider brand panel", async stage => {
+    const { container } = await renderSignUp({ skySignUpStage: stage });
+    expect(container.querySelectorAll(".sl-legacy-teams")).toHaveLength(2);
+    expect(container.querySelector(".sl-legacy-stack--wide")).toBeNull();
+    expect(container.querySelector(".sl-legacy-brand__copy")).toBeNull();
+  });
+
   it("asks for the first and last name with the proven address read-only and no password", async () => {
     const { container } = await renderSignUp();
 

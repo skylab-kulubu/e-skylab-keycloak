@@ -2257,6 +2257,18 @@ SKY_ACCOUNT_COMPOSE_FILE="$COMPOSE_FILE" \
   SKY_ACCOUNT_CLIENT_SECRET="$client_secret" \
   "$SCRIPT_DIR/sky-account-contract.sh"
 
+# Bilet 11 runs against the exact optimized candidate too. No test-only clock provider enters
+# the production image: expiry is exercised by the standalone harness and unit tests instead.
+CURRENT_STAGE='sky-account Sudo e-mail code contract'
+SUDO_EMAIL_BASE_URL=http://127.0.0.1:18080 \
+  SUDO_EMAIL_ADMIN_PASSWORD=integration-admin-password \
+  SUDO_EMAIL_MAIL_URL=http://127.0.0.1:18025 \
+  SUDO_EMAIL_MAIL_CONTAINER=mailpit \
+  SUDO_EMAIL_SKYMAIL_CONTAINER="$("${COMPOSE[@]}" ps -q skymail)" \
+  SUDO_EMAIL_KEYCLOAK_CONTAINER="$("${COMPOSE[@]}" ps -q keycloak)" \
+  SUDO_EMAIL_PLAYWRIGHT_MODULE="$SCRIPT_DIR/../theme/node_modules/@playwright/test/index.mjs" \
+  node "$SCRIPT_DIR/sudo-email-code.mjs"
+
 # The passkey ceremony runs a Chromium virtual authenticator against the SPI: register a
 # passkey from an allowed my.-like origin, see it in GET identity, log in on Keycloak's own
 # login page with it (RP-ID compatibility), sudo by passkey, and prove the refusals. It runs

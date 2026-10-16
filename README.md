@@ -1170,3 +1170,21 @@ listelenir.
     <img src="https://raw.githubusercontent.com/skylab-kulubu/skylab-assets/main/logos/arge/weblab/weblab-colored.svg" alt="SKY LAB WebLab" width="150" />
   </a>
 </div>
+
+
+### E-posta koduyla Sudo (SPI 1.27.0)
+
+Hesap Merkezi’nde parola, passkey ve TOTP’si olmayan kişi doğrulanmış birincil
+adresine altı haneli kod alıp hassas işlemi onaylayabilir. YTÜ bağlantılı kişiye
+Microsoft yedeği de sunulur. `identity.sudoEmailCodeAvailable` capability’si
+uygunluğu bildirir; send ve verify uygunluğu ayrıca yeniden kontrol eder.
+Kod realm/kullanıcı/oturuma ve o anki birincile bağlı, 10 dakika, 5 yanlışta
+geçersiz, tek kullanımlıdır. Gönderim 3/saat, doğrulama Sudo bütçesi ve mevcut
+brute-force korumasıyla sınırlıdır.
+
+Sözleşme: [sky-account API](docs/sky-account-api.md),
+[yerel/sandbox kabul planı](docs/sudo-email-code-test-plan.md).
+Önce SkyMail `keycloak.login-code` şablonunun `purpose=sudo` dalı hazır olmalı;
+ardından Keycloak, sonra account-center yayımlanır. Bu sürüm kayıt ayarını
+kendiliğinden açmaz. Endpoint’lerin yüklenmesi uygun mevcut hesaplara API’de
+e-posta Sudo imkânı verir; bağımsız aç/kapat ayarı yoktur.

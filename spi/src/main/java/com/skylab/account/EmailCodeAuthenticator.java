@@ -719,7 +719,7 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
         }
         UserModel user = null;
         for (int attempt = 0; attempt < 3 && user == null; attempt++) {
-            String username = usernames.choose(session, realm, address);
+            String username = usernames.choose(session, realm, firstName, lastName);
             try {
                 user = accounts.open(session, realm, username, address, firstName, lastName);
             } catch (SignUpAccounts.Refused refused) {

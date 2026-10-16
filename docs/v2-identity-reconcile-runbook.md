@@ -3559,7 +3559,7 @@ koruması) canlıda olmadan açılmaz** (spec S8, §10).
 
 ### Nasıl çalışır
 
-SPI 1.22.0. Ayar, realm'in `sky-email-code` yürütmesinin Keycloak yapılandırmasındadır (Admin Console →
+SPI 1.23.0. Ayar, realm'in `sky-email-code` yürütmesinin Keycloak yapılandırmasındadır (Admin Console →
 Authentication → `browser plus passkey` → `sky-email-code` → ayar dişlisi; ad `sky email code sign-up`,
 alan `sign-up`). Yürütme ve ayar realm'e özel olduğu için sandbox ve canlı ayrı açılır.
 
@@ -3594,11 +3594,13 @@ alan `sign-up`). Yürütme ve ayar realm'e özel olduğu için sandbox ve canlı
   kişi değil SPI yazar). Hesap:
   - `email` = adres, `emailVerified=true`; `personalEmail` = adres, `personalEmailVerifiedAt` = an
     (`PersonalEmailProof`, Hesap Merkezi'nin kanıtıyla aynı kayıt);
-  - kullanıcı adı adresin yerel kısmından (`SignUpUsernames`): `+etiket` atılır, Türkçe ve aksanlı
-    harfler ASCII'ye, başka karakter noktaya; Hesap Merkezi alfabesi `[a-z0-9._]{3,30}`; çakışmada
-    `ada2`, `ada3`… (kısa adda `a01`, `ab1`); 100 denemeden sonra rastgele 6 rakam. Faz 0 olgusu
-    (olgular-faz0 §2.2): 117 hesabın 105'inde kullanıcı adı e-posta değil, bu yüzden adres kullanıcı adı
-    olmaz. Kişi Hesap Merkezi'nden değiştirebilir;
+  - kullanıcı adı formdaki **Ad ve Soyad** alanlarından `ad.soyad` (`SignUpUsernames`, Yusuf 2026-10-15):
+    Türkçe ve aksanlı harfler ASCII'ye, boşluk ve ayırıcılar noktaya; Hesap Merkezi alfabesi
+    `[a-z0-9._]{3,30}`. Uzun adlarda iki alandan da parça korunur. ASCII'ye dönmeyen geçerli Unicode
+    adlarda kullanılabilen bölüm, hiçbiri dönmezse nötr `uye` kullanılır; e-posta hiçbir zaman girdi
+    olmaz. Çakışmada `ada.lovelace2`, `ada.lovelace3`…; 100 denemeden sonra rastgele 6 rakam.
+    Ayrı kullanıcı adı sorusu yok; kişi Hesap Merkezi'nden değiştirebilir. İsimleri kabul eden son
+    merci realm'in User Profile doğrulamalarıdır;
   - parola, TOTP, passkey yok; grup yok; rol yalnız realm varsayılanı (`default-roles-e-skylab`);
   - `REGISTER` olayı (`register_method=email_code`, `sky_method=email_code`, kullanıcı adı ve adres:
     Keycloak'ın kendi kaydı gibi); kişi girer, `LOGIN` olayı `sky_method=email_code`. Oturum notu
@@ -3639,15 +3641,15 @@ kullanılmaz. Satırlar:
 
 ### Üretim sırası
 
-1. SPI 1.22.0'ı taşıyan imaj yayımlanır (`main` → `production`, Touch ID kapısı). Ayar kapalı olduğu için
+1. SPI 1.23.0'ı taşıyan imaj yayımlanır (`main` → `production`, Touch ID kapısı). Ayar kapalı olduğu için
    hiçbir şey değişmez.
 2. Tema: ilk ekrandaki "Hesabın yok mu? E-postayla hesap aç" bağlantısı ve adres sayfasının "Hesap aç"
    başlığı (bilet 08b'nin `emailCodeChoice.ts`'ine `sky-email-code-intent=sign-up` eklenir; parola formu
    `skyEmailCodeSignUp`'ı, kod sayfası `skyEmailCodeSignUp` ve `skyEmailCodeIntent`'i taşır). Bu PR'da yok
    (08b ile çakışmasın diye); 08b birleştikten sonra küçük bir tema PR'ı. O olmadan da kayıt çalışır:
    "E-postayla devam et"e hesabı olmayan adres yazan kişi formu görür.
-3. Bilet 11 ve 12 canlıda olmalı (yukarıda). Bilet 10 (kayıt sonrası sorular) ve 13 (hoş geldin postası)
-   aynı yayında olmalı.
+3. Bilet 11 ve 12 canlıda olmalı (yukarıda). Bilet 10 (kayıt sonrası sorular), 13 (hoş geldin postası)
+   ve 24 (ardışık yanlış kod sayacı) de açılış bağımlılığıdır. Kayıt bu bağımlılıklar bitmeden açılmaz.
 4. Sandbox önce, §22'deki operatör oturumuyla (production sunucusunda; sandbox realm'inde e-posta kodu
    alt akışı §29'daki gibi kurulu olmalı):
 
@@ -3668,7 +3670,7 @@ kullanılmaz. Satırlar:
 
 `KEYCLOAK_EMAIL_CODE_SIGN_UP=off` (aynı komut): hesabı olmayan adrese yeniden hiçbir şey gitmez; o anda
 formda bekleyen kişi `unavailable` görür. Açılmış hesaplar kalır ve kodla girer. Acil yol: Admin Console
-→ Authentication → `browser plus passkey` → `sky-email-code` ayarı → `sign-up` kapalı. 1.22.0'dan eski bir
+→ Authentication → `browser plus passkey` → `sky-email-code` ayarı → `sign-up` kapalı. 1.23.0'dan eski bir
 imaja dönülecekse önce `off` (eski imaj ayarı tanımaz ama yapılandırma zararsızdır; `off` yine de temiz
 bırakır). §29'un `off`'u (alt akış DISABLED) kaydı da kapatır.
 
@@ -3679,7 +3681,7 @@ dev kipinde, SPI jar'ı, production'ın akış biçimi ve User Profile'ı, SkyMa
 `keep` adımsızken ve kapalıyken bildirir; adımsız `on` yazmadan reddedilir; `on` uzlaştırıcı kimliğiyle
 ayarı kurar, ikinci `on` değiştirmez, `registrationAllowed` kapalı kalır; kapalıyken hesapsız adrese posta
 yok; yeni adres: kayıt kodu SkyMail'e (`purpose=signup`, bağlantısız), form, hesap (doğrulanmış birincil ve
-kanıtlı kişisel adres, `yeni.kisi` kullanıcı adı, kimlik bilgisi, grup ve ek rol yok, `REGISTER` ve `LOGIN`
+kanıtlı kişisel adres, `ayse.yilmaz` kullanıcı adı, kimlik bilgisi, grup ve ek rol yok, `REGISTER` ve `LOGIN`
 olayları, core JIT'in okuduğu claim'ler), sonra kodla yeniden giriş; dolu kullanıcı adına sayı eklenir;
 yasak karakterli ad formu tutar, hesap açmaz; hesaplı ve hesapsız adreste kod sayfası aynı (süreler
 yazdırılır: ilk yerel koşuda medyan 17,7 ms ve 14,2 ms); "Hesap aç" + var olan hesap: giriş kodu,

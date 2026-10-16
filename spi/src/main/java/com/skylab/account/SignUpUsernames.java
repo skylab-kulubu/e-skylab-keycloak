@@ -11,20 +11,19 @@ import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 /**
- * The username of an account opened by Self-registration (eskylab-login-ux 09). Faz 0 counted the
- * usernames of the realm (olgular-faz0 §2.2): 105 of 117 are not e-mail addresses, so the address
- * itself is never the username. It is derived from the address's local part instead, in the
- * Account center's username alphabet ({@link IdentityResource#USERNAME}: {@code [a-z0-9._]}, 3 to 30):
- * the {@code +tag} dropped, Turkish and accented letters folded to ASCII, anything else a dot, no
- * repeated or framing dots. A clash gets a number ({@code ada}, {@code ada2}, {@code ada3}, …; a base
- * shorter than three is padded: {@code a01}, {@code ab1}); after {@value #NUMBERED_TRIES} candidates
- * a random six-digit suffix is tried. The person may change it in Account center (the cooldown
- * starts with the first change).
+ * The username of a Self-registration account (eskylab-login-ux 09): firstName.lastName from the
+ * validated form, never the e-mail address (Yusuf, 2026-10-15). Turkish and accented letters fold
+ * to ASCII in Account center's alphabet ({@link IdentityResource#USERNAME}: {@code [a-z0-9._]},
+ * 3 to 30). Separators become dots; long names retain part of both names. Names without usable
+ * ASCII letters get a neutral fallback, so Unicode names allowed by User Profile still work
+ * without exposing any part of the address. A clash gets a number ({@code ada.lovelace2}, …);
+ * after {@value #NUMBERED_TRIES} candidates a random six-digit suffix is tried. The person may
+ * change it in Account center (the cooldown starts with the first change).
  *
  * <p>A chosen name is claimed in Keycloak's single-use store for a minute first
- * ({@link org.keycloak.models.SingleUseObjectProvider#putIfAbsent}, atomic across nodes), so two
- * sign-ups at the same moment with the same local part never pick the same name; the database's
- * unique username stays the last word.
+ * ({@link org.keycloak.models.SingleUseObjectProvider#putIfAbsent}, atomic across nodes), so
+ * simultaneous sign-ups with the same names pick different usernames; the database's unique
+ * username stays the last word.
  */
 final class SignUpUsernames {
 
@@ -43,12 +42,12 @@ final class SignUpUsernames {
     private static final SecureRandom RANDOM = new SecureRandom();
 
     /**
-     * A free name for {@code address}, claimed for this sign-up.
+     * A free name from the form, claimed for this sign-up.
      *
      * @throws IllegalStateException when not one of the candidates is free (practically never)
      */
-    String choose(KeycloakSession session, RealmModel realm, String address) {
-        String base = base(address);
+    String choose(KeycloakSession session, RealmModel realm, String firstName, String lastName) {
+        String base = base(firstName, lastName);
         for (String candidate : candidates(base).limit(NUMBERED_TRIES).toList()) {
             if (isFree(session, realm, candidate)) {
                 return candidate;
@@ -69,24 +68,26 @@ final class SignUpUsernames {
                 && session.singleUseObjects().putIfAbsent(CLAIM_PREFIX + realm.getId() + ":" + candidate, CLAIM_SECONDS);
     }
 
-    /** The local part of {@code address} in the username alphabet, at most {@value #MAX_LENGTH} long. */
-    static String base(String address) {
-        String local = address == null ? "" : address.strip();
-        int at = local.lastIndexOf('@');
-        if (at >= 0) {
-            local = local.substring(0, at);
+    /** Both names in the username alphabet, at most {@value #MAX_LENGTH} long. */
+    static String base(String firstName, String lastName) {
+        String first = part(firstName);
+        String last = part(lastName);
+        if (first.isEmpty() || last.isEmpty()) {
+            String usable = first + last;
+            return usable.isEmpty() ? FALLBACK : trim(usable.substring(0, Math.min(usable.length(), MAX_LENGTH)));
         }
-        int tag = local.indexOf('+');
-        if (tag >= 0) {
-            local = local.substring(0, tag);
-        }
-        String folded = MARKS.matcher(Normalizer.normalize(foldTurkish(local), Normalizer.Form.NFD)).replaceAll("")
+        int available = MAX_LENGTH - 1; // The dot between the names.
+        int firstBudget = Math.min(first.length(), Math.max(available - last.length(), (available + 1) / 2));
+        first = trim(first.substring(0, firstBudget));
+        last = trim(last.substring(0, Math.min(last.length(), available - first.length())));
+        return first + "." + last;
+    }
+
+    private static String part(String raw) {
+        String name = IdentityResource.normalisePersonName(raw == null ? "" : raw);
+        String folded = MARKS.matcher(Normalizer.normalize(foldTurkish(name), Normalizer.Form.NFD)).replaceAll("")
                 .toLowerCase(Locale.ROOT);
-        String name = trim(DOT_RUNS.matcher(OUTSIDE_ALPHABET.matcher(folded).replaceAll(".")).replaceAll("."));
-        if (name.length() > MAX_LENGTH) {
-            name = trim(name.substring(0, MAX_LENGTH));
-        }
-        return name.isEmpty() ? FALLBACK : name;
+        return trim(DOT_RUNS.matcher(OUTSIDE_ALPHABET.matcher(folded).replaceAll(".")).replaceAll("."));
     }
 
     /**

@@ -31,7 +31,7 @@
 #   - a new address: the sign-up code goes to it through SkyMail's keycloak.login-code (purpose=signup,
 #     subjectKey skySignUpCodeSubject, no link), the right code opens the sign-up form, the names open
 #     the account: the address as verified Primary e-mail and proven Personal e-mail
-#     (personalEmailVerifiedAt), the username from its local part, no credential, no group, only the
+#     (personalEmailVerifiedAt), the username from the names on the form, no credential, no group, only the
 #     realm's default roles, a REGISTER event (register_method and sky_method email_code), a LOGIN
 #     event with sky_method=email_code; the token carries what core's JIT reads (sub, email,
 #     email_verified, given_name, family_name, preferred_username) and no school_email (the welcome
@@ -540,7 +540,7 @@ account=$(user_by_email yeni.kisi@example.invalid)
 [[ $(jq length <<<"$account") == 1 ]] || fail 'not exactly one account for the address'
 account=$(jq -c '.[0]' <<<"$account")
 new_id=$(jq -r '.id' <<<"$account")
-jq -e '.username == "yeni.kisi" and .email == "yeni.kisi@example.invalid" and .emailVerified == true and .enabled == true
+jq -e '.username == "ayse.yilmaz" and .email == "yeni.kisi@example.invalid" and .emailVerified == true and .enabled == true
     and .firstName == "Ayşe" and .lastName == "Yılmaz"
     and .attributes.personalEmail == ["yeni.kisi@example.invalid"]
     and (.attributes.personalEmailVerifiedAt[0] | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
@@ -554,11 +554,11 @@ kcadm get "users/$new_id/role-mappings/realm" -r "$REALM" | jq -e 'map(.name) ==
   || fail 'the new account has client roles'
 kcadm get events -r "$REALM" -q type=REGISTER -q "user=$new_id" \
   | jq -e 'length == 1 and .[0].details.register_method == "email_code" and .[0].details.sky_method == "email_code"
-      and .[0].details.username == "yeni.kisi"' >/dev/null || fail 'no REGISTER event with register_method and sky_method email_code'
+      and .[0].details.username == "ayse.yilmaz"' >/dev/null || fail 'no REGISTER event with register_method and sky_method email_code'
 kcadm get events -r "$REALM" -q type=LOGIN -q "user=$new_id" | jq -e '.[0].details.sky_method == "email_code"' >/dev/null \
   || fail 'the LOGIN event after the sign-up does not say sky_method=email_code'
 jq -e --arg sub "$new_id" '.sub == $sub and .email == "yeni.kisi@example.invalid" and .email_verified == true
-    and .given_name == "Ayşe" and .family_name == "Yılmaz" and .preferred_username == "yeni.kisi"
+    and .given_name == "Ayşe" and .family_name == "Yılmaz" and .preferred_username == "ayse.yilmaz"
     and (has("school_email") | not) and (has("university") | not)' <<<"$claims" >/dev/null \
   || { printf '%s\n' "$claims" >&2; fail "the token does not carry what core's JIT reads"; }
 open_code_page yeni-again
@@ -569,13 +569,13 @@ CODES+=("$code")
 type_code "$code"
 finish
 [[ $LANDED == app ]] || fail "the new account did not sign in with a Login code ($(page_summary))"
-printf '    code (purpose=signup) -> form -> account: verified Primary and Personal e-mail, username yeni.kisi, no credential, group or extra role; REGISTER and LOGIN events; JIT claims; signs in again by code\n'
+printf '    code (purpose=signup) -> form -> account: verified Primary and Personal e-mail, username ayse.yilmaz, no credential, group or extra role; REGISTER and LOGIN events; JIT claims; signs in again by code\n'
 
 # ---------------------------------------------------------------------------------------------------
 stage 'usernames and names'
 person ada.lovelace someone@example.invalid >/dev/null
-sign_up_new Ada.Lovelace@other.invalid Ada Lovelace lovelace
-user_by_email ada.lovelace@other.invalid | jq -e '.[0].username == "ada.lovelace2"' >/dev/null \
+sign_up_new private.mailbox@other.invalid Ada Lovelace lovelace
+user_by_email private.mailbox@other.invalid | jq -e '.[0].username == "ada.lovelace2"' >/dev/null \
   || fail 'a taken username was not numbered'
 open_code_page bad-name
 before=$(code_count badname@example.invalid)
@@ -588,10 +588,12 @@ sign_up '<script>' 'Yılmaz'
 on_form kc-email-code-sign-up-form || fail "a refused name did not keep the form ($(page_summary))"
 [[ $(sign_up_error) == first_name_invalid ]] || fail "a prohibited character gave '$(sign_up_error)', not first_name_invalid"
 [[ $(user_by_email badname@example.invalid | jq length) == 0 ]] || fail 'an account was opened with a refused name'
-sign_up 'Bora' 'Kaya'
+sign_up '李' '王'
 finish
 [[ $LANDED == app ]] || fail "the corrected names did not open the account ($(page_summary))"
-printf '    a taken username gets a number (ada.lovelace2); a prohibited character keeps the form, nothing opened\n'
+user_by_email badname@example.invalid | jq -e '.[0].username == "uye" and .[0].firstName == "李" and .[0].lastName == "王"' >/dev/null \
+  || fail 'valid Unicode names were not preserved with a neutral username'
+printf '    names determine the username independently of the address; collisions get a number; prohibited names open nothing; Unicode names keep their profile with a neutral username\n'
 
 # ---------------------------------------------------------------------------------------------------
 stage 'the same page for an address with and without an account'

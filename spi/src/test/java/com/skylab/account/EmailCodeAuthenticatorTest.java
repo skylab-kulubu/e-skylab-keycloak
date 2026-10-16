@@ -1266,7 +1266,7 @@ class EmailCodeAuthenticatorTest {
 
         tab.signUp("  Ayşe  ", " Yılmaz ");
 
-        assertEquals(List.of(Map.of("username", "new.person", "address", "new.person@example.com",
+        assertEquals(List.of(Map.of("username", "ayse.yilmaz", "address", "new.person@example.com",
                 "firstName", "Ayşe", "lastName", "Yılmaz")), opened);
         assertTrue(tab.succeeded);
         assertEquals("new-1", tab.signedIn.getId());
@@ -1274,7 +1274,7 @@ class EmailCodeAuthenticatorTest {
         assertEquals("true", tab.notes.get(EmailCodeSignUp.SIGNED_UP_NOTE), "ticket 10 reads it");
         assertNull(tab.notes.get(EmailCodeSignUp.ADDRESS_NOTE), "the form cannot open a second account");
         Map<String, String> register = tab.lastEvent(EventType.REGISTER);
-        assertEquals(Map.of(Details.USERNAME, "new.person", Details.EMAIL, "new.person@example.com",
+        assertEquals(Map.of(Details.USERNAME, "ayse.yilmaz", Details.EMAIL, "new.person@example.com",
                 Details.REGISTER_METHOD, "email_code", "sky_method", "email_code"), register);
         assertTrue(tab.clonedSucceeded.get(tab.clonedTypes.lastIndexOf(EventType.REGISTER)));
         verify(tab.event).detail("sky_method", "email_code");
@@ -1305,6 +1305,38 @@ class EmailCodeAuthenticatorTest {
         assertTrue(opened.isEmpty());
         tab.signUp("Ayşe", "Yılmaz");
         assertEquals(1, opened.size());
+    }
+
+    @Test
+    void invisibleNamesAreMissingAndTheLimitAppliesAfterNormalisation() {
+        signUpOn = true;
+        Browser tab = provenSignUp("root-names", "private.mailbox@example.com");
+        for (String blank : List.of("\u200b\u200c\ufeff", "\u00a0\u2007\u202f", " \t ")) {
+            tab.signUp(blank, "Kaya");
+            assertEquals("first_name_missing", tab.signUpError());
+            tab.signUp("Ada", blank);
+            assertEquals("last_name_missing", tab.signUpError());
+        }
+        tab.signUp("a".repeat(65), "Kaya");
+        assertEquals("first_name_invalid", tab.signUpError());
+        assertTrue(opened.isEmpty());
+
+        tab.signUp("  Ay\u200bşe\u00a0  Nur  ", " Yılmaz ");
+        assertEquals("ayse.nur.yilmaz", opened.get(0).get("username"));
+        assertEquals("Ayşe Nur", opened.get(0).get("firstName"));
+    }
+
+    @Test
+    void unicodeNamesUseANeutralUsernameAndNeverThePrivateMailbox() {
+        signUpOn = true;
+        Browser tab = provenSignUp("root-unicode", "private.mailbox@example.com");
+
+        tab.signUp("李", "王");
+
+        assertEquals("uye", opened.get(0).get("username"));
+        assertEquals("李", opened.get(0).get("firstName"));
+        assertEquals("王", opened.get(0).get("lastName"));
+        assertTrue(tab.succeeded);
     }
 
     @Test
@@ -1505,19 +1537,19 @@ class EmailCodeAuthenticatorTest {
 
         tab.signUp("Ayşe", "Yılmaz");
 
-        assertEquals("ada2", opened.get(0).get("username"));
+        assertEquals("ayse.yilmaz2", opened.get(0).get("username"));
         assertTrue(tab.succeeded);
     }
 
     @Test
     void anExistingUsernameIsNeverReusedForTheNewAccount() {
         signUpOn = true;
-        person("ada", "ada", "someone@example.com");
+        person("ada", "ayse.yilmaz", "someone@example.com");
         Browser tab = provenSignUp("root-new", "ada@example.org");
 
         tab.signUp("Ayşe", "Yılmaz");
 
-        assertEquals("ada2", opened.get(0).get("username"));
+        assertEquals("ayse.yilmaz2", opened.get(0).get("username"));
     }
 
     // Spec §7.2: at the overall daily budget sign-up codes stop; sign-in codes go on.

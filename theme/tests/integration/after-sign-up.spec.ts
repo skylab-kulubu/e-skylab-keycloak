@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
 
 const path = process.env.B10_BROWSER_CONFIG;
@@ -28,7 +28,11 @@ async function fixture(browser: Browser, native: boolean) {
   await context.addInitScript(() => {
     if (window.PublicKeyCredential) Object.defineProperty(window.PublicKeyCredential, "isConditionalMediationAvailable", { value: async () => false });
   });
-  expect((await context.request.post(`${probe}/scope?native=${native}`)).ok()).toBe(true);
+  const scope = await context.request.post(`${probe}/scope?native=${native}`);
+  expect(scope.ok()).toBe(true);
+  const readback = await scope.json();
+  expect(readback.configuredClientFound === true).toBe(true);
+  expect(readback.fullScopeAllowed === native).toBe(true);
   const page = await context.newPage();
   return { context, page };
 }
@@ -152,10 +156,70 @@ async function withCleanup(page: Page, body: () => Promise<void>, cleanups: (() 
   if (cleanupFailed) throw cleanupError;
 }
 
+// Failure-only observation: project each field; never serialize the response/context itself.
+async function nativeCapabilityDiagnostic(page: Page) {
+  const booleanFields = ["nativeLinkSupported", "supportedRelyingParty", "credentialsActionEnabled", "idpLinkActionEnabled",
+    "configuredClientMatches", "clientEnabled", "clientStandardFlow", "clientOidc", "clientFullScopeAllowed", "userEnabled",
+    "userIsServiceAccount", "accountClientFound", "manageAccountRoleFound", "userHasManageAccount", "clientHasManageAccountScope",
+    "manageAccountLinksRoleFound", "userHasManageAccountLinks", "clientHasManageAccountLinksScope", "obsFound", "obsEnabled",
+    "obsMicrosoft", "brokerRootFound", "promptCountAtLeast65"] as const;
+  const enumFields = {
+    status: ["ok", "auth_missing", "user_missing", "client_missing", "read_error"],
+    brokerOverride: ["not_applicable", "none", "same_root", "other"],
+    selectedProvider: ["missing", "guarded_microsoft", "other", "unavailable"]
+  } as const;
+  const server = async (): Promise<Record<string, boolean | number | string>> => {
+    try {
+      const tab = new URL(page.url()).searchParams.get("tab_id");
+      if (!tab) return { probeStatus: "missing_tab" };
+      const response = await page.context().request.get(`${probe}/native-capability?tab=${encodeURIComponent(tab)}`, { timeout: 1000 });
+      if (!response.ok()) return { probeStatus: "http_error" };
+      const raw: unknown = await response.json();
+      if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return { probeStatus: "invalid" };
+      const source = raw as Record<string, unknown>, safe: Record<string, boolean | number | string> = { probeStatus: "ok" };
+      for (const field of booleanFields) if (typeof source[field] === "boolean") safe[field] = source[field];
+      for (const field of ["promptCount", "requiredLeafPromptCount"] as const) {
+        const value = source[field];
+        if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 65) safe[field] = value;
+      }
+      for (const field of ["status", "brokerOverride", "selectedProvider"] as const) {
+        const value = source[field];
+        if (typeof value === "string" && (enumFields[field] as readonly string[]).includes(value)) safe[field] = value;
+      }
+      return safe;
+    } catch { return { probeStatus: "unavailable" }; }
+  };
+  const rendered = async () => {
+    try {
+      const value: unknown = await page.evaluate(() => {
+        const context = (window as Window & { kcContext?: { skyYtuLinkAvailable?: unknown } }).kcContext;
+        const value = context?.skyYtuLinkAvailable;
+        return value === true ? "boolean_true" : value === false ? "boolean_false"
+          : value === "true" ? "string_true" : value === "false" ? "string_false"
+          : value === undefined ? "missing" : "other";
+      });
+      return typeof value === "string" && ["boolean_true", "boolean_false", "string_true", "string_false", "missing", "other"].includes(value)
+        ? value : "other";
+    } catch { return "unavailable" as const; }
+  };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const diagnostic = await Promise.race([
+      Promise.all([server(), rendered()]).then(([capability, renderedAvailability]) => ({ capability, renderedAvailability })),
+      new Promise<{ diagnosticStatus: "timeout" }>(resolve => { timer = setTimeout(() => resolve({ diagnosticStatus: "timeout" }), 1500); })
+    ]);
+    console.log("B10 native capability diagnostic:", JSON.stringify(diagnostic));
+    writeFileSync(test.info().outputPath("native-capability-safe-diagnostic.json"), JSON.stringify(diagnostic) + "\n", { mode: 0o600 });
+  } finally { clearTimeout(timer); }
+}
+
 async function beginNativeLink(page: Page) {
   await test.step("Native school link is offered and selected", async () => {
     const link = page.locator('[name="sky-sign-up-school-choice"][value="link"]');
-    await expect(link).toBeVisible();
+    try { await expect(link).toBeVisible(); } catch (error) {
+      try { await nativeCapabilityDiagnostic(page); } catch { /* Keep the original visibility failure even if observation fails. */ }
+      throw error;
+    }
     await link.click();
   });
   await test.step("Native account-link confirmation", () => nativeConfirmation(page));

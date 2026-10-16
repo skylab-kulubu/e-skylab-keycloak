@@ -401,7 +401,11 @@ kopyalanan boşluklar kabul edilir. On dakika yaşar, tam son anda geçersizdir,
 beş yanlışta ölür, tek kullanımlıdır. Yeniden gönderim aynı oturumun önceki
 kodunu değiştirir. Kayıt yalnız tuzlu SHA-256 özeti ve kısa ömürlü payload tutar;
 `sky-account:sudo-email-code:` namespace'i login/signup/link ve personal-email
-kodlarından ayrıdır. Realm + `sub` + bearer `sid` anahtar bağıdır, hedef o anki
+kodlarından ayrıdır. Realm + `sub` + bearer `sid` anahtar bağı active-handle pointer
+tutar; her gönderimin kod kaydı rastgele ayrı handle taşır. Pointer yalnız
+başarılı teslimden sonra yayınlanır; eski gönderimin hatası yeni teslimin
+kodunu silemez. Consume sonrası pointer yeniden kontrol edilir; yeniden
+gönderim sırasında emekli edilen eski kod grant vermez. Hedef o anki
 birincile bağlanır. Gönderim ve doğrulama faktör/primary uygunluğunu yeniden
 kontrol eder; arada faktör eklenirse kod silinir, primary değişirse eski kod
 geçersizdir. Başka kullanıcı veya oturumun kodu kullanılamaz.

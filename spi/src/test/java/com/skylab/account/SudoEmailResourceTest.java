@@ -131,7 +131,7 @@ class SudoEmailResourceTest {
             throw new org.keycloak.email.EmailException("delivery failed");
         });
         assertEquals(503, failed.sendEmailCode("{}").getStatus());
-        assertTrue(entries.isEmpty());
+        assertTrue(entries.values().stream().noneMatch(notes -> notes.containsKey("codeHash")));
         verify(request, never()).issueSudo(any(), any());
     }
     @Test void realMailAdapterUsesTheSudoTemplateAndPurposeWithoutRecipientOverride() throws Exception {
@@ -142,6 +142,36 @@ class SudoEmailResourceTest {
                 argThat(attributes -> "sudo".equals(attributes.get("purpose"))
                         && attributes.get("code").toString().matches("[0-9]{6}")
                         && Integer.valueOf(10).equals(attributes.get("codeExpiration"))), eq("old@example.com"));
+    }
+
+    @Test void lateFailedSendCannotKillTheNewerDeliveredCode() {
+        SudoResource first = new SudoResource(request, (c, address, code) -> {
+            assertEquals(202, resource.sendEmailCode("{}").getStatus());
+            throw new org.keycloak.email.EmailException("late delivery failure");
+        });
+        assertEquals(503, first.sendEmailCode("{}").getStatus());
+        assertEquals(200, resource.withEmailCode("{\"code\":\"" + sentCode.get() + "\"}").getStatus());
+    }
+
+    @Test void factorAddedDuringConsumptionCannotObtainAGrant() {
+        assertEquals(202, resource.sendEmailCode("{}").getStatus());
+        when(store.remove(anyString())).thenAnswer(call -> {
+            Map<String, String> removed = entries.remove(call.getArgument(0));
+            when(credentials.isConfiguredFor("password")).thenReturn(true);
+            return removed;
+        });
+        assertEquals(403, resource.withEmailCode("{\"code\":\"" + sentCode.get() + "\"}").getStatus());
+        verify(request, never()).issueSudo(any(), any());
+    }
+    @Test void primaryChangedDuringConsumptionCannotObtainAGrant() {
+        assertEquals(202, resource.sendEmailCode("{}").getStatus());
+        when(store.remove(anyString())).thenAnswer(call -> {
+            Map<String, String> removed = entries.remove(call.getArgument(0));
+            when(user.getEmail()).thenReturn("new@example.com");
+            return removed;
+        });
+        assertEquals(404, resource.withEmailCode("{\"code\":\"" + sentCode.get() + "\"}").getStatus());
+        verify(request, never()).issueSudo(any(), any());
     }
 
 }

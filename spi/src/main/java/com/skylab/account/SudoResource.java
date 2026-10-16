@@ -11,7 +11,6 @@ import org.keycloak.WebAuthnConstants;
 import org.jboss.logging.Logger;
 import org.keycloak.email.EmailException;
 import org.keycloak.email.EmailTemplateProvider;
-import org.keycloak.common.util.Time;
 import java.util.HashMap;
 import org.keycloak.authentication.authenticators.util.AuthenticatorUtils;
 import org.keycloak.credential.CredentialModel;
@@ -101,18 +100,25 @@ public final class SudoResource {
             String address = requireEmailCodeEligibility(caller, codes);
             requireNotLockedOut(caller, PasswordCredentialModel.TYPE);
             request.limit(RateLimiter.SUDO_EMAIL_SEND, caller);
-            long expiresAt = Time.currentTime() + SudoEmailCodes.TTL_SECONDS;
-            String code = codes.issue(request.realm().getId(), caller.user().getId(), caller.userSession().getId(), address);
+            SudoEmailCodes.Issued pending = codes.issue(request.realm().getId(), caller.user().getId(), caller.userSession().getId(), address);
             try {
-                emailCodeMail.send(caller, address, code);
+                emailCodeMail.send(caller, address, pending.code());
             } catch (EmailException | RuntimeException exception) {
-                codes.discard(request.realm().getId(), caller.user().getId(), caller.userSession().getId());
+                codes.discard(pending);
                 // Sender exceptions may contain the address/code, so never attach them to logs.
                 LOG.warn("sky-account could not send a sudo e-mail code");
                 throw Problems.emailNotSent().exception();
             }
+            if (!address.equals(requireEmailCodeEligibility(caller, codes))) {
+                codes.discard(pending);
+                throw Problems.noPendingSudoEmailCode().exception();
+            }
+            if (!codes.activate(request.realm().getId(), caller.user().getId(), caller.userSession().getId(), pending)) {
+                codes.discard(pending);
+                throw Problems.emailNotSent().exception();
+            }
             ObjectNode response = JsonSerialization.mapper.createObjectNode();
-            response.put("expiresAt", AccountRequest.isoSeconds(expiresAt));
+            response.put("expiresAt", AccountRequest.isoSeconds(pending.expiresAt()));
             return AccountRequest.ok(202, response);
         });
     }
@@ -138,6 +144,10 @@ public final class SudoResource {
                 // reporting in the password bucket makes the realm's existing lockout effective.
                 recordFailedAttempt(caller, PasswordCredentialModel.TYPE);
                 throw Problems.invalidSudoEmailCode(result.attemptsLeft()).exception();
+            }
+            // Consumption may race a factor/primary mutation; never turn the retired proof into sudo.
+            if (!address.equals(requireEmailCodeEligibility(caller, codes))) {
+                throw Problems.noPendingSudoEmailCode().exception();
             }
             recordSuccessfulAttempt(caller, PasswordCredentialModel.TYPE);
             SudoTokens.Issued issued = request.issueSudo(caller, SudoTokens.Method.EMAIL_CODE);

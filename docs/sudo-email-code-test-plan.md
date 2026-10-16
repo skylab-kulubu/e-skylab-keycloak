@@ -32,3 +32,20 @@ Gerçek Keycloak için ağır runtime yuvası ayrıca koordine edilir.
 Yayın: purpose=sudo SkyMail şablonu hazır → Keycloak (fiziksel Touch ID dahil
 mevcut kapılar) → Account center. Üretim e-posta gönderimi, template seed,
 realm akışı açma ve yayın bu kod değişikliğinin parçası değildir.
+
+
+Otomatik gerçek Keycloak kabulü: `mvn -f spi/pom.xml package` ardından
+`bash tests/sudo-email-code.sh` (yerel pinned stock imajlar önceden bulunmalı;
+`theme/node_modules/@playwright/test` veya `SUDO_EMAIL_PLAYWRIGHT_MODULE` gerekir).
+Wrapper kendine ait üç container/network/tmpfs açıp kapatır; imaj çekmez. Native
+single-use store, SkyMail fixture ve SMTP Mailpit, gerçek virtual passkey,
+3/saat + 10/15dk bütçesi, brute-force kilidi, primary ve pending-personal hedefleri,
+sub/sid, replay ve 10dk expiry sınanır. Clock kontrolü yalnız ayrı test JAR'ında
+ve `SKY_HARNESS=1` + özel fixture realm'inde bulunur; production SPI'da olmadığı
+wrapper tarafından kontrol edilir. Yerel wrapper ek `sudo-email-code-clock.mjs` modülünü açıkça kaydeder; +601s
+saat provası bu ayrı yerel kabul modülündedir. CI ve release `spi` integration
+grubu optimize aday imajında **standart API senaryolarını** çalıştırır; clock
+modülünü test listesine kaydetmez. CI sonucuna TTL saat testi koşmuş gibi bir
+PASS veya koşulan teste SKIP yazılmaz. TTL kanıtı yerel saat provası ve birim
+testleridir. Yayın adayının JAR production class’ları ile yerel provanın
+class’larının byte eşliği ayrıca kaydedilir.

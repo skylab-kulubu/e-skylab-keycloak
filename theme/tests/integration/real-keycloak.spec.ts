@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { expect, test, type Browser, type BrowserContext, type Page, type Request } from "@playwright/test";
+import { readFileSync, writeFileSync } from "node:fs";
+import { expect, test, type Browser, type BrowserContext, type CDPSession, type Page, type Request, type TestInfo } from "@playwright/test";
 
 type IntegrationConfig = {
   baseUrl: string;
@@ -138,6 +138,37 @@ async function expectCallback(
   }
 }
 
+type WebAuthnCounts = { createStarted: number; getStarted: number; added: number; asserted: number; clicks: number };
+
+async function recordWebAuthnFailure(page: Page, cdp: CDPSession, authenticatorId: string,
+  phase: string, counts: WebAuthnCounts, testInfo: TestInfo) {
+  // Keep this artifact a whitelist. Raw traces, HTML, URLs, hidden fields and credential
+  // payloads can contain protocol/session values and are deliberately not attached here.
+  const pageShape = page.evaluate(() => {
+    const clean = (text: string) => text.replace(/https?:\/\/\S+/g, "[url]")
+      .replace(/[\w.+-]+@[\w.-]+/g, "[address]").replace(/\b[0-9]{6}\b/g, "[redacted]")
+      .replace(/\b[A-Za-z0-9_-]{24,}\b/g, "[redacted]").slice(0, 160);
+    const identifier = (text: string) => /^[a-zA-Z0-9_.:-]{0,80}$/.test(text) ? text : "[dynamic]";
+    return {
+      heading: clean(document.querySelector("h1")?.textContent?.trim() ?? ""),
+      forms: Array.from(document.forms).map(form => identifier(form.id)),
+      controls: Array.from(document.querySelectorAll<HTMLElement>("button,input,select"))
+        .filter(element => element.getClientRects().length > 0)
+        .map(element => ({ tag: element.tagName, id: identifier(element.id),
+          name: identifier(element.getAttribute("name") ?? ""), type: identifier(element.getAttribute("type") ?? "") }))
+    };
+  });
+  const [shape, virtualCredentials] = await Promise.all([
+    withTimeout(pageShape, "Diagnostic page observation unavailable", 500).catch(() => null),
+    withTimeout(cdp.send("WebAuthn.getCredentials", { authenticatorId })
+      .then(result => result.credentials.length), "Diagnostic credential observation unavailable", 500).catch(() => null)
+  ]);
+  const diagnostic = { phase, counts: { ...counts }, virtualCredentials, page: shape };
+  const safeJson = JSON.stringify(diagnostic, null, 2);
+  console.log("WebAuthn safe failure diagnostic:", safeJson);
+  writeFileSync(testInfo.outputPath("webauthn-safe-diagnostic.json"), safeJson);
+}
+
 function decodeBase32(input: string): Buffer {
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
   let bits = "";
@@ -170,7 +201,7 @@ function generateTotp(secret: string): string {
   return String(binary % 1_000_000).padStart(6, "0");
 }
 
-test("real Keycloak 26.7 login and AIA contracts", async ({ browser }) => {
+test("real Keycloak 26.7 login and AIA contracts", async ({ browser }, testInfo) => {
   test.setTimeout(300_000);
 
   await test.step("password login, theme locale and keyboard", async () => {
@@ -248,15 +279,28 @@ test("real Keycloak 26.7 login and AIA contracts", async ({ browser }) => {
     type CredentialGetProbe = { mediation: string | null };
     let resolveNextCredentialGet: ((probe: CredentialGetProbe) => void) | undefined;
     let explicitPasskeyClickCount = 0;
+    let phase = "registration-setup";
+    const counts: WebAuthnCounts = { createStarted: 0, getStarted: 0, added: 0, asserted: 0, clicks: 0 };
+    await context.exposeBinding("__skyLabCredentialCreateStarted", () => { counts.createStarted += 1; });
     await context.exposeBinding("__skyLabCredentialGetStarted", (_source, mediation: unknown) => {
+      counts.getStarted += 1;
       resolveNextCredentialGet?.({ mediation: typeof mediation === "string" ? mediation : null });
       resolveNextCredentialGet = undefined;
     });
     await context.exposeBinding("__skyLabExplicitPasskeyClicked", () => {
       explicitPasskeyClickCount += 1;
+      counts.clicks += 1;
     });
     await context.addInitScript(() => {
       if (typeof CredentialsContainer !== "undefined") {
+        const originalCreate = CredentialsContainer.prototype.create;
+        CredentialsContainer.prototype.create = function (...args: Parameters<CredentialsContainer["create"]>) {
+          const notify = (globalThis as typeof globalThis & {
+            __skyLabCredentialCreateStarted?: () => Promise<void>;
+          }).__skyLabCredentialCreateStarted;
+          void notify?.();
+          return Reflect.apply(originalCreate, this, args) as ReturnType<CredentialsContainer["create"]>;
+        };
         const originalGet = CredentialsContainer.prototype.get;
         CredentialsContainer.prototype.get = function (...args: Parameters<CredentialsContainer["get"]>) {
           const notify = (globalThis as typeof globalThis & {
@@ -294,66 +338,76 @@ test("real Keycloak 26.7 login and AIA contracts", async ({ browser }) => {
         automaticPresenceSimulation: true
       }
     });
+    cdp.on("WebAuthn.credentialAdded", () => { counts.added += 1; });
+    cdp.on("WebAuthn.credentialAsserted", () => { counts.asserted += 1; });
     page.on("dialog", dialog => dialog.accept("CI virtual passkey"));
 
-    const state = await openAction(page, "webauthn-register-passwordless");
-    await signIn(page);
-    const conditionalMediationAvailable = await page.evaluate(async () =>
-      typeof PublicKeyCredential !== "undefined" &&
-      typeof PublicKeyCredential.isConditionalMediationAvailable === "function" &&
-      (await PublicKeyCredential.isConditionalMediationAvailable())
-    );
-    await page.locator("#authenticateWebAuthnButton").click();
-    await expectCallback(callbackReached, state, "success");
-
-    // The callback request proves that Keycloak completed the AIA contract.
-    // Do not make this isolated integration test depend on the public Account
-    // Center host committing its navigation; stop the outbound load before
-    // reusing the same page and virtual authenticator for passwordless login.
-    await page.goto("about:blank", { waitUntil: "commit" });
-
-    await context.clearCookies();
-    // The registration submit deliberately uses the same Keycloak element id;
-    // only clicks from the following passwordless-authentication ceremony count.
-    explicitPasskeyClickCount = 0;
-    const nextCredentialGet = new Promise<CredentialGetProbe>(resolve => {
-      resolveNextCredentialGet = resolve;
-    });
-    const credentialAsserted = new Promise<{ authenticatorId: string }>(resolve => {
-      cdp.once("WebAuthn.credentialAsserted", payload => resolve(payload));
-    });
-    const passwordlessAuthorization = await createAuthorizationUrl();
-    const passwordlessCallbackReached = waitForCallbackRequest(page);
-    await page.goto(passwordlessAuthorization.url);
-
-    if (conditionalMediationAvailable) {
-      // A supported browser must enter the conditional ceremony. If KC fails to
-      // invoke credentials.get, fail instead of masking that regression with an
-      // explicit click. The init-script probe is installed before navigation,
-      // so this remains deterministic even under slow emulation.
-      const credentialGetProbe = await withTimeout(
-        nextCredentialGet,
-        "Keycloak did not start conditional WebAuthn mediation within 45 seconds"
+    try {
+      const state = await openAction(page, "webauthn-register-passwordless");
+      await signIn(page);
+      const conditionalMediationAvailable = await page.evaluate(async () =>
+        typeof PublicKeyCredential !== "undefined" &&
+        typeof PublicKeyCredential.isConditionalMediationAvailable === "function" &&
+        (await PublicKeyCredential.isConditionalMediationAvailable())
       );
-      expect(credentialGetProbe.mediation).toBe("conditional");
-    } else {
-      const passkeyButton = page.locator("#authenticateWebAuthnButton");
-      await expect(passkeyButton).toBeVisible();
-      await passkeyButton.click();
-    }
-    const [assertedCredential] = await Promise.all([
-      withTimeout(
-        credentialAsserted,
-        "Chromium did not emit WebAuthn.credentialAsserted within 45 seconds"
-      ),
-      expectCallback(passwordlessCallbackReached, passwordlessAuthorization.state)
-    ]);
-    expect(assertedCredential.authenticatorId).toBe(authenticatorId);
-    expect(explicitPasskeyClickCount).toBe(conditionalMediationAvailable ? 0 : 1);
+      await page.locator("#authenticateWebAuthnButton").click();
+      phase = "registration-callback";
+      await test.step("WebAuthn registration AIA callback", () => expectCallback(callbackReached, state, "success"));
 
-    await cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId });
-    await cdp.send("WebAuthn.disable");
-    await context.close();
+      // The callback request proves that Keycloak completed the AIA contract.
+      // Do not make this isolated integration test depend on the public Account
+      // Center host committing its navigation; stop the outbound load before
+      // reusing the same page and virtual authenticator for passwordless login.
+      await page.goto("about:blank", { waitUntil: "commit" });
+
+      phase = "resident-sign-in-setup";
+      await context.clearCookies();
+      // The registration submit deliberately uses the same Keycloak element id;
+      // only clicks from the following passwordless-authentication ceremony count.
+      explicitPasskeyClickCount = 0;
+      const nextCredentialGet = new Promise<CredentialGetProbe>(resolve => {
+        resolveNextCredentialGet = resolve;
+      });
+      const credentialAsserted = new Promise<{ authenticatorId: string }>(resolve => {
+        cdp.once("WebAuthn.credentialAsserted", payload => resolve(payload));
+      });
+      const passwordlessAuthorization = await createAuthorizationUrl();
+      const passwordlessCallbackReached = waitForCallbackRequest(page);
+      await page.goto(passwordlessAuthorization.url);
+
+      if (conditionalMediationAvailable) {
+        // A supported browser must enter the conditional ceremony. If KC fails to
+        // invoke credentials.get, fail instead of masking that regression with an
+        // explicit click. The init-script probe is installed before navigation,
+        // so this remains deterministic even under slow emulation.
+        const credentialGetProbe = await withTimeout(
+          nextCredentialGet,
+          "Keycloak did not start conditional WebAuthn mediation within 45 seconds"
+        );
+        expect(credentialGetProbe.mediation).toBe("conditional");
+      } else {
+        const passkeyButton = page.locator("#authenticateWebAuthnButton");
+        await expect(passkeyButton).toBeVisible();
+        await passkeyButton.click();
+      }
+      phase = "resident-sign-in-callback";
+      const [assertedCredential] = await Promise.all([
+        withTimeout(
+          credentialAsserted,
+          "Chromium did not emit WebAuthn.credentialAsserted within 45 seconds"
+        ),
+        test.step("WebAuthn resident sign-in callback", () => expectCallback(passwordlessCallbackReached, passwordlessAuthorization.state))
+      ]);
+      expect(assertedCredential.authenticatorId).toBe(authenticatorId);
+      expect(explicitPasskeyClickCount).toBe(conditionalMediationAvailable ? 0 : 1);
+
+      await cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId });
+      await cdp.send("WebAuthn.disable");
+      await context.close();
+    } catch (error) {
+      try { await recordWebAuthnFailure(page, cdp, authenticatorId, phase, counts, testInfo); } catch { /* Preserve the original test failure. */ }
+      throw error;
+    }
   });
 
   await test.step("UPDATE_PASSWORD complete", async () => {

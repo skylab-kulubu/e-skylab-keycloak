@@ -495,6 +495,15 @@ jobs:
       - name: Run Keycloak, OIDC and RabbitMQ contracts
         run: bash tests/run-integration.sh
 
+      - name: Keep only the whitelisted WebAuthn failure diagnostic
+        if: failure() && matrix.group == 'spi'
+        uses: actions/upload-artifact@v4
+        with:
+          name: spi-webauthn-safe-diagnostic
+          path: theme/test-results/**/webauthn-safe-diagnostic.json
+          if-no-files-found: ignore
+          retention-days: 7
+
   # One check named integration, green only when every group is.
   integration:
     runs-on: ubuntu-latest

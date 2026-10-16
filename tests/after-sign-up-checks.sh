@@ -27,7 +27,7 @@ b10_reconcile() {
   [[ $result == "$wanted" ]] || { printf '%s\n' "$output" >&2; fail "B10 reconcile exited$result, expected$wanted"; }
   printf '%s\n' "$output"
 }
-b10_flag() { kcadm get "realms/$REALM" --fields attributes | jq -r '.attributes.skyAfterSignUpEnabled//"missing"'; }
+b10_flag() { kcadm get "realms/$REALM" --fields 'attributes(*)' | jq -r '.attributes.skyAfterSignUpEnabled//"missing"'; }
 
 stage 'B10 native fixture and production-shaped email flow'
 kcadm update identity-provider/instances/OBS -r "$REALM" -s providerId=microsoft >/dev/null

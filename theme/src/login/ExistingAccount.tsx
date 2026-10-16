@@ -32,7 +32,7 @@ export default function ExistingAccount({ kcContext, i18n }: Props) {
     : error ? msgStr("existingAccountTryAgain") : undefined;
 
   return (
-    <LegacyFrame {...getLegacyChromeProps(i18n)} mainId="sl-existing-account-main"
+    <LegacyFrame {...getLegacyChromeProps(i18n)} teams mainId="sl-existing-account-main"
       titleId="sl-existing-account-title" title={title} description={msgStr("existingAccountDescription")}>
       <form action={kcContext.url.loginAction} method="post" className="sl-email-code"
         data-sky-existing-account-stage={stage}>

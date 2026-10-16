@@ -52,9 +52,8 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     skylabSchoolPasswordOr: "ya da",
     skylabSchoolPasswordSupport: "BİDB'ye başvur",
     skylabDomainNotice: "Giriş adresi her zaman e.yildizskylab.com'dur.",
-    // The password form for someone without an account. Self-registration is not live yet
-    // (ADR-0063: by e-mail code only, never Keycloak's registration page); see Login.tsx.
-    skylabNoAccountYtu: "YTÜ öğrencisiysen",
+    // The password form's alternative while e-mail registration is unavailable; see Login.tsx.
+    skylabNoAccountYtu: "YTÜ hesabın varsa",
     skylabNoAccountYtuLink: "YTÜ hesabınla devam et",
     passkeyChoice: "Erişim anahtarı ile giriş yap",
     skipToContent: "İçeriğe geç",
@@ -135,6 +134,10 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
 
     // "E-postayla devam et": sign-in with a code mailed to the account (SPI sky-email-code, eskylab-login-ux 08)
     emailCodeTitle: "E-postayla devam et",
+    emailCodeSignUpLink: "E-postayla hesap aç",
+    emailCodeSignUpTitle: "Hesap aç",
+    emailCodeSignUpDescription:
+      "E-posta adresini ya da kullanıcı adını yaz. Hesabın varsa giriş yaparsın; yoksa e-posta adresini doğruladıktan sonra hesabını açabilirsin.",
     emailCodeDescription:
       "E-posta adresini ya da kullanıcı adını yaz; hesabının e-posta adresine 6 haneli bir giriş kodu gönderelim.",
     emailCodeCodeDescription: "E-postana gelen 6 haneli kodu yaz.",
@@ -442,7 +445,7 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     skylabSchoolPasswordOr: "or",
     skylabSchoolPasswordSupport: "contact YTÜ IT",
     skylabDomainNotice: "The sign-in address is always e.yildizskylab.com.",
-    skylabNoAccountYtu: "If you're a YTÜ student,",
+    skylabNoAccountYtu: "If you have a YTÜ account,",
     skylabNoAccountYtuLink: "continue with your YTÜ account",
     passkeyChoice: "Sign in with a passkey",
     skipToContent: "Skip to content",
@@ -520,6 +523,10 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     signUpUnavailableText: "No account can be created with this address right now. Try another address or contact the club admins.",
 
     emailCodeTitle: "Continue with email",
+    emailCodeSignUpLink: "Create an account with email",
+    emailCodeSignUpTitle: "Create an account",
+    emailCodeSignUpDescription:
+      "Type your email or username. If you have an account, you will sign in; otherwise, verify your email to create one.",
     emailCodeDescription: "Type your email or username; we will send a 6-digit sign-in code to your account's email.",
     emailCodeCodeDescription: "Type the 6-digit code from your email.",
     emailCodeIdentifierLabel: "Your email or username",

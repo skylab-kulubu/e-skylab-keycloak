@@ -45,6 +45,8 @@ export default function Login(props: LoginProps) {
   // With the e-mail code step on (eskylab-login-ux 08) the e-mail button goes there, and that page's
   // "Parolanla gir" comes back here straight to the password view, the field filled.
   const emailCodeExecution = emailCodeExecutionId(kcContext);
+  const signUpExecution = !isBrokerProof && (kcContext.skyEmailCodeSignUp === "true" || kcContext.skyEmailCodeSignUp === true)
+    ? emailCodeExecution : undefined;
   const [passwordChoice] = useState(takePasswordChoice);
   const [view, setView] = useState<"choice" | "password">(
     hasCredentialsError || passwordChoice !== undefined || isBrokerProof ? "password" : "choice"
@@ -277,12 +279,10 @@ export default function Login(props: LoginProps) {
 
                 {/*
                   No link to Keycloak's registration page, even if the realm allowed it: ADR-0063 keeps it
-                  closed and opens accounts by e-mail code only. Until then a YTÜ student's account opens on
-                  the first YTÜ sign-in, so that is the only way offered here. When self-registration
-                  (eskylab-login-ux 09) is live, this block becomes "Hesabın yok mu? E-postayla hesap aç"
-                  into the "E-postayla devam et" door.
+                  closed and opens accounts by e-mail code only. Without that step's registration
+                  option, someone with a YTÜ account can still continue through Microsoft.
                 */}
-                {microsoftProvider !== undefined && !isBrokerProof && (
+                {microsoftProvider !== undefined && !isBrokerProof && signUpExecution === undefined && (
                   <div className="sl-legacy-no-account">
                     <p className="sl-legacy-no-account__title">{msgStr("noAccount")}</p>
                     <p>
@@ -291,6 +291,18 @@ export default function Login(props: LoginProps) {
                     </p>
                   </div>
                 )}
+              </div>
+            )}
+
+            {signUpExecution !== undefined && (
+              <div className="sl-legacy-no-account">
+                <p className="sl-legacy-no-account__title">{msgStr("noAccount")}</p>
+                <p>
+                  <button className="sl-text-button" type="button"
+                    onClick={() => chooseExecution(url.loginAction, signUpExecution, "sign-up")}>
+                    {msgStr("emailCodeSignUpLink")}
+                  </button>
+                </p>
               </div>
             )}
 

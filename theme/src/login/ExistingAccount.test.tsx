@@ -15,6 +15,13 @@ describe("first Microsoft login existing-account protection", () => {
   beforeAll(() => window.history.replaceState(null, "", "/?viewMode=docs"));
   afterEach(cleanup);
 
+  it.each(["question", "identifier", "code", "unavailable"])("keeps the team backdrop on the %s stage without a wider brand panel", async stage => {
+    const { container } = await page({ skyExistingAccountStage: stage });
+    expect(container.querySelectorAll(".sl-legacy-teams")).toHaveLength(2);
+    expect(container.querySelector(".sl-legacy-stack--wide")).toBeNull();
+    expect(container.querySelector(".sl-legacy-brand__copy")).toBeNull();
+  });
+
   it("offers an explicit existing-account decision and an explicit new-account decision", async () => {
     const { container } = await page({ skyExistingAccountStage: "question" });
     expect(container.querySelector("h1")).toHaveTextContent("Zaten bir SKY LAB hesabın var mı?");

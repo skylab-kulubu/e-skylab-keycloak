@@ -153,6 +153,9 @@ public final class ReconcileJson {
             case "user-profile" -> System.exit(userProfile(requireFile(args), readStdin(), out));
             case "password-form" -> System.exit(passwordForm(args, readStdin(), out));
             case "first-broker-login" -> System.exit(firstBrokerLogin(args, readStdin(), out));
+            case "existing-account-flow" -> System.exit(existingAccountFlow(args, readStdin(), out));
+            case "existing-account-providers" -> System.exit(existingAccountProviders(readStdin()));
+            case "copy-broker-review-config" -> copyBrokerReviewConfig(args, readStdin(), out);
             case "email-code-flow" -> System.exit(emailCodeFlow(args, readStdin(), out));
             case "config-value" -> System.exit(configValue(args, readStdin(), out));
             case "role-groups" -> roleGroups(requireFile(args), out);
@@ -741,7 +744,7 @@ public final class ReconcileJson {
             if (topLevel) {
                 topLevelPriorities.add(node.path("priority").asInt());
             }
-            if ("idp-review-profile".equals(provider)) {
+            if ("idp-review-profile".equals(provider) || "sky-broker-review-profile".equals(provider)) {
                 if (!topLevel) {
                     return refuse("the review profile step is not at the top level of the flow");
                 }
@@ -754,6 +757,11 @@ public final class ReconcileJson {
             } else if ("idp-email-verification".equals(provider)) {
                 verifications.add(node);
             }
+        }
+        // A stopped, config-preserving wrapper replacement may briefly leave these two known
+        // reviews side by side. The existing-account planner completes it after this step.
+        if (reviews.size() == 2 && reviews.stream().map(n -> n.path("providerId").asText()).distinct().count() == 2) {
+            reviews.removeIf(n -> "idp-review-profile".equals(n.path("providerId").asText()));
         }
         if (reviews.size() != 1) {
             return refuse("expected exactly one review profile step, found " + reviews.size());
@@ -795,6 +803,128 @@ public final class ReconcileJson {
         String describe() {
             return subFlow ? "subflow '" + alias + "'" : provider;
         }
+    }
+
+    private static List<Node> brokerNodes(JsonNode executions) {
+        List<Node> nodes = new ArrayList<>();
+        Map<Integer, String> flowAtLevel = new TreeMap<>();
+        for (JsonNode n : executions) {
+            int level = n.path("level").asInt();
+            String parent = level == 0 ? "-" : flowAtLevel.getOrDefault(level - 1, "?");
+            boolean sub = n.path("authenticationFlow").asBoolean(false);
+            if (sub) flowAtLevel.put(level, n.path("flowId").asText());
+            nodes.add(new Node(n.path("id").asText(), parent, n.path("priority").asInt(),
+                    n.path("requirement").asText(), n.path("providerId").asText(""), sub,
+                    n.path("flowId").asText(""), n.path("displayName").asText("")));
+        }
+        return nodes;
+    }
+
+    private static int existingAccountProviders(JsonNode providers) {
+        if (!providers.isArray()) return refuse("authenticator providers could not be read");
+        for (String id : List.of("sky-existing-account-prompt", "sky-broker-review-profile", "sky-existing-account-proven")) {
+            boolean found = false;
+            for (JsonNode provider : providers) if (id.equals(provider.path("id").asText())) found = true;
+            if (!found) return refuse("the running image has no " + id + "; deploy the reviewed image first");
+        }
+        return 0;
+    }
+
+    private static void copyBrokerReviewConfig(String[] args, JsonNode source, PrintStream out) throws IOException {
+        if (args.length != 2 || !source.isObject()) usage();
+        ObjectNode body = MAPPER.createObjectNode();
+        body.put("alias", args[1]);
+        ObjectNode config = source.path("config").isObject() ? source.path("config").deepCopy() : MAPPER.createObjectNode();
+        config.put("update.profile.on.first.login", "missing");
+        body.set("config", config);
+        out.println(MAPPER.writeValueAsString(body));
+    }
+
+    /** Plans only the known additions to the editable first-broker-login copy. */
+    private static int existingAccountFlow(String[] args, JsonNode executions, PrintStream out) throws IOException {
+        if (args.length != 4 || !executions.isArray() || !List.of("on", "off").contains(args[1])) usage();
+        boolean on = "on".equals(args[1]);
+        List<Node> nodes = brokerNodes(executions);
+        List<Node> ytu = nodes.stream().filter(n -> "sky-ytu-first-login".equals(n.provider())).toList();
+        List<Node> creates = nodes.stream().filter(n -> "idp-create-user-if-unique".equals(n.provider())).toList();
+        List<Node> reviews = nodes.stream().filter(n -> List.of("idp-review-profile", "sky-broker-review-profile")
+                .contains(n.provider())).toList();
+        List<Node> prompts = nodes.stream().filter(n -> "sky-existing-account-prompt".equals(n.provider())).toList();
+        List<Node> proven = nodes.stream().filter(n -> "sky-existing-account-proven".equals(n.provider())).toList();
+        if (reviews.isEmpty() || reviews.size() > 2 || creates.size() != 1 || prompts.size() > 1 || proven.size() > 1
+                || reviews.stream().anyMatch(n -> !"-".equals(n.parent()) || !"REQUIRED".equals(n.requirement()))
+                || reviews.stream().map(Node::provider).distinct().count() != reviews.size()) {
+            return refuse("existing-account protection requires one known top-level review and one native Create User If Unique");
+        }
+        Node create = creates.getFirst();
+        if (!"ALTERNATIVE".equals(create.requirement()) || "?".equals(create.parent()) || "-".equals(create.parent())) {
+            return refuse("Create User If Unique is not an alternative in a known subflow");
+        }
+        if (prompts.stream().anyMatch(n -> !"-".equals(n.parent()))
+                || proven.stream().anyMatch(n -> !create.parent().equals(n.parent()))) {
+            return refuse("existing-account steps are outside their dedicated positions");
+        }
+        JsonNode builtIn = MAPPER.readTree(Files.readString(Path.of(args[3]), StandardCharsets.UTF_8));
+        List<JsonNode> base = new ArrayList<>();
+        boolean hadReview = false;
+        for (JsonNode n : executions) {
+            String provider = n.path("providerId").asText("");
+            if (List.of("sky-ytu-first-login", "sky-existing-account-prompt", "sky-existing-account-proven")
+                    .contains(provider)) continue;
+            if (List.of("idp-review-profile", "sky-broker-review-profile").contains(provider)) {
+                if (hadReview) continue;
+                hadReview = true;
+            }
+            base.add(n);
+        }
+        if (!builtIn.isArray() || builtIn.size() != base.size()) return refuse("the native first-broker-login shape has changed");
+        for (int i = 0; i < base.size(); i++) {
+            if (!shapeOf(base.get(i), true).equals(shapeOf(builtIn.get(i), true))) {
+                return refuse("native broker step " + (i + 1) + " has changed; inspect the flow before enabling protection");
+            }
+        }
+        String wantedReview = on ? "sky-broker-review-profile" : "idp-review-profile";
+        Node desired = reviews.stream().filter(n -> wantedReview.equals(n.provider())).findFirst().orElse(null);
+        Node old = reviews.stream().filter(n -> !wantedReview.equals(n.provider())).findFirst().orElse(null);
+        Node anchor = desired != null ? desired : old;
+        if (on && (ytu.size() != 1 || !"-".equals(ytu.getFirst().parent())
+                || !"REQUIRED".equals(ytu.getFirst().requirement())
+                || ytu.getFirst().priority() >= anchor.priority())) {
+            return refuse("turn on the school-primary first-login step before existing-account protection");
+        }
+        if (!on) {
+            prompts.forEach(n -> out.println("remove\t" + n.id()));
+            proven.forEach(n -> out.println("remove\t" + n.id()));
+        }
+        String desiredConfig = "-", oldConfig = "-";
+        for (JsonNode n : executions) {
+            if (desired != null && desired.id().equals(n.path("id").asText())) desiredConfig = n.path("authenticationConfig").asText("-");
+            if (old != null && old.id().equals(n.path("id").asText())) oldConfig = n.path("authenticationConfig").asText("-");
+        }
+        out.println(String.join("\t", "review", desired == null ? "-" : desired.id(), args[2], wantedReview,
+                Integer.toString(anchor.priority()), oldConfig.isBlank() ? "-" : oldConfig,
+                desiredConfig.isBlank() ? "-" : desiredConfig));
+        if (old != null) out.println("remove\t" + old.id());
+        if (on) {
+            int promptPriority = anchor.priority() - 1;
+            int ytuPriority = anchor.priority() - 2;
+            if (nodes.stream().anyMatch(n -> "-".equals(n.parent()) && n.priority() == ytuPriority
+                    && !"sky-ytu-first-login".equals(n.provider()))) {
+                return refuse("the reserved priority before the existing-account question is occupied");
+            }
+            brokerEnsure(out, ytu.getFirst(), args[2], "sky-ytu-first-login", ytuPriority, "REQUIRED");
+            brokerEnsure(out, proven.isEmpty() ? null : proven.getFirst(), create.parent(),
+                    "sky-existing-account-proven", create.priority() - 1, "ALTERNATIVE");
+            brokerEnsure(out, prompts.isEmpty() ? null : prompts.getFirst(), args[2],
+                    "sky-existing-account-prompt", promptPriority, "REQUIRED");
+        }
+        return 0;
+    }
+
+    private static void brokerEnsure(PrintStream out, Node present, String parent, String provider, int priority, String requirement) {
+        boolean same = present != null && present.priority() == priority && requirement.equals(present.requirement());
+        out.println(String.join("\t", "ensure", present == null ? "-" : present.id(), parent, provider,
+                Integer.toString(priority), requirement, same ? "same" : "change"));
     }
 
     private static int emailCodeFlow(String[] args, JsonNode executions, PrintStream out) {
@@ -951,9 +1081,18 @@ public final class ReconcileJson {
         otherNode.forEach(other::add);
         List<JsonNode> executions = new ArrayList<>();
         for (JsonNode node : stdin) {
-            if (step == null || !step.equals(node.path("providerId").asText(""))) {
+            String provider = node.path("providerId").asText("");
+            if ("sky-ytu-first-login".equals(step)
+                    && List.of("sky-existing-account-prompt", "sky-existing-account-proven").contains(provider)) {
+                // Exact position and requirement are checked below, before ignoring these known additions.
+                continue;
+            }
+            if (step == null || !step.equals(provider)) {
                 executions.add(node);
             }
+        }
+        if ("sky-ytu-first-login".equals(step) && !safeBrokerProtectionShape(stdin)) {
+            return refuse("existing-account protection has an unexpected position or requirement");
         }
         boolean copy = step != null;
         int count = Math.max(other.size(), executions.size());
@@ -970,12 +1109,31 @@ public final class ReconcileJson {
     private static String shapeOf(JsonNode execution, boolean copy) {
         boolean subFlow = execution.path("authenticationFlow").asBoolean(false);
         String provider = execution.path("providerId").asText("?");
+        if (copy && "sky-broker-review-profile".equals(provider)) provider = "idp-review-profile";
         String requirement = copy && "idp-email-verification".equals(provider)
                 ? "any requirement" : execution.path("requirement").asText("?");
         return (subFlow ? "sub-flow" : "step " + provider)
                 + " (level " + execution.path("level").asInt()
                 + (copy ? "" : ", index " + execution.path("index").asInt())
                 + ", " + requirement + ")";
+    }
+
+    private static boolean safeBrokerProtectionShape(JsonNode executions) {
+        List<Node> nodes = brokerNodes(executions);
+        List<Node> prompt = nodes.stream().filter(n -> "sky-existing-account-prompt".equals(n.provider())).toList();
+        List<Node> proven = nodes.stream().filter(n -> "sky-existing-account-proven".equals(n.provider())).toList();
+        List<Node> review = nodes.stream().filter(n -> "sky-broker-review-profile".equals(n.provider())).toList();
+        if (prompt.isEmpty() && proven.isEmpty() && review.isEmpty()) return true;
+        if (prompt.size() != 1 || proven.size() != 1 || review.size() != 1) return false;
+        Node question = prompt.getFirst(), proof = proven.getFirst(), profile = review.getFirst();
+        List<Node> ytu = nodes.stream().filter(n -> "sky-ytu-first-login".equals(n.provider())).toList();
+        List<Node> create = nodes.stream().filter(n -> "idp-create-user-if-unique".equals(n.provider())).toList();
+        return ytu.size() == 1 && create.size() == 1
+                && "-".equals(question.parent()) && "REQUIRED".equals(question.requirement())
+                && "-".equals(profile.parent()) && "REQUIRED".equals(profile.requirement())
+                && ytu.getFirst().priority() < question.priority() && question.priority() < profile.priority()
+                && create.getFirst().parent().equals(proof.parent()) && "ALTERNATIVE".equals(proof.requirement())
+                && proof.priority() < create.getFirst().priority();
     }
 
     // ------------------------------------------------------------------ config-value

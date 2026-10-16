@@ -4,6 +4,7 @@ import type { ClassKey } from "keycloakify/login";
 import type { KcContext } from "./KcContext";
 import EmailCodeSignUp from "./EmailCodeSignUp";
 import EmailCode from "./EmailCode";
+import ExistingAccount from "./ExistingAccount";
 import HandoffFailed from "./HandoffFailed";
 import Login from "./Login";
 import LoginPageExpired from "./LoginPageExpired";
@@ -25,6 +26,10 @@ export default function KcPage(props: { kcContext: KcContext }) {
   const { i18n } = useI18n({ kcContext });
 
   usePasskeyRememberMeBridge(kcContext);
+
+  if (kcContext.pageId === "sky-existing-account.ftl") {
+    return <ExistingAccount kcContext={kcContext} i18n={i18n} />;
+  }
 
   if (kcContext.pageId === "login.ftl") {
     return (

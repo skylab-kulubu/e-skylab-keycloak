@@ -386,7 +386,7 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
      * One slot of the overall daily budget. It never stops a sign-in code; the claim that takes the
      * middle slot and the one that takes the last raise the operator alarm, each exactly once a day.
      */
-    private void countTowardTheDailyBudget(AuthenticationFlowContext context) {
+    void countTowardTheDailyBudget(AuthenticationFlowContext context) {
         int dailyLimit = settings.dailyLimit();
         int slot = new RateLimiter(context.getSession().singleUseObjects())
                 .claimSlot(RateLimiter.loginCodesPerDay(dailyLimit), context.getRealm().getId());
@@ -916,7 +916,7 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
     // ------------------------------------------------------------------------------- budgets
 
     /** The budgets every request for a code spends: this sign-in session's and its IP class's. */
-    private static boolean claimRequestBudgets(AuthenticationFlowContext context) {
+    static boolean claimRequestBudgets(AuthenticationFlowContext context) {
         KeycloakSession session = context.getSession();
         RealmModel realm = context.getRealm();
         AuthenticationSessionModel authSession = context.getAuthenticationSession();
@@ -929,7 +929,7 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
     }
 
     /** At most three codes a quarter of an hour and ten a day to one address. */
-    private static boolean claimAddressBudgets(AuthenticationFlowContext context, String address) {
+    static boolean claimAddressBudgets(AuthenticationFlowContext context, String address) {
         KeycloakSession session = context.getSession();
         String key = BudgetKeys.keyed(session, context.getRealm(), "address:" + address);
         RateLimiter limiter = new RateLimiter(session.singleUseObjects());
@@ -938,7 +938,7 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
     }
 
     /** Whether the wrong codes under {@code key} reached today's ceiling (security review K2). */
-    private boolean pastCeiling(AuthenticationFlowContext context, String key) {
+    boolean pastCeiling(AuthenticationFlowContext context, String key) {
         return new RateLimiter(context.getSession().singleUseObjects())
                 .spent(RateLimiter.loginCodeWrongPerAccount(settings.wrongCodesPerAccount()), key);
     }
@@ -947,7 +947,7 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
      * One wrong code of the person toward today's ceiling. The one that reaches it is logged with
      * how many accounts reached it today; the first account of the day also alarms the operator.
      */
-    private void countTowardTheCeiling(AuthenticationFlowContext context, UserModel user, String key) {
+    void countTowardTheCeiling(AuthenticationFlowContext context, UserModel user, String key) {
         int ceiling = settings.wrongCodesPerAccount();
         RateLimiter limiter = new RateLimiter(context.getSession().singleUseObjects());
         if (limiter.claimSlot(RateLimiter.loginCodeWrongPerAccount(ceiling), key) != ceiling) {
@@ -975,7 +975,7 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
         }
     }
 
-    private static String accountCeilingKey(AuthenticationFlowContext context, String userId) {
+    static String accountCeilingKey(AuthenticationFlowContext context, String userId) {
         return BudgetKeys.keyed(context.getSession(), context.getRealm(), "wrong-account:" + userId);
     }
 

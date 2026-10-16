@@ -81,7 +81,18 @@ async function credentials(page: Page) {
   await expect(page.locator("#kc-after-sign-up-credentials-form")).toBeVisible();
 }
 async function callback(page: Page, context: BrowserContext, auth: Auth) {
-  await page.waitForURL(url => url.origin + url.pathname === config.callbackUrl);
+  const atCallback = (url: URL) => url.origin + url.pathname === config.callbackUrl;
+  // This fixture explicitly enables the existing optional session-lifetime question. It is
+  // independent of B10 and may follow any completed native credential or ordinary-login path.
+  const next = await Promise.race([
+    page.waitForURL(atCallback).then(() => "callback" as const),
+    page.locator("#kc-stay-signed-in-form").waitFor({ state: "visible" }).then(() => "stay" as const)
+  ]);
+  if (next === "stay") {
+    await expect(page.locator("#kc-after-sign-up-credentials-form")).toHaveCount(0);
+    await page.locator('[name="sky-stay-signed-in"][value="no"]').click();
+  }
+  await page.waitForURL(atCallback);
   const landed = new URL(page.url());
   expect(landed.searchParams.get("state")).toBe(auth.state);
   const value = landed.searchParams.get("code");

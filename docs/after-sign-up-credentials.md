@@ -117,8 +117,12 @@ için iki ürün okuması `attributes(*)` yapıldı; realm haritası bütünüyl
 ON/KEEP idempotency, unrelated attribute korunumu, native action sırası, eski parola dalı ve kapalı
 yarım-swap onarımı/duplicate refusal geçti.
 
-Tarayıcı paketi henüz **geçmedi**: ilk senaryo İngilizce sayfada Türkçe locator bekleyerek durdu;
-0 başarılı, 1 başarısız, 1 kesilmiş, 7 çalışmamış senaryo. Test isteği açık Türkçe locale kullanacak
-şekilde düzeltildi; bunun yeni gerçek koşusu, final exact-head CI ve bağımsız son inceleme açıktır.
+Tarayıcı paketi henüz **geçmedi**. İlk turdaki İngilizce sayfa/Türkçe locator kusuru test isteğinde
+locale belirtilerek düzeltildi. Son tur gerçek kayıt → okul bağlantısını ertele → credential atla →
+mevcut StaySignedIn sorusuna ulaştı; callback yardımcısı bu soruyu tamamlamayı atladığı için durdu.
+Bu turda da 0 başarılı, 1 başarısız, 1 kesilmiş, 7 çalışmamış senaryo vardır; callback/token başarısı
+iddia edilmez. Yardımcı şimdi özgün callback veya mevcut Stay sorusunu bekler, yalnız Stay çıkarsa
+Hayır ile tamamlar; OIDC/state/nonce/PKCE/token kontrolleri korunur. Yeni gerçek koşu, final exact-head
+CI ve bağımsız son inceleme açıktır.
 Hazır/yayın GO iddiası yoktur. Fiziksel Touch ID bu otomasyonla doğrulanmaz; sanal resident
 authenticator kanıtı ayrı cihaz uyumluluğu sınırıdır, yeni bir insan onayı sorusu değildir.

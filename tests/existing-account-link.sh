@@ -522,7 +522,10 @@ for scenario in primary disabled factor rotate remove ttl flow override; do
   id=$(local_person "probe-$scenario" "probe.$scenario.b12@example.invalid")
   if [[ $scenario == rotate || $scenario == remove ]]; then curl -fsS -X POST "$PROBE/$scenario/factor?user=probe-$scenario" >/dev/null; fi
   if [[ $scenario == ttl ]]; then ttl='&ttl=2'; else ttl=''; fi
-  prepare "$scenario" "probe-$scenario" "subject-$scenario" "&pause=before$ttl"
+  # The full operator reconciliation can outlive the default fixture-only 20s barrier on CI.
+  # Only this case waits up to 90s; its unchanged proof deadline is 120s and must still be live.
+  if [[ $scenario == flow ]]; then barrier='&barrierSeconds=90'; else barrier=''; fi
+  prepare "$scenario" "probe-$scenario" "subject-$scenario" "&pause=before$ttl$barrier"
   complete_background "$scenario"; waiter=$PROBE_PID
   wait_state "$scenario" waiting
   case $scenario in
@@ -532,12 +535,25 @@ for scenario in primary disabled factor rotate remove ttl flow override; do
     rotate) curl -fsS -X POST "$PROBE/$scenario/factor?user=probe-$scenario&rotate=true" >/dev/null ;;
     remove) curl -fsS -X POST "$PROBE/$scenario/factor?user=probe-$scenario&remove=true" >/dev/null ;;
     ttl) sleep 3 ;;
-    flow) reconcile "$ADMIN_CONFIG" 0 KEYCLOAK_EXISTING_ACCOUNT_PROMPT=off >/dev/null ;;
+    flow)
+      operator_started=$SECONDS
+      reconcile "$ADMIN_CONFIG" 0 KEYCLOAK_EXISTING_ACCOUNT_PROMPT=off >/dev/null
+      printf '  pending callback operator OFF: %ss elapsed\n' "$((SECONDS - operator_started))"
+      curl -fsS "$PROBE/$scenario" | jq -e '.proofLive == true and .barrierTimedOut == false' >/dev/null \
+        || fail 'flow callback fixture exhausted its barrier or proof deadline before release'
+      ;;
     override) kcadm update identity-provider/instances/OBS -r "$REALM" -s 'firstBrokerLoginFlowAlias=first broker login' >/dev/null ;;
   esac
   release "$scenario"; wait "$waiter"
-  [[ $(cat "$STATE_DIR/$scenario.status") == 409 ]] || fail "$scenario callback did not return the fixed refusal"
+  callback_status=$(cat "$STATE_DIR/$scenario.status")
+  if [[ $callback_status != 409 ]]; then
+    callback_shape=$(curl -fsS "$PROBE/$scenario" | jq -c '{barrierTimedOut,proofLive}' || true)
+    fail "$scenario callback did not return the fixed refusal (HTTP$callback_status; fixture=${callback_shape:-unavailable})"
+  fi
   [[ $(links "$id") == 0 ]] || fail "$scenario callback committed a refused link"
+  if [[ $scenario == flow ]]; then
+    printf '  pending callback operator OFF: HTTP409, fixture timeout=false, committed links=0\n'
+  fi
   if [[ $scenario == primary ]]; then
     kcadm update "users/$id" -r "$REALM" -s email=probe.primary.b12@example.invalid >/dev/null
     replay_status=$(curl -sS -o "$STATE_DIR/replay.body" -w '%{http_code}' -X POST "$PROBE/$scenario/complete")

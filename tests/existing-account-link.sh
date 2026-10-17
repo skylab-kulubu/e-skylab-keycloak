@@ -262,8 +262,10 @@ for claim in upn department; do
   kcadm create "clients/$mock_client/protocol-mappers/models" -r "$MOCK" -b "{\"name\":\"$claim\",\"protocol\":\"openid-connect\",\"protocolMapper\":\"oidc-usermodel-attribute-mapper\",\"config\":{\"user.attribute\":\"$claim\",\"claim.name\":\"$claim\",\"jsonType.label\":\"String\",\"userinfo.token.claim\":\"true\",\"id.token.claim\":\"true\",\"access.token.claim\":\"true\"}}" >/dev/null
 done
 # Front-channel URLs reach the published port; token/profile calls stay inside the same container.
+provider_id=sky-test-microsoft
+if [[ ${B10_AFTER_SIGN_UP_ONLY:-0} == 1 ]]; then provider_id=microsoft; fi
 kcadm create identity-provider/instances -r "$REALM" -f - >/dev/null <<JSON
-{"alias":"OBS","providerId":"sky-test-microsoft","enabled":true,"trustEmail":true,"config":{
+{"alias":"OBS","providerId":"$provider_id","enabled":true,"trustEmail":true,"config":{
 "clientId":"ytu-broker","clientSecret":"$BROKER_SECRET","syncMode":"LEGACY",
 "authorizationUrl":"$BASE_URL/realms/$MOCK/protocol/openid-connect/auth",
 "tokenUrl":"http://localhost:8080/realms/$MOCK/protocol/openid-connect/token",

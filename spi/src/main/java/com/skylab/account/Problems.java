@@ -212,6 +212,28 @@ final class Problems {
                 .withExtension("field", "address");
     }
 
+    static Problem sudoEmailNotAllowed() {
+        return new Problem(403, "sudo_email_not_allowed", "E-mail sudo is not allowed",
+                "Hesabında parola, passkey ya da doğrulama uygulaması var; kimliğini onlarla doğrula.");
+    }
+
+    static Problem sudoEmailUnavailable() {
+        return new Problem(409, "sudo_email_unavailable", "No usable primary e-mail",
+                "Kod alabileceğin doğrulanmış birincil e-posta adresin bulunamadı. Başka bir doğrulama yöntemi kullan.");
+    }
+
+    static Problem noPendingSudoEmailCode() {
+        return new Problem(404, "no_pending_sudo_email_code", "No sudo code is waiting",
+                "Bekleyen bir doğrulama kodu yok: süresi dolmuş ya da kullanılmış olabilir. Yeni bir kod iste.");
+    }
+
+    static Problem invalidSudoEmailCode(int attemptsLeft) {
+        return new Problem(400, "invalid_sudo_email_code", "Invalid sudo code",
+                attemptsLeft > 0 ? "Doğrulama kodu yanlış. " + attemptsLeft + " deneme hakkın kaldı."
+                        : "Doğrulama kodu yanlış ve deneme hakkın bitti. Yeni bir kod iste.")
+                .withExtension("attemptsLeft", attemptsLeft);
+    }
+
     static Problem emailNotSent() {
         return new Problem(503, "email_not_sent", "Verification mail could not be sent",
                 "Doğrulama e-postası gönderilemedi. Lütfen daha sonra tekrar dene.");

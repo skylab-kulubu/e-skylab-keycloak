@@ -11,6 +11,8 @@ WORKDIR /build/spi
 COPY spi/pom.xml ./pom.xml
 RUN --mount=type=cache,target=/root/.m2 mvn --batch-mode --no-transfer-progress dependency:go-offline
 COPY spi/src ./src
+# Planner tests compile the same reconciler source used by the runtime operator.
+COPY config/ReconcileJson.java ../config/ReconcileJson.java
 RUN --mount=type=cache,target=/root/.m2 mvn --batch-mode --no-transfer-progress verify
 
 WORKDIR /build/rabbitmq-provider
@@ -45,7 +47,7 @@ ENV KC_DB=postgres \
     KC_METRICS_ENABLED=true \
     KC_FEATURES=account-api:v1,account:v3,par:v1,passkeys:v1,web-authn:v1
 
-COPY --from=providers --chown=keycloak:keycloak --chmod=0644 /build/spi/target/e-skylab-spi-1.22.1.jar /opt/keycloak/providers/e-skylab-spi-1.22.1.jar
+COPY --from=providers --chown=keycloak:keycloak --chmod=0644 /build/spi/target/e-skylab-spi-1.27.0.jar /opt/keycloak/providers/e-skylab-spi-1.27.0.jar
 COPY --from=providers --chown=keycloak:keycloak --chmod=0644 /build/rabbitmq-provider/target/keycloak-to-rabbit-3.1.1.jar /opt/keycloak/providers/keycloak-to-rabbit-3.1.1.jar
 COPY --from=theme --chown=keycloak:keycloak --chmod=0644 /build/theme/dist_keycloak/e-skylab-theme-2.0.1.jar /opt/keycloak/providers/e-skylab-theme-2.0.1.jar
 COPY --from=theme --chown=keycloak:keycloak /build/theme/dist_welcome/e-skylab-welcome /opt/keycloak/themes/e-skylab-welcome

@@ -40,7 +40,7 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.22.1`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.27.0`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.1.1`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
@@ -309,7 +309,7 @@ Keycloak'ın hazır "var olan hesap" yolu (onay, sonra yeniden kimlik doğrulama
 açılmasını önler. Adres başka bir hesabın `schoolEmail`'i, `personalEmail`'i ya da doğrulanmamış
 `email`'iyse, ya da IdP `syncMode=FORCE` iken Keycloak'ın bildiği bir adres ya da aracı kullanıcı
 adıysa yazılmaz (OBS FORCE'a alınmadan önce adım `off` ile kapatılır) ve profil
-sayfası bugünkü gibi çıkar (bilet 12 oraya "Zaten bir SKY LAB hesabın var mı?"yı koyacak). Bağlama
+sayfası koruma kapalıyken bugünkü gibi çıkar. Bağlama
 kipinde ve e-postası gelen kimlikte hiçbir şey yapmaz.
 `MicrosoftMapper` değişmedi: bağlı hesapların birincil adresi hiçbir YTÜ girişinde değişmez.
 Uzlaştırıcı Keycloak'ın yerleşik `first broker login` akışını bir kez `sky first broker login`
@@ -324,6 +324,29 @@ realm bağlamasını görmez; uzlaştırıcı kimliği IdP okuyamadığı için 
 yapılmış `first broker login for obs` geçersiz kılması da yalnız biçimi yerleşik akışla aynıysa
 kaldırılır (adı OBS'ye not edilir, akış silinmez); `off` onu geri yazar (bilet 22). Ayrıntı, üretim sırası ve geri dönüş: runbook §22. Harness
 `tests/ytu-first-login.sh` tek başına çalışır (stok imaj, SPI jar'ı, taklit YTÜ kiracısı).
+
+SPI 1.27.0, gerçek e-posta kaydından sonra isteğe bağlı YTÜ bağlama ve native erişim anahtarı/parola
+önerilerini ekler. Özgün uygulamanın OIDC callback'i korunur; native YTÜ yetkisi olmayan RP açıklama
+ve atlama yolunu kullanır. `KEYCLOAK_AFTER_SIGN_UP=keep` varsayılandır; kayıt ve yayın ayrı kapıdır.
+Akış, güvenlik, uzlaştırıcı ve geri dönüş: [Kayıt sonrası seçenekler](docs/after-sign-up-credentials.md).
+
+SPI 1.26.0, e-posta giriş ve mevcut hesaba bağlama kodlarında hesap başına kalıcı ardışık yanlış
+kod sayacını ekler: 100 sınırı gün değişiminde ve yeniden başlatmada korunur; gerçek başarılı LOGIN
+sıfırlar. Genel ekran/HTTP, günlük bütçeler ve TOTP koşulları korunur. Bakım reseti, UserProfile
+API yerine aynı kullanıcı kilitli SQL ile yapılır. Mimari, test ve yayın sırası:
+[Kalıcı e-posta kodu hata sınırı](docs/email-code-consecutive-failures.md). Kayıt açılmadan önce
+tüm örnekler yeni SPI'ye geçmeli ve yeni alarm şablonu seed edilmiş olmalıdır.
+
+SPI 1.25.0, yeni Microsoft hesabını mevcut SKY LAB hesabına kanıtla bağlamak için
+`sky-existing-account-prompt` ekler (bilet 12). `KEYCLOAK_EXISTING_ACCOUNT_PROMPT=on` yalnız etkin
+SKY LAB first-broker kopyasında soru, native parola/passkey + TOTP veya current-primary'ye altı
+haneli link kodu sunar; varsayılan `keep` kurulmamış özelliği açmaz. Primary ve doğrulama durumu
+korunur; native/A6 callback'leri PostgreSQL'de aynı Microsoft subject'in çift hesaba bağlanmasını
+engelleyen dar transaction guard'ını paylaşır. `off` yeni adımları geri alır ve pending kanıtları
+iptal eder. Ayrıntı, veritabanı şartı ve yayın kapıları:
+[`docs/broker-existing-account.md`](docs/broker-existing-account.md), runbook §31.
+Gerçek PostgreSQL 17/Keycloak harness'i `tests/existing-account-link.sh` ve CI'daki
+`existing-account-link` işidir; test fixture'ları üretim JAR'ına girmez.
 
 Bilet 21'den sonra (SPI 1.18.0) aynı ilk girişin sonunda bir kez kişisel e-posta önerisi çıkar:
 "Mezun olunca okul adresin kapanabilir. Kişisel e-postanı ekle." Adres kutusu, [Kod gönder],
@@ -439,6 +462,29 @@ sunuyorsa (`sky-email-code-display-name`) koda geçer, sunmuyorsa bugünkü paro
 yeniden gönderme sayacını, `one-time-code` alanını, "Parolanla gir"i ve passkey'i taşır. SPI 1.22.0'dan
 sonra "Bu cihazda oturumum açık kalsın mı?" kodla girişte de sorulur (kod sayfasında "Beni hatırla"
 yok) ve son sayfa olduğu için `LOGIN` olayının `sky_method=email_code` ayrıntısını korur.
+
+SPI 1.23.0'dan sonra aynı kapıdan e-postayla kayıt (eskylab-login-ux bilet 09, ADR-0063 karar 1, CONTEXT
+"Self-registration"); realm başına, varsayılan kapalı. Ayar `sky-email-code` yürütmesinin Keycloak
+yapılandırmasındadır (`sign-up`, yapılandırma adı `sky email code sign-up`); Keycloak'ın hazır kayıt
+sayfası (`registrationAllowed`) kapalı kalır. Açıkken hiçbir hesaba çıkmayan bir e-posta adresine kayıt
+kodu gider (`purpose=signup`, aynı sayfa, aynı bütçeler; genel sınır dolunca yalnız kayıt kodları durur,
+yanlış kayıt kodları adres başına aynı günlük tavana sayılır). Doğru kod ayrı bir tema sayfası
+(`sky-email-code-sign-up.ftl`, `theme/src/login/EmailCodeSignUp.tsx`) açar: adres salt okunur, ad ve soyad,
+KVKK yalnız bilgilendirir. "Hesabı aç" hesabı User Profile ile açar (`ProfileSignUpAccounts`, yönetici
+bağlamı, realm'in ad ve adres doğrulamaları): adres doğrulanmış birincil ve kanıtlı kişisel adres
+(`personalEmailVerifiedAt`), kullanıcı adı formdaki ad ve soyaddan `ad.soyad` olarak (`SignUpUsernames`: Türkçe/aksanlı harfler ASCII'ye, Hesap Merkezi'nin
+`[a-z0-9._]{3,30}` alfabesi, çakışmada sayı), parola, grup ve realm varsayılanı dışında rol yok,
+`REGISTER` olayı (`register_method` ve `sky_method` `email_code`); kişi girer, oturum notu
+`sky-email-code.signed-up` bilet 10'un soruları içindir. YTÜ alan adındaki adres hesap açmaz, YTÜ
+girişine (OBS) yönlendirilir. Adres bu arada bir hesaba eklendiyse ikinci hesap açılmaz, kod o hesapla
+girer; aynı adresin iki kaydı tek hesap açar (adres başına bir dakikalık kilit ve veritabanının tekil
+e-postası). Tema "Hesap aç"ı yürütme seçimiyle birlikte `sky-email-code-intent=sign-up` göndererek
+açar; hesabı olan kişi koddan sonra "Bu adresle zaten hesabın vardı, giriş yaptın." görür. Parola formu
+sayfası kaydın açık olduğunu `skyEmailCodeSignUp` ile söyler. Uzlaştırıcı `KEYCLOAK_EMAIL_CODE_SIGN_UP=on`
+ayarı açar, `off` kapatır (geri dönüş), `keep` dokunmaz; aynı operatör adımı
+(`KEYCLOAK_RECONCILE_ONLY=email-code-login`). Canlıda bilet 11 (Sudo e-posta kodu) ve 12 (çift hesap
+koruması) olmadan açılmaz; 10 (kayıt sonrası), 13 (hoş geldin) ve 24 (ardışık yanlış kod sayacı) de açılış bağımlılığıdır. Ayrıntı: runbook §30. Harness `tests/sign-up-by-email-code.sh` tek başına
+çalışır.
 
 Hesap silmede (ADR-0051) core, SkyMail, CMS ve Forms'a ayrı bir gizli service
 account istemcisinden, `core-erasure`'dan aldığı token'larla gider. Operatör
@@ -1124,3 +1170,21 @@ listelenir.
     <img src="https://raw.githubusercontent.com/skylab-kulubu/skylab-assets/main/logos/arge/weblab/weblab-colored.svg" alt="SKY LAB WebLab" width="150" />
   </a>
 </div>
+
+
+### E-posta koduyla Sudo (SPI 1.27.0)
+
+Hesap Merkezi’nde parola, passkey ve TOTP’si olmayan kişi doğrulanmış birincil
+adresine altı haneli kod alıp hassas işlemi onaylayabilir. YTÜ bağlantılı kişiye
+Microsoft yedeği de sunulur. `identity.sudoEmailCodeAvailable` capability’si
+uygunluğu bildirir; send ve verify uygunluğu ayrıca yeniden kontrol eder.
+Kod realm/kullanıcı/oturuma ve o anki birincile bağlı, 10 dakika, 5 yanlışta
+geçersiz, tek kullanımlıdır. Gönderim 3/saat, doğrulama Sudo bütçesi ve mevcut
+brute-force korumasıyla sınırlıdır.
+
+Sözleşme: [sky-account API](docs/sky-account-api.md),
+[yerel/sandbox kabul planı](docs/sudo-email-code-test-plan.md).
+Önce SkyMail `keycloak.login-code` şablonunun `purpose=sudo` dalı hazır olmalı;
+ardından Keycloak, sonra account-center yayımlanır. Bu sürüm kayıt ayarını
+kendiliğinden açmaz. Endpoint’lerin yüklenmesi uygun mevcut hesaplara API’de
+e-posta Sudo imkânı verir; bağımsız aç/kapat ayarı yoktur.

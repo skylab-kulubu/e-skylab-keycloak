@@ -2,7 +2,10 @@ import { lazy, Suspense } from "react";
 import DefaultPage from "keycloakify/login/DefaultPage";
 import type { ClassKey } from "keycloakify/login";
 import type { KcContext } from "./KcContext";
+import EmailCodeSignUp from "./EmailCodeSignUp";
+import AfterSignUp from "./AfterSignUp";
 import EmailCode from "./EmailCode";
+import ExistingAccount from "./ExistingAccount";
 import HandoffFailed from "./HandoffFailed";
 import Login from "./Login";
 import LoginPageExpired from "./LoginPageExpired";
@@ -24,6 +27,14 @@ export default function KcPage(props: { kcContext: KcContext }) {
   const { i18n } = useI18n({ kcContext });
 
   usePasskeyRememberMeBridge(kcContext);
+
+  if (kcContext.pageId === "sky-after-sign-up-school.ftl" || kcContext.pageId === "sky-after-sign-up-credentials.ftl") {
+    return <AfterSignUp kcContext={kcContext} i18n={i18n} />;
+  }
+
+  if (kcContext.pageId === "sky-existing-account.ftl") {
+    return <ExistingAccount kcContext={kcContext} i18n={i18n} />;
+  }
 
   if (kcContext.pageId === "login.ftl") {
     return (
@@ -65,6 +76,14 @@ export default function KcPage(props: { kcContext: KcContext }) {
     return (
       <Suspense fallback={<main className="sl-loading" aria-live="polite">{i18n.msgStr("skylabLoading")}</main>}>
         <PersonalEmailOffer kcContext={kcContext} i18n={i18n} />
+      </Suspense>
+    );
+  }
+
+  if (kcContext.pageId === "sky-email-code-sign-up.ftl") {
+    return (
+      <Suspense fallback={<main className="sl-loading" aria-live="polite">{i18n.msgStr("skylabLoading")}</main>}>
+        <EmailCodeSignUp kcContext={kcContext} i18n={i18n} />
       </Suspense>
     );
   }

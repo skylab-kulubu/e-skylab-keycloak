@@ -6,9 +6,16 @@ export type KcContextExtension = {
   themeName: ThemeName;
   properties: Record<KcEnvName, string> & {};
   skyExistingAccountEscape?: boolean;
+  // Set by the SPI only while this realm offers registration through the e-mail code step.
+  skyEmailCodeSignUp?: string | boolean;
 };
 
 export type KcContextExtensionPerPage = {
+  "sky-after-sign-up-school.ftl": {
+    skyYtuLinkAvailable?: boolean | string;
+    skyYtuLinkDeferredMessage?: string;
+  };
+  "sky-after-sign-up-credentials.ftl": {};
   "sky-existing-account.ftl": {
     skyExistingAccountStage?: string;
     skyExistingAccountIdentifier?: string;
@@ -43,6 +50,7 @@ export type KcContextExtensionPerPage = {
   // Rendered by the SPI's sky-email-code step ("E-postayla devam et", eskylab-login-ux 08); on the
   // identifier stage also Keycloak's conditional passkey data (WebAuthnConditionalUIAuthenticator).
   "sky-email-code.ftl": {
+    skyEmailCodeIntent?: string;
     skyEmailCodeStage?: string;
     skyEmailCodeIdentifier?: string;
     skyEmailCodeError?: string;

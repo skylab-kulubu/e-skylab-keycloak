@@ -40,7 +40,7 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.26.0`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.27.0`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.1.1`) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
@@ -324,6 +324,11 @@ realm bağlamasını görmez; uzlaştırıcı kimliği IdP okuyamadığı için 
 yapılmış `first broker login for obs` geçersiz kılması da yalnız biçimi yerleşik akışla aynıysa
 kaldırılır (adı OBS'ye not edilir, akış silinmez); `off` onu geri yazar (bilet 22). Ayrıntı, üretim sırası ve geri dönüş: runbook §22. Harness
 `tests/ytu-first-login.sh` tek başına çalışır (stok imaj, SPI jar'ı, taklit YTÜ kiracısı).
+
+SPI 1.27.0, gerçek e-posta kaydından sonra isteğe bağlı YTÜ bağlama ve native erişim anahtarı/parola
+önerilerini ekler. Özgün uygulamanın OIDC callback'i korunur; native YTÜ yetkisi olmayan RP açıklama
+ve atlama yolunu kullanır. `KEYCLOAK_AFTER_SIGN_UP=keep` varsayılandır; kayıt ve yayın ayrı kapıdır.
+Akış, güvenlik, uzlaştırıcı ve geri dönüş: [Kayıt sonrası seçenekler](docs/after-sign-up-credentials.md).
 
 SPI 1.26.0, e-posta giriş ve mevcut hesaba bağlama kodlarında hesap başına kalıcı ardışık yanlış
 kod sayacını ekler: 100 sınırı gün değişiminde ve yeniden başlatmada korunur; gerçek başarılı LOGIN

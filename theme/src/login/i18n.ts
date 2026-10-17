@@ -16,6 +16,20 @@ import type { ThemeName } from "../kc.gen";
  */
 const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCustomTranslations({
   tr: {
+    afterSignUpSchoolTitle: "Okul hesabını bağlamak ister misin?",
+    afterSignUpSchoolDescription: "YTÜ hesabın varsa şimdi bağlayabilirsin. İstersen bu adımı geçebilirsin.",
+    afterSignUpSchoolOptional: "Kişisel e-postan birincil adresin olarak kalır.",
+    afterSignUpSchoolDeferred: "Okul hesabını daha sonra Hesap Merkezi’nden bağlayabilirsin.",
+    afterSignUpSchoolLink: "YTÜ hesabımı bağla",
+    afterSignUpSchoolSkip: "Şimdi değil",
+    afterSignUpContinue: "Devam et",
+    afterSignUpCredentialsTitle: "Girişini kolaylaştır",
+    afterSignUpCredentialsDescription: "Erişim anahtarı eklemek ya da parola belirlemek ister misin?",
+    afterSignUpCredentialsNote: "Kodla girmeye devam edebilirsin; ikisini de sonra Hesap Merkezi’nden ekleyebilirsin.",
+    afterSignUpPasskey: "Erişim anahtarı ekle (önerilen)",
+    afterSignUpPassword: "Parola belirle",
+    afterSignUpSkip: "Şimdilik geç",
+    afterSignUpChooseAgain: "Lütfen tercihini yeniden seç.",
     existingAccountTitle: "Zaten bir SKY LAB hesabın var mı?",
     existingAccountLinkTitle: "Giriş yap ve YTÜ hesabını bağla",
     existingAccountDescription: "Daha önce e-postayla SKY LAB hesabı açtıysan buradan bağla; iki ayrı hesabın olmasın. Emin değilsen e-postanı yaz, hesabın varsa kod gelir.",
@@ -32,7 +46,7 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     existingAccountRateLimited: "Çok sık denedin. Biraz bekleyip yeniden dene.",
     // Login page and shared chrome
     skylabTitle: "SKY LAB'e Hoş Geldin!",
-    skylabDesc: "YTÜ öğrencisiysen okul hesabınla, SKY LAB parolan varsa e-postanla gir.",
+    skylabDesc: "YTÜ hesabınla ya da e-posta adresinle devam et.",
     microsoft: "YTÜ hesabınla devam et",
     microsoftHint: "Microsoft ile",
     // Opens today's password form; the e-mail code page once eskylab-login-ux 08 is live.
@@ -52,9 +66,8 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     skylabSchoolPasswordOr: "ya da",
     skylabSchoolPasswordSupport: "BİDB'ye başvur",
     skylabDomainNotice: "Giriş adresi her zaman e.yildizskylab.com'dur.",
-    // The password form for someone without an account. Self-registration is not live yet
-    // (ADR-0063: by e-mail code only, never Keycloak's registration page); see Login.tsx.
-    skylabNoAccountYtu: "YTÜ öğrencisiysen",
+    // The password form's alternative while e-mail registration is unavailable; see Login.tsx.
+    skylabNoAccountYtu: "YTÜ hesabın varsa",
     skylabNoAccountYtuLink: "YTÜ hesabınla devam et",
     passkeyChoice: "Erişim anahtarı ile giriş yap",
     skipToContent: "İçeriğe geç",
@@ -135,6 +148,10 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
 
     // "E-postayla devam et": sign-in with a code mailed to the account (SPI sky-email-code, eskylab-login-ux 08)
     emailCodeTitle: "E-postayla devam et",
+    emailCodeSignUpLink: "E-postayla hesap aç",
+    emailCodeSignUpTitle: "Hesap aç",
+    emailCodeSignUpDescription:
+      "E-posta adresini ya da kullanıcı adını yaz. Hesabın varsa giriş yaparsın; yoksa e-posta adresini doğruladıktan sonra hesabını açabilirsin.",
     emailCodeDescription:
       "E-posta adresini ya da kullanıcı adını yaz; hesabının e-posta adresine 6 haneli bir giriş kodu gönderelim.",
     emailCodeCodeDescription: "E-postana gelen 6 haneli kodu yaz.",
@@ -409,6 +426,20 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     identityProviderAlreadyLinkedMessage: "Bu YTÜ hesabı zaten başka bir SKY LAB hesabına bağlı."
   },
   en: {
+    afterSignUpSchoolTitle: "Would you like to link your university account?",
+    afterSignUpSchoolDescription: "If you have a YTU account, you can link it now. You can also skip this step.",
+    afterSignUpSchoolOptional: "Your personal email stays your primary address.",
+    afterSignUpSchoolDeferred: "You can link your university account later in Account Center.",
+    afterSignUpSchoolLink: "Link my YTU account",
+    afterSignUpSchoolSkip: "Not now",
+    afterSignUpContinue: "Continue",
+    afterSignUpCredentialsTitle: "Make signing in easier",
+    afterSignUpCredentialsDescription: "Would you like to add a passkey or set a password?",
+    afterSignUpCredentialsNote: "You can keep signing in with a code; you can add either later in Account Center.",
+    afterSignUpPasskey: "Add a passkey (recommended)",
+    afterSignUpPassword: "Set a password",
+    afterSignUpSkip: "Skip for now",
+    afterSignUpChooseAgain: "Please choose again.",
     existingAccountTitle: "Do you already have a SKY LAB account?",
     existingAccountLinkTitle: "Sign in and link your YTU account",
     existingAccountDescription: "If you created a SKY LAB account with email, sign in here to link it and keep one account. Unsure? Enter your email; if you have an account, a code will arrive.",
@@ -425,7 +456,7 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     existingAccountRateLimited: "Too many attempts. Wait a little and try again.",
     // Login page and shared chrome
     skylabTitle: "Welcome to SKY LAB!",
-    skylabDesc: "Sign in with your YTÜ account, or with your email if you have a SKY LAB password.",
+    skylabDesc: "Continue with your YTÜ account or email address.",
     microsoft: "Continue with your YTÜ account",
     microsoftHint: "via Microsoft",
     continueWithEmail: "Continue with email",
@@ -442,7 +473,7 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     skylabSchoolPasswordOr: "or",
     skylabSchoolPasswordSupport: "contact YTÜ IT",
     skylabDomainNotice: "The sign-in address is always e.yildizskylab.com.",
-    skylabNoAccountYtu: "If you're a YTÜ student,",
+    skylabNoAccountYtu: "If you have a YTÜ account,",
     skylabNoAccountYtuLink: "continue with your YTÜ account",
     passkeyChoice: "Sign in with a passkey",
     skipToContent: "Skip to content",
@@ -520,6 +551,10 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     signUpUnavailableText: "No account can be created with this address right now. Try another address or contact the club admins.",
 
     emailCodeTitle: "Continue with email",
+    emailCodeSignUpLink: "Create an account with email",
+    emailCodeSignUpTitle: "Create an account",
+    emailCodeSignUpDescription:
+      "Type your email or username. If you have an account, you will sign in; otherwise, verify your email to create one.",
     emailCodeDescription: "Type your email or username; we will send a 6-digit sign-in code to your account's email.",
     emailCodeCodeDescription: "Type the 6-digit code from your email.",
     emailCodeIdentifierLabel: "Your email or username",

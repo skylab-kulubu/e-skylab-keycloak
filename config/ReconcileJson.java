@@ -934,7 +934,7 @@ public final class ReconcileJson {
         String step = args[1];
         String subflowAlias = args[2];
         String otpAlias = args[3];
-        String offer = args[4];
+        List<String> offers = List.of(args[4].split(","));
         List<String> forms = List.of(args).subList(5, args.length);
         List<Node> nodes = new ArrayList<>();
         Map<Integer, String> flowAtLevel = new TreeMap<>();
@@ -1003,7 +1003,7 @@ public final class ReconcileJson {
                 stepNode = part;
             } else if (part.subFlow() && otpAlias.equals(part.alias()) && otpNode == null) {
                 otpNode = part;
-            } else if (!part.subFlow() && offer.equals(part.provider()) && offerNode == null) {
+            } else if (!part.subFlow() && offers.contains(part.provider()) && offerNode == null) {
                 offerNode = part;
             } else {
                 return refuse("subflow '" + subflowAlias + "' holds " + part.describe()
@@ -1012,11 +1012,12 @@ public final class ReconcileJson {
         }
         if (!inOrder(stepNode, otpNode, offerNode)) {
             return refuse("the parts of subflow '" + subflowAlias + "' are not in the order " + step + ", subflow '"
-                    + otpAlias + "', " + offer);
+                    + otpAlias + "', " + String.join(" or ", offers));
         }
         plan.add(line("step", stepNode, false));
         plan.add(line("otp", otpNode, true));
         plan.add(line("offer", offerNode, false));
+        plan.add("offer-provider\t" + (offerNode == null ? "-" : offerNode.provider()));
         Node condition = null;
         Node otpForm = null;
         if (otpNode != null) {

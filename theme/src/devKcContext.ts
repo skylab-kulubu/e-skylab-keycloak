@@ -84,6 +84,8 @@ const { getKcContextMock } = createGetKcContextMock({
   kcContextExtensionPerPage: {
     "sky-existing-account.ftl": { skyExistingAccountStage: "question" },
     "passkey-offer.ftl": {},
+    "sky-after-sign-up-school.ftl": { skyYtuLinkAvailable: true },
+    "sky-after-sign-up-credentials.ftl": {},
     "sky-personal-email-offer.ftl": { skyOfferStage: "address", skyOfferCodeMinutes: "10" },
     // The YTÜ stage of the sign-up page links to the YTÜ sign-in, as Keycloak's own pages do.
     "sky-email-code-sign-up.ftl": {
@@ -299,6 +301,7 @@ const { getKcContextMock } = createGetKcContextMock({
       idpAlias: microsoftProvider.alias,
       brokerContext: { username: previewUser.email }
     },
+    "link-idp-action.ftl": { idpDisplayName: "YTÜ Microsoft", isAppInitiatedAction: true },
     "passkey-offer.ftl": {},
     "sky-email-code-sign-up.ftl": {
       isAppInitiatedAction: false
@@ -434,6 +437,9 @@ export function getDevKcContext(): KcContext {
   // `?page=sky-handoff-failed.ftl&reason=used` previews one failure reason; the value is passed
   // on unchecked, as the SPI would, so the page's own handling of unknown reasons is exercised.
   const reason = searchParams.get("reason");
+  if (kcContext.pageId === "sky-after-sign-up-school.ftl" && searchParams.get("school") === "deferred") {
+    kcContext.skyYtuLinkAvailable = false;
+  }
   if (kcContext.pageId === "sky-handoff-failed.ftl" && reason !== null) {
     kcContext.skyHandoffReason = reason;
   }
@@ -457,6 +463,23 @@ export function getDevKcContext(): KcContext {
   const code = searchParams.get("code");
   if (kcContext.pageId === "sky-email-code.ftl" && code !== null) {
     Object.assign(kcContext, getEmailCodePreview(code));
+  }
+
+  // Registration is off in the normal preview, just as on a realm without the operator switch.
+  // ?registration=on offers its entry; on the code page ?registration=sign-up also carries the
+  // intent the SPI would put there after the entry's execution-switch POST.
+  const registration = searchParams.get("registration");
+  if (registration === "on" || registration === "sign-up") {
+    kcContext.skyEmailCodeSignUp = "true";
+    if (kcContext.pageId === "login.ftl") {
+      Object.assign(kcContext.auth, { authenticationSelections: [
+        { authExecId: "preview-password", displayName: "sky-username-password-form-display-name" },
+        { authExecId: "preview-email-code", displayName: "sky-email-code-display-name" }
+      ] });
+    }
+    if (kcContext.pageId === "sky-email-code.ftl" && registration === "sign-up") {
+      kcContext.skyEmailCodeIntent = "sign-up";
+    }
   }
 
   const broker = searchParams.get("broker");

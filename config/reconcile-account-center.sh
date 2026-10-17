@@ -132,6 +132,12 @@ EMAIL_CODE_SIGN_UP=${KEYCLOAK_EMAIL_CODE_SIGN_UP:-keep}
 EMAIL_CODE_SIGN_UP_SETTING=sign-up
 EMAIL_CODE_SIGN_UP_CONFIG_ALIAS='sky email code sign-up'
 PASSKEY_OFFER_STEP=passkey-offer-authenticator
+# Registration-only continuation. keep never mutates this feature; on activates the realm flag
+# only after the email child-flow leaf and session-only required action have been read back.
+AFTER_SIGN_UP=${KEYCLOAK_AFTER_SIGN_UP:-keep}
+AFTER_SIGN_UP_ATTRIBUTE=skyAfterSignUpEnabled
+AFTER_SIGN_UP_STEP=sky-after-login
+AFTER_SIGN_UP_ACTION=sky-sign-up-credentials
 SCOPE_NAME=account-center-account-api
 CORE_SCOPE_NAME=account-center-core-claims
 SKYAPP_CLIENT_ID=skyapp
@@ -348,6 +354,10 @@ case $EMAIL_CODE_SIGN_UP in
     printf 'KEYCLOAK_EMAIL_CODE_SIGN_UP must be keep (default), on or off (rollback), not %s\n' "$EMAIL_CODE_SIGN_UP" >&2
     exit 1
     ;;
+esac
+case $AFTER_SIGN_UP in
+  keep | on | off) ;;
+  *) printf 'KEYCLOAK_AFTER_SIGN_UP must be keep (default), on or off, not %s\n' "$AFTER_SIGN_UP" >&2; exit 1 ;;
 esac
 
 BASE_URL=$(normalize_account_center_base_url \
@@ -951,7 +961,7 @@ reconcile_email_code_login() {
   set_email_code_requirement "$flow_alias" "$ECF_COND" REQUIRED "$ECF_COND_PRIO" "$ECF_COND_REQ" conditional-user-configured
   set_email_code_requirement "$flow_alias" "$ECF_OTP_FORM" REQUIRED "$ECF_OTP_FORM_PRIO" "$ECF_OTP_FORM_REQ" auth-otp-form
   set_email_code_requirement "$flow_alias" "$ECF_OTP" CONDITIONAL "$ECF_OTP_PRIO" "$ECF_OTP_REQ" "subflow '$EMAIL_CODE_OTP_FLOW_ALIAS'"
-  set_email_code_requirement "$flow_alias" "$ECF_OFFER" REQUIRED "$ECF_OFFER_PRIO" "$ECF_OFFER_REQ" "$PASSKEY_OFFER_STEP"
+  set_email_code_requirement "$flow_alias" "$ECF_OFFER" REQUIRED "$ECF_OFFER_PRIO" "$ECF_OFFER_REQ" "$ECF_OFFER_PROVIDER"
   set_email_code_requirement "$flow_alias" "$ECF_SUBFLOW" ALTERNATIVE "$ECF_SUBFLOW_PRIO" "$ECF_SUBFLOW_REQ" "subflow '$EMAIL_CODE_FLOW_ALIAS'"
   plan_email_code_flow "$flow_alias" || return 1
   if [[ $ECF_SUBFLOW_REQ != ALTERNATIVE ]] || ! email_code_parts_in_place; then
@@ -976,7 +986,7 @@ plan_email_code_flow() {
   plan_file=$(mktemp "$WORK_DIR/email-code-plan.XXXXXX")
   kcadm_json "authentication/flows/$(flow_alias_path "$flow_alias")/executions" -r "$TARGET_REALM" >"$live_file"
   if json_tool email-code-flow "$EMAIL_CODE_STEP" "$EMAIL_CODE_FLOW_ALIAS" "$EMAIL_CODE_OTP_FLOW_ALIAS" \
-    "$PASSKEY_OFFER_STEP" "$SKY_PASSWORD_FORM" "$STOCK_PASSWORD_FORM" <"$live_file" >"$plan_file"; then
+    "$PASSKEY_OFFER_STEP,$AFTER_SIGN_UP_STEP" "$SKY_PASSWORD_FORM" "$STOCK_PASSWORD_FORM" <"$live_file" >"$plan_file"; then
     status=0
   else
     status=$?
@@ -991,6 +1001,7 @@ plan_email_code_flow() {
   ECF_STEP=- ECF_STEP_REQ=- ECF_STEP_PRIO=-
   ECF_OTP=- ECF_OTP_REQ=- ECF_OTP_PRIO=-
   ECF_OFFER=- ECF_OFFER_REQ=- ECF_OFFER_PRIO=-
+  ECF_OFFER_PROVIDER=-
   ECF_COND=- ECF_COND_REQ=- ECF_COND_PRIO=-
   ECF_OTP_FORM=- ECF_OTP_FORM_REQ=- ECF_OTP_FORM_PRIO=-
   while IFS=$'\t' read -r kind a b c d; do
@@ -1000,6 +1011,7 @@ plan_email_code_flow() {
       step) ECF_STEP=$a ECF_STEP_REQ=$b ECF_STEP_PRIO=$c ;;
       otp) ECF_OTP=$a ECF_OTP_REQ=$c ECF_OTP_PRIO=$d ;;
       offer) ECF_OFFER=$a ECF_OFFER_REQ=$b ECF_OFFER_PRIO=$c ;;
+      offer-provider) ECF_OFFER_PROVIDER=$a ;;
       otp-condition) ECF_COND=$a ECF_COND_REQ=$b ECF_COND_PRIO=$c ;;
       otp-form) ECF_OTP_FORM=$a ECF_OTP_FORM_REQ=$b ECF_OTP_FORM_PRIO=$c ;;
     esac
@@ -1014,7 +1026,7 @@ email_code_parts_present() {
 email_code_parts_summary() {
   printf "%s %s, subflow '%s' %s, conditional-user-configured %s, auth-otp-form %s, %s %s" \
     "$EMAIL_CODE_STEP" "${ECF_STEP_REQ/#-/missing}" "$EMAIL_CODE_OTP_FLOW_ALIAS" "${ECF_OTP_REQ/#-/missing}" \
-    "${ECF_COND_REQ/#-/missing}" "${ECF_OTP_FORM_REQ/#-/missing}" "$PASSKEY_OFFER_STEP" "${ECF_OFFER_REQ/#-/missing}"
+    "${ECF_COND_REQ/#-/missing}" "${ECF_OTP_FORM_REQ/#-/missing}" "${ECF_OFFER_PROVIDER/#-/missing}" "${ECF_OFFER_REQ/#-/missing}"
 }
 
 email_code_parts_in_place() {
@@ -1034,6 +1046,139 @@ set_email_code_requirement() {
   if [[ -n $label ]]; then
     changes+=("$label $current -> $wanted")
   fi
+}
+
+# B10 changes only the offer in the email-code child flow. Disable the child during replacement;
+# a cut leaves it closed. Rerun with EMAIL_CODE_LOGIN=on to complete a cut/disabled swap explicitly.
+after_sign_up_flag() {
+  local attributes
+  # kcadm --fields attributes projects an EMPTY map. The wildcard keeps every existing key.
+  attributes=$(kcadm_json "realms/$TARGET_REALM" --fields 'attributes(*)' | json_tool field attributes)
+  [[ -n $attributes ]] || attributes='{}'
+  json_tool field "$AFTER_SIGN_UP_ATTRIBUTE" <<<"$attributes"
+}
+
+set_after_sign_up_flag() {
+  local wanted=$1 live_file="$WORK_DIR/after-sign-up-realm.json" body="$WORK_DIR/after-sign-up-write.json"
+  [[ $(after_sign_up_flag) != "$wanted" ]] || return 0
+  kcadm_json "realms/$TARGET_REALM" --fields 'attributes(*)' >"$live_file"
+  json_tool realm-attribute "$AFTER_SIGN_UP_ATTRIBUTE" "$wanted" <"$live_file" >"$body"
+  kcadm update "realms/$TARGET_REALM" -n -f "$body" >/dev/null
+  [[ $(after_sign_up_flag) == "$wanted" ]] || { printf 'Registration continuation flag readback failed\n' >&2; return 1; }
+}
+
+reconcile_after_sign_up() {
+  local flag flow_alias wanted providers original_requirement offer_priority actions password_priority passkey_priority
+  local mine minimum stay last action enabled row
+  local changes=()
+  flag=$(after_sign_up_flag)
+  if [[ $AFTER_SIGN_UP == keep && $flag != true ]]; then
+    log 'registration continuation: unchanged (off; KEYCLOAK_AFTER_SIGN_UP=on activates it)'
+    return 0
+  fi
+  # Rollback must close new continuations before touching registrations or executions.
+  if [[ $AFTER_SIGN_UP == off ]]; then set_after_sign_up_flag false; fi
+  flow_alias=$(kcadm_json "realms/$TARGET_REALM" --fields browserFlow | json_tool field browserFlow)
+  [[ -n $flow_alias ]] || { printf 'Registration continuation needs the realm browser flow\n' >&2; return 1; }
+  plan_email_code_flow "$flow_alias" || return 1
+  if [[ $ECF_SUBFLOW == - ]]; then
+    if [[ $AFTER_SIGN_UP == off ]]; then
+      reconcile_switched_required_action 'registration credentials' "$AFTER_SIGN_UP_ACTION" \
+        'SKY LAB sign-up credential choices' KEYCLOAK_AFTER_SIGN_UP off 1.27.0
+      log 'registration continuation: unchanged (off, no email-code child flow)'
+      return 0
+    fi
+    printf 'Registration continuation needs KEYCLOAK_EMAIL_CODE_LOGIN=on\n' >&2
+    return 1
+  fi
+  wanted=$AFTER_SIGN_UP_STEP
+  [[ $AFTER_SIGN_UP != off ]] || wanted=$PASSKEY_OFFER_STEP
+  providers=$(kcadm get authentication/authenticator-providers -r "$TARGET_REALM" --fields id --format csv --noquotes)
+  grep -Fxq "$wanted" <<<"$providers" || { printf 'The image offers no %s (SPI 1.27.0 or later)\n' "$wanted" >&2; return 1; }
+  actions=$(kcadm get authentication/required-actions -r "$TARGET_REALM" \
+    --fields alias,providerId,enabled,defaultAction,priority --format csv --noquotes)
+  row=$(grep -E "^$AFTER_SIGN_UP_ACTION," <<<"$actions" || true)
+  if [[ -n $row && $row != "$AFTER_SIGN_UP_ACTION,$AFTER_SIGN_UP_ACTION,"* ]]; then
+    printf 'Registration credential alias belongs to another provider; inspect it before changing anything\n' >&2
+    return 1
+  fi
+  if [[ $AFTER_SIGN_UP != off ]]; then
+    # These remain native optional actions; do not grant roles/scopes or change their policies.
+    for action in UPDATE_PASSWORD webauthn-register-passwordless; do
+      row=$(grep -E "^$action,$action,true,false," <<<"$actions" || true)
+      [[ -n $row ]] || { printf 'Registration continuation needs enabled non-default native action %s\n' "$action" >&2; return 1; }
+    done
+    password_priority=$(grep '^UPDATE_PASSWORD,' <<<"$actions" | cut -d, -f5)
+    passkey_priority=$(grep '^webauthn-register-passwordless,' <<<"$actions" | cut -d, -f5)
+    minimum=$password_priority
+    ((passkey_priority >= minimum)) || minimum=$passkey_priority
+    ((minimum > -2147483648)) || { printf 'Native action priorities leave no room for registration choices\n' >&2; return 1; }
+    mine=$(grep -E "^$AFTER_SIGN_UP_ACTION,$AFTER_SIGN_UP_ACTION,true,false," <<<"$actions" | cut -d, -f5 || true)
+    stay=$(grep -E "^$STAY_SIGNED_IN_ACTION,$STAY_SIGNED_IN_ACTION,true," <<<"$actions" | cut -d, -f5 || true)
+    last=$(grep -Ev "^$STAY_SIGNED_IN_ACTION," <<<"$actions" | cut -d, -f5 | sort -n | tail -1)
+    if [[ $flag == true && $ECF_SUBFLOW_REQ == ALTERNATIVE && $ECF_OFFER_PROVIDER == "$wanted" ]] \
+      && email_code_parts_in_place && [[ -n $mine ]] && ((mine < minimum)) \
+      && { [[ -z $stay ]] || ((stay > last)); }; then
+      log 'registration continuation: unchanged (on; native action order verified)'
+      return 0
+    fi
+    if [[ $AFTER_SIGN_UP == keep ]]; then
+      printf 'Registration continuation is on with flow/action drift; use KEYCLOAK_AFTER_SIGN_UP=on to repair or off to roll back\n' >&2
+      return 1
+    fi
+    if [[ $ECF_SUBFLOW_REQ != ALTERNATIVE || $ECF_STEP_REQ != REQUIRED || $ECF_OTP_REQ != CONDITIONAL \
+      || $ECF_COND_REQ != REQUIRED || $ECF_OTP_FORM_REQ != REQUIRED || $ECF_OFFER == - ]]; then
+      printf 'Complete the email-code subflow with KEYCLOAK_EMAIL_CODE_LOGIN=on before registration continuation\n' >&2
+      return 1
+    fi
+  fi
+  if [[ $AFTER_SIGN_UP == on ]]; then
+    # A repair is closed while its dependencies change. In a steady state the early return above
+    # means on is a real no-op, including no realm-attribute write/admin event.
+    set_after_sign_up_flag false
+    reconcile_switched_required_action 'registration credentials' "$AFTER_SIGN_UP_ACTION" \
+      'SKY LAB sign-up credential choices' KEYCLOAK_AFTER_SIGN_UP on 1.27.0
+    if [[ -z $mine ]] || ((mine >= minimum)); then
+      kcadm update "authentication/required-actions/$AFTER_SIGN_UP_ACTION" -r "$TARGET_REALM" \
+        -s "priority=$((minimum - 1))" >/dev/null
+    fi
+    actions=$(kcadm get authentication/required-actions -r "$TARGET_REALM" \
+      --fields alias,providerId,enabled,defaultAction,priority --format csv --noquotes)
+    mine=$(grep -E "^$AFTER_SIGN_UP_ACTION,$AFTER_SIGN_UP_ACTION,true,false," <<<"$actions" | cut -d, -f5 || true)
+    [[ -n $mine ]] && ((mine < minimum)) || { printf 'Registration credential action priority readback failed\n' >&2; return 1; }
+    if [[ -n $stay ]]; then
+      last=$(grep -Ev "^$STAY_SIGNED_IN_ACTION," <<<"$actions" | cut -d, -f5 | sort -n | tail -1)
+      if ((stay <= last)); then
+        kcadm update "authentication/required-actions/$STAY_SIGNED_IN_ACTION" -r "$TARGET_REALM" \
+          -s "priority=$((last + 1))" >/dev/null
+        row=$(kcadm get "authentication/required-actions/$STAY_SIGNED_IN_ACTION" -r "$TARGET_REALM" --fields priority | json_tool field priority)
+        [[ $row == "$((last + 1))" ]] || { printf 'Stay signed in priority readback failed\n' >&2; return 1; }
+      fi
+    fi
+  fi
+  original_requirement=$ECF_SUBFLOW_REQ
+  offer_priority=$ECF_OFFER_PRIO
+  [[ $offer_priority != - ]] || offer_priority=$((ECF_OTP_PRIO + 10))
+  if [[ $ECF_OFFER_PROVIDER != "$wanted" ]]; then
+    set_email_code_requirement "$flow_alias" "$ECF_SUBFLOW" DISABLED "$ECF_SUBFLOW_PRIO" "$ECF_SUBFLOW_REQ"
+    [[ $ECF_OFFER == - ]] || kcadm delete "authentication/executions/$ECF_OFFER" -r "$TARGET_REALM" >/dev/null
+    kcadm create "authentication/flows/$(flow_alias_path "$EMAIL_CODE_FLOW_ALIAS")/executions/execution" -r "$TARGET_REALM" \
+      -b "{\"provider\":\"$wanted\",\"priority\":$offer_priority}" >/dev/null
+    plan_email_code_flow "$flow_alias" || return 1
+    [[ $ECF_OFFER_PROVIDER == "$wanted" ]] || { printf 'Registration offer swap readback failed\n' >&2; return 1; }
+    set_email_code_requirement "$flow_alias" "$ECF_OFFER" REQUIRED "$offer_priority"
+    set_email_code_requirement "$flow_alias" "$ECF_SUBFLOW" "$original_requirement" "$ECF_SUBFLOW_PRIO" "$ECF_SUBFLOW_REQ"
+  fi
+  plan_email_code_flow "$flow_alias" || return 1
+  [[ $ECF_OFFER_PROVIDER == "$wanted" && $ECF_OFFER_REQ == REQUIRED ]] || { printf 'Registration offer final readback failed\n' >&2; return 1; }
+  if [[ $AFTER_SIGN_UP == on ]]; then
+    email_code_parts_in_place && [[ $ECF_SUBFLOW_REQ == ALTERNATIVE ]] || return 1
+    set_after_sign_up_flag true
+  else
+    reconcile_switched_required_action 'registration credentials' "$AFTER_SIGN_UP_ACTION" \
+      'SKY LAB sign-up credential choices' KEYCLOAK_AFTER_SIGN_UP off 1.27.0
+  fi
+  log "registration continuation: reconciled ($AFTER_SIGN_UP; only the email-code offer changed)"
 }
 
 # eskylab-login-ux 09: Self-registration on the e-mail code step (see EMAIL_CODE_SIGN_UP above). The
@@ -3570,6 +3715,7 @@ fi
 if [[ $RECONCILE_ONLY == email-code-login ]]; then
   reconcile_email_code_login
   reconcile_email_code_sign_up
+  reconcile_after_sign_up
   if [[ -n $EMAIL_CODE_UNGUARDED ]]; then
     printf 'E-mail code sign-in is reconciled except the OTP after the code (%s); run again with KEYCLOAK_EMAIL_CODE_LOGIN=on (or off), or fix the subflow in the Admin Console\n' \
       "$EMAIL_CODE_UNGUARDED" >&2
@@ -3602,6 +3748,7 @@ retire_account_center_browser_flow
 reconcile_password_form "$BROWSER_FLOW_ALIAS"
 reconcile_email_code_login
 reconcile_email_code_sign_up
+reconcile_after_sign_up
 reconcile_reset_choose_user
 reconcile_reset_otp_step
 reconcile_first_broker_login

@@ -61,7 +61,7 @@ grep -Fqx "ARG NODE_IMAGE=$NODE_IMAGE" "$KEYCLOAK_DIR/Dockerfile" \
   || fail 'Node builder image is not the approved atomic tag and digest'
 grep -Fq "image: $NODE_IMAGE" "$SCRIPT_DIR/docker-compose.integration.yml" \
   || fail 'integration SkyMail fixture image is not digest-pinned'
-grep -Fqx 'COPY --from=providers --chown=keycloak:keycloak --chmod=0644 /build/spi/target/e-skylab-spi-1.26.0.jar /opt/keycloak/providers/e-skylab-spi-1.26.0.jar' "$KEYCLOAK_DIR/Dockerfile" \
+grep -Fqx 'COPY --from=providers --chown=keycloak:keycloak --chmod=0644 /build/spi/target/e-skylab-spi-1.27.0.jar /opt/keycloak/providers/e-skylab-spi-1.27.0.jar' "$KEYCLOAK_DIR/Dockerfile" \
   || fail 'optimized image does not install the pinned SKY LAB SPI version'
 grep -Fqx 'COPY --from=theme --chown=keycloak:keycloak --chmod=0644 /build/theme/dist_keycloak/e-skylab-theme-2.0.1.jar /opt/keycloak/providers/e-skylab-theme-2.0.1.jar' "$KEYCLOAK_DIR/Dockerfile" \
   || fail 'optimized image does not install the one source-built SKY LAB theme'
@@ -79,6 +79,12 @@ grep -Fqx "export LOGIN_BY_EMAIL_CODE_POSTGRES_IMAGE=$PERSISTENT_POSTGRES_IMAGE"
   || fail 'persistent counter regression must use its approved PostgreSQL18 tag and digest'
 grep -Fqx "export B12_PG_IMAGE=$PERSISTENT_POSTGRES_IMAGE" "$SCRIPT_DIR/existing-account-counter.sh" \
   || fail 'LINK counter regression must use the same approved PostgreSQL18 tag and digest'
+grep -Fqx "export B12_PG_IMAGE=$PERSISTENT_POSTGRES_IMAGE" "$SCRIPT_DIR/after-sign-up.sh" \
+  || fail 'native registration regression must use the approved PostgreSQL18 tag and digest'
+grep -Fq '  after-sign-up-native:' "$KEYCLOAK_CI" \
+  || fail 'native registration continuation must have its own CI job'
+grep -Fq 'bash tests/after-sign-up.sh' "$KEYCLOAK_CI" \
+  || fail 'CI must run the native registration continuation contract'
 grep -Fq '  email-code-persistent-counter:' "$KEYCLOAK_CI" \
   || fail 'persistent counter regression must have its own CI job'
 grep -Fq 'LOGIN_BY_EMAIL_CODE_TEST_PULL=never bash tests/login-code-persistent.sh' "$KEYCLOAK_CI" \

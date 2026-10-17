@@ -19,6 +19,10 @@ import java.util.Map;
  * ({@code KEYCLOAK_EMAIL_CODE_LOGIN=on}, realm by realm) and turns that subflow off again
  * ({@code off}, the rollback). A callback factory, so the step hears when its subflow succeeded.
  *
+ * <p>The execution's one setting, {@value EmailCodeSignUp#CONFIG} (Keycloak's authenticator config,
+ * so per realm), turns Self-registration on (eskylab-login-ux 09, {@link EmailCodeSignUp}); off
+ * unless it is {@code true}. The reconciler sets it ({@code KEYCLOAK_EMAIL_CODE_SIGN_UP}).
+ *
  * <p>Settings: the YTÜ identity provider alias as the password form takes it (provider config
  * {@code --spi-authenticator-sky-email-code-ytu-idp-alias}, then {@code SKY_ACCOUNT_YTU_IDP_ALIAS},
  * then {@code OBS}); {@code SKY_EMAIL_CODE_DAILY_LIMIT} and {@code SKY_EMAIL_CODE_ALARM_GROUP}
@@ -78,7 +82,7 @@ public final class EmailCodeAuthenticatorFactory implements AuthenticationFlowCa
 
     @Override
     public boolean isConfigurable() {
-        return false;
+        return true;
     }
 
     @Override
@@ -93,11 +97,16 @@ public final class EmailCodeAuthenticatorFactory implements AuthenticationFlowCa
 
     @Override
     public String getHelpText() {
-        return "Signs in with a six-digit code mailed to the account's primary e-mail (Login code, ADR-0063).";
+        return "Signs in with an eight-digit code mailed to the account's primary e-mail (Login code, ADR-0063);"
+                + " with sign-up on, an address without an account can open one (Self-registration).";
     }
 
     @Override
     public List<ProviderConfigProperty> getConfigProperties() {
-        return List.of();
+        ProviderConfigProperty signUp = new ProviderConfigProperty(EmailCodeSignUp.CONFIG, "Self-registration",
+                "On: an e-mail address without an account is mailed a sign-up code, and the right code opens the"
+                        + " sign-up form (eskylab-login-ux 09). Off (the default): such an address is mailed nothing.",
+                ProviderConfigProperty.BOOLEAN_TYPE, "false");
+        return List.of(signUp);
     }
 }

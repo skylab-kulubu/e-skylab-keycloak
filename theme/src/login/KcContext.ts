@@ -5,9 +5,24 @@ import type { KcEnvName, ThemeName } from "../kc.gen";
 export type KcContextExtension = {
   themeName: ThemeName;
   properties: Record<KcEnvName, string> & {};
+  skyExistingAccountEscape?: boolean;
+  // Set by the SPI only while this realm offers registration through the e-mail code step.
+  skyEmailCodeSignUp?: string | boolean;
 };
 
 export type KcContextExtensionPerPage = {
+  "sky-after-sign-up-school.ftl": {
+    skyYtuLinkAvailable?: boolean | string;
+    skyYtuLinkDeferredMessage?: string;
+  };
+  "sky-after-sign-up-credentials.ftl": {};
+  "sky-existing-account.ftl": {
+    skyExistingAccountStage?: string;
+    skyExistingAccountIdentifier?: string;
+    skyExistingAccountError?: string;
+    skyExistingAccountSchoolCandidate?: boolean;
+    skyExistingAccountResendAfter?: string;
+  };
   "passkey-offer.ftl": {};
   // Rendered by the SPI's sky-personal-email-offer required action (first YTÜ login, ticket 21).
   "sky-personal-email-offer.ftl": {
@@ -17,9 +32,25 @@ export type KcContextExtensionPerPage = {
     skyOfferAttemptsLeft?: string;
     skyOfferCodeMinutes?: string;
   };
+  // Rendered by the SPI's sky-email-code step after the right sign-up code (Self-registration,
+  // eskylab-login-ux 09): the stage (form, ytu, existing, unavailable), the proven address, the form's
+  // error and what was typed, and the YTÜ identity provider's alias.
+  "sky-email-code-sign-up.ftl": {
+    skySignUpStage?: string;
+    skySignUpAddress?: string;
+    skySignUpError?: string;
+    skySignUpFirstName?: string;
+    skySignUpLastName?: string;
+    skySignUpYtuAlias?: string;
+    // Keycloak's identity providers, as on every page its login forms render: the YTÜ stage links to one.
+    social?: {
+      providers?: { alias: string; displayName: string; providerId: string; loginUrl: string }[];
+    };
+  };
   // Rendered by the SPI's sky-email-code step ("E-postayla devam et", eskylab-login-ux 08); on the
   // identifier stage also Keycloak's conditional passkey data (WebAuthnConditionalUIAuthenticator).
   "sky-email-code.ftl": {
+    skyEmailCodeIntent?: string;
     skyEmailCodeStage?: string;
     skyEmailCodeIdentifier?: string;
     skyEmailCodeError?: string;

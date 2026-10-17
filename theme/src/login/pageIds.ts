@@ -26,9 +26,14 @@ export const themedPageIds = [
   "idp-review-user-profile.ftl",
   "login-idp-link-confirm.ftl",
   "login-idp-link-email.ftl",
+  "link-idp-action.ftl",
   "passkey-offer.ftl",
   "sky-personal-email-offer.ftl",
+  "sky-email-code-sign-up.ftl",
   "sky-email-code.ftl",
+  "sky-existing-account.ftl",
+  "sky-after-sign-up-school.ftl",
+  "sky-after-sign-up-credentials.ftl",
   "sky-stay-signed-in.ftl",
   "sky-handoff-failed.ftl"
 ] as const;

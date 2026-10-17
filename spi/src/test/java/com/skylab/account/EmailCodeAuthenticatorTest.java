@@ -13,6 +13,9 @@ import org.keycloak.common.ClientConnection;
 import org.keycloak.common.util.Time;
 import org.keycloak.events.Details;
 import org.keycloak.events.EventBuilder;
+import org.keycloak.events.EventType;
+import org.keycloak.models.AuthenticatorConfigModel;
+import org.keycloak.models.Constants;
 import org.keycloak.forms.login.LoginFormsProvider;
 import org.keycloak.http.HttpRequest;
 import org.keycloak.models.AuthenticationExecutionModel;
@@ -71,6 +74,22 @@ class EmailCodeAuthenticatorTest {
     private final UserProvider users = mock(UserProvider.class);
     private final BruteForceProtector protector = mock(BruteForceProtector.class);
     private final RecordingMail mail = new RecordingMail();
+    private final Map<String, Integer> consecutive = new HashMap<>();
+    private final LoginCodeFailureCounter persistentFailures = new LoginCodeFailureCounter() {
+        public void prepare(KeycloakSession ignored) { }
+        public void reset(KeycloakSession ignored, RealmModel realm, String userId) { consecutive.remove(userId); }
+        public Guard lock(KeycloakSession ignored, RealmModel realm, String userId) {
+            return new Guard() {
+                public boolean blocked() { return consecutive.getOrDefault(userId, 0) >= LIMIT; }
+                public boolean wrongCode() {
+                    if (blocked()) return false;
+                    int next = consecutive.getOrDefault(userId, 0) + 1;
+                    consecutive.put(userId, next);
+                    return next == LIMIT;
+                }
+            };
+        }
+    };
     private final Map<String, UserModel> byId = new HashMap<>();
     private final Set<String> lockedOut = new HashSet<>();
     private final Set<String> linkedToYtu = new HashSet<>();
@@ -79,7 +98,39 @@ class EmailCodeAuthenticatorTest {
     private final Map<String, List<AuthenticationExecutionModel>> flows = new HashMap<>();
     private final AuthenticationExecutionModel step = OtpAfterCodeTest.reconciledShape(flows);
 
+    /** Self-registration (ticket 09): the step's setting, off unless a test turns it on. */
+    private boolean signUpOn;
+    /** The accounts the sign-up opened, in order: username, address, firstName, lastName. */
+    private final List<Map<String, String>> opened = new ArrayList<>();
+    /** The next account the fake refuses to open, and why. */
+    private SignUpAccounts.Refused.Reason refuseNext;
+    /** Whether an opened account is found by lookups at once (committed) or only later. */
+    private boolean openedVisible = true;
+    private final List<UserModel> openedNotYetVisible = new ArrayList<>();
+    private final SignUpAccounts accounts = (keycloakSession, keycloakRealm, username, address, firstName, lastName) -> {
+        if (refuseNext != null) {
+            SignUpAccounts.Refused.Reason reason = refuseNext;
+            refuseNext = null;
+            throw new SignUpAccounts.Refused(reason);
+        }
+        opened.add(Map.of("username", username, "address", address, "firstName", firstName, "lastName", lastName));
+        UserModel user = person("new-" + opened.size(), username, address,
+                IdentityResource.PERSONAL_EMAIL_ATTRIBUTE + "=" + address,
+                IdentityResource.PERSONAL_EMAIL_VERIFIED_AT_ATTRIBUTE + "=2026-10-15T10:00:00Z");
+        if (!openedVisible) {
+            byId.remove(user.getId());
+            openedNotYetVisible.add(user);
+        }
+        return user;
+    };
+
     private EmailCodeAuthenticator authenticator = authenticator(500, null);
+
+    private AuthenticatorConfigModel signUpConfig() {
+        AuthenticatorConfigModel config = new AuthenticatorConfigModel();
+        config.setConfig(Map.of(EmailCodeSignUp.CONFIG, Boolean.toString(signUpOn)));
+        return config;
+    }
 
     /** What the authenticator mailed: whom, where, which code, for what. */
     private record Sent(String userId, String address, String code, String purpose) {
@@ -96,6 +147,11 @@ class EmailCodeAuthenticatorTest {
         }
 
         @Override
+        public void sendSignUpCode(AuthenticationFlowContext context, String address, String code) {
+            sent.add(new Sent(null, address, code, "signup"));
+        }
+
+        @Override
         public void alarm(AuthenticationFlowContext context, String level, int dailyLimit) {
             alarms.add(level + "/" + dailyLimit);
         }
@@ -103,6 +159,11 @@ class EmailCodeAuthenticatorTest {
         @Override
         public void ceilingAlarm(AuthenticationFlowContext context, int ceiling, int accounts) {
             alarms.add("ceiling/" + ceiling + "/" + accounts);
+        }
+
+        @Override
+        public void consecutiveAlarm(AuthenticationFlowContext context, int limit) {
+            alarms.add("consecutive/" + limit);
         }
 
         Sent last() {
@@ -121,6 +182,10 @@ class EmailCodeAuthenticatorTest {
         final LoginFormsProvider form = mock(LoginFormsProvider.class, RETURNS_SELF);
         final Map<String, Object> page = new HashMap<>();
         final MultivaluedHashMap<String, String> posted = new MultivaluedHashMap<>();
+        /** The event type of each cloned event (REGISTER for the sign-up's), and whether it succeeded. */
+        final List<EventType> clonedTypes = new ArrayList<>();
+        final List<Boolean> clonedSucceeded = new ArrayList<>();
+        String template;
         UserModel signedIn;
         boolean succeeded;
 
@@ -139,7 +204,11 @@ class EmailCodeAuthenticatorTest {
                 page.put(call.getArgument(0), call.getArgument(1));
                 return form;
             });
-            when(form.createForm(EmailCodeAuthenticator.TEMPLATE)).thenReturn(mock(Response.class));
+            when(form.createForm(anyString())).thenAnswer(call -> {
+                template = call.getArgument(0);
+                return mock(Response.class);
+            });
+            when(context.getAuthenticatorConfig()).thenAnswer(call -> signUpConfig());
             HttpRequest request = mock(HttpRequest.class);
             when(context.getHttpRequest()).thenReturn(request);
             when(request.getDecodedFormParameters()).thenReturn(posted);
@@ -159,10 +228,21 @@ class EmailCodeAuthenticatorTest {
             when(event.clone()).thenAnswer(call -> {
                 EventBuilder failure = mock(EventBuilder.class, RETURNS_SELF);
                 Map<String, String> details = new HashMap<>();
+                int index = clonedTypes.size();
+                clonedTypes.add(EventType.LOGIN);
+                clonedSucceeded.add(false);
                 when(failure.detail(anyString(), anyString())).thenAnswer(detail -> {
                     details.put(detail.getArgument(0), detail.getArgument(1));
                     return failure;
                 });
+                when(failure.event(any(EventType.class))).thenAnswer(type -> {
+                    clonedTypes.set(index, type.getArgument(0));
+                    return failure;
+                });
+                doAnswer(success -> {
+                    clonedSucceeded.set(index, true);
+                    return null;
+                }).when(failure).success();
                 failures.add(failure);
                 failureDetails.add(details);
                 return failure;
@@ -192,6 +272,48 @@ class EmailCodeAuthenticatorTest {
                 posted.putSingle(name, value);
             }
             authenticator.action(context);
+        }
+
+        /** Keycloak's execution switch to this step, as the theme's "Hesap aç" (or, without it, "E-postayla devam et") posts it. */
+        void choose(boolean signUp) {
+            posted.clear();
+            posted.putSingle(Constants.AUTHENTICATION_EXECUTION, "execution-id");
+            if (signUp) {
+                posted.putSingle(EmailCodeSignUp.INTENT_PARAM, EmailCodeSignUp.INTENT_SIGN_UP);
+            }
+            authenticator.authenticate(context);
+        }
+
+        /** "Hesabı aç" with the two names. */
+        void signUp(String firstName, String lastName) {
+            posted.clear();
+            posted.putSingle(EmailCodeAuthenticator.ACTION_PARAM, EmailCodeSignUp.SIGN_UP);
+            posted.putSingle(EmailCodeSignUp.FIRST_NAME_PARAM, firstName);
+            posted.putSingle(EmailCodeSignUp.LAST_NAME_PARAM, lastName);
+            authenticator.action(context);
+        }
+
+        /** "Devam et" on the existing stage. */
+        void carryOn() {
+            post(EmailCodeSignUp.CONTINUE, null, null);
+        }
+
+        String signUpStage() {
+            return EmailCodeSignUp.TEMPLATE.equals(template) ? (String) shown(EmailCodeSignUp.STAGE_ATTRIBUTE) : null;
+        }
+
+        String signUpError() {
+            return (String) shown(EmailCodeSignUp.ERROR_ATTRIBUTE);
+        }
+
+        /** The details of the last event of the given type this browser wrote. */
+        Map<String, String> lastEvent(EventType type) {
+            for (int i = clonedTypes.size() - 1; i >= 0; i--) {
+                if (clonedTypes.get(i) == type) {
+                    return failureDetails.get(i);
+                }
+            }
+            return null;
         }
 
         void send(String identifier) {
@@ -271,7 +393,123 @@ class EmailCodeAuthenticatorTest {
 
     private EmailCodeAuthenticator authenticator(int dailyLimit, WebAuthnConditionalUIAuthenticator webauthn,
             int wrongCodesPerAccount) {
-        return new EmailCodeAuthenticator(new EmailCodeSettings(YTU, dailyLimit, null, wrongCodesPerAccount), mail, webauthn);
+        return new EmailCodeAuthenticator(new EmailCodeSettings(YTU, dailyLimit, null, wrongCodesPerAccount), mail, webauthn,
+                accounts, new SignUpUsernames(), persistentFailures);
+    }
+
+    @Test
+    void thePersistentLimitStopsSendingAndCheckingAPreviouslyMailedRightCode() {
+        person("ada", "ada", "ada@example.com");
+        browser.send("ada");
+        String right = mail.last().code();
+        consecutive.put("ada", 100);
+        Browser second = new Browser("root-persistent", "203.0.113.8");
+        second.send("ada");
+        assertEquals(1, mail.sent.size());
+        assertEquals("code", second.stage());
+        browser.verify(right);
+        assertFalse(browser.succeeded);
+        assertEquals("wrong_code", browser.error());
+        assertEquals(100, consecutive.get("ada"));
+        assertEquals("consecutive_code_ceiling", browser.lastFailure().get(EmailCodeAuthenticator.EVENT_DETAIL));
+        assertTrue(mail.alarms.isEmpty(), "an already blocked account does not alarm again");
+    }
+
+    @Test
+    void oneComparedWrongCodeAt99Reaches100AndAlarmsOnceWithoutAffectingAnotherAccount() {
+        person("ada", "ada", "ada@example.com");
+        person("bob", "bob", "bob@example.com");
+        consecutive.put("ada", 99);
+        browser.send("ada");
+        String right = mail.last().code();
+        browser.verify(other(right));
+        assertEquals(100, consecutive.get("ada"));
+        assertEquals(List.of("consecutive/100"), mail.alarms);
+        browser.verify(right);
+        assertEquals(100, consecutive.get("ada"));
+        assertEquals(List.of("consecutive/100"), mail.alarms);
+        Browser second = new Browser("root-other", "203.0.113.8");
+        second.send("bob");
+        second.verify(mail.last().code());
+        assertTrue(second.succeeded);
+    }
+
+    @Test
+    void aRightCodeDoesNotResetThePersistentCountBeforeTotpAndTheActualLogin() {
+        person("ada", "ada", "ada@example.com");
+        consecutive.put("ada", 42);
+        browser.send("ada");
+        browser.verify(mail.last().code());
+        assertTrue(browser.succeeded);
+        assertEquals(42, consecutive.get("ada"), "only the eventual LOGIN transaction resets it");
+    }
+
+    @Test
+    void anExistingAccountProofCannotContinueAfterAnotherSessionReaches100() {
+        signUpOn = true;
+        person("ada", "ada", "ada@example.com");
+        consecutive.put("ada", 99);
+        browser.choose(true);
+        browser.send("ada@example.com");
+        browser.verify(mail.last().code());
+        assertEquals("existing", browser.signUpStage());
+        consecutive.put("ada", 100);
+        browser.carryOn();
+        assertFalse(browser.succeeded);
+        assertEquals(100, consecutive.get("ada"));
+    }
+
+    @Test
+    void aSignUpCodeStartsCountingWhenItsAddressGetsAnAccountBeforeTheTry() {
+        signUpOn = true;
+        browser.send("new@example.com");
+        String right = mail.last().code();
+        browser.verify(other(right));
+        assertTrue(consecutive.isEmpty(), "an unknown address has no account counter");
+        person("meanwhile", "meanwhile", "new@example.com");
+        consecutive.put("meanwhile", 99);
+
+        browser.verify(other(right));
+
+        assertEquals(100, consecutive.get("meanwhile"));
+        assertEquals(List.of("consecutive/100"), mail.alarms);
+        browser.verify(right);
+        assertFalse(browser.succeeded);
+        assertEquals("wrong_code", browser.error());
+        assertNull(browser.signUpStage());
+        assertTrue(opened.isEmpty());
+    }
+
+    @Test
+    void aLateAccountAlsoGetsTheExistingDailyAccountCeiling() {
+        signUpOn = true;
+        authenticator = authenticator(1_000, null, 2);
+        browser.send("new@example.com");
+        String right = mail.last().code();
+        person("meanwhile", "meanwhile", "new@example.com");
+        browser.verify(other(right));
+        browser.verify(other(right));
+        assertEquals(2, consecutive.get("meanwhile"));
+
+        Browser next = new Browser("root-late-account", "203.0.113.8");
+        next.send("meanwhile");
+        assertEquals(1, mail.sent.size(), "the account daily ceiling blocks another code");
+        assertFalse(next.succeeded);
+        assertTrue(opened.isEmpty());
+    }
+
+    @Test
+    void thePersistentBlockOutlivesTheDailyBudgetsAndSessionExpiry() {
+        person("ada", "ada", "ada@example.com");
+        consecutive.put("ada", 100);
+        Time.setOffset(86_400);
+
+        Browser tomorrow = new Browser("root-next-day", "203.0.113.8");
+        tomorrow.send("ada");
+
+        assertEquals("code", tomorrow.stage());
+        assertTrue(mail.sent.isEmpty());
+        assertEquals(100, consecutive.get("ada"));
     }
 
     /** A person of the realm; attributes are name=value pairs. */
@@ -1080,6 +1318,563 @@ class EmailCodeAuthenticatorTest {
         }
         assertTrue(store.notesHoldNo(code));
         assertNotEquals(0, store.claimedSlots());
+    }
+
+    // ------------------------------------------------------------------------------- sign-up
+
+    // Self-registration (eskylab-login-ux 09, ADR-0063 decision 1, CONTEXT "Self-registration"): an
+    // e-mail address that names nobody gets a sign-up code while the step's setting is on. The page is
+    // the one any address gets; only the right code tells the branches apart.
+
+    /** A sign-up code for {@code address} in a browser of its own, typed right; returns the browser. */
+    private Browser provenSignUp(String sessionId, String address) {
+        Browser tab = new Browser(sessionId, "198.51.100.40");
+        tab.send(address);
+        assertEquals("signup", mail.last().purpose(), "a sign-up code was mailed");
+        tab.verify(mail.last().code());
+        return tab;
+    }
+
+    @Test
+    void selfRegistrationIsOffUnlessTheStepsSettingIsOn() {
+        browser.send("new@example.com");
+        assertTrue(mail.sent.isEmpty(), "off: an address that names nobody is mailed nothing");
+        assertNull(browser.shown(EmailCodeSignUp.ON_ATTRIBUTE));
+
+        signUpOn = true;
+        Browser on = new Browser("root-on", "198.51.100.41");
+        on.send("new@example.com");
+        assertEquals(new Sent(null, "new@example.com", mail.last().code(), "signup"), mail.last());
+        assertEquals("true", on.shown(EmailCodeSignUp.ON_ATTRIBUTE));
+    }
+
+    @Test
+    void withSignUpOnAnUnknownAddressGetsASignUpCodeAndTheSamePage() {
+        signUpOn = true;
+        person("ada", "ada", "ada@example.com");
+        browser.send("ada@example.com");
+        Map<String, Object> known = new HashMap<>(browser.page);
+
+        Browser stranger = new Browser("root-2", "203.0.113.7");
+        stranger.send("New.Person@Example.com");
+        Map<String, Object> unknown = new HashMap<>(stranger.page);
+
+        assertEquals("login", mail.sent.get(0).purpose());
+        assertEquals(new Sent(null, "new.person@example.com", mail.last().code(), "signup"), mail.last(),
+                "the sign-up code goes to the typed address, lowercased");
+        known.remove(EmailCodeAuthenticator.IDENTIFIER_ATTRIBUTE);
+        unknown.remove(EmailCodeAuthenticator.IDENTIFIER_ATTRIBUTE);
+        assertEquals(known, unknown, "the code page must not tell whether the account exists");
+        assertTrue(stranger.failures.isEmpty(), "asking for a sign-up code is not a failure");
+    }
+
+    @Test
+    void aUsernameOrSomethingThatIsNoAddressNeverGetsASignUpCode() {
+        signUpOn = true;
+        for (String typed : List.of("nobody", "nobody@", "@example.com", "no body@example.com")) {
+            Browser tab = new Browser("root-" + typed, "198.51.100.42");
+            tab.send(typed);
+            assertEquals("code", tab.stage(), typed);
+        }
+        assertTrue(mail.sent.isEmpty());
+    }
+
+    @Test
+    void theRightSignUpCodeOpensTheFormForTheProvenAddress() {
+        signUpOn = true;
+        Browser tab = provenSignUp("root-new", "new@example.com");
+
+        assertEquals("form", tab.signUpStage());
+        assertEquals("new@example.com", tab.shown(EmailCodeSignUp.ADDRESS_ATTRIBUTE));
+        assertFalse(tab.succeeded);
+        assertNull(tab.signedIn);
+        assertTrue(opened.isEmpty(), "no account before the names");
+        assertNull(tab.notes.get(EmailCodeAuthenticator.HANDLE_NOTE), "the code is used up");
+
+        tab.open();
+        assertEquals("form", tab.signUpStage(), "a reload shows the form again");
+    }
+
+    @Test
+    void theNamesOpenTheAccountAndSignItIn() {
+        signUpOn = true;
+        Browser tab = provenSignUp("root-new", "new.person@example.com");
+
+        tab.signUp("  Ayşe  ", " Yılmaz ");
+
+        assertEquals(List.of(Map.of("username", "ayse.yilmaz", "address", "new.person@example.com",
+                "firstName", "Ayşe", "lastName", "Yılmaz")), opened);
+        assertTrue(tab.succeeded);
+        assertEquals("new-1", tab.signedIn.getId());
+        assertEquals("email_code", tab.notes.get(EmailCodeAuthenticator.METHOD_NOTE));
+        assertEquals("true", tab.notes.get(EmailCodeSignUp.SIGNED_UP_NOTE), "ticket 10 reads it");
+        assertNull(tab.notes.get(EmailCodeSignUp.ADDRESS_NOTE), "the form cannot open a second account");
+        Map<String, String> register = tab.lastEvent(EventType.REGISTER);
+        assertEquals(Map.of(Details.USERNAME, "ayse.yilmaz", Details.EMAIL, "new.person@example.com",
+                Details.REGISTER_METHOD, "email_code", "sky_method", "email_code"), register);
+        assertTrue(tab.clonedSucceeded.get(tab.clonedTypes.lastIndexOf(EventType.REGISTER)));
+        verify(tab.event).detail("sky_method", "email_code");
+
+        tab.signUp("Ayşe", "Yılmaz");
+        assertEquals(1, opened.size(), "posting the form again opens nothing");
+    }
+
+    @Test
+    void theNamesAreCheckedBeforeAnyAccountIsOpened() {
+        signUpOn = true;
+        Browser tab = provenSignUp("root-new", "new@example.com");
+
+        tab.signUp("   ", "Yılmaz");
+        assertEquals("form", tab.signUpStage());
+        assertEquals("first_name_missing", tab.signUpError());
+        tab.signUp("Ayşe", "");
+        assertEquals("last_name_missing", tab.signUpError());
+        tab.signUp("<script>", "Yılmaz");
+        assertEquals("first_name_invalid", tab.signUpError());
+        assertEquals("<script>", tab.shown(EmailCodeSignUp.FIRST_NAME_ATTRIBUTE), "what was typed comes back");
+        tab.signUp("Ayşe", "x".repeat(IdentityResource.MAX_NAME_LENGTH + 1));
+        assertEquals("last_name_invalid", tab.signUpError());
+        refuseNext = SignUpAccounts.Refused.Reason.LAST_NAME;
+        tab.signUp("Ayşe", "Yılmaz");
+        assertEquals("last_name_invalid", tab.signUpError(), "the realm's User Profile has the last word");
+
+        assertTrue(opened.isEmpty());
+        tab.signUp("Ayşe", "Yılmaz");
+        assertEquals(1, opened.size());
+    }
+
+    @Test
+    void invisibleNamesAreMissingAndTheLimitAppliesAfterNormalisation() {
+        signUpOn = true;
+        Browser tab = provenSignUp("root-names", "private.mailbox@example.com");
+        for (String blank : List.of("\u200b\u200c\ufeff", "\u00a0\u2007\u202f", " \t ")) {
+            tab.signUp(blank, "Kaya");
+            assertEquals("first_name_missing", tab.signUpError());
+            tab.signUp("Ada", blank);
+            assertEquals("last_name_missing", tab.signUpError());
+        }
+        tab.signUp("a".repeat(65), "Kaya");
+        assertEquals("first_name_invalid", tab.signUpError());
+        assertTrue(opened.isEmpty());
+
+        tab.signUp("  Ay\u200bşe\u00a0  Nur  ", " Yılmaz ");
+        assertEquals("ayse.nur.yilmaz", opened.get(0).get("username"));
+        assertEquals("Ayşe Nur", opened.get(0).get("firstName"));
+    }
+
+    @Test
+    void unicodeNamesUseANeutralUsernameAndNeverThePrivateMailbox() {
+        signUpOn = true;
+        Browser tab = provenSignUp("root-unicode", "private.mailbox@example.com");
+
+        tab.signUp("李", "王");
+
+        assertEquals("uye", opened.get(0).get("username"));
+        assertEquals("李", opened.get(0).get("firstName"));
+        assertEquals("王", opened.get(0).get("lastName"));
+        assertTrue(tab.succeeded);
+    }
+
+    @Test
+    void aSchoolAddressIsSentToTheYtuSignInAndOpensNoAccount() {
+        signUpOn = true;
+        for (String address : List.of("yeni@std.yildiz.edu.tr", "Hoca@YILDIZ.edu.tr", "x@ce.yildiz.edu.tr")) {
+            Browser tab = provenSignUp("root-" + address, address);
+
+            assertEquals("ytu", tab.signUpStage(), address);
+            assertEquals(YTU, tab.shown(EmailCodeSignUp.YTU_ALIAS_ATTRIBUTE));
+            assertEquals("school_domain", tab.lastEvent(EventType.REGISTER).get("sky_email_code"));
+            tab.signUp("Ayşe", "Yılmaz");
+            assertNotEquals("form", tab.signUpStage(), "the form never opens for a school address");
+        }
+        assertTrue(opened.isEmpty());
+    }
+
+    // Spec §7.4: "Hesap aç" for an address that has an account signs the person in with the code
+    // and says so; no second account.
+    @Test
+    void hesapAcForAnAddressWithAnAccountSignsInAndSaysSo() {
+        signUpOn = true;
+        UserModel ada = person("ada", "ada", "ada@example.com");
+        browser.choose(true);
+        assertEquals("sign-up", browser.shown(EmailCodeSignUp.INTENT_ATTRIBUTE));
+        browser.send("ada@example.com");
+        assertEquals("login", mail.last().purpose(), "the code is a sign-in code to the primary address");
+        assertEquals("sign-up", browser.shown(EmailCodeSignUp.INTENT_ATTRIBUTE));
+
+        browser.verify(mail.last().code());
+        assertEquals("existing", browser.signUpStage());
+        assertFalse(browser.succeeded, "the note comes first");
+
+        browser.open();
+        assertEquals("existing", browser.signUpStage(), "a reload shows the note again");
+        browser.carryOn();
+        assertTrue(browser.succeeded);
+        assertEquals(ada, browser.signedIn);
+        assertTrue(opened.isEmpty());
+        verify(browser.event).detail("sky_email_code", "existing_account");
+    }
+
+    @Test
+    void withoutHesapAcAnAccountIsSignedInWithoutTheNote() {
+        signUpOn = true;
+        person("ada", "ada", "ada@example.com");
+        browser.choose(true);
+        browser.choose(false);
+        assertNull(browser.shown(EmailCodeSignUp.INTENT_ATTRIBUTE), "plain 'E-postayla devam et' forgets the intent");
+        browser.send("ada");
+        browser.verify(mail.last().code());
+
+        assertTrue(browser.succeeded);
+        assertNull(browser.signUpStage());
+    }
+
+    @Test
+    void theIntentIsKeptOnlyWhileSelfRegistrationIsOn() {
+        browser.choose(true);
+        assertNull(browser.notes.get(EmailCodeSignUp.INTENT_NOTE));
+        assertNull(browser.shown(EmailCodeSignUp.INTENT_ATTRIBUTE));
+    }
+
+    @Test
+    void theExistingNoteChecksThePersonAgainOnContinue() {
+        signUpOn = true;
+        UserModel ada = person("ada", "ada", "ada@example.com");
+        browser.choose(true);
+        browser.send("ada");
+        browser.verify(mail.last().code());
+        assertEquals("existing", browser.signUpStage());
+
+        when(ada.isEnabled()).thenReturn(false);
+        browser.carryOn();
+
+        assertFalse(browser.succeeded);
+        assertEquals("account_disabled", browser.error());
+    }
+
+    @Test
+    void theExistingNoteExpiresFromTheProofEvenAfterReloads() {
+        signUpOn = true;
+        person("ada", "ada", "ada@example.com");
+        browser.choose(true);
+        browser.send("ada");
+        browser.verify(mail.last().code());
+        assertEquals("existing", browser.signUpStage());
+
+        Time.setOffset(EmailCodeSignUp.PROOF_SECONDS - 1);
+        browser.open();
+        assertEquals("existing", browser.signUpStage());
+        Time.setOffset(EmailCodeSignUp.PROOF_SECONDS + 1);
+        browser.carryOn();
+
+        assertFalse(browser.succeeded);
+        assertEquals("identifier", browser.stage());
+    }
+
+    @Test
+    void movingFromTheFormToAnExistingAccountDoesNotRenewTheProof() {
+        signUpOn = true;
+        Browser tab = provenSignUp("root-new", "new@example.com");
+        Time.setOffset(EmailCodeSignUp.PROOF_SECONDS - 1);
+        person("meanwhile", "meanwhile", "new@example.com");
+        tab.signUp("Ayşe", "Yılmaz");
+        assertEquals("existing", tab.signUpStage());
+
+        Time.setOffset(EmailCodeSignUp.PROOF_SECONDS + 1);
+        tab.open();
+        tab.carryOn();
+
+        assertFalse(tab.succeeded);
+        assertEquals("identifier", tab.stage());
+    }
+
+    // The race (ticket 09): the address got an account meanwhile; the code signs the person in to it.
+    @Test
+    void anAccountOpenedForTheAddressSinceTheCodeIsSignedInNotDuplicated() {
+        signUpOn = true;
+        browser.send("new@example.com");
+        String code = mail.last().code();
+        UserModel meanwhile = person("meanwhile", "meanwhile", "new@example.com");
+
+        browser.verify(code);
+
+        assertEquals("existing", browser.signUpStage());
+        browser.carryOn();
+        assertEquals(meanwhile, browser.signedIn);
+        assertTrue(opened.isEmpty());
+    }
+
+    @Test
+    void anAccountOpenedForTheAddressWhileTheFormWasOpenIsSignedInNotDuplicated() {
+        signUpOn = true;
+        Browser tab = provenSignUp("root-new", "new@example.com");
+        UserModel meanwhile = person("meanwhile", "meanwhile", "new@example.com");
+
+        tab.signUp("Ayşe", "Yılmaz");
+
+        assertTrue(opened.isEmpty());
+        assertEquals("existing", tab.signUpStage());
+        tab.carryOn();
+        assertEquals(meanwhile, tab.signedIn);
+    }
+
+    @Test
+    void twoSessionsSigningUpTheSameAddressOpenOneAccount() {
+        signUpOn = true;
+        Browser first = provenSignUp("root-first", "new@example.com");
+        Browser second = provenSignUp("root-second", "new@example.com");
+
+        first.signUp("Ayşe", "Yılmaz");
+        second.signUp("Ayşe", "Yılmaz");
+
+        assertEquals(1, opened.size());
+        assertTrue(first.succeeded);
+        assertEquals("existing", second.signUpStage(), "the second sign-up finds the account the first opened");
+        second.carryOn();
+        assertEquals(first.signedIn, second.signedIn);
+    }
+
+    @Test
+    void whileAnotherSignUpOfTheAddressIsStillWritingTheFormSaysTryAgain() {
+        signUpOn = true;
+        openedVisible = false;
+        Browser first = provenSignUp("root-first", "new@example.com");
+        Browser second = provenSignUp("root-second", "new@example.com");
+
+        first.signUp("Ayşe", "Yılmaz");
+        second.signUp("Ayşe", "Yılmaz");
+
+        assertEquals(1, opened.size(), "one account, whatever the timing");
+        assertEquals("form", second.signUpStage());
+        assertEquals("try_again", second.signUpError());
+    }
+
+    @Test
+    void anAddressHeldByAnAccountThatDoesNotSignInWithItOpensNothing() {
+        signUpOn = true;
+        // An unproven Personal e-mail: not a sign-in identifier, still nobody else's to open.
+        person("x", "x", "x@example.com", IdentityResource.PERSONAL_EMAIL_ATTRIBUTE + "=held@example.com");
+        Browser tab = provenSignUp("root-held", "held@example.com");
+
+        assertEquals("unavailable", tab.signUpStage());
+        assertEquals("sign_up_taken", tab.lastEvent(EventType.REGISTER).get("sky_email_code"));
+        tab.signUp("Ayşe", "Yılmaz");
+        assertTrue(opened.isEmpty());
+    }
+
+    @Test
+    void aSignUpCodeOpensNothingWhenSelfRegistrationWentOffMeanwhile() {
+        signUpOn = true;
+        browser.send("new@example.com");
+        signUpOn = false;
+
+        browser.verify(mail.last().code());
+
+        assertEquals("unavailable", browser.signUpStage());
+        assertEquals("sign_up_off", browser.lastEvent(EventType.REGISTER).get("sky_email_code"));
+        assertTrue(opened.isEmpty());
+    }
+
+    @Test
+    void theFormNeedsAnAddressProvenInThisSessionRecently() {
+        signUpOn = true;
+        browser.signUp("Ayşe", "Yılmaz");
+        assertTrue(opened.isEmpty());
+        assertEquals("identifier", browser.stage());
+
+        Browser tab = provenSignUp("root-new", "new@example.com");
+        Time.setOffset(EmailCodeSignUp.PROOF_SECONDS + 1);
+        tab.signUp("Ayşe", "Yılmaz");
+        assertTrue(opened.isEmpty(), "the proof does not outlive half an hour");
+    }
+
+    @Test
+    void anotherAddressFromTheSignUpPageStartsAgain() {
+        signUpOn = true;
+        Browser tab = provenSignUp("root-new", "new@example.com");
+
+        tab.post(EmailCodeAuthenticator.CHANGE, null, null);
+
+        assertEquals("identifier", tab.stage());
+        assertNull(tab.notes.get(EmailCodeSignUp.ADDRESS_NOTE));
+        tab.signUp("Ayşe", "Yılmaz");
+        assertTrue(opened.isEmpty());
+    }
+
+    @Test
+    void aUsernameTakenBetweenTheChoiceAndTheWriteMovesToTheNextName() {
+        signUpOn = true;
+        Browser tab = provenSignUp("root-new", "ada@example.com");
+        refuseNext = SignUpAccounts.Refused.Reason.USERNAME_TAKEN;
+
+        tab.signUp("Ayşe", "Yılmaz");
+
+        assertEquals("ayse.yilmaz2", opened.get(0).get("username"));
+        assertTrue(tab.succeeded);
+    }
+
+    @Test
+    void anExistingUsernameIsNeverReusedForTheNewAccount() {
+        signUpOn = true;
+        person("ada", "ayse.yilmaz", "someone@example.com");
+        Browser tab = provenSignUp("root-new", "ada@example.org");
+
+        tab.signUp("Ayşe", "Yılmaz");
+
+        assertEquals("ayse.yilmaz2", opened.get(0).get("username"));
+    }
+
+    // Spec §7.2: at the overall daily budget sign-up codes stop; sign-in codes go on.
+    @Test
+    void signUpCodesStopAtTheOverallBudgetButSignInCodesGoOn() {
+        signUpOn = true;
+        authenticator = authenticator(2, null);
+        Time.setOffset(-(Time.currentTime() % (24 * 60 * 60)));
+        new Browser("root-a", "198.51.100.50").send("first@example.com");
+        new Browser("root-b", "198.51.100.51").send("second@example.com");
+        assertEquals(2, mail.sent.size());
+
+        Browser third = new Browser("root-c", "198.51.100.52");
+        third.send("third@example.com");
+        assertEquals(2, mail.sent.size(), "no sign-up code past the budget");
+        assertEquals("code", third.stage());
+        assertEquals("sign_up_paused", third.lastEvent(EventType.REGISTER).get("sky_email_code"));
+
+        person("ada", "ada", "ada@example.com");
+        new Browser("root-d", "198.51.100.53").send("ada");
+        assertEquals(3, mail.sent.size(), "a sign-in code still goes");
+    }
+
+    @Test
+    void wrongSignUpCodesReachTheCeilingOfTheirAddress() {
+        signUpOn = true;
+        authenticator = authenticator(500, null, 2);
+        Time.setOffset(-(Time.currentTime() % (24 * 60 * 60)));
+        Browser waiting = new Browser("root-waiting", "198.51.100.60");
+        waiting.send("new@example.com");
+        String mailed = mail.last().code();
+        for (int i = 0; i < 2; i++) {
+            Browser guesser = new Browser("root-g" + i, "198.51.100.6" + (i + 1));
+            guesser.send("new@example.com");
+            guesser.verify(other(mail.last().code()));
+            assertEquals("wrong_code", guesser.error());
+        }
+        int sent = mail.sent.size();
+
+        waiting.verify(mailed);
+        assertEquals("wrong_code", waiting.error(), "a code mailed before is not looked at");
+        // A quarter of an hour later, so the address budget does not decide.
+        Time.setOffset(Time.getOffset() + 15 * 60);
+        Browser after = new Browser("root-after", "198.51.100.70");
+        after.send("new@example.com");
+        assertEquals(sent, mail.sent.size(), "no sign-up code to the address past its ceiling");
+        assertEquals("wrong_code_ceiling", after.lastEvent(EventType.REGISTER).get("sky_email_code"));
+        assertTrue(opened.isEmpty());
+        assertTrue(mail.alarms.isEmpty(), "no account at stake, no operator alarm");
+        verify(protector, never()).failedLogin(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void aWrongSignUpCodeCostsATryLikeAnyOther() {
+        signUpOn = true;
+        browser.send("new@example.com");
+        String code = mail.last().code();
+
+        browser.verify(other(code));
+        assertEquals("wrong_code", browser.error());
+        assertEquals("4", browser.shown(EmailCodeAuthenticator.ATTEMPTS_LEFT_ATTRIBUTE));
+        browser.verify(code);
+        assertEquals("form", browser.signUpStage());
+    }
+
+    @Test
+    void anAddressThatNamesTwoPeopleOrADisabledAccountGetsNoSignUpCode() {
+        signUpOn = true;
+        person("one", "one", "shared@example.com");
+        person("two", "shared@example.com", "two@example.com");
+        UserModel disabled = person("off", "off", "off@example.com");
+        when(disabled.isEnabled()).thenReturn(false);
+
+        for (String typed : List.of("shared@example.com", "off@example.com")) {
+            Browser tab = new Browser("root-" + typed, "198.51.100.43");
+            tab.send(typed);
+            assertEquals("code", tab.stage(), typed);
+        }
+        assertTrue(mail.sent.isEmpty(), "an address that names somebody is never signed up");
+    }
+
+    // Nobody is signed in by an address that is not where their codes go (spec S4): an address that
+    // became somebody's proven Personal e-mail in the ten minutes, while their Primary is another,
+    // opens nothing and signs nobody in.
+    @Test
+    void anAddressThatBecameSomebodysSecondAddressMeanwhileSignsNobodyIn() {
+        signUpOn = true;
+        browser.send("new@example.com");
+        String code = mail.last().code();
+        person("ada", "ada", "ada@example.com", IdentityResource.PERSONAL_EMAIL_ATTRIBUTE + "=new@example.com",
+                IdentityResource.PERSONAL_EMAIL_VERIFIED_AT_ATTRIBUTE + "=2026-10-15T10:00:00Z");
+
+        browser.verify(code);
+
+        assertEquals("unavailable", browser.signUpStage());
+        assertFalse(browser.succeeded);
+        browser.carryOn();
+        assertFalse(browser.succeeded, "there is no existing stage to continue from");
+        assertTrue(opened.isEmpty());
+    }
+
+    // Spec §7.5: the sign-up's refusals name neither the IP nor the address.
+    @Test
+    void signUpRefusalsCarryNeitherTheIpNorTheAddress() {
+        signUpOn = true;
+        Browser tab = provenSignUp("root-ytu", "yeni@std.yildiz.edu.tr");
+
+        int index = tab.clonedTypes.lastIndexOf(EventType.REGISTER);
+        EventBuilder refusal = tab.failures.get(index);
+        verify(refusal).ipAddress(null);
+        verify(refusal).removeDetail(Details.USERNAME);
+        verify(refusal).error(org.keycloak.events.Errors.INVALID_REGISTRATION);
+        assertFalse(tab.failureDetails.get(index).containsValue("yeni@std.yildiz.edu.tr"));
+    }
+
+    @Test
+    void theFourthSignUpCodeToOneAddressInAQuarterHourIsNotMailed() {
+        signUpOn = true;
+        Time.setOffset(-(Time.currentTime() % (15 * 60)));
+        for (int i = 0; i < 4; i++) {
+            Browser tab = new Browser("root-q" + i, "198.51.100.8" + i);
+            tab.send("new@example.com");
+            assertEquals("code", tab.stage());
+        }
+        assertEquals(3, mail.sent.size(), "the address budget holds for sign-up codes too");
+    }
+
+    // ADR-0044's rule for a sign-up code too: it works only in the sign-in session that asked for it.
+    @Test
+    void aSignUpCodeDoesNotWorkInAnotherBrowser() {
+        signUpOn = true;
+        browser.send("new@example.com");
+        String code = mail.last().code();
+        Browser other = new Browser("root-other", "198.51.100.90");
+        other.send("other@example.com");
+
+        other.verify(code);
+
+        assertEquals("wrong_code", other.error());
+        assertNull(other.signUpStage());
+        browser.verify(code);
+        assertEquals("form", browser.signUpStage(), "the other browser's try cost this one nothing");
+    }
+
+    @Test
+    void theStoreHoldsNeitherTheSignUpCodeNorTheAddressInAnyKey() {
+        signUpOn = true;
+        Browser tab = provenSignUp("root-new", "new@example.com");
+        tab.signUp("Ayşe", "Yılmaz");
+
+        for (String key : store.keys()) {
+            assertFalse(key.contains("new@example.com"), key);
+        }
     }
 
     // ------------------------------------------------------------------------------- helpers

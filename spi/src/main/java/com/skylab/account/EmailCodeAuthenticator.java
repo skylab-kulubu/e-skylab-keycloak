@@ -15,7 +15,9 @@ import org.keycloak.common.util.Time;
 import org.keycloak.events.Details;
 import org.keycloak.events.Errors;
 import org.keycloak.events.EventBuilder;
+import org.keycloak.events.EventType;
 import org.keycloak.forms.login.LoginFormsProvider;
+import org.keycloak.models.Constants;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
@@ -41,8 +43,20 @@ import org.keycloak.sessions.AuthenticationSessionModel;
  * the request, in the background ({@link LoginCodeMail}), so the answer takes the same time. The
  * page never says that an address has no account: the right code of a code nobody was mailed (a
  * guess) gets a dead code's sentence; only the event, for the administrators, says {@code no_account}.
- * Self-registration (ticket 09) will turn that branch into the sign-up form for a code that was
- * mailed to sign up.
+ *
+ * <p>Self-registration (ticket 09, ADR-0063 decision 1, CONTEXT "Self-registration"; off unless the
+ * execution's {@value EmailCodeSignUp#CONFIG} setting is {@code true}, {@link EmailCodeSignUp}): an
+ * e-mail address that names nobody is mailed a sign-up code instead of none, on the same page, in the
+ * same budgets (the overall one stops sign-up codes when it is used up; sign-in codes go on). Only
+ * the right code tells the two apart: it opens the sign-up form ({@link EmailCodeSignUp#TEMPLATE}),
+ * or, for an address on a YTÜ school domain, sends the person to the YTÜ sign-in and opens nothing
+ * (spec S3). The form takes a first and a last name and opens the account
+ * ({@link SignUpAccounts}): the proven address as its verified Primary e-mail and Personal e-mail,
+ * a username derived from it ({@link SignUpUsernames}), no password, no rights, a {@code REGISTER}
+ * event; then the person is signed in. When the address got an account meanwhile (another sign-up,
+ * a race), no second account is opened: the code signs the person in to it. A person who came
+ * through "Hesap aç" ({@value EmailCodeSignUp#INTENT_PARAM}) and has an account is signed in by the
+ * Login code and told so once.
  *
  * <p>The code follows CONTEXT's Login code ({@link LoginCodes}): six digits, ten minutes, dead after
  * five wrong tries, single use, valid only in the sign-in session (browser and tab) that asked for
@@ -132,8 +146,16 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
      * K2): a code that was not mailed, or a try spent without looking at the code.
      */
     static final String WRONG_CODE_CEILING = "wrong_code_ceiling";
+    static final String CONSECUTIVE_CODE_CEILING = "consecutive_code_ceiling";
+    /** Self-registration's event details (ticket 09); the events carry no IP and no address. */
+    static final String SIGN_UP_PAUSED = "sign_up_paused";
+    static final String SCHOOL_DOMAIN = "school_domain";
+    static final String SIGN_UP_TAKEN = "sign_up_taken";
+    static final String SIGN_UP_OFF = "sign_up_off";
+    static final String EXISTING_ACCOUNT = "existing_account";
+    static final String REGISTER_METHOD = "email_code";
 
-    /** What a code is for, in the mail; only sign-in here. */
+    /** What a code is for, in the mail: sign-in; a sign-up code is {@link LoginCodes#SIGN_UP_PURPOSE}. */
     static final String PURPOSE_LOGIN = "login";
     static final int RESEND_SECONDS = 60;
     static final int MAX_IDENTIFIER_LENGTH = 255;
@@ -174,15 +196,35 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
     private final EmailCodeSettings settings;
     private final LoginCodeMail mail;
     private final WebAuthnConditionalUIAuthenticator webauthn;
+    private final SignUpAccounts accounts;
+    private final SignUpUsernames usernames;
+    private final LoginCodeFailureCounter persistentFailures;
 
     EmailCodeAuthenticator(EmailCodeSettings settings, LoginCodeMail mail, WebAuthnConditionalUIAuthenticator webauthn) {
+        this(settings, mail, webauthn, new ProfileSignUpAccounts(), new SignUpUsernames());
+    }
+
+    EmailCodeAuthenticator(EmailCodeSettings settings, LoginCodeMail mail, WebAuthnConditionalUIAuthenticator webauthn,
+            SignUpAccounts accounts, SignUpUsernames usernames) {
+        this(settings, mail, webauthn, accounts, usernames, new PersistentLoginCodeFailures());
+    }
+
+    EmailCodeAuthenticator(EmailCodeSettings settings, LoginCodeMail mail, WebAuthnConditionalUIAuthenticator webauthn,
+            SignUpAccounts accounts, SignUpUsernames usernames, LoginCodeFailureCounter persistentFailures) {
         this.settings = settings;
         this.mail = mail;
         this.webauthn = webauthn;
+        this.accounts = accounts;
+        this.usernames = usernames;
+        this.persistentFailures = persistentFailures;
     }
 
     @Override
     public void authenticate(AuthenticationFlowContext context) {
+        rememberIntent(context);
+        if (resumeSignUp(context)) {
+            return;
+        }
         if (waiting(context) != null) {
             context.challenge(codePage(context, null, null));
             return;
@@ -203,6 +245,18 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
             return;
         }
         String action = form.getFirst(ACTION_PARAM);
+        if (EmailCodeSignUp.SIGN_UP.equals(action)) {
+            submitSignUp(context, form.getFirst(EmailCodeSignUp.FIRST_NAME_PARAM), form.getFirst(EmailCodeSignUp.LAST_NAME_PARAM));
+            return;
+        }
+        if (EmailCodeSignUp.CONTINUE.equals(action)) {
+            continueExisting(context);
+            return;
+        }
+        if (SEND.equals(action) || RESEND.equals(action) || VERIFY.equals(action) || CHANGE.equals(action)) {
+            // The code path again: whatever a right code had opened before is closed.
+            clearSignUp(context);
+        }
         if (SEND.equals(action)) {
             send(context, form.getFirst(IDENTIFIER_PARAM));
         } else if (RESEND.equals(action)) {
@@ -268,8 +322,9 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
 
     /**
      * Whom the identifier names, where their codes go, the address budgets, then this session's new
-     * code: mailed to that address, or never mailed when there is nobody to mail it to or the
-     * address budget is spent. The page is the code page either way.
+     * code: mailed to that address; with Self-registration on, a sign-up code mailed to an e-mail
+     * address that names nobody; or never mailed when there is nobody to mail it to or a budget is
+     * spent. The page is the code page either way.
      */
     private void issue(AuthenticationFlowContext context, String identifier) {
         KeycloakSession session = context.getSession();
@@ -278,6 +333,9 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
         LoginIdentifiers.Match match = LoginIdentifiers.resolve(session, realm, settings.ytuIdpAlias(), identifier);
         UserModel user = match instanceof LoginIdentifiers.Person person ? person.user() : null;
         String address = user == null ? null : destination(session, realm, user);
+        String signUpAddress = match instanceof LoginIdentifiers.Nobody && EmailCodeSignUp.isOn(context)
+                && PersonalEmailVerification.isValidAddress(session, identifier)
+                ? PersonalEmailProof.normalise(identifier) : null;
         LoginCodes codes = new LoginCodes(session.singleUseObjects());
         String previousHandle = authSession.getAuthNote(HANDLE_NOTE);
 
@@ -285,13 +343,27 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
         String budgetAddress = PersonalEmailProof.normalise(address != null ? address : identifier);
         boolean withinBudget = claimAddressBudgets(context, budgetAddress);
         boolean mailable = user != null && address != null;
+        LoginCodeFailureCounter.Guard persistent = withinBudget && mailable
+                ? persistentFailures.lock(session, realm, user.getId()) : null;
         if (!withinBudget) {
             failure(context, user, "rate_limited_address", RATE_LIMITED_ERROR);
-        } else if (mailable && pastCeiling(context, user.getId())) {
+            signUpAddress = null;
+        } else if (mailable && (persistent == null || persistent.blocked())) {
+            failure(context, user, CONSECUTIVE_CODE_CEILING, RATE_LIMITED_ERROR);
+            mailable = false;
+        } else if (mailable && pastCeiling(context, accountCeilingKey(context, user.getId()))) {
             // Security review K2: no code reaches the account for the rest of the day; the page
             // and the code that is never mailed are the ones anybody else gets.
             failure(context, user, WRONG_CODE_CEILING, RATE_LIMITED_ERROR);
             mailable = false;
+        } else if (signUpAddress != null && pastCeiling(context, signUpCeilingKey(context, signUpAddress))) {
+            // The same ceiling for an address being signed up: no more guesses at its codes today.
+            signUpFailure(context, WRONG_CODE_CEILING, RATE_LIMITED_ERROR);
+            signUpAddress = null;
+        } else if (signUpAddress != null && dailyBudgetSpent(context)) {
+            // Spec §7.2: at the overall budget sign-up codes stop; sign-in codes go on.
+            signUpFailure(context, SIGN_UP_PAUSED, RATE_LIMITED_ERROR);
+            signUpAddress = null;
         }
 
         // A new code always replaces the old one, mailed or not: had a code already mailed kept
@@ -304,6 +376,12 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
             authSession.setAuthNote(HANDLE_NOTE, handle);
             mail.sendCode(context, user, address, code, PURPOSE_LOGIN);
             countTowardTheDailyBudget(context);
+        } else if (signUpAddress != null) {
+            String handle = handle();
+            String code = codes.issueSignUp(handle, signUpAddress);
+            authSession.setAuthNote(HANDLE_NOTE, handle);
+            mail.sendSignUpCode(context, signUpAddress, code);
+            countTowardTheDailyBudget(context);
         } else {
             authSession.setAuthNote(HANDLE_NOTE, newHandle(codes, "", ""));
         }
@@ -311,11 +389,17 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
         context.challenge(codePage(context, null, null));
     }
 
+    /** Whether today's overall budget of Login codes is used up (sign-up codes stop there). */
+    private boolean dailyBudgetSpent(AuthenticationFlowContext context) {
+        return new RateLimiter(context.getSession().singleUseObjects())
+                .spent(RateLimiter.loginCodesPerDay(settings.dailyLimit()), context.getRealm().getId());
+    }
+
     /**
      * One slot of the overall daily budget. It never stops a sign-in code; the claim that takes the
      * middle slot and the one that takes the last raise the operator alarm, each exactly once a day.
      */
-    private void countTowardTheDailyBudget(AuthenticationFlowContext context) {
+    void countTowardTheDailyBudget(AuthenticationFlowContext context) {
         int dailyLimit = settings.dailyLimit();
         int slot = new RateLimiter(context.getSession().singleUseObjects())
                 .claimSlot(RateLimiter.loginCodesPerDay(dailyLimit), context.getRealm().getId());
@@ -363,26 +447,61 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
             return;
         }
         // Past the person's ceiling of wrong codes no code is looked at: the try is spent as a
-        // wrong one, so the page is the one any wrong code gets (security review K2).
-        boolean pastCeiling = !isBlank(waiting.userId()) && pastCeiling(context, waiting.userId());
-        LoginCodes.Outcome outcome = pastCeiling ? codes.spendTry(handle) : codes.confirm(handle, code);
+        // wrong one, so the page is the one any wrong code gets (security review K2). A sign-up
+        // code has the same ceiling, per address.
+        String userId = accountAtVerification(context, waiting);
+        String signUpCeiling = isBlank(waiting.signUpAddress()) ? null
+                : signUpCeilingKey(context, waiting.signUpAddress());
+        String ceilingKey = isBlank(userId) ? signUpCeiling : accountCeilingKey(context, userId);
+        boolean pastCeiling = (ceilingKey != null && pastCeiling(context, ceilingKey))
+                || (signUpCeiling != null && pastCeiling(context, signUpCeiling));
+        LoginCodeFailureCounter.Guard persistent = isBlank(userId) ? null
+                : persistentFailures.lock(context.getSession(), context.getRealm(), userId);
+        boolean persistentBlocked = !isBlank(userId) && (persistent == null || persistent.blocked());
+        boolean suppressed = pastCeiling || persistentBlocked;
+        LoginCodes.Outcome outcome = suppressed ? codes.spendTry(handle) : codes.confirm(handle, code);
+        if (outcome.status() == LoginCodes.Outcome.Status.WRONG_CODE && !suppressed && persistent != null
+                && persistent.wrongCode()) {
+            mail.consecutiveAlarm(context, LoginCodeFailureCounter.LIMIT);
+        }
         switch (outcome.status()) {
             case NONE -> expired(context, null);
-            case WRONG_CODE -> wrongCode(context, outcome, pastCeiling);
+            case WRONG_CODE -> wrongCode(context, outcome, userId, ceilingKey, signUpCeiling, suppressed, persistentBlocked);
             case CONFIRMED -> confirmed(context, outcome.pending());
         }
     }
 
-    private void wrongCode(AuthenticationFlowContext context, LoginCodes.Outcome outcome, boolean pastCeiling) {
-        UserModel user = isBlank(outcome.userId()) ? null
-                : context.getSession().users().getUserById(context.getRealm(), outcome.userId());
+    /** A sign-up address can acquire an account after its code was mailed, before this try. */
+    private String accountAtVerification(AuthenticationFlowContext context, LoginCodes.Waiting waiting) {
+        if (!isBlank(waiting.userId())) {
+            return waiting.userId();
+        }
+        if (!isBlank(waiting.signUpAddress()) && LoginIdentifiers.resolve(context.getSession(), context.getRealm(),
+                settings.ytuIdpAlias(), waiting.signUpAddress()) instanceof LoginIdentifiers.Person person) {
+            String address = destination(context.getSession(), context.getRealm(), person.user());
+            if (address != null && address.equalsIgnoreCase(waiting.signUpAddress())) {
+                return person.user().getId();
+            }
+        }
+        return null;
+    }
+
+    private void wrongCode(AuthenticationFlowContext context, LoginCodes.Outcome outcome, String userId,
+            String ceilingKey, String signUpCeiling, boolean pastCeiling, boolean persistentBlocked) {
+        UserModel user = isBlank(userId) ? null
+                : context.getSession().users().getUserById(context.getRealm(), userId);
         if (user != null) {
             recordFailedLogin(context, user);
             if (!pastCeiling) {
-                countTowardTheCeiling(context, user);
+                countTowardTheCeiling(context, user, ceilingKey);
             }
         }
-        failure(context, user, pastCeiling ? WRONG_CODE_CEILING : Problem.WRONG_CODE.value, Errors.INVALID_CODE);
+        if (signUpCeiling != null && !pastCeiling) {
+            countTowardTheSignUpCeiling(context, signUpCeiling);
+        }
+        String reason = persistentBlocked ? CONSECUTIVE_CODE_CEILING
+                : pastCeiling ? WRONG_CODE_CEILING : Problem.WRONG_CODE.value;
+        failure(context, user, reason, Errors.INVALID_CODE);
         if (outcome.attemptsLeft() > 0) {
             context.challenge(codePage(context, Problem.WRONG_CODE, outcome.attemptsLeft()));
         } else {
@@ -401,9 +520,12 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
     private void confirmed(AuthenticationFlowContext context, LoginCodes.Pending pending) {
         KeycloakSession session = context.getSession();
         RealmModel realm = context.getRealm();
-        AuthenticationSessionModel authSession = context.getAuthenticationSession();
         String identifier = identifierOf(context);
         discardCode(context);
+        if (pending.signUp()) {
+            signUpCodeConfirmed(context, pending.address(), identifier);
+            return;
+        }
 
         UserModel user = isBlank(pending.userId()) ? null : session.users().getUserById(realm, pending.userId());
         if (user == null) {
@@ -414,21 +536,41 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
             context.challenge(identifierPage(context, identifier, Problem.CODE_EXPIRED));
             return;
         }
+        if (!admitted(context, user, pending.address(), identifier)) {
+            return;
+        }
+        if (EmailCodeSignUp.INTENT_SIGN_UP.equals(context.getAuthenticationSession().getAuthNote(EmailCodeSignUp.INTENT_NOTE))) {
+            // "Hesap aç" with an address that has an account: the code signs the person in, and the
+            // page says so once (spec §7.4) before the sign-in goes on.
+            showExisting(context, user, pending.address());
+            return;
+        }
+        signIn(context, user, pending.address(), identifier);
+    }
+
+    /**
+     * Whether {@code user} may be signed in now by a code that went to {@code address}: enabled, not
+     * locked, the address still where the person's codes go, OTP still asked when the person has it.
+     * When not, the refusal is written and the page is challenged.
+     */
+    private boolean admitted(AuthenticationFlowContext context, UserModel user, String address, String identifier) {
+        KeycloakSession session = context.getSession();
+        RealmModel realm = context.getRealm();
         if (!user.isEnabled()) {
             failure(context, user, Problem.ACCOUNT_DISABLED.value, Errors.USER_DISABLED);
             context.challenge(identifierPage(context, identifier, Problem.ACCOUNT_DISABLED));
-            return;
+            return false;
         }
         String bruteForceError = AuthenticatorUtils.getDisabledByBruteForceEventError(context, user);
         if (bruteForceError != null) {
             failure(context, user, Problem.ACCOUNT_LOCKED.value, bruteForceError);
             context.challenge(identifierPage(context, identifier, Problem.ACCOUNT_LOCKED));
-            return;
+            return false;
         }
         String destination = destination(session, realm, user);
-        if (destination == null || !destination.equalsIgnoreCase(pending.address())) {
+        if (destination == null || !destination.equalsIgnoreCase(address)) {
             expired(context, user);
-            return;
+            return false;
         }
         if (user.credentialManager().isConfiguredFor(OTPCredentialModel.TYPE)
                 && !OtpAfterCode.asked(session, realm, context.getExecution())) {
@@ -438,9 +580,23 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
                     + " KEYCLOAK_EMAIL_CODE_LOGIN=on (or off)", realm.getName());
             failure(context, user, OTP_UNGUARDED, Errors.INVALID_CONFIG);
             context.challenge(identifierPage(context, identifier, Problem.UNAVAILABLE));
-            return;
+            return false;
         }
-        if (destination.equalsIgnoreCase(trimmed(user.getEmail())) && !user.isEmailVerified()) {
+        // A fixed proof shown on the existing-account sign-up page can outlive another session's
+        // hundredth failure. Recheck under the same user lock before dispatching that proof too.
+        LoginCodeFailureCounter.Guard persistent = persistentFailures.lock(session, realm, user.getId());
+        if (persistent == null || persistent.blocked()) {
+            clearSignUp(context);
+            expired(context, user);
+            return false;
+        }
+        return true;
+    }
+
+    /** The code signs {@code user} in: the flow goes on to TOTP and the rest. */
+    private void signIn(AuthenticationFlowContext context, UserModel user, String address, String identifier) {
+        AuthenticationSessionModel authSession = context.getAuthenticationSession();
+        if (address.equalsIgnoreCase(trimmed(user.getEmail())) && !user.isEmailVerified()) {
             user.setEmailVerified(true);
             user.removeRequiredAction(UserModel.RequiredAction.VERIFY_EMAIL);
         }
@@ -448,11 +604,344 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
             // As the password form leaves it: the login event and the session name what was typed.
             authSession.setAuthNote(AbstractUsernameFormAuthenticator.ATTEMPTED_USERNAME, identifier);
         }
+        clearSignUp(context);
+        authSession.removeAuthNote(EmailCodeSignUp.INTENT_NOTE);
         authSession.removeAuthNote(IDENTIFIER_NOTE);
         authSession.setAuthNote(METHOD_NOTE, METHOD);
         context.getEvent().detail(METHOD_DETAIL, METHOD);
         context.setUser(user);
         context.success();
+    }
+
+    // ------------------------------------------------------------------------------- sign-up
+
+    /**
+     * "Hesap aç" ({@value EmailCodeSignUp#INTENT_PARAM}) travels with Keycloak's execution switch to
+     * this step; any other switch to it is plain "E-postayla devam et". Remembered only while
+     * Self-registration is on.
+     */
+    private static void rememberIntent(AuthenticationFlowContext context) {
+        MultivaluedMap<String, String> form = context.getHttpRequest().getDecodedFormParameters();
+        if (form == null || !form.containsKey(Constants.AUTHENTICATION_EXECUTION)) {
+            return;
+        }
+        AuthenticationSessionModel authSession = context.getAuthenticationSession();
+        if (EmailCodeSignUp.INTENT_SIGN_UP.equals(form.getFirst(EmailCodeSignUp.INTENT_PARAM)) && EmailCodeSignUp.isOn(context)) {
+            authSession.setAuthNote(EmailCodeSignUp.INTENT_NOTE, EmailCodeSignUp.INTENT_SIGN_UP);
+        } else {
+            authSession.removeAuthNote(EmailCodeSignUp.INTENT_NOTE);
+        }
+    }
+
+    /**
+     * The right sign-up code proved {@code address}. Who has it now decides: an account whose codes
+     * go there (one opened meanwhile) is signed in; one that holds it otherwise, two accounts, or
+     * Self-registration turned off meanwhile open nothing; a YTÜ school address goes to the YTÜ
+     * sign-in (spec S3); any other opens the form.
+     */
+    private void signUpCodeConfirmed(AuthenticationFlowContext context, String address, String identifier) {
+        if (signedInToAnAccountThatHasIt(context, address, identifier)) {
+            return;
+        }
+        if (PersonalEmailVerification.isSchoolDomain(address)) {
+            signUpFailure(context, SCHOOL_DOMAIN, Errors.INVALID_REGISTRATION);
+            showStage(context, EmailCodeSignUp.Stage.YTU, address);
+            return;
+        }
+        if (!signUpPossible(context, address)) {
+            return;
+        }
+        AuthenticationSessionModel authSession = context.getAuthenticationSession();
+        authSession.setAuthNote(EmailCodeSignUp.ADDRESS_NOTE, address);
+        authSession.setAuthNote(EmailCodeSignUp.PROVEN_AT_NOTE, Integer.toString(Time.currentTime()));
+        context.challenge(EmailCodeSignUp.page(context, EmailCodeSignUp.Stage.FORM, address, null, null, null, null));
+    }
+
+    /**
+     * When {@code address} now names a person whose codes go there, that person is signed in by the
+     * proof (shown the existing stage first) and true is returned. Nobody is signed in by an address
+     * that is not where their codes go.
+     */
+    private boolean signedInToAnAccountThatHasIt(AuthenticationFlowContext context, String address, String identifier) {
+        KeycloakSession session = context.getSession();
+        RealmModel realm = context.getRealm();
+        if (!(LoginIdentifiers.resolve(session, realm, settings.ytuIdpAlias(), address)
+                instanceof LoginIdentifiers.Person person)) {
+            return false;
+        }
+        UserModel user = person.user();
+        String destination = destination(session, realm, user);
+        if (destination == null || !destination.equalsIgnoreCase(address)) {
+            return false;
+        }
+        if (admitted(context, user, address, identifier)) {
+            showExisting(context, user, address);
+        }
+        return true;
+    }
+
+    /**
+     * Whether an account may be opened for {@code address} now; when not, the refusal is written and
+     * the unavailable stage is challenged.
+     */
+    private boolean signUpPossible(AuthenticationFlowContext context, String address) {
+        KeycloakSession session = context.getSession();
+        RealmModel realm = context.getRealm();
+        if (!EmailCodeSignUp.isOn(context)) {
+            signUpFailure(context, SIGN_UP_OFF, Errors.REGISTRATION_DISABLED);
+            showStage(context, EmailCodeSignUp.Stage.UNAVAILABLE, address);
+            return false;
+        }
+        if (!(LoginIdentifiers.resolve(session, realm, settings.ytuIdpAlias(), address) instanceof LoginIdentifiers.Nobody)
+                || PersonalEmailVerification.isTakenByAnother(session, realm, null, address)) {
+            signUpFailure(context, SIGN_UP_TAKEN, Errors.EMAIL_IN_USE);
+            showStage(context, EmailCodeSignUp.Stage.UNAVAILABLE, address);
+            return false;
+        }
+        return true;
+    }
+
+    /** "Hesabı aç": the names, then the account, then the sign-in. */
+    private void submitSignUp(AuthenticationFlowContext context, String typedFirstName, String typedLastName) {
+        KeycloakSession session = context.getSession();
+        AuthenticationSessionModel authSession = context.getAuthenticationSession();
+        String address = provenAddress(authSession);
+        if (address == null) {
+            clearSignUp(context);
+            authenticate(context);
+            return;
+        }
+        String identifier = identifierOf(context);
+        String firstName = IdentityResource.normalisePersonName(typedFirstName == null ? "" : typedFirstName);
+        String lastName = IdentityResource.normalisePersonName(typedLastName == null ? "" : typedLastName);
+        EmailCodeSignUp.Problem problem = nameProblem(firstName, true);
+        if (problem == null) {
+            problem = nameProblem(lastName, false);
+        }
+        if (problem != null) {
+            context.challenge(EmailCodeSignUp.page(context, EmailCodeSignUp.Stage.FORM, address, problem, firstName,
+                    lastName, null));
+            return;
+        }
+        String lock = addressLockKey(context, address);
+        if (!session.singleUseObjects().putIfAbsent(lock, EmailCodeSignUp.LOCK_SECONDS)) {
+            // Another sign-up of this address is opening its account, or just opened it.
+            if (!signedInToAnAccountThatHasIt(context, address, identifier)) {
+                context.challenge(EmailCodeSignUp.page(context, EmailCodeSignUp.Stage.FORM, address,
+                        EmailCodeSignUp.Problem.TRY_AGAIN, firstName, lastName, null));
+            }
+            return;
+        }
+        // The lock stays for its minute once an account is opened (a second sign-up of the address
+        // then finds that account); it goes at once when none was.
+        UserModel user = null;
+        try {
+            user = openAccount(context, address, identifier, firstName, lastName);
+        } finally {
+            if (user == null) {
+                session.singleUseObjects().remove(lock);
+            }
+        }
+        if (user != null) {
+            registered(context, user, address);
+            authSession.setAuthNote(EmailCodeSignUp.SIGNED_UP_NOTE, "true");
+            signIn(context, user, address, identifier);
+        }
+    }
+
+    /**
+     * The account for {@code address}, opened under this sign-up's lock; null when none was opened
+     * (the page or another stage is challenged then).
+     */
+    private UserModel openAccount(AuthenticationFlowContext context, String address, String identifier,
+            String firstName, String lastName) {
+        KeycloakSession session = context.getSession();
+        RealmModel realm = context.getRealm();
+        if (signedInToAnAccountThatHasIt(context, address, identifier) || !signUpPossible(context, address)) {
+            return null;
+        }
+        UserModel user = null;
+        for (int attempt = 0; attempt < 3 && user == null; attempt++) {
+            String username = usernames.choose(session, realm, firstName, lastName);
+            try {
+                user = accounts.open(session, realm, username, address, firstName, lastName);
+            } catch (SignUpAccounts.Refused refused) {
+                switch (refused.reason()) {
+                    case USERNAME_TAKEN -> {
+                        // Taken between the choice and the write: the next name.
+                    }
+                    case FIRST_NAME, LAST_NAME -> {
+                        context.challenge(EmailCodeSignUp.page(context, EmailCodeSignUp.Stage.FORM, address,
+                                refused.reason() == SignUpAccounts.Refused.Reason.FIRST_NAME
+                                        ? EmailCodeSignUp.Problem.FIRST_NAME_INVALID
+                                        : EmailCodeSignUp.Problem.LAST_NAME_INVALID,
+                                firstName, lastName, null));
+                        return null;
+                    }
+                    case ADDRESS_TAKEN -> {
+                        if (!signedInToAnAccountThatHasIt(context, address, identifier)) {
+                            signUpFailure(context, SIGN_UP_TAKEN, Errors.EMAIL_IN_USE);
+                            showStage(context, EmailCodeSignUp.Stage.UNAVAILABLE, address);
+                        }
+                        return null;
+                    }
+                    default -> {
+                        context.challenge(EmailCodeSignUp.page(context, EmailCodeSignUp.Stage.FORM, address,
+                                EmailCodeSignUp.Problem.TRY_AGAIN, firstName, lastName, null));
+                        return null;
+                    }
+                }
+            }
+        }
+        if (user == null) {
+            context.challenge(EmailCodeSignUp.page(context, EmailCodeSignUp.Stage.FORM, address,
+                    EmailCodeSignUp.Problem.TRY_AGAIN, firstName, lastName, null));
+        }
+        return user;
+    }
+
+    /** What a name may not be: empty, longer than Account center allows, or with prohibited characters. */
+    private static EmailCodeSignUp.Problem nameProblem(String name, boolean first) {
+        if (name.isEmpty()) {
+            return first ? EmailCodeSignUp.Problem.FIRST_NAME_MISSING : EmailCodeSignUp.Problem.LAST_NAME_MISSING;
+        }
+        if (name.length() > IdentityResource.MAX_NAME_LENGTH || !IdentityResource.isAllowedPersonName(name)) {
+            return first ? EmailCodeSignUp.Problem.FIRST_NAME_INVALID : EmailCodeSignUp.Problem.LAST_NAME_INVALID;
+        }
+        return null;
+    }
+
+    /** "Devam et" on the existing stage: the person the code named, checked again, is signed in. */
+    private void continueExisting(AuthenticationFlowContext context) {
+        AuthenticationSessionModel authSession = context.getAuthenticationSession();
+        String userId = authSession.getAuthNote(EmailCodeSignUp.EXISTING_USER_NOTE);
+        String address = authSession.getAuthNote(EmailCodeSignUp.EXISTING_ADDRESS_NOTE);
+        if (userId == null || address == null || !proofIsFresh(authSession)) {
+            clearSignUp(context);
+            expired(context, null);
+            return;
+        }
+        String identifier = identifierOf(context);
+        clearSignUp(context);
+        UserModel user = context.getSession().users().getUserById(context.getRealm(), userId);
+        if (user == null) {
+            expired(context, null);
+            return;
+        }
+        if (admitted(context, user, address, identifier)) {
+            // The login event of this request, when the sign-in ends here, says why it took a step more.
+            context.getEvent().detail(EVENT_DETAIL, EXISTING_ACCOUNT);
+            signIn(context, user, address, identifier);
+        }
+    }
+
+    private void showExisting(AuthenticationFlowContext context, UserModel user, String address) {
+        AuthenticationSessionModel authSession = context.getAuthenticationSession();
+        String provenAt = authSession.getAuthNote(EmailCodeSignUp.PROVEN_AT_NOTE);
+        clearSignUp(context);
+        authSession.setAuthNote(EmailCodeSignUp.PROVEN_AT_NOTE,
+                provenAt == null ? Integer.toString(Time.currentTime()) : provenAt);
+        authSession.setAuthNote(EmailCodeSignUp.STAGE_NOTE, EmailCodeSignUp.Stage.EXISTING.value);
+        authSession.setAuthNote(EmailCodeSignUp.EXISTING_USER_NOTE, user.getId());
+        authSession.setAuthNote(EmailCodeSignUp.EXISTING_ADDRESS_NOTE, address);
+        context.challenge(EmailCodeSignUp.page(context, EmailCodeSignUp.Stage.EXISTING, address, null, null, null, null));
+    }
+
+    /** A stage other than the form, kept for a reload of the page. */
+    private void showStage(AuthenticationFlowContext context, EmailCodeSignUp.Stage stage, String address) {
+        clearSignUp(context);
+        AuthenticationSessionModel authSession = context.getAuthenticationSession();
+        authSession.setAuthNote(EmailCodeSignUp.STAGE_NOTE, stage.value);
+        authSession.setAuthNote(EmailCodeSignUp.ADDRESS_NOTE, address);
+        context.challenge(stagePage(context, stage, address));
+    }
+
+    private Response stagePage(AuthenticationFlowContext context, EmailCodeSignUp.Stage stage, String address) {
+        return EmailCodeSignUp.page(context, stage, address, null, null, null,
+                stage == EmailCodeSignUp.Stage.YTU ? settings.ytuIdpAlias() : null);
+    }
+
+    /** A page of the sign-up waiting in this session (a reload): shown again, true; otherwise false. */
+    private boolean resumeSignUp(AuthenticationFlowContext context) {
+        AuthenticationSessionModel authSession = context.getAuthenticationSession();
+        EmailCodeSignUp.Stage stage = EmailCodeSignUp.Stage.of(authSession.getAuthNote(EmailCodeSignUp.STAGE_NOTE));
+        String address = stage == EmailCodeSignUp.Stage.EXISTING
+                ? authSession.getAuthNote(EmailCodeSignUp.EXISTING_ADDRESS_NOTE)
+                : stage == null ? provenAddress(authSession) : authSession.getAuthNote(EmailCodeSignUp.ADDRESS_NOTE);
+        if (address == null || (stage == EmailCodeSignUp.Stage.EXISTING && !proofIsFresh(authSession))) {
+            clearSignUp(context);
+            return false;
+        }
+        context.challenge(stage == null
+                ? EmailCodeSignUp.page(context, EmailCodeSignUp.Stage.FORM, address, null, null, null, null)
+                : stagePage(context, stage, address));
+        return true;
+    }
+
+    /** The address the sign-up form may open an account for: proven in this session, recently. */
+    private static String provenAddress(AuthenticationSessionModel authSession) {
+        String address = authSession.getAuthNote(EmailCodeSignUp.ADDRESS_NOTE);
+        return address != null && authSession.getAuthNote(EmailCodeSignUp.STAGE_NOTE) == null && proofIsFresh(authSession)
+                ? address : null;
+    }
+
+    /** Fixed lifetime from the code proof; reloading or changing stages never renews it. */
+    private static boolean proofIsFresh(AuthenticationSessionModel authSession) {
+        String provenAt = authSession.getAuthNote(EmailCodeSignUp.PROVEN_AT_NOTE);
+        if (provenAt == null) {
+            return false;
+        }
+        try {
+            long age = (long) Time.currentTime() - Long.parseLong(provenAt);
+            return age >= 0 && age <= EmailCodeSignUp.PROOF_SECONDS;
+        } catch (NumberFormatException malformed) {
+            return false;
+        }
+    }
+
+    /** Forgets every page of the sign-up this session was on; the intent stays. */
+    private static void clearSignUp(AuthenticationFlowContext context) {
+        AuthenticationSessionModel authSession = context.getAuthenticationSession();
+        authSession.removeAuthNote(EmailCodeSignUp.ADDRESS_NOTE);
+        authSession.removeAuthNote(EmailCodeSignUp.PROVEN_AT_NOTE);
+        authSession.removeAuthNote(EmailCodeSignUp.STAGE_NOTE);
+        authSession.removeAuthNote(EmailCodeSignUp.EXISTING_USER_NOTE);
+        authSession.removeAuthNote(EmailCodeSignUp.EXISTING_ADDRESS_NOTE);
+    }
+
+    /** One address is opened by one sign-up at a time, across nodes. */
+    private static String addressLockKey(AuthenticationFlowContext context, String address) {
+        return "sky-email-code:sign-up-lock:" + BudgetKeys.keyed(context.getSession(), context.getRealm(), "address:" + address);
+    }
+
+    /**
+     * Keycloak's {@code REGISTER} event of the new account, as its own registration writes it (the
+     * username and the address), with {@code register_method} and {@code sky_method}
+     * {@value #REGISTER_METHOD}.
+     */
+    private static void registered(AuthenticationFlowContext context, UserModel user, String address) {
+        context.getEvent().clone()
+                .event(EventType.REGISTER)
+                .user(user)
+                .detail(Details.USERNAME, user.getUsername())
+                .detail(Details.EMAIL, address)
+                .detail(Details.REGISTER_METHOD, REGISTER_METHOD)
+                .detail(METHOD_DETAIL, METHOD)
+                .success();
+    }
+
+    /**
+     * A refusal of Self-registration: a {@code REGISTER_ERROR} of its own, with what happened and
+     * neither the IP nor the address (as {@link #failure}).
+     */
+    private static void signUpFailure(AuthenticationFlowContext context, String what, String error) {
+        context.getEvent().clone()
+                .event(EventType.REGISTER)
+                .ipAddress(null)
+                .removeDetail(Details.USERNAME)
+                .detail(METHOD_DETAIL, METHOD)
+                .detail(EVENT_DETAIL, what)
+                .error(error);
     }
 
     /**
@@ -470,7 +959,7 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
     // ------------------------------------------------------------------------------- budgets
 
     /** The budgets every request for a code spends: this sign-in session's and its IP class's. */
-    private static boolean claimRequestBudgets(AuthenticationFlowContext context) {
+    static boolean claimRequestBudgets(AuthenticationFlowContext context) {
         KeycloakSession session = context.getSession();
         RealmModel realm = context.getRealm();
         AuthenticationSessionModel authSession = context.getAuthenticationSession();
@@ -483,7 +972,7 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
     }
 
     /** At most three codes a quarter of an hour and ten a day to one address. */
-    private static boolean claimAddressBudgets(AuthenticationFlowContext context, String address) {
+    static boolean claimAddressBudgets(AuthenticationFlowContext context, String address) {
         KeycloakSession session = context.getSession();
         String key = BudgetKeys.keyed(session, context.getRealm(), "address:" + address);
         RateLimiter limiter = new RateLimiter(session.singleUseObjects());
@@ -491,20 +980,20 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
                 && limiter.claim(RateLimiter.LOGIN_CODE_ADDRESS_DAY, key) == 0;
     }
 
-    /** Whether the person's wrong codes reached today's ceiling (security review K2). */
-    private boolean pastCeiling(AuthenticationFlowContext context, String userId) {
+    /** Whether the wrong codes under {@code key} reached today's ceiling (security review K2). */
+    boolean pastCeiling(AuthenticationFlowContext context, String key) {
         return new RateLimiter(context.getSession().singleUseObjects())
-                .spent(RateLimiter.loginCodeWrongPerAccount(settings.wrongCodesPerAccount()), ceilingKey(context, userId));
+                .spent(RateLimiter.loginCodeWrongPerAccount(settings.wrongCodesPerAccount()), key);
     }
 
     /**
      * One wrong code of the person toward today's ceiling. The one that reaches it is logged with
      * how many accounts reached it today; the first account of the day also alarms the operator.
      */
-    private void countTowardTheCeiling(AuthenticationFlowContext context, UserModel user) {
+    void countTowardTheCeiling(AuthenticationFlowContext context, UserModel user, String key) {
         int ceiling = settings.wrongCodesPerAccount();
         RateLimiter limiter = new RateLimiter(context.getSession().singleUseObjects());
-        if (limiter.claimSlot(RateLimiter.loginCodeWrongPerAccount(ceiling), ceilingKey(context, user.getId())) != ceiling) {
+        if (limiter.claimSlot(RateLimiter.loginCodeWrongPerAccount(ceiling), key) != ceiling) {
             return;
         }
         int accounts = limiter.claimSlot(RateLimiter.LOGIN_CODE_CEILING_ACCOUNTS, context.getRealm().getId());
@@ -517,8 +1006,24 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
         }
     }
 
-    private static String ceilingKey(AuthenticationFlowContext context, String userId) {
+    /**
+     * One wrong sign-up code toward the address's ceiling; the one that reaches it is logged (no
+     * address). No operator alarm: no account is at stake.
+     */
+    private void countTowardTheSignUpCeiling(AuthenticationFlowContext context, String key) {
+        int ceiling = settings.wrongCodesPerAccount();
+        if (new RateLimiter(context.getSession().singleUseObjects())
+                .claimSlot(RateLimiter.loginCodeWrongPerAccount(ceiling), key) == ceiling) {
+            LOG.warnf("sky_email_code_sign_up_wrong_ceiling ceiling=%d realm=%s", ceiling, context.getRealm().getName());
+        }
+    }
+
+    static String accountCeilingKey(AuthenticationFlowContext context, String userId) {
         return BudgetKeys.keyed(context.getSession(), context.getRealm(), "wrong-account:" + userId);
+    }
+
+    private static String signUpCeilingKey(AuthenticationFlowContext context, String address) {
+        return BudgetKeys.keyed(context.getSession(), context.getRealm(), "wrong-sign-up:" + address);
     }
 
     // ------------------------------------------------------------------------------- the page
@@ -542,6 +1047,7 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
         LoginFormsProvider form = context.form()
                 .setAttribute(STAGE_ATTRIBUTE, Stage.IDENTIFIER.value)
                 .setAttribute(CODE_MINUTES_ATTRIBUTE, Integer.toString(LoginCodes.TTL_SECONDS / 60));
+        signUpAttributes(context, form);
         if (identifier != null) {
             form.setAttribute(IDENTIFIER_ATTRIBUTE, identifier);
         }
@@ -556,6 +1062,7 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
                 .setAttribute(STAGE_ATTRIBUTE, Stage.CODE.value)
                 .setAttribute(CODE_MINUTES_ATTRIBUTE, Integer.toString(LoginCodes.TTL_SECONDS / 60))
                 .setAttribute(RESEND_AFTER_ATTRIBUTE, Integer.toString(secondsUntilResend(context)));
+        signUpAttributes(context, form);
         String identifier = identifierOf(context);
         if (identifier != null) {
             form.setAttribute(IDENTIFIER_ATTRIBUTE, identifier);
@@ -567,6 +1074,19 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
             form.setAttribute(ATTEMPTS_LEFT_ATTRIBUTE, Integer.toString(attemptsLeft));
         }
         return form.createForm(TEMPLATE);
+    }
+
+    /**
+     * Whether Self-registration is on, and whether the person came through "Hesap aç": the same for
+     * every address typed, so the page still tells no account apart.
+     */
+    private static void signUpAttributes(AuthenticationFlowContext context, LoginFormsProvider form) {
+        if (EmailCodeSignUp.isOn(context)) {
+            form.setAttribute(EmailCodeSignUp.ON_ATTRIBUTE, "true");
+            if (EmailCodeSignUp.INTENT_SIGN_UP.equals(context.getAuthenticationSession().getAuthNote(EmailCodeSignUp.INTENT_NOTE))) {
+                form.setAttribute(EmailCodeSignUp.INTENT_ATTRIBUTE, EmailCodeSignUp.INTENT_SIGN_UP);
+            }
+        }
     }
 
     // ------------------------------------------------------------------------------- session state

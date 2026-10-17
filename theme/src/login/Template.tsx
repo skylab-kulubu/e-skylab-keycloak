@@ -4,6 +4,7 @@ import type { KcContext } from "./KcContext";
 import type { I18n } from "./i18n";
 import LegacyFrame from "./LegacyFrame";
 import PageMessage from "./PageMessage";
+import BrokerLinkEscape from "./BrokerLinkEscape";
 import { getLegacyChromeProps, getLegacyPageDescription, reactNodeToText, useLegacyChrome } from "./legacyChrome";
 
 /**
@@ -74,6 +75,7 @@ export default function Template(props: TemplateProps<KcContext, I18n>) {
       }
     >
       <div className="sl-legacy-content">{children}</div>
+      <BrokerLinkEscape kcContext={kcContext} i18n={i18n} />
 
       {auth?.showTryAnotherWayLink && (
         <form

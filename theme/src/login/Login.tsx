@@ -7,6 +7,7 @@ import type { I18n } from "./i18n";
 import YtuMark from "./YtuMark";
 import LegacyFrame from "./LegacyFrame";
 import PageMessage from "./PageMessage";
+import BrokerLinkEscape from "./BrokerLinkEscape";
 import { getLegacyChromeProps, useLegacyChrome } from "./legacyChrome";
 import { chooseExecution, emailCodeExecutionId, takePasswordChoice } from "./emailCodeChoice";
 
@@ -36,15 +37,19 @@ export default function Login(props: LoginProps) {
     (authenticators !== undefined && authenticators.authenticators.length > 0);
   const microsoftProvider = social?.providers?.find(provider => provider.providerId === "microsoft");
   const hasCredentialsError = messagesPerField.existsError("username", "password");
+  const isBrokerProof = kcContext.skyExistingAccountEscape === true;
   // Wrong credentials belong to the fields (shown once, under them); every other message is page-wide.
   const pageMessage = hasCredentialsError ? undefined : kcContext.message;
-  const resetPasswordUrl = realm.password && realm.resetPasswordAllowed ? url.loginResetCredentialsUrl : undefined;
+  const resetPasswordUrl = !isBrokerProof && realm.password && realm.resetPasswordAllowed
+    ? url.loginResetCredentialsUrl : undefined;
   // With the e-mail code step on (eskylab-login-ux 08) the e-mail button goes there, and that page's
   // "Parolanla gir" comes back here straight to the password view, the field filled.
   const emailCodeExecution = emailCodeExecutionId(kcContext);
+  const signUpExecution = !isBrokerProof && (kcContext.skyEmailCodeSignUp === "true" || kcContext.skyEmailCodeSignUp === true)
+    ? emailCodeExecution : undefined;
   const [passwordChoice] = useState(takePasswordChoice);
   const [view, setView] = useState<"choice" | "password">(
-    hasCredentialsError || passwordChoice !== undefined ? "password" : "choice"
+    hasCredentialsError || passwordChoice !== undefined || isBrokerProof ? "password" : "choice"
   );
   const [isLoginButtonDisabled, setIsLoginButtonDisabled] = useState(false);
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
@@ -151,7 +156,7 @@ export default function Login(props: LoginProps) {
 
             {view === "password" && (
               <div className="sl-legacy-password-view">
-                <button
+                {!isBrokerProof && <button
                   className="sl-legacy-back"
                   type="button"
                   onClick={() => setView("choice")}
@@ -166,7 +171,7 @@ export default function Login(props: LoginProps) {
                     />
                   </svg>
                   {msgStr("goBack")}
-                </button>
+                </button>}
 
                 <form
                   id="kc-form-login"
@@ -235,9 +240,9 @@ export default function Login(props: LoginProps) {
                   )}
 
                   {/* Directly below the password field: remember me on the left, the reset link on the right. */}
-                  {((realm.rememberMe && !usernameHidden) || resetPasswordUrl !== undefined) && (
+                  {((realm.rememberMe && !usernameHidden && !isBrokerProof) || resetPasswordUrl !== undefined) && (
                     <div className="sl-legacy-form-options">
-                      {realm.rememberMe && !usernameHidden && (
+                      {realm.rememberMe && !usernameHidden && !isBrokerProof && (
                         <label className="sl-legacy-remember" htmlFor="rememberMe">
                           <input
                             id="rememberMe"
@@ -274,12 +279,10 @@ export default function Login(props: LoginProps) {
 
                 {/*
                   No link to Keycloak's registration page, even if the realm allowed it: ADR-0063 keeps it
-                  closed and opens accounts by e-mail code only. Until then a YTÜ student's account opens on
-                  the first YTÜ sign-in, so that is the only way offered here. When self-registration
-                  (eskylab-login-ux 09) is live, this block becomes "Hesabın yok mu? E-postayla hesap aç"
-                  into the "E-postayla devam et" door.
+                  closed and opens accounts by e-mail code only. Without that step's registration
+                  option, someone with a YTÜ account can still continue through Microsoft.
                 */}
-                {microsoftProvider !== undefined && (
+                {microsoftProvider !== undefined && !isBrokerProof && signUpExecution === undefined && (
                   <div className="sl-legacy-no-account">
                     <p className="sl-legacy-no-account__title">{msgStr("noAccount")}</p>
                     <p>
@@ -291,7 +294,20 @@ export default function Login(props: LoginProps) {
               </div>
             )}
 
+            {signUpExecution !== undefined && (
+              <div className="sl-legacy-no-account">
+                <p className="sl-legacy-no-account__title">{msgStr("noAccount")}</p>
+                <p>
+                  <button className="sl-text-button" type="button"
+                    onClick={() => chooseExecution(url.loginAction, signUpExecution, "sign-up")}>
+                    {msgStr("emailCodeSignUpLink")}
+                  </button>
+                </p>
+              </div>
+            )}
+
             <p className="sl-legacy-domain">{msgStr("skylabDomainNotice")}</p>
+            <BrokerLinkEscape kcContext={kcContext} i18n={i18n} />
 
             {hasPasskey && (
               <>

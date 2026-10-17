@@ -54,6 +54,7 @@ final class SudoTokens {
     enum Method {
         PASSWORD("password", List.of("pwd")),
         TOTP("totp", List.of("otp")),
+        EMAIL_CODE("email-code", List.of("otp")),
         /** A passkey assertion: a hardware-held key ({@code hwk}) after a user presence/verification test ({@code user}). */
         PASSKEY("passkey", List.of("hwk", "user")),
         /**

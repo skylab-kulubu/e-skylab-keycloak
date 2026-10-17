@@ -60,4 +60,10 @@ class SkyMailTemplatesTest {
         assertEquals("eventUpdatePasswordSubject", SkyMailTemplates.eventSubjectKey(EventType.UPDATE_PASSWORD));
         assertEquals("eventLoginErrorSubject", SkyMailTemplates.eventSubjectKey(EventType.LOGIN_ERROR));
     }
+    @org.junit.jupiter.api.Test
+    void sudoCodeUsesTheMaskedCodeTemplateWithItsOwnPurpose() {
+        org.junit.jupiter.api.Assertions.assertEquals(SkyMailTemplates.LOGIN_CODE,
+                SkyMailTemplates.forBodyTemplate(com.skylab.account.SudoResource.MAIL_TEMPLATE));
+    }
+
 }

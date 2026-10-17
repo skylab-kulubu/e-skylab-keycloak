@@ -39,7 +39,8 @@ Only the two original brand image assets were carried forward.
   on the left, a brand panel on the right (the logo, what one account gives,
   a faint watermark in its corner). Every other page keeps one column with
   the logo on top, as every page does on a phone.
-- Team strips: on the login page (with the brand panel) and both stages of "E-postayla devam et",
+- Team strips: on the login page (with the brand panel), both stages of "E-postayla devam et",
+  every e-mail sign-up stage and the first YTÜ login's existing-account question/proof page,
   `TeamMarquee.tsx` runs two slow rows of SKY LAB team logos
   above and below the card (one row on a phone; still with reduced motion,
   hidden in forced colors, `aria-hidden`). Which teams, in what order, comes
@@ -65,6 +66,33 @@ Only the two original brand image assets were carried forward.
   `verify` (with `code`), `change` or `skip`; the field ids `sky-offer-address`,
   `sky-offer-code` and the error's `data-sky-offer-error` match the SPI's own
   fallback template, which the harness drives.
+- `sky-email-code-sign-up.ftl` is the SPI's Self-registration page on "E-postayla
+  devam et" (step `sky-email-code`, eskylab-login-ux 09), shown only after the right
+  sign-up code proved the address. The SPI decides the stage (`skySignUpStage`: `form`,
+  `ytu`, `existing`, `unavailable`; anything else is the form) and hands over
+  `skySignUpAddress`, `skySignUpError` (a code from `src/login/signUpStages.ts`),
+  `skySignUpFirstName`/`skySignUpLastName` (what was typed) and `skySignUpYtuAlias`;
+  `EmailCodeSignUp.tsx` only words them. The form posts `sky-email-code-action` = `sign-up`
+  (with `firstName`, `lastName`) or `change`; the existing stage posts `continue`; the YTÜ
+  stage links to the provider in `social.providers` whose alias is `skySignUpYtuAlias`. The
+  address is read-only and not posted, there is no password field and no consent box (the
+  KVKK footer only informs). Form ids (`kc-email-code-sign-up-form`, `…-ytu-form`,
+  `…-existing-form`, `…-unavailable-form`) and `data-sky-sign-up-stage` /
+  `data-sky-sign-up-error` match the SPI's own fallback template, which the harness drives.
+  Previews: `?page=sky-email-code-sign-up.ftl&signup=ytu|existing|unavailable|error`. The
+  password form's page carries `skyEmailCodeSignUp=true` while a realm offers it. On both the
+  first choice screen and the password view, "Hesabın yok mu? E-postayla hesap aç" appears only
+  with that explicit flag and an offered `sky-email-code` execution. It posts that execution
+  and `sky-email-code-intent=sign-up` to the current `url.loginAction`, preserving the login
+  session. Keycloak's built-in registration route is never offered. Broker account-proof mode
+  never shows this ordinary entry; its explicit "Bağlanamadım, yeni hesap aç" POST stays separate.
+  On the shared code page, only the enabled sign-up intent changes the heading to "Hesap aç"
+  and the address-stage description; the code-stage notice, errors, budgets and proof-before-
+  account-disclosure behavior remain the same. Ordinary e-mail/password switches carry no
+  registration intent. Preview the enabled entry with `?page=login.ftl&registration=on`, or
+  its address/code page with `?page=sky-email-code.ftl&registration=sign-up[&code=sent|wrong]`.
+  The normal preview keeps registration off. The team strips on sign-up and existing-account
+  pages use `LegacyFrame`'s `teams` opt-in, preserving the single-column card without a brand panel.
 - `sky-email-code.ftl` is "E-postayla devam et", the SPI's sky-email-code step
   (eskylab-login-ux 08). The SPI hands over `skyEmailCodeStage` (`identifier` or
   `code`), `skyEmailCodeIdentifier` (what was typed), `skyEmailCodeError` (a code from

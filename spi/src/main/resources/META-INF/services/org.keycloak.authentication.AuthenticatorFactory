@@ -1,6 +1,11 @@
 com.skylab.authenticator.Oauth2UserCreatorFactory
 com.skylab.passkey.PasskeyOfferAuthenticatorFactory
+com.skylab.passkey.SkyAfterLoginAuthenticatorFactory
 com.skylab.authenticator.SkyUsernamePasswordFormFactory
 com.skylab.authenticator.SkyResetCredentialChooseUser
 com.skylab.account.EmailCodeAuthenticatorFactory
 com.skylab.authenticator.SkyYtuFirstLogin
+
+com.skylab.account.SkyExistingAccountPromptFactory
+com.skylab.account.SkyExistingAccountPromptFactory$Review
+com.skylab.account.SkyExistingAccountPromptFactory$Proven

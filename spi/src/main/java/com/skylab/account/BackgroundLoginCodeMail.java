@@ -12,15 +12,19 @@ import org.keycloak.executors.ExecutorsProvider;
 import org.keycloak.http.FormPartValue;
 import org.keycloak.http.HttpRequest;
 import org.keycloak.models.GroupModel;
+import org.keycloak.models.AbstractKeycloakTransaction;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.KeycloakSessionFactory;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.utils.KeycloakModelUtils;
+import org.keycloak.storage.adapter.InMemoryUserAdapter;
 
 import java.security.cert.X509Certificate;
+import java.net.URI;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.Executor;
 
@@ -43,9 +47,11 @@ final class BackgroundLoginCodeMail implements LoginCodeMail {
 
     static final String EXECUTOR = "sky-email-code";
     static final String SUBJECT_KEY = "skyLoginCodeSubject";
+    static final String SIGN_UP_SUBJECT_KEY = "skySignUpCodeSubject";
     static final String ALARM_HALF_SUBJECT_KEY = "skyLoginCodeAlarmHalfSubject";
     static final String ALARM_FULL_SUBJECT_KEY = "skyLoginCodeAlarmFullSubject";
     static final String ALARM_CEILING_SUBJECT_KEY = "skyLoginCodeAlarmCeilingSubject";
+    static final String ALARM_CONSECUTIVE_SUBJECT_KEY = "skyLoginCodeAlarmConsecutiveSubject";
 
     private static final Logger LOG = Logger.getLogger(BackgroundLoginCodeMail.class);
 
@@ -76,6 +82,45 @@ final class BackgroundLoginCodeMail implements LoginCodeMail {
     }
 
     /**
+     * The sign-up code (eskylab-login-ux 09) goes to an address that has no account, so Keycloak's
+     * template providers, which render for a person, get a stand-in that exists only in memory: its
+     * address, and the language the sign-in page was shown in (the background session has no
+     * request headers to resolve it from). Nothing of it is stored.
+     */
+    @Override
+    public void sendSignUpCode(AuthenticationFlowContext context, String address, String code) {
+        String language = requestLanguage(context);
+        run(context, "sky_email_code_send_failed purpose=" + EmailCodeSignUp.SIGN_UP, (session, realm) -> {
+            UserModel recipient = new InMemoryUserAdapter(session, realm, SIGN_UP_RECIPIENT_ID);
+            recipient.setEmail(address);
+            if (language != null) {
+                recipient.setSingleAttribute(UserModel.LOCALE, language);
+            }
+            Map<String, Object> attributes = new HashMap<>();
+            attributes.put("code", code);
+            attributes.put("codeExpiration", LoginCodes.TTL_SECONDS / 60);
+            attributes.put("purpose", LoginCodes.SIGN_UP_PURPOSE);
+            session.getProvider(EmailTemplateProvider.class)
+                    .setRealm(realm)
+                    .setUser(recipient)
+                    .send(SIGN_UP_SUBJECT_KEY, List.of(), EmailCodeAuthenticator.MAIL_TEMPLATE, attributes, address);
+        });
+    }
+
+    /** The id of the in-memory stand-in a sign-up code is rendered for; never a stored account. */
+    static final String SIGN_UP_RECIPIENT_ID = "sky-email-code-sign-up";
+
+    /** The sign-in page's language, resolved in the request thread; null when it cannot be. */
+    private static String requestLanguage(AuthenticationFlowContext context) {
+        try {
+            Locale locale = context.getSession().getContext().resolveLocale(null);
+            return locale == null ? null : locale.toLanguageTag();
+        } catch (RuntimeException unresolvable) {
+            return null;
+        }
+    }
+
+    /**
      * The operator alarm goes to every enabled member of the alarm group (default {@code /ADMIN})
      * who has an e-mail address, one SkyMail single mail each, with keycloak-mailer's own
      * {@code skymail:mails:send}: SkyMail's own group send ({@code POST /v1/mail_tasks}) would need
@@ -100,31 +145,83 @@ final class BackgroundLoginCodeMail implements LoginCodeMail {
                 ceilingText(context.getRealm().getName(), ceiling, accounts));
     }
 
+    /** Capture only immutable, person-free data and long-lived factory/executor while the request is open. */
+    @Override
+    public void consecutiveAlarm(AuthenticationFlowContext context, int limit) {
+        if (settings.alarmGroup() == null) return;
+        KeycloakSession requestSession = context.getSession();
+        KeycloakSessionFactory factory = requestSession.getKeycloakSessionFactory();
+        Executor executor = requestSession.getProvider(ExecutorsProvider.class).getExecutor(EXECUTOR);
+        ConsecutiveNotice notice = new ConsecutiveNotice(context.getRealm().getId(), context.getRealm().getName(),
+                settings.alarmGroup(), context.getUriInfo().getBaseUri(), limit);
+        requestSession.getTransactionManager().enlistAfterCompletion(new AbstractKeycloakTransaction() {
+            @Override
+            protected void commitImpl() {
+                LOG.warnf("sky_email_code_consecutive_limit limit=%d realm=%s", notice.limit(), notice.realmName());
+                try {
+                executor.execute(() -> {
+                    try {
+                        KeycloakModelUtils.runJobInTransaction(factory, session -> {
+                            RealmModel realm = session.realms().getRealm(notice.realmId());
+                            if (realm == null) return;
+                            session.getContext().setRealm(realm);
+                            session.getContext().setHttpRequest(new DetachedRequest(new DetachedBaseUri(notice.baseUri())));
+                            deliverAlarm(session, realm, notice.groupPath(), ALARM_CONSECUTIVE_SUBJECT_KEY,
+                                    "SKY LAB: bir hesap ardışık yanlış e-posta kodu sınırına ulaştı",
+                                    consecutiveText(notice.realmName(), notice.limit()));
+                        });
+                    } catch (RuntimeException failed) {
+                        LOG.error("sky_email_code_consecutive_alarm_failed");
+                    }
+                });
+                } catch (RuntimeException rejected) {
+                    LOG.error("sky_email_code_consecutive_alarm_failed");
+                }
+            }
+
+            @Override
+            protected void rollbackImpl() { }
+        });
+    }
+
+    private record ConsecutiveNotice(String realmId, String realmName, String groupPath, URI baseUri, int limit) { }
+
+    static String consecutiveText(String realmName, int limit) {
+        return "Keycloak'ın " + realmName + " realm'inde bir hesap " + limit + " ardışık yanlış e-posta kodu sınırına ulaştı.\n"
+                + "O hesaba giriş/hesap bağlama kodu gönderilmez ve kodlar denetlenmez; ekran aynı kalır.\n"
+                + "Gün dönümü veya yeniden başlatma sınırı kaldırmaz. Başarılı gerçek giriş veya yetkili bakım sıfırlar.\n"
+                + "Parola, passkey ve YTÜ girişi etkilenmez. Bu uyarı her sınıra ulaşma geçişinde bir kez üretilir.\n";
+    }
+
     private void mailAlarmGroup(AuthenticationFlowContext context, String subjectKey, String subject, String text) {
         String realmName = context.getRealm().getName();
         String groupPath = settings.alarmGroup();
         if (groupPath == null) {
             return;
         }
-        run(context, "sky_email_code_alarm_failed realm=" + realmName, (session, realm) -> {
-            List<UserModel> recipients = alarmRecipients(session, realm, groupPath);
-            if (recipients.isEmpty()) {
-                LOG.warnf("sky_email_code_alarm_unsent reason=no_recipient realm=%s", realmName);
-                return;
+        run(context, "sky_email_code_alarm_failed realm=" + realmName, (session, realm) ->
+                deliverAlarm(session, realm, groupPath, subjectKey, subject, text));
+    }
+
+    private static void deliverAlarm(KeycloakSession session, RealmModel realm, String groupPath,
+            String subjectKey, String subject, String text) {
+        List<UserModel> recipients = alarmRecipients(session, realm, groupPath);
+        if (recipients.isEmpty()) {
+            LOG.warnf("sky_email_code_alarm_unsent reason=no_recipient realm=%s", realm.getName());
+            return;
+        }
+        int failed = 0;
+        for (UserModel recipient : recipients) {
+            try {
+                SkyMailNotice.sendLoginCodeAlarm(session, realm, subjectKey, recipient, subject, text);
+            } catch (Exception exception) {
+                failed++;
+                LOG.debug("sky-email-code alarm failure", exception);
             }
-            int failed = 0;
-            for (UserModel recipient : recipients) {
-                try {
-                    SkyMailNotice.sendLoginCodeAlarm(session, realm, subjectKey, recipient, subject, text);
-                } catch (Exception exception) {
-                    failed++;
-                    LOG.debug("sky-email-code alarm failure", exception);
-                }
-            }
-            if (failed > 0) {
-                LOG.errorf("sky_email_code_alarm_failed realm=%s failed=%d of=%d", realmName, failed, recipients.size());
-            }
-        });
+        }
+        if (failed > 0) {
+            LOG.errorf("sky_email_code_alarm_failed realm=%s failed=%d of=%d", realm.getName(), failed, recipients.size());
+        }
     }
 
     /** At most this many members of the alarm group are mailed. */

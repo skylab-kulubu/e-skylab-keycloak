@@ -191,6 +191,96 @@ jobs:
       - name: Sign-in with an e-mail code against a throwaway Keycloak
         run: LOGIN_BY_EMAIL_CODE_THEME_JAR=theme/dist_keycloak/e-skylab-theme-2.0.1.jar bash tests/login-by-email-code.sh
 
+  # Separate from the full login regression: PostgreSQL18, two independent Keycloak instances,
+  # account-counter races/restarts, real UserProfile API negatives and token/reset fault gates.
+  # The targeted baseline took 149s / 70 assertions on the developer Mac; no old login gate is removed.
+  email-code-persistent-counter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.22.1
+          cache: npm
+          cache-dependency-path: theme/package-lock.json
+
+      - name: Build and test the providers
+        run: MAVEN_OPTS=-Xmx768m mvn -B -f spi/pom.xml -DargLine=-Xmx512m -DforkCount=1 verify
+
+      - name: Cache the pinned disposable runtime images
+        run: |
+          keycloak_image=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' Dockerfile)
+          node_image=$(sed -n 's/^ARG NODE_IMAGE=//p' Dockerfile)
+          mailpit_image=$(sed -n 's/^ *image: \(axllent\/mailpit:[^ ]*\)$/\1/p' tests/docker-compose.integration.yml)
+          postgres_image=$(sed -n 's/^export LOGIN_BY_EMAIL_CODE_POSTGRES_IMAGE=//p' tests/login-code-persistent.sh)
+          docker pull "$keycloak_image"
+          docker pull "$node_image"
+          docker pull "$mailpit_image"
+          docker pull "$postgres_image"
+
+      - name: Persistent counter HTTP, API and token fault contract
+        run: |
+          LOGIN_BY_EMAIL_CODE_SPI_JAR=$(find "$PWD/spi/target" -maxdepth 1 -name 'e-skylab-spi-*.jar' -print -quit)
+          export LOGIN_BY_EMAIL_CODE_SPI_JAR
+          LOGIN_BY_EMAIL_CODE_TEST_PULL=never bash tests/login-code-persistent.sh
+
+      - name: Install the native passkey test browser
+        working-directory: theme
+        run: |
+          npm ci --ignore-scripts
+          npx --no-install playwright install --with-deps chromium
+
+      - name: LINK counter, native callback fault and alternate-login reset contract
+        run: |
+          B12_SPI_JAR=$(find "$PWD/spi/target" -maxdepth 1 -name 'e-skylab-spi-*.jar' -print -quit)
+          export B12_SPI_JAR
+          bash tests/existing-account-counter.sh
+
+  # Registration continuation: native AIA cancellation, policy/password/passkey choices,
+  # original OIDC state/nonce/PKCE, closed partial swaps and unchanged ordinary-login offers.
+  after-sign-up-native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.22.1
+          cache: npm
+          cache-dependency-path: theme/package-lock.json
+      - name: Build and test the providers
+        run: MAVEN_OPTS=-Xmx768m mvn -B -f spi/pom.xml -DargLine=-Xmx512m -DforkCount=1 verify
+      - name: Build the actual login theme and install the native test browser
+        working-directory: theme
+        run: |
+          npm ci --ignore-scripts
+          npm run build-keycloak-theme
+          bash ../tests/check-theme-contract.sh
+          npx --no-install playwright install --with-deps chromium
+      - name: Cache pinned disposable runtime images
+        run: |
+          docker pull "$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' Dockerfile)"
+          docker pull "$(sed -n 's/^ *image: \(axllent\/mailpit:[^ ]*\)$/\1/p' tests/docker-compose.integration.yml)"
+          docker pull "$(sed -n 's/^export B12_PG_IMAGE=//p' tests/after-sign-up.sh)"
+      - name: Registration, native YTU and optional credential contract
+        run: |
+          B12_SPI_JAR=$(find "$PWD/spi/target" -maxdepth 1 -name 'e-skylab-spi-*.jar' -print -quit)
+          export B12_SPI_JAR
+          B10_THEME_JAR="$PWD/theme/dist_keycloak/e-skylab-theme-2.0.1.jar" bash tests/after-sign-up.sh
+
   # The SPI's microsoft identity provider: Keycloak's re-authentication (max_age exceeded,
   # prompt=login) goes to Microsoft as prompt=login; an ordinary first login and SSO unchanged;
   # SKY_FORWARD_REAUTHENTICATION=false gives Keycloak's own behaviour back. Stock Keycloak image
@@ -219,6 +309,52 @@ jobs:
 
       - name: Sign-up with an e-mail code against a throwaway Keycloak
         run: bash tests/sign-up-by-email-code.sh
+
+  # First Microsoft login: explicit account choice, target-bound native proof and the
+  # callback transaction guard, including real PG locks/rollback and a resident passkey.
+  # The Microsoft transport/barrier fixtures are compiled into a separate test-only JAR.
+  existing-account-link:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      B12_PG_IMAGE: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.22.1
+          cache: npm
+          cache-dependency-path: theme/package-lock.json
+
+      - name: Build and test the providers
+        run: MAVEN_OPTS=-Xmx768m mvn -B -f spi/pom.xml -DargLine=-Xmx512m -DforkCount=1 verify
+
+      - name: Install the native passkey test browser
+        working-directory: theme
+        run: |
+          npm ci --ignore-scripts
+          npx --no-install playwright install --with-deps chromium
+
+      - name: Cache the pinned disposable runtime images
+        run: |
+          keycloak_image=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' Dockerfile)
+          mailpit_image=$(sed -n 's/^ *image: \(axllent\/mailpit:[^ ]*\)$/\1/p' tests/docker-compose.integration.yml)
+          docker pull "$keycloak_image"
+          docker pull "$mailpit_image"
+          docker pull "$B12_PG_IMAGE"
+
+      - name: Existing-account proof and callback races against PostgreSQL and Keycloak
+        run: |
+          B12_SPI_JAR=$(find "$PWD/spi/target" -maxdepth 1 -name 'e-skylab-spi-*.jar' -print -quit)
+          export B12_SPI_JAR
+          bash tests/existing-account-link.sh
 
   # config/site-clients.sh and config/site-editor-grants.sh (the event sites' Site clients, with
   # inscribed-cms-roles.sh between them) against the stock Keycloak image in dev mode, with a real
@@ -358,6 +494,15 @@ jobs:
 
       - name: Run Keycloak, OIDC and RabbitMQ contracts
         run: bash tests/run-integration.sh
+
+      - name: Keep only the whitelisted WebAuthn failure diagnostic
+        if: failure() && matrix.group == 'spi'
+        uses: actions/upload-artifact@v4
+        with:
+          name: spi-webauthn-safe-diagnostic
+          path: theme/test-results/**/webauthn-safe-diagnostic.json
+          if-no-files-found: ignore
+          retention-days: 7
 
   # One check named integration, green only when every group is.
   integration:

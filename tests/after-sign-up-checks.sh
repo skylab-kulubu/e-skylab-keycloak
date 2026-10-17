@@ -32,7 +32,8 @@ b10_reconcile() {
 b10_flag() { kcadm get "realms/$REALM" --fields 'attributes(*)' | jq -r '.attributes.skyAfterSignUpEnabled//"missing"'; }
 
 stage 'B10 native fixture and production-shaped email flow'
-kcadm update identity-provider/instances/OBS -r "$REALM" -s providerId=microsoft >/dev/null
+[[ $(kcadm get identity-provider/instances/OBS -r "$REALM" | jq -r '.providerId') == microsoft ]] \
+  || fail 'B10 fixture must create the Microsoft provider type'
 kcadm update "realms/$REALM" -s loginTheme=e-skylab-theme -s internationalizationEnabled=true \
   -s attributes.b10KeepSentinel=retained \
   -s 'supportedLocales=["tr","en"]' -s rememberMe=true -s 'passwordPolicy=length(12) and digits(1)' \

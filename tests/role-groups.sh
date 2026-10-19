@@ -40,6 +40,8 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=kcadm-jvm.sh
+source "$SCRIPT_DIR/kcadm-jvm.sh"
 REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 IMAGE=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' "$REPOSITORY_ROOT/Dockerfile")
 PORT=${ROLE_GROUPS_TEST_PORT:-18096}
@@ -245,6 +247,7 @@ for code in AIRLAB ALGOLAB BIZBIZE GECEKODU MOBILAB SKYDEVOPS SKYSEC WEBLAB CHAI
     || fail "a role group name contains the team code $code"
 done
 docker run --rm -d --name "$CONTAINER" -p "127.0.0.1:$PORT:8080" \
+  -e KC_OPTS="$KCADM_JVM_OPTS" \
   -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
   "$IMAGE" start-dev >/dev/null
 for _ in $(seq 1 90); do

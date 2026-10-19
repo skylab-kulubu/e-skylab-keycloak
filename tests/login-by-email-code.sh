@@ -76,6 +76,8 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=kcadm-jvm.sh
+source "$SCRIPT_DIR/kcadm-jvm.sh"
 REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 IMAGE=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' "$REPOSITORY_ROOT/Dockerfile")
 MAVEN_IMAGE=$(sed -n 's/^FROM \(maven:[^ ]*\) AS providers$/\1/p' "$REPOSITORY_ROOT/Dockerfile")
@@ -500,6 +502,7 @@ fi
 start_keycloak() {
   local instance=$1 port=$2
   docker run "${pull_arguments[@]}" --rm -d --name "$instance" --network "$NETWORK" --memory "$MEMORY" -p "127.0.0.1:$port:$port" \
+    -e KC_OPTS="$KCADM_JVM_OPTS" \
     -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
     -e SKY_EMAIL_CODE_DAILY_LIMIT="$DAILY_LIMIT" -e SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT="$WRONG_CEILING" \
     -e SKY_HARNESS=1 -e SKY_MAIL_ENABLED=true -e "SKY_MAIL_BASE_URL=http://$SKYMAIL_CONTAINER:8080" \

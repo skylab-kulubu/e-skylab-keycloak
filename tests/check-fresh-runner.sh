@@ -439,7 +439,7 @@ def assert_ci_scope(ci, release)
       gate_run.include?('($full == "true" or .value.result != "skipped")')
     abort "#{ci} gate must agree with scope and allow skipped jobs only in a fast run"
   end
-  unless jobs.fetch("integration-group").fetch("if") == "needs.scope.outputs.full == 'true'"
+  unless jobs.fetch("integration-group").fetch("if").start_with?("needs.scope.outputs.full == 'true' || ")
     abort "#{ci} integration-group must run in every full run"
   end
   build_steps = YAML.load_file(release, aliases: true).fetch("jobs").fetch("keycloak-build").fetch("steps")
@@ -454,6 +454,44 @@ def assert_ci_scope(ci, release)
   end
 end
 
+# Affected tests: a fast run also runs every job of the whole suite whose own tests its diff
+# touches. tests/affected-jobs.sh lists each such job with the tests/ scripts its steps run; that
+# list must be exactly ci.yml's whole-suite jobs and their scripts, every such job must run on its
+# own name in scope's affected output, and a harness change must reach its jobs.
+def assert_affected_jobs(ci, helper)
+  jobs = YAML.load_file(ci, aliases: true).fetch("jobs")
+  entries = `bash #{helper} --entries`.lines.map(&:split).to_h { |words| [words.first, words.drop(1).sort] }
+  abort "#{helper} --entries failed" unless $?.success?
+  whole_suite = jobs.select { |_, job| job.fetch("if", "").to_s.start_with?("needs.scope.outputs.full == 'true'") }
+  unless entries.keys.sort == whole_suite.keys.sort
+    abort "#{helper} must list exactly ci.yml's whole-suite jobs (#{whole_suite.keys.sort.join(" ")})"
+  end
+  whole_suite.each do |name, job|
+    expected_if = "needs.scope.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' #{name} ')"
+    abort "#{ci} #{name} must also run when scope lists it as affected" unless job.fetch("if") == expected_if
+    scripts = job.fetch("steps").flat_map { |step| step.fetch("run", "").scan(%r{bash (?:\.\./)?(tests/[A-Za-z0-9_.-]+\.sh)}).flatten }.uniq.sort
+    unless scripts == entries.fetch(name)
+      abort "#{helper} must list #{name} with the scripts it runs (#{scripts.join(" ")})"
+    end
+  end
+  scope_run = jobs.fetch("scope").fetch("steps").map { |step| step.fetch("run", "") }.join("\n")
+  unless scope_run.include?('affected=$(bash tests/affected-jobs.sh <<<"$changed")') &&
+      scope_run.include?("bash tests/affected-jobs.sh --entries")
+    abort "#{ci} scope must name the affected jobs of a fast run, and every one when its diff cannot be read"
+  end
+  { "tests/kcadm-core-roles-failure.sh" => %w[role-groups dk-read-only integration-group],
+    "tests/core-service-roles.sh" => %w[integration-group],
+    "tests/fixture-realm.json" => %w[integration-group],
+    "tests/dk-read-only.sh" => %w[dk-read-only] }.each do |path, expected|
+    affected = IO.popen(["bash", helper], "r+") { |io| io.puts(path); io.close_write; io.read }.split
+    missing = expected - affected
+    abort "#{helper} does not reach #{missing.join(" ")} from #{path}" unless missing.empty?
+  end
+  docs = IO.popen(["bash", helper], "r+") { |io| io.puts("docs/x.md"); io.close_write; io.read }.split
+  abort "#{helper} must not run whole-suite jobs for docs/x.md" unless docs.empty?
+end
+
+assert_affected_jobs(File.join(root, ".github/workflows/ci.yml"), File.join(root, "tests/affected-jobs.sh"))
 assert_ci_branches(File.join(root, ".github/workflows/ci.yml"))
 assert_ci_scope(File.join(root, ".github/workflows/ci.yml"), File.join(root, ".github/workflows/release.yml"))
 assert_order(File.join(root, ".github/workflows/ci.yml"), "integration-group")

@@ -31,6 +31,8 @@ concurrency:
 jobs:
   # full or fast, and which areas a fast run touches: theme/, spi/, and other (anything outside
   # theme/, spi/, docs/ and *.md). A full run, or a diff that cannot be read, selects everything.
+  # affected: the whole suite's jobs whose own tests a fast run's diff touches
+  # (tests/affected-jobs.sh); they run in that fast run too (integration-group: all four groups).
   scope:
     name: scope (${{ (github.event_name != 'pull_request' || github.base_ref != 'main' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && 'full' || 'fast' }})
     runs-on: ubuntu-latest
@@ -40,6 +42,7 @@ jobs:
       theme: ${{ steps.scope.outputs.theme }}
       spi: ${{ steps.scope.outputs.spi }}
       other: ${{ steps.scope.outputs.other }}
+      affected: ${{ steps.scope.outputs.affected }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -52,7 +55,8 @@ jobs:
           FULL: ${{ (github.event_name != 'pull_request' || github.base_ref != 'main' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && 'true' || 'false' }}
         run: |
           everything() {
-            printf 'full=%s\ntheme=true\nspi=true\nother=true\n' "$FULL" >> "$GITHUB_OUTPUT"
+            all=" $(bash tests/affected-jobs.sh --entries | cut -d' ' -f1 | tr '\n' ' ')"
+            printf 'full=%s\ntheme=true\nspi=true\nother=true\naffected=%s\n' "$FULL" "$all" >> "$GITHUB_OUTPUT"
             exit 0
           }
           if [[ $FULL == true ]]; then
@@ -72,8 +76,9 @@ jobs:
               *) other=true ;;
             esac
           done <<<"$changed"
-          printf 'fast run: theme=%s spi=%s other=%s\n' "$theme" "$spi" "$other"
-          printf 'full=false\ntheme=%s\nspi=%s\nother=%s\n' "$theme" "$spi" "$other" >> "$GITHUB_OUTPUT"
+          affected=$(bash tests/affected-jobs.sh <<<"$changed")
+          printf 'fast run: theme=%s spi=%s other=%s affected=[%s]\n' "$theme" "$spi" "$other" "$affected"
+          printf 'full=false\ntheme=%s\nspi=%s\nother=%s\naffected=%s\n' "$theme" "$spi" "$other" "$affected" >> "$GITHUB_OUTPUT"
 
   # Every run: the version pins, the workflow wiring, the theme contracts, the image build (which
   # runs the SPI's and the RabbitMQ provider's Maven tests) and the operator scripts' static
@@ -173,7 +178,7 @@ jobs:
   # dev mode; needs no build of this repository's image.
   inscribed-cms-roles:
     needs: scope
-    if: needs.scope.outputs.full == 'true'
+    if: needs.scope.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' inscribed-cms-roles ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -228,7 +233,7 @@ jobs:
   # image.
   role-groups:
     needs: scope
-    if: needs.scope.outputs.full == 'true'
+    if: needs.scope.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' role-groups ')
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -243,7 +248,7 @@ jobs:
   # tokens; needs no build of this repository's image.
   dk-read-only:
     needs: scope
-    if: needs.scope.outputs.full == 'true'
+    if: needs.scope.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' dk-read-only ')
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -257,7 +262,7 @@ jobs:
   # flows (PKCE) through admin-local and the panel's client; needs no build of this repository's image.
   sandbox-admin-local-client:
     needs: scope
-    if: needs.scope.outputs.full == 'true'
+    if: needs.scope.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' sandbox-admin-local-client ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -291,7 +296,7 @@ jobs:
   # KEYCLOAK_STAY_SIGNED_IN).
   ytu-first-login:
     needs: scope
-    if: needs.scope.outputs.full == 'true'
+    if: needs.scope.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' ytu-first-login ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -388,7 +393,7 @@ jobs:
   # original OIDC state/nonce/PKCE, closed partial swaps and unchanged ordinary-login offers.
   after-sign-up-native:
     needs: scope
-    if: needs.scope.outputs.full == 'true'
+    if: needs.scope.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' after-sign-up-native ')
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -509,7 +514,7 @@ jobs:
   # authorization code flow (PKCE); needs no build of this repository's image.
   site-clients:
     needs: scope
-    if: needs.scope.outputs.full == 'true'
+    if: needs.scope.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' site-clients ')
     runs-on: ubuntu-latest
     # 19-28 minutes on main before the --shared-scope stage (about 5 more).
     timeout-minutes: 45
@@ -524,7 +529,7 @@ jobs:
   # with SkyApp's real public-client login (PKCE) and refresh; needs no build of this repository's image.
   skyapp-cms-editor:
     needs: scope
-    if: needs.scope.outputs.full == 'true'
+    if: needs.scope.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' skyapp-cms-editor ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -539,7 +544,7 @@ jobs:
   # and the operator scripts that share these clients; needs no build of this repository's image.
   login-clients:
     needs: scope
-    if: needs.scope.outputs.full == 'true'
+    if: needs.scope.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' login-clients ')
     runs-on: ubuntu-latest
     # ~21 minutes on a loaded developer Mac (2026-10-05); every kcadm call starts a JVM.
     timeout-minutes: 45
@@ -590,7 +595,7 @@ jobs:
     name: integration (${{ matrix.group }})
     runs-on: ubuntu-latest
     needs: [scope, theme]
-    if: needs.scope.outputs.full == 'true'
+    if: needs.scope.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' integration-group ')
     strategy:
       fail-fast: false
       matrix:

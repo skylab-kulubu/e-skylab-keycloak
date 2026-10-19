@@ -55,7 +55,7 @@ jobs:
           promoted_from=''
           if [[ $ELIGIBLE == true && $PRODUCTION == true ]]; then
             tree=$(git rev-parse 'HEAD^{tree}')
-            if promoted_from=$(bash tests/find-green-full-ci-run.sh "$tree"); then
+            if promoted_from=$(bash tests/find-green-full-ci-run.sh "$tree") && [[ $promoted_from =~ ^[0-9]+$ ]]; then
               echo "tree $tree passed CI run $promoted_from in full: the fast set"
               full=false
             else
@@ -852,7 +852,8 @@ jobs:
           case "$ELIGIBLE/$PRODUCTION/$FULL" in
             true/*/true | false/*/false) ;;
             true/true/false)
-              bash tests/find-green-full-ci-run.sh "$(git rev-parse 'HEAD^{tree}')" >/dev/null
+              run_id=$(bash tests/find-green-full-ci-run.sh "$(git rev-parse 'HEAD^{tree}')")
+              [[ $run_id =~ ^[0-9]+$ ]]
               ;;
             *)
               echo "mode chose full=$FULL for a run with eligible=$ELIGIBLE production=$PRODUCTION" >&2

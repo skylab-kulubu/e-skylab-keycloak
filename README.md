@@ -1054,10 +1054,12 @@ koşturulan eski bir yayın `:production`'ı ezemez. Yayınlar tek tek koşar
 edilmedi) `production` push'unun kendi `ci.yml` koşusu tam koşar; yeşil olunca yayın yeniden
 koşturulur (`gh run rerun <run> --failed`).
 
-Yayının paket artifact'inin ömrü 3 gün, CI adayınınki 14 gün. **Touch ID kanıtı 3 günden uzun
-sürerse** koşu yeniden denenemez (indirme adımı düşer); yayın koşusu baştan başlatılır
-(production'a aynı ağaçla yeni bir commit). Ağacın tam koşusu 14 günden eskiyse
-`gh workflow run ci.yml --ref main` ile yenisi alınır.
+CI adayının ömrü 14 gün: Touch ID kanıtı beklenirken yayın (`gh run rerun <run> --failed`, Touch
+ID adımı yeniden koşar) adayın kalan ömrü boyunca yeniden denenebilir. Paket artifact'i Touch ID
+geçtikten sonra oluşur ve 3 gün yaşar; 3 gün yalnız paket ile `keycloak-publish`'in yeniden
+denenmesi arasındaki sınırdır, daha geçse yayın koşusu baştan başlatılır. Ağacın tam koşusu 14 günden eskiyse (adayı silinmişse
+bulucu onu kanıt saymaz) `gh workflow run ci.yml --ref production` ile yenisi alınır: `production`'ın
+ağacını test eder (`main` o zamana kadar ayrışmış olabilir).
 
 Tek Keycloak'ta bütün aşamaların sırayla koşusu (`INTEGRATION_GROUP=all`) artık ne CI'da ne
 yayında var; `.github/workflows/integration-all.yml` onu haftada bir (pazartesi 03:17 UTC, main)

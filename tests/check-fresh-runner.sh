@@ -168,6 +168,21 @@ def assert_release_boundary(workflow)
   unless package_job.fetch("environment", nil) == "keycloak-production"
     abort "#{workflow} keycloak-package must read the physical WebAuthn evidence of the keycloak-production environment"
   end
+  # The evidence comes only from the environment's variables: a value derived from the run (such
+  # as github.sha) would approve itself.
+  evidence = package_job.fetch("env", {}).select { |name, _| name.start_with?("PHYSICAL_WEBAUTHN_") }
+  unless evidence == {
+    "PHYSICAL_WEBAUTHN_APPROVED_COMMIT" => "${{ vars.KEYCLOAK_PHYSICAL_WEBAUTHN_APPROVED_COMMIT }}",
+    "PHYSICAL_WEBAUTHN_EVIDENCE_URL" => "${{ vars.KEYCLOAK_PHYSICAL_WEBAUTHN_EVIDENCE_URL }}",
+    "PHYSICAL_WEBAUTHN_APPROVED_SURFACES" => "${{ vars.KEYCLOAK_PHYSICAL_WEBAUTHN_APPROVED_SURFACES }}",
+  }
+    abort "#{workflow} keycloak-package must read the physical WebAuthn evidence from the environment's variables only"
+  end
+  if document.fetch("env", {}).keys.any? { |name| name.start_with?("PHYSICAL_WEBAUTHN_") } ||
+      package_steps.any? { |step| step.key?("env") && step.fetch("run", "").include?("check-physical-webauthn-release.sh") } ||
+      package_steps.any? { |step| step.fetch("run", "").include?("PHYSICAL_WEBAUTHN_") }
+    abort "#{workflow} the physical WebAuthn gate must read only keycloak-package's environment variables"
+  end
 
   download_index = package_steps.index do |step|
     step["uses"] == "actions/download-artifact@v5" && step.fetch("with", {})["name"] == "keycloak-ci-candidate" &&
@@ -400,7 +415,7 @@ def assert_ci_scope(ci)
   mode_run = mode_step&.fetch("run", "").to_s
   unless mode_step && mode_step.fetch("env", {})["ELIGIBLE"] == eligible && mode_step.fetch("env", {})["PRODUCTION"] == production &&
       mode_run.include?("full=$ELIGIBLE") && mode_run.include?('if [[ $ELIGIBLE == true && $PRODUCTION == true ]]; then') &&
-      mode_run.include?('bash tests/find-green-full-ci-run.sh "$tree"')
+      mode_run.include?('if promoted_from=$(bash tests/find-green-full-ci-run.sh "$tree") && [[ $promoted_from =~ ^[0-9]+$ ]]; then')
     abort "#{ci} mode must make every eligible run full unless it is a production run of a tree already tested in full"
   end
   scope = jobs.fetch("scope")
@@ -419,7 +434,7 @@ def assert_ci_scope(ci)
   unless gate_step && gate_step.fetch("env", {})["ELIGIBLE"] == eligible && gate_step.fetch("env", {})["PRODUCTION"] == production &&
       gate_step.fetch("env", {})["FULL"] == "${{ needs.mode.outputs.full }}" &&
       gate_run.include?("true/*/true | false/*/false) ;;") &&
-      gate_run.include?("true/true/false)\n    bash tests/find-green-full-ci-run.sh") &&
+      gate_run.include?("true/true/false)\n    run_id=$(bash tests/find-green-full-ci-run.sh \"$(git rev-parse 'HEAD^{tree}')\")\n    [[ $run_id =~ ^[0-9]+$ ]]\n") &&
       gate_run.include?('($full == "true" or .value.result != "skipped")') &&
       gate_run.include?(%q(test "$(jq -r '.mode.result' <<<"$NEEDS")" = success))
     abort "#{ci} gate must check mode against the event, re-find a promoted tree's run, and allow skipped jobs only in a fast run"
@@ -496,6 +511,14 @@ def assert_finder(finder)
     abort "#{finder} is missing #{required}" unless text.include?(required)
   end
   abort "#{finder} must never accept pull_request runs" if text.include?('.event == "pull_request"')
+  # Not found is a failure, and a run whose candidate or a receipt expired is no evidence.
+  unless text.lines.map(&:strip).reject(&:empty?).last == "exit 1"
+    abort "#{finder} must exit 1 when no run is found"
+  end
+  ['--jq \'.artifacts[] | select(.expired == false) | .name\'', "required_artifacts=(keycloak-ci-candidate)",
+   'required_artifacts+=("keycloak-ci-tested-$group")', "INTEGRATION_GROUPS="].each do |required|
+    abort "#{finder} must require the run's live candidate and receipts (#{required})" unless text.include?(required)
+  end
 end
 
 assert_finder(File.join(root, "tests/find-green-full-ci-run.sh"))

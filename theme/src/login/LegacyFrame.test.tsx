@@ -57,6 +57,53 @@ describe("LegacyFrame SKY LAB identity", () => {
     expect(container.querySelector(".sl-legacy-logo img")).toBeNull();
   });
 
+  it("keeps the wide brand panel: the logo, its title, sentence and three features", () => {
+    const brand = {
+      title: "Tek hesap, tek giriş",
+      text: "Aynı hesapla girersin.",
+      features: { sites: "Siteler", ytu: "YTÜ", passkey: "Erişim anahtarı" }
+    };
+    const { container } = render(
+      <LegacyFrame {...chrome} title="Giriş yap" brand={brand}>
+        <p>İçerik</p>
+      </LegacyFrame>
+    );
+
+    const panel = container.querySelector(".sl-legacy-card--brand .sl-legacy-brand") as HTMLElement;
+    expect(panel.querySelector('[data-skylab-logo-animation="draw"]')).not.toBeNull();
+    expect(panel.querySelector(".sl-legacy-brand__title")).toHaveTextContent("Tek hesap, tek giriş");
+    expect(panel.querySelector(".sl-legacy-brand__text")).toHaveTextContent("Aynı hesapla girersin.");
+    expect(Array.from(panel.querySelectorAll(".sl-legacy-brand__features li")).map(item => item.textContent)).toEqual([
+      "Siteler",
+      "YTÜ",
+      "Erişim anahtarı"
+    ]);
+  });
+
+  it("carries a quiet loading state in the card: the logo drawn again, a live region outside the card filled in only when shown", () => {
+    const { container } = render(
+      <LegacyFrame {...chrome} title="Giriş yap" loadingLabel="Yükleniyor…">
+        <p>İçerik</p>
+      </LegacyFrame>
+    );
+
+    const loading = container.querySelector(".sl-legacy-card > .sl-legacy-loading") as HTMLElement;
+    expect(loading).not.toBeNull();
+    const logo = loading.querySelector('[data-skylab-logo-animation="loading"]');
+    expect(logo).toHaveAttribute("aria-hidden", "true");
+    expect(logo?.querySelectorAll("path")).toHaveLength(19);
+    // The page still has exactly one logo for assistive technology and the draw contract.
+    expect(container.querySelectorAll('[data-skylab-logo-animation="draw"]')).toHaveLength(1);
+    // The visible label (reduced motion) is not what is announced.
+    expect(loading.querySelector(".sl-legacy-loading__label")).toHaveAttribute("aria-hidden", "true");
+    // The live region is on the page from the start, empty and outside the card that turns busy.
+    const status = container.querySelector(".sl-legacy-loading__status");
+    expect(status).toHaveAttribute("role", "status");
+    expect(status).toHaveAttribute("data-label", "Yükleniyor…");
+    expect(status?.textContent).toBe("");
+    expect(status?.closest(".sl-legacy-card")).toBeNull();
+  });
+
   it("keeps the KVKK footer landmark and marks translation readiness", () => {
     const { container, rerender } = render(
       <LegacyFrame {...chrome} title="Giriş yap" translationsReady={false}>

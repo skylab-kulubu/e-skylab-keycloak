@@ -111,17 +111,13 @@ describe("login page: forgot password link", () => {
     cleanup();
   });
 
-  it("is on the first screen, under the sign-in choices", async () => {
+  it("is not on the first screen: it waits in the password form, where a password is typed", async () => {
     const view = await renderPage("login.ftl");
 
-    const link = view.getByRole("link", { name: "Parolanı mı unuttun?" });
-    expect(link).toHaveAttribute("href", resetUrl);
-    // After the choices (and the passkey button), so the primary choices stay first in reading order.
-    const choices = view.container.querySelector(".sl-legacy-choices");
-    expect(choices?.compareDocumentPosition(link) ?? 0).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(view.container.querySelector("#authenticateWebAuthnButton")?.compareDocumentPosition(link) ?? 0).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING
-    );
+    expect(view.queryByRole("link", { name: "Parolanı mı unuttun?" })).toBeNull();
+    expect(view.container).not.toHaveTextContent("Parolanı mı unuttun?");
+    fireEvent.click(view.getByRole("button", { name: "E-postayla devam et" }));
+    expect(view.getByRole("link", { name: "Parolanı mı unuttun?" })).toHaveAttribute("href", resetUrl);
   });
 
   it("sits directly below the password field in the password form, before the submit button", async () => {
@@ -278,47 +274,87 @@ describe("login page: sign-in choices and trust copy (eskylab-login-ux 05)", () 
     expect(container.querySelector(".sl-legacy-intro p")?.textContent).toBe(text);
   });
 
-  it("says in one sentence under the choices that the school password stays with Microsoft", async () => {
+  it("keeps the first screen to the choices, one quiet line and a plain reset link: no explanatory copy", async () => {
     const view = await renderPage("login.ftl");
 
-    const trust = view.container.querySelector(".sl-legacy-trust") as HTMLElement;
-    expect(trust).not.toBeNull();
-    expect(view.container.querySelector(".sl-legacy-choices")?.compareDocumentPosition(trust)).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING
-    );
-    expect(trust.querySelector(":scope > p")?.textContent).toBe("Okul şifreni yalnız Microsoft'a yazarsın; SKY LAB görmez.");
-
-    const details = within(trust).getByText("Neleri alıyoruz?").closest("details") as HTMLDetailsElement;
-    expect(details).not.toBeNull();
-    expect(details.open).toBe(false);
-    expect(details.querySelector("p")?.textContent).toBe(
-      "Adın, okul e-postan, bölümün ve Microsoft kimlik numaran. Postalarına ve dosyalarına erişmeyiz."
-    );
-  });
-
-  it("helps someone who does not know the school password in one line, in a new tab", async () => {
-    const view = await renderPage("login.ftl");
-
-    const details = view.getByText("Okul şifreni bilmiyor musun?").closest("details") as HTMLElement;
-    expect(details).not.toBeNull();
-    expect(details.querySelector("p")?.textContent).toBe("Microsoft'ta sıfırla ya da BİDB'ye başvur.");
-    const reset = within(details).getByRole("link", { name: "Microsoft'ta sıfırla" });
+    // Reading order: the two choices, the quiet line, the school password reset link.
+    const choices = view.container.querySelector(".sl-legacy-choices") as Element;
+    const alternatives = view.container.querySelector(".sl-legacy-alternatives") as Element;
+    const reset = view.getByRole("link", { name: "Okul şifreni sıfırla" });
+    expect(choices.compareDocumentPosition(alternatives)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(alternatives.compareDocumentPosition(reset)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(reset).toHaveAttribute("href", "https://passwordreset.microsoftonline.com/");
-    const support = within(details).getByRole("link", { name: "BİDB'ye başvur" });
-    expect(support).toHaveAttribute("href", "https://teknikdestek.yildiz.edu.tr/");
-    for (const link of [reset, support]) {
-      expect(link).toHaveAttribute("target", "_blank");
-      expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    expect(reset).toHaveAttribute("target", "_blank");
+    expect(reset).toHaveAttribute("rel", "noopener noreferrer");
+    expect(reset.closest("p")?.textContent).toBe("Okul şifreni sıfırla");
+
+    // Nothing to unfold and none of the removed sentences (Yusuf, 2026-10-19).
+    expect(view.container.querySelector("details")).toBeNull();
+    for (const removed of [
+      "Okul şifreni yalnız Microsoft'a yazarsın",
+      "Neleri alıyoruz?",
+      "Postalarına ve dosyalarına erişmeyiz",
+      "Okul şifreni bilmiyor musun?",
+      "BİDB",
+      "Giriş adresi her zaman"
+    ]) {
+      expect(view.container, removed).not.toHaveTextContent(removed);
     }
   });
 
-  it("names the sign-in address on both screens", async () => {
-    const view = await renderPage("login.ftl");
-    const notice = "Giriş adresi her zaman e.yildizskylab.com'dur.";
+  it("says the same in English", async () => {
+    const kcContext = getDevKcContextForPage("login.ftl", "en");
+    const view = render(<KcPage kcContext={kcContext} />);
+    await waitFor(() => expect(view.container.querySelector(".sl-legacy-shell")).toHaveAttribute("data-sl-translations", "ready"));
 
-    expect(view.getByText(notice)).toBeInTheDocument();
-    fireEvent.click(view.getByRole("button", { name: "E-postayla devam et" }));
-    expect(view.getByText(notice)).toBeInTheDocument();
+    expect(view.getByRole("link", { name: "Reset your school password" })).toHaveAttribute(
+      "href",
+      "https://passwordreset.microsoftonline.com/"
+    );
+    for (const removed of ["SKY LAB never sees it", "What do we take?", "contact YTÜ IT", "The sign-in address is always"]) {
+      expect(view.container, removed).not.toHaveTextContent(removed);
+    }
+  });
+
+  it("puts the passkey on one quiet line under the two choices", async () => {
+    const view = await renderPage("login.ftl");
+
+    const alternatives = view.container.querySelector(".sl-legacy-alternatives") as HTMLElement;
+    const passkey = within(alternatives).getByRole("button", { name: "Erişim anahtarı ile giriş yap" });
+    expect(passkey).toHaveAttribute("id", "authenticateWebAuthnButton");
+    // Only the two main choices are big buttons.
+    expect(view.container.querySelectorAll(".sl-legacy-choice")).toHaveLength(2);
+  });
+
+  it("drops the school password link without a YTÜ provider", async () => {
+    const kcContext = loginContext();
+    kcContext.social = undefined;
+    const view = render(<KcPage kcContext={kcContext} />);
+    await waitFor(() => expect(view.container.querySelector(".sl-legacy-choices")).not.toBeNull());
+
+    expect(view.queryByRole("link", { name: "Okul şifreni sıfırla" })).toBeNull();
+  });
+
+  it("keeps the wide brand panel as it was: logo, title, sentence and three features (TR and EN)", async () => {
+    const view = await renderPage("login.ftl");
+    const panel = view.container.querySelector(".sl-legacy-card--brand .sl-legacy-brand") as HTMLElement;
+    expect(panel.querySelector('[data-skylab-logo-animation="draw"]')).not.toBeNull();
+    expect(panel.querySelector(".sl-legacy-brand__title")).toHaveTextContent("Tek hesap, tek giriş");
+    expect(panel.querySelector(".sl-legacy-brand__text")?.textContent).toBe("SKY LAB'in tüm platformlarına tek hesapla gir.");
+    expect(Array.from(panel.querySelectorAll(".sl-legacy-brand__features li")).map(item => item.textContent)).toEqual([
+      "Hesap isteyen kulüp sitelerinde tek hesap",
+      "YTÜ öğrenci hesabınla hızlı giriş",
+      "Erişim anahtarıyla parolasız giriş"
+    ]);
+    view.unmount();
+
+    const english = render(<KcPage kcContext={getDevKcContextForPage("login.ftl", "en")} />);
+    await waitFor(() => expect(english.container.querySelector(".sl-legacy-shell")).toHaveAttribute("data-sl-translations", "ready"));
+    expect(english.container.querySelector(".sl-legacy-brand__title")).toHaveTextContent("One account, one sign-in");
+    expect(english.container.querySelector(".sl-legacy-brand__text")?.textContent).toBe(
+      "Sign in to every SKY LAB platform with one account."
+    );
+    expect(english.container.querySelectorAll(".sl-legacy-brand__features li")).toHaveLength(3);
   });
 
   it("points to the KVKK notice itself and says it can be read, not that it was accepted", async () => {

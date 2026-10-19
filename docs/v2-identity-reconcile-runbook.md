@@ -3723,7 +3723,7 @@ kullanılmaz. Satırlar:
    Yalnız sürüm numarası yeterli değildir: B11 Sudo e-posta (#110), B12, B24, B10 ve hoş geldin postası
    bağımlılıkları gerçekten yayımlanmış olmalıdır. Kayıt ve kayıt sonrası sorular varsayılan kapalı kalır.
    Sanal passkey otomasyonu fiziksel Touch ID davranışını kanıtlamaz; cihaz yürüyüşü ayrı kanıttır.
-2. Tema: ilk ekrandaki ve parola görünümündeki “E-postayla hesap aç” bağlantısı, “Hesap aç” başlığı,
+2. Tema: ilk ekrandaki “Hesabın yok mu? Hesap aç” ve parola görünümündeki “E-postayla hesap aç” bağlantısı, “Hesap aç” başlığı,
    kayıt ve bağlama ekranlarında ekip arka planı; B10 okul/credential sayfaları ve native link onayı
    yayımlanan tema JAR'ında doğrulanır. B24 alarm şablonu önce seed edilmeli, bütün KC örnekleri yeni
    kalıcı sayaç sürümünde olmalıdır. Sandbox'ta kayıt sonrası sorular önce hazırlanır (§32), kayıt

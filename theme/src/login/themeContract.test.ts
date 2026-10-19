@@ -5,6 +5,7 @@ import kcPageSource from "./KcPage.tsx?raw";
 import loginSource from "./Login.tsx?raw";
 import templateSource from "./Template.tsx?raw";
 import { classes } from "./KcPage";
+import { TEAM_MARQUEE_SECONDS } from "./TeamMarquee";
 
 type Rgb = [number, number, number];
 type Rgba = [number, number, number, number];
@@ -202,5 +203,125 @@ describe("SKY LAB theme: one design system", () => {
     expect(css).toContain("animation: none");
     expect(css).toContain("@media (forced-colors: active)");
     expect(css).toContain("@media (max-width: 39.999rem)");
+  });
+
+  /** The body of one `@media` block, comments removed. */
+  function mediaBlock(query: string): string {
+    const source = css.replace(/\/\*[\s\S]*?\*\//g, "");
+    const start = source.indexOf(`@media ${query} {`);
+    expect(start, `missing @media ${query}`).toBeGreaterThanOrEqual(0);
+    let depth = 0;
+    for (let index = source.indexOf("{", start); index < source.length; index += 1) {
+      if (source[index] === "{") depth += 1;
+      if (source[index] === "}") depth -= 1;
+      if (depth === 0) return source.slice(start, index + 1);
+    }
+    throw new Error(`unterminated @media ${query}`);
+  }
+
+  it("shows the whole logo from the first frame; the animation only traces a line over it", () => {
+    const path = rules.find(rule => rule.selectors.includes(".sl-legacy-logo__svg path"))!.body;
+    expect(path).toMatch(/(?:^|;)\s*fill-opacity:\s*1\s*;/);
+    expect(path).not.toMatch(/fill-opacity:\s*0\s*;/);
+    expect(declaration(".sl-legacy-logo__svg path", "animation-name")).toBe("sl-legacy-logo-draw, sl-legacy-logo-stroke-fade");
+    // Nothing fades the fill in any more.
+    expect(css).not.toContain("sl-legacy-logo-fill");
+    expect(mediaBlock("(prefers-reduced-motion: reduce)")).toMatch(
+      /\.sl-legacy-logo__svg path\s*\{[^}]*animation:\s*none;[^}]*fill-opacity:\s*1;[^}]*stroke-opacity:\s*0;/
+    );
+  });
+
+  it("keeps help copy, field labels and the KVKK line at 14px or more", () => {
+    // The developer credit, the language links and the attempted-account label may stay at 12-13px.
+    for (const selector of [
+      ".sl-legacy-label",
+      ".sl-legacy-field > label",
+      ".sl-legacy-footer p",
+      ".sl-legacy-school-reset",
+      ".sl-legacy-alternatives",
+      ".sl-legacy-no-account",
+      ".sl-legacy-choice__hint",
+      ".sl-legacy-field-error",
+      ".sl-helper-text",
+      ".sl-legacy-required-note",
+      ".sl-passkey-offer__privacy",
+      ".sl-personal-email-offer__note",
+      ".sl-stay-signed-in__warning",
+      ".sl-email-code-sign-up__note",
+      ".sl-auth-item__description"
+    ]) {
+      const size = declaration(selector, "font-size");
+      expect(size, selector).toMatch(/rem$/);
+      expect(Number.parseFloat(size) * 16, selector).toBeGreaterThanOrEqual(14);
+    }
+  });
+
+  it("keeps the team strips quiet, inside the window and, on a phone, below the form", () => {
+    expect(Number(declaration(".sl-legacy-teams__item", "opacity"))).toBeLessThanOrEqual(0.2);
+    const base = rules.find(rule => rule.selectors.includes(".sl-legacy-teams"))!.body;
+    expect(base).toMatch(/width:\s*min\(100% - 2rem,/);
+    const phone = mediaBlock("(max-width: 39.999rem)");
+    expect(phone).toMatch(/\.sl-legacy-teams--left\s*\{\s*display:\s*none;/);
+    expect(phone).not.toMatch(/\.sl-legacy-teams--right\s*\{\s*display:\s*none;/);
+  });
+
+  it("opts into cross-document View Transitions only without reduced motion", () => {
+    const motion = mediaBlock("(prefers-reduced-motion: no-preference)");
+    expect(motion).toMatch(/@view-transition\s*\{\s*navigation:\s*auto;/);
+    // The rule never stands outside that block.
+    expect(css.replace(/\/\*[\s\S]*?\*\//g, "").replace(motion, "")).not.toContain("@view-transition");
+    expect(mediaBlock("(prefers-reduced-motion: reduce)")).not.toContain("view-transition");
+    // Only the card's content slides, both ways; the frame is swapped at once.
+    expect(motion).toMatch(/::view-transition-old\(sl-card-body\)\s*\{\s*animation:\s*sl-legacy-step-out\b/);
+    expect(motion).toMatch(/::view-transition-new\(sl-card-body\)\s*\{\s*animation:\s*sl-legacy-step-in\b/);
+    expect(motion).toMatch(/data-sl-vt-direction="back"\]::view-transition-old\(sl-card-body\)/);
+    for (const name of ["sl-backdrop", "sl-teams-top", "sl-teams-bottom", "sl-footer"]) {
+      expect(motion, name).toContain(`::view-transition-new(${name})`);
+    }
+  });
+
+  it("names the frame's parts once each, so they stay put across steps", () => {
+    const names = new Map([
+      [".sl-legacy-background", "sl-backdrop"],
+      [".sl-legacy-teams--left", "sl-teams-top"],
+      [".sl-legacy-teams--right", "sl-teams-bottom"],
+      [".sl-legacy-card", "sl-card"],
+      [".sl-legacy-card__body", "sl-card-body"],
+      [".sl-legacy-logo", "sl-logo"],
+      [".sl-legacy-footer", "sl-footer"]
+    ]);
+    for (const [selector, name] of names) {
+      expect(declaration(selector, "view-transition-name"), selector).toBe(name);
+    }
+    expect(new Set(names.values()).size).toBe(names.size);
+  });
+
+  it("plays the entrance animations on a tab's first page only", () => {
+    for (const selector of [
+      "html[data-sl-entered] .sl-legacy-background__layers",
+      "html[data-sl-entered] .sl-legacy-background__iris",
+      "html[data-sl-entered] .sl-legacy-background__grain",
+      "html[data-sl-entered] .sl-legacy-brand__mark",
+      "html[data-sl-entered] .sl-legacy-logo .sl-legacy-logo__svg path"
+    ]) {
+      expect(declaration(selector, "animation"), selector).toBe("none");
+    }
+  });
+
+  it("draws the logo while a step loads, and holds it still with reduced motion", () => {
+    expect(declaration(".sl-legacy-loading", "display")).toBe("none");
+    expect(declaration("html[data-sl-loading] .sl-legacy-loading", "display")).toBe("flex");
+    expect(declaration("html[data-sl-loading] .sl-legacy-card__body", "pointer-events")).toBe("none");
+    expect(rules.find(rule => rule.selectors.includes(".sl-legacy-loading .sl-legacy-logo__svg path"))!.body)
+      .toMatch(/animation:\s*sl-legacy-loading-draw/);
+    const reduced = mediaBlock("(prefers-reduced-motion: reduce)");
+    expect(reduced).toMatch(/\.sl-legacy-loading \.sl-legacy-logo__svg path\s*\{\s*animation:\s*none;/);
+    // A plain text indicator instead of the drawing.
+    expect(reduced).toMatch(/\.sl-legacy-loading__label\s*\{\s*position:\s*static;/);
+  });
+
+  it("runs the team strips as long as TeamMarquee.tsx assumes for its clock-based phase", () => {
+    const track = rules.find(rule => rule.selectors.includes(".sl-legacy-teams__track"))!.body;
+    expect(track).toMatch(new RegExp(`animation:\\s*sl-legacy-teams ${TEAM_MARQUEE_SECONDS}s linear infinite`));
   });
 });

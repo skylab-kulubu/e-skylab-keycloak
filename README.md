@@ -662,16 +662,18 @@ operatör yapar (`KEYCLOAK_RECONCILE_KCADM_CONFIG` + `KEYCLOAK_RECONCILE_ONLY=se
 `would …` diye yazar, hiçbir şey yazmaz. Adım önce her şeyi okur, okuma hatasında hiçbir şey vermez
 (eksik varsayılan `roles` kapsamı hariç: onu okuma sırasında ve tam uzlaştırmada da ekler, runbook §20.1),
 verdikten sonra rolün `skylab.granted-service-accounts` özniteliğine kaydeder; `users:read` dışındaki
-rolleri taşıyan başka kullanıcı, grup ya da varsayılan rolü, servis hesabının listede olmayan core
-rollerini bildirir ve hiçbir şey silmez. `forms` yalnız servis hesabıdır (Forms kişileri `skyforms`
+rolleri taşıyan başka kullanıcı, grup, varsayılan rolü ya da onları içeren bileşik rolü, servis
+hesabının listede olmayan core rollerini bildirir ve hiçbir şey silmez. `forms` yalnız servis hesabıdır (Forms kişileri `skyforms`
 ile giriş yaptırır; core ürünü `client_id == azp`'den okur): uzlaştırıcı `standardFlowEnabled`,
 `implicitFlowEnabled`, `directAccessGrantsEnabled`'in kapalı olduğunu doğrular, değilse uyarır;
 operatör adımı açık olanları kapatır (kuru koşuda `would set …`). `media:attach`'ın istemci listesi
 core'un `MEDIA_SERVICE_CLIENTS`'ıyla aynı tutulur (runbook §20).
 Aynı adım SkyMail'in servis hesabına (`skymail-backend`) core'un `audience:read` rolünü (core #242,
-haber ve duyuru kitlesi) ve core'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`,
-`skymail:lists:read`, `skymail:lists:write` rollerini verir; SkyMail'in rollerini oluşturmaz, eksikse
-uyarır; listelenen servis istemcisinde varsayılan `roles` kapsamı yoksa ekler (runbook §20.1). `skymail:announcements:send` (haber ve duyuruyu Mail onayı olmadan gönderme)
+haber ve duyuru kitlesi) ve `communication-preferences:read` rolünü (core #256, kimin takip
+edilebileceği), core'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`,
+`skymail:lists:read`, `skymail:lists:write` ve `skymail:tracking:withdraw` (skymail-backend #75, takibi
+geri alma; yalnız `service-account-core`) rollerini verir; SkyMail'in rollerinden yalnız
+`skymail:tracking:withdraw`'u oluşturur, öbürleri eksikse uyarır (runbook §20.1); listelenen servis istemcisinde varsayılan `roles` kapsamı yoksa ekler (runbook §20.1). `skymail:announcements:send` (haber ve duyuruyu Mail onayı olmadan gönderme)
 `skymail:system-mails:read` gibi bir kez tohumlanır ama yalnız ADMIN ve YK'ya (runbook §25). Forms'un
 salt okur rolü `skyforms:read-all` (DK her formu ve cevabı okur, yazamaz; forms-backend henüz okumuyor)
 aynı biçimde `forms` istemcisinde var edilir ve yalnız DK'ya bir kez verilir (runbook §28).

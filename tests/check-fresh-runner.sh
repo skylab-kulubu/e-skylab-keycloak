@@ -472,7 +472,8 @@ end
 # writes packages; only release.yml's keycloak-package and keycloak-publish run in an environment;
 # release.yml has no workflow-level env or permissions, and among its jobs only keycloak-publish
 # reads a secret; no other workflow reads one.
-secret_use = /secrets\s*[.\[]|toJSON\(\s*secrets|secrets:\s*inherit/
+# Expression names are case-insensitive: any ${{ … }} naming the secrets context, and secrets: inherit.
+secret_use = /\$\{\{[^}]*\bsecrets\b|\bsecrets\s*:\s*inherit/i
 Dir.glob(File.join(root, ".github/workflows/*.{yml,yaml}")).sort.each do |workflow|
   name = File.basename(workflow)
   document = YAML.load_file(workflow, aliases: true)
@@ -503,11 +504,19 @@ Dir.glob(File.join(root, ".github/workflows/*.{yml,yaml}")).sort.each do |workfl
       abort "#{workflow} #{job_name} must not run in an environment"
     end
     job_text = job.to_s
-    if (job_text.match?(secret_use) || job_text.include?("DOKPLOY")) && !(name == "release.yml" && job_name == "keycloak-publish")
-      abort "#{workflow} #{job_name} must not read secrets or deploy"
+    unless name == "release.yml" && job_name == "keycloak-publish"
+      if job_text.match?(secret_use) || job_text.match?(/dokploy/i)
+        abort "#{workflow} #{job_name} must not read secrets or deploy"
+      end
+      # A reusable workflow call (uses:) or passed secrets (secrets:) would carry this job's
+      # secrets elsewhere.
+      if job.key?("uses") || job.key?("secrets")
+        abort "#{workflow} #{job_name} must not call a reusable workflow or pass secrets"
+      end
     end
   end
-  if name != "release.yml" && (File.read(workflow, encoding: "UTF-8").match?(secret_use) || File.read(workflow, encoding: "UTF-8").include?("DOKPLOY"))
+  text = File.read(workflow, encoding: "UTF-8")
+  if name != "release.yml" && (text.match?(secret_use) || text.match?(/dokploy/i))
     abort "#{workflow} must not read secrets or deploy"
   end
 end

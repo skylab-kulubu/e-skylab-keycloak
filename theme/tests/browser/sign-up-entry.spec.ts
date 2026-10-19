@@ -65,9 +65,9 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
         await expect(page.locator(".sl-legacy-teams")).toHaveCount(2);
         if (suffix === "") {
           await expect(page.locator("#username")).toBeVisible();
-          await expect(page.locator(".sl-legacy-intro")).toContainText("Hesabın varsa giriş yaparsın; yoksa");
+          await expect(page.locator(".sl-legacy-intro p")).toHaveCount(0);
         } else {
-          await expect(page.locator("#sky-email-code-sent")).toContainText("Bu adresle bir hesabın varsa");
+          await expect(page.locator("#sky-email-code-sent")).toHaveText("Kod 10 dakika geçerli.");
           await expect(page.locator("#sky-email-code-error")).toContainText("Kod yanlış. 4 deneme hakkın kaldı.");
           await expect(page.locator("#sky-email-code")).toHaveAttribute("autocomplete", "one-time-code");
           await expect(page.locator("#kc-email-code-sign-up-form")).toHaveCount(0);

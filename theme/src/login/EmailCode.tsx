@@ -73,6 +73,8 @@ export default function EmailCode(props: EmailCodeProps) {
   }, [resendAfter]);
 
   const fieldId = stage === "code" ? "sky-email-code" : "username";
+  // The address stage needs no sentence: its label and "Kod gönder" say it. The code stage keeps one line.
+  const description = stage === "code" ? msgStr("emailCodeCodeDescription") : undefined;
 
   return (
     <LegacyFrame
@@ -81,8 +83,7 @@ export default function EmailCode(props: EmailCodeProps) {
       mainId="sl-email-code-main"
       titleId="sl-email-code-title"
       title={title}
-      description={msgStr(stage === "code" ? "emailCodeCodeDescription"
-        : signUpIntent ? "emailCodeSignUpDescription" : "emailCodeDescription")}
+      description={description}
     >
       <BackToChoice kcContext={kcContext} label={msgStr("goBack")} />
       <form

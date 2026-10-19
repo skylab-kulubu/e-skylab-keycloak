@@ -348,27 +348,8 @@ a:hover {
   justify-content: flex-start;
 }
 
-.sl-legacy-brand__copy,
 .sl-legacy-brand__mark {
   display: none;
-}
-
-.sl-legacy-brand__title {
-  margin: 0;
-  color: var(--sl-legacy-ink);
-  font-size: 1.375rem;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  line-height: 1.25;
-  text-wrap: balance;
-}
-
-.sl-legacy-brand__text {
-  margin: 0.5rem 0 0;
-  color: var(--sl-legacy-muted);
-  font-size: 0.875rem;
-  line-height: 1.6;
-  text-wrap: pretty;
 }
 
 .sl-legacy-brand__icon {
@@ -439,7 +420,6 @@ a:hover {
 
   .sl-legacy-card--brand .sl-legacy-logo {
     justify-content: center;
-    margin-bottom: 1.5rem;
   }
 
   .sl-legacy-card--brand .sl-legacy-logo__animation {
@@ -447,7 +427,6 @@ a:hover {
     height: 7.25rem;
   }
 
-  .sl-legacy-card--brand .sl-legacy-brand__copy,
   .sl-legacy-card--brand .sl-legacy-brand__mark {
     display: block;
   }
@@ -962,77 +941,48 @@ textarea.sl-legacy-input {
   margin: 0;
 }
 
-/* The one folded help area of the first screen: the trust sentence, what we take and the school
-   password help (eskylab-login-ux 05). Help copy is never smaller than 14px. */
-.sl-legacy-help,
+/* "Okul şifreni sıfırla" under the choices: a plain link, nothing to read around it. */
+.sl-legacy-school-reset {
+  margin: 0.5rem 0 0;
+  text-align: center;
+  font-size: 0.875rem;
+}
+
+.sl-legacy-school-reset a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.5rem;
+  color: var(--sl-legacy-link);
+  font-weight: 500;
+}
+
+/* The password form's no-account note (and the sign-up entry there). Never smaller than 14px. */
 .sl-legacy-no-account {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--sl-legacy-surface-raised);
   color: var(--sl-legacy-muted);
   font-size: 0.875rem;
   line-height: 1.55;
   text-wrap: pretty;
 }
 
-.sl-legacy-help {
-  margin-top: 0.5rem;
-  text-align: center;
-}
-
-.sl-legacy-help summary {
-  width: fit-content;
-  min-height: 1.5rem;
-  margin: 0 auto;
-  color: var(--sl-legacy-link);
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.sl-legacy-help[open] {
-  text-align: left;
-}
-
-.sl-legacy-help[open] summary {
-  margin-bottom: 0.5rem;
-}
-
-.sl-legacy-help p,
 .sl-legacy-no-account p {
   margin: 0;
 }
 
-.sl-legacy-help p + p,
 .sl-legacy-no-account p + p {
   margin-top: 0.375rem;
 }
 
-.sl-legacy-help strong {
-  color: var(--sl-legacy-text);
-  font-weight: 600;
-}
-
-.sl-legacy-help a,
 .sl-legacy-no-account a {
   color: var(--sl-legacy-link);
   font-weight: 500;
 }
 
-.sl-legacy-no-account {
-  margin-top: 1.25rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--sl-legacy-surface-raised);
-}
-
 .sl-legacy-no-account .sl-legacy-no-account__title {
   color: var(--sl-legacy-text);
   font-weight: 600;
-}
-
-/* The phishing line ("Giriş adresi her zaman e.yildizskylab.com'dur."), small, last on the card
-   just above the footer. */
-.sl-legacy-domain {
-  margin: 1.5rem 0 0;
-  color: var(--sl-legacy-muted);
-  font-size: 0.875rem;
-  text-align: center;
 }
 
 .sl-legacy-remember input {

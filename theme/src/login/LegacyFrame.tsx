@@ -23,17 +23,12 @@ export type LegacyFrameLanguageMenu = {
   languages: LegacyFrameLanguage[];
 };
 
-/**
- * The quiet panel beside the card on wide screens: the logo, one slogan and one sentence. It does
- * not list the ways in again; the form beside it already offers them.
- */
-export type LegacyFrameBrand = {
-  title: string;
-  text: string;
-};
-
 type LegacyFrameProps = {
-  brand?: LegacyFrameBrand;
+  /**
+   * The login page's wide layout: a quiet panel beside the card with only the logo (and its faint
+   * watermark). No slogan or copy: the form beside it says what there is to do.
+   */
+  brand?: boolean;
   /** The developer credit links to LinkedIn; false keeps it plain text (Web handoff failure page). */
   creditLinked?: boolean;
   /** Rendered between the title and the card body; can be empty for pages whose body is the message. */
@@ -57,7 +52,7 @@ type LegacyFrameProps = {
 
 export default function LegacyFrame(props: LegacyFrameProps) {
   const {
-    brand,
+    brand = false,
     children,
     creditLinked = true,
     description,
@@ -99,8 +94,8 @@ export default function LegacyFrame(props: LegacyFrameProps) {
 
       <main id={mainId} className="sl-legacy-main" tabIndex={-1}>
         {teams && <TeamMarquee direction="left" />}
-        <div className={brand === undefined ? "sl-legacy-stack" : "sl-legacy-stack sl-legacy-stack--wide"}>
-          <section className={brand === undefined ? "sl-legacy-card" : "sl-legacy-card sl-legacy-card--brand"} aria-labelledby={titleId}>
+        <div className={brand ? "sl-legacy-stack sl-legacy-stack--wide" : "sl-legacy-stack"}>
+          <section className={brand ? "sl-legacy-card sl-legacy-card--brand" : "sl-legacy-card"} aria-labelledby={titleId}>
             <div className="sl-legacy-card__body">
               <div className="sl-legacy-intro">
                 <h1 id={titleId}>{title}</h1>
@@ -115,16 +110,10 @@ export default function LegacyFrame(props: LegacyFrameProps) {
             </div>
 
             <div className="sl-legacy-brand">
-              {brand !== undefined && <img className="sl-legacy-brand__mark" src={skyLabWatermarkUrl} alt="" />}
+              {brand && <img className="sl-legacy-brand__mark" src={skyLabWatermarkUrl} alt="" />}
               <header className="sl-legacy-logo">
                 <AnimatedSkyLabLogo />
               </header>
-              {brand !== undefined && (
-                <div className="sl-legacy-brand__copy">
-                  <p className="sl-legacy-brand__title">{brand.title}</p>
-                  <p className="sl-legacy-brand__text">{brand.text}</p>
-                </div>
-              )}
             </div>
           </section>
 

@@ -38,9 +38,8 @@ Only the two original brand image assets were carried forward.
   a canvas at about 15 fps, still on touch screens, small CPUs, data saver
   and reduced motion). On wide screens the login page alone
   (`getLegacyChromeProps(i18n, { brand: true })`) splits the card: the form
-  on the left, a narrower, logo-centred panel on the right (the logo, one
-  slogan and one sentence, a faint watermark in its corner; it does not list
-  the ways in again). Every other page keeps one column with the logo on top,
+  on the left, a narrower panel on the right with only the logo and a faint
+  watermark in its corner (no slogan or copy). Every other page keeps one column with the logo on top,
   as every page does on a phone.
 - Team strips: on the login page (with the brand panel), both stages of "E-postayla devam et",
   every e-mail sign-up stage and the first YTÜ login's existing-account question/proof page,
@@ -163,12 +162,16 @@ Only the two original brand image assets were carried forward.
   for errors, `role="status"` otherwise, focused on load unless the page
   autofocused a field. Wrong credentials stay on the fields, once (Keycloak's
   own `displayMessage` rules).
-- The login page's first screen is the two ways in ("YTÜ hesabınla devam et",
-  "E-postayla devam et"), one quiet line under them ("Erişim anahtarı ile giriş
-  yap" and, with sign-up on, "Hesabın yok mu? Hesap aç"), one folded help area
-  ("YTÜ girişi hakkında": the trust sentence, "Neleri alıyoruz?" and "Okul şifreni
-  bilmiyor musun?" with its links) and the sign-in address line last on the card.
-  Help copy is never smaller than 14px (`themeContract.test.ts`).
+- Copy is functional only: headings, at most one short line under a heading,
+  labels, buttons, errors and the links someone needs. No explanatory or
+  reassuring paragraphs (Yusuf, 2026-10-19). The login page's first screen is
+  the two ways in ("YTÜ hesabınla devam et", "E-postayla devam et"), one quiet
+  line under them ("Erişim anahtarı ile giriş yap" and, with sign-up on,
+  "Hesabın yok mu? Hesap aç") and a plain "Okul şifreni sıfırla" link
+  (Microsoft's self-service reset, in a new tab). The address stage of "E-postayla
+  devam et" has no sentence under its heading; the code stage keeps "E-postana
+  gelen 6 haneli kodu yaz." and "Kod {0} dakika geçerli.". Small copy is never
+  smaller than 14px (`themeContract.test.ts`).
 - "Parolanı mı unuttun?" (`url.loginResetCredentialsUrl`, when the realm allows
   resetting) is in the password form only, directly below the password field,
   right-aligned, beside "Beni hatırla".

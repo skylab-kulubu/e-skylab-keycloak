@@ -14,9 +14,8 @@ import { chooseExecution, emailCodeExecutionId, takePasswordChoice } from "./ema
 
 type LoginProps = PageProps<Extract<KcContext, { pageId: "login.ftl" }>, I18n>;
 
-/** YTÜ's self-service reset of the school (Microsoft) password, then BİDB's help desk. */
+/** YTÜ's self-service reset of the school (Microsoft) password. */
 const SCHOOL_PASSWORD_RESET_URL = "https://passwordreset.microsoftonline.com/";
-const SCHOOL_SUPPORT_URL = "https://teknikdestek.yildiz.edu.tr/";
 
 export default function Login(props: LoginProps) {
   const { kcContext, i18n } = props;
@@ -140,27 +139,13 @@ export default function Login(props: LoginProps) {
                   </div>
                 )}
 
-                {/* One folded help area: the trust sentence, what we take and the school password help. */}
+                {/* The one functional thing left of the YTÜ help: a plain link to reset the school password. */}
                 {microsoftProvider !== undefined && (
-                  <details className="sl-legacy-help">
-                    <summary>{msgStr("skylabHelpSummary")}</summary>
-                    <p>{msgStr("skylabTrust")}</p>
-                    <p>
-                      <strong>{msgStr("skylabTrustMore")}</strong>{" "}
-                      {msgStr("skylabTrustTaken")}
-                    </p>
-                    <p>
-                      <strong>{msgStr("skylabSchoolPasswordHelp")}</strong>{" "}
-                      <a href={SCHOOL_PASSWORD_RESET_URL} target="_blank" rel="noopener noreferrer">
-                        {msgStr("skylabSchoolPasswordReset")}
-                      </a>{" "}
-                      {msgStr("skylabSchoolPasswordOr")}{" "}
-                      <a href={SCHOOL_SUPPORT_URL} target="_blank" rel="noopener noreferrer">
-                        {msgStr("skylabSchoolPasswordSupport")}
-                      </a>
-                      .
-                    </p>
-                  </details>
+                  <p className="sl-legacy-school-reset">
+                    <a href={SCHOOL_PASSWORD_RESET_URL} target="_blank" rel="noopener noreferrer">
+                      {msgStr("skylabSchoolPasswordResetLink")}
+                    </a>
+                  </p>
                 )}
               </>
             )}
@@ -309,7 +294,6 @@ export default function Login(props: LoginProps) {
               </div>
             )}
 
-            <p className="sl-legacy-domain">{msgStr("skylabDomainNotice")}</p>
             <BrokerLinkEscape kcContext={kcContext} i18n={i18n} />
 
             {hasPasskey && (

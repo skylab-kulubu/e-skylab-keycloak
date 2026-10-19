@@ -107,7 +107,8 @@ describe("the e-SKY LAB landing page", () => {
       )
     ).toBeInTheDocument();
     expect(trust.getByText(/değişmez kimlik numarasını/)).toBeInTheDocument();
-    expect(trust.getByText(/Giriş adresi her zaman e\.yildizskylab\.com'dur\./)).toBeInTheDocument();
+    // The sign-in address line was removed from the login theme (Yusuf, 2026-10-19), here too.
+    expect(screen.queryByText(/Giriş adresi her zaman/)).toBeNull();
 
     const kvkk = screen.getAllByRole("link", { name: "KVKK Aydınlatma Metni" });
     expect(kvkk.length).toBeGreaterThan(0);

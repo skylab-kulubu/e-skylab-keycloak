@@ -24,7 +24,8 @@ describe("the sign-up intent on the shared e-mail code page", () => {
     const view = await renderIntent({ skyEmailCodeSignUp: flag, skyEmailCodeIntent: "sign-up" });
 
     expect(view.container.querySelector("h1")).toHaveTextContent("Hesap aç");
-    expect(view.container).toHaveTextContent("Hesabın varsa giriş yaparsın; yoksa e-posta adresini doğruladıktan sonra hesabını açabilirsin.");
+    // No explanatory sentence under the heading: the field and "Kod gönder" say it.
+    expect(view.container.querySelector(".sl-legacy-intro p")).toBeNull();
     expect(view.container.querySelector("#kc-email-code-identifier-form")).toBeInTheDocument();
     expect(document.title).toBe("Hesap aç · SKY LAB");
   });
@@ -33,15 +34,14 @@ describe("the sign-up intent on the shared e-mail code page", () => {
     const view = await renderIntent({ skyEmailCodeSignUp: flag, skyEmailCodeIntent: "sign-up" });
 
     expect(view.container.querySelector("h1")).toHaveTextContent("E-postayla devam et");
-    expect(view.container).not.toHaveTextContent("yoksa e-posta adresini doğruladıktan sonra");
+    expect(view.container.querySelector(".sl-legacy-intro p")).toBeNull();
   });
 
   it.each([undefined, "login", "unexpected"])("keeps ordinary sign-in copy without the explicit registration intent %s", async intent => {
     const view = await renderIntent({ skyEmailCodeSignUp: "true", skyEmailCodeIntent: intent });
 
     expect(view.container.querySelector("h1")).toHaveTextContent("E-postayla devam et");
-    expect(view.container).toHaveTextContent("hesabının e-posta adresine 6 haneli bir giriş kodu gönderelim");
-    expect(view.container).not.toHaveTextContent("yoksa e-posta adresini doğruladıktan sonra");
+    expect(view.container.querySelector(".sl-legacy-intro p")).toBeNull();
   });
 
   it.each(["sent", "wrong"])("keeps the generic code and error message before address proof (%s)", async state => {
@@ -52,9 +52,7 @@ describe("the sign-up intent on the shared e-mail code page", () => {
     });
 
     expect(view.container.querySelector("h1")).toHaveTextContent("Hesap aç");
-    expect(view.container.querySelector("#sky-email-code-sent")).toHaveTextContent(
-      "Kodu gönderdik. Bu adresle bir hesabın varsa kod, hesabının birincil e-posta adresine gider."
-    );
+    expect(view.container.querySelector("#sky-email-code-sent")?.textContent).toBe("Kod 10 dakika geçerli.");
     expect(view.container.querySelector('input[name="code"]')).toHaveAttribute("autocomplete", "one-time-code");
     expect(view.container.querySelector("#kc-email-code-form")).toHaveAttribute("method", "post");
     expect(view.container.querySelector("#kc-email-code-sign-up-form")).toBeNull();
@@ -64,12 +62,11 @@ describe("the sign-up intent on the shared e-mail code page", () => {
     }
   });
 
-  it("translates the registration heading and neutral description into English", async () => {
+  it("translates the registration heading into English, without a description", async () => {
     const view = await renderIntent({ skyEmailCodeSignUp: "true", skyEmailCodeIntent: "sign-up" }, "en");
 
     expect(view.container.querySelector("h1")).toHaveTextContent("Create an account");
-    expect(view.container).toHaveTextContent("If you have an account, you will sign in; otherwise, verify your email to create one.");
+    expect(view.container.querySelector(".sl-legacy-intro p")).toBeNull();
     expect(view.container).not.toHaveTextContent("emailCodeSignUpTitle");
-    expect(view.container).not.toHaveTextContent("emailCodeSignUpDescription");
   });
 });

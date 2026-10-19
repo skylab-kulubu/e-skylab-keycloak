@@ -22,12 +22,7 @@ export function getLegacyChromeProps(i18n: I18n, options: LegacyChromeOptions = 
     kvkkPrefix: msgStr(kvkk === "login" ? "kvkkPrefix" : "kvkkActionPrefix"),
     kvkkSuffix: msgStr(kvkk === "login" ? "kvkkSuffix" : "kvkkActionSuffix"),
     languageMenu: languageMenu ? getLegacyLanguageMenu(i18n) : undefined,
-    brand: brand
-      ? {
-          title: msgStr("skylabBrandTitle"),
-          text: msgStr("skylabBrandText")
-        }
-      : undefined,
+    brand,
     skipToContent: msgStr("skipToContent"),
     teams: brand,
     translationsReady: !i18n.isFetchingTranslations

@@ -57,10 +57,9 @@ describe("E-postayla devam et (sky-email-code.ftl)", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const { container } = await renderEmailCode(getEmailCodePreview("sent"));
 
-    expect(container.querySelector("#sky-email-code-sent")).toHaveTextContent(
-      "Kodu gönderdik. Bu adresle bir hesabın varsa kod, hesabının birincil e-posta adresine gider."
-    );
-    expect(container.querySelector("#sky-email-code-sent")).toHaveTextContent("Kod 10 dakika geçerli.");
+    // One functional line; the page stays the same whether or not the address has an account.
+    expect(container.querySelector("#sky-email-code-sent")?.textContent).toBe("Kod 10 dakika geçerli.");
+    expect(container.querySelector(".sl-legacy-intro p")?.textContent).toBe("E-postana gelen 6 haneli kodu yaz.");
     expect(container.querySelector("#sky-email-code-identifier")).toHaveTextContent("Yazdığın: ada.lovelace@example.org");
     const code = container.querySelector("input#sky-email-code");
     expect(code).toHaveAttribute("name", "code");

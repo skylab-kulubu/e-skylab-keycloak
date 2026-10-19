@@ -232,10 +232,9 @@ describe("SKY LAB theme: one design system", () => {
 
   it("keeps help copy at 14px or more", () => {
     for (const selector of [
-      ".sl-legacy-help",
+      ".sl-legacy-school-reset",
       ".sl-legacy-alternatives",
       ".sl-legacy-no-account",
-      ".sl-legacy-domain",
       ".sl-legacy-choice__hint",
       ".sl-legacy-field-error",
       ".sl-helper-text",

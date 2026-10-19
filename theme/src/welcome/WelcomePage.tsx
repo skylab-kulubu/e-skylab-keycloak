@@ -78,16 +78,6 @@ function MailIcon() {
   );
 }
 
-function AddressIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M3 12h18" />
-      <path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18" />
-    </svg>
-  );
-}
-
 function DocumentIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -270,14 +260,6 @@ export default function WelcomePage() {
               <p>
                 YTÜ hesabından yalnız adını, okul e-postanı ve bölümünü alırız; postalarına ve dosyalarına erişmeyiz.
                 Hesabını tanımak için Microsoft hesabının değişmez kimlik numarasını da saklarız.
-              </p>
-            </li>
-            <li>
-              <span className="sl-legacy-brand__icon">
-                <AddressIcon />
-              </span>
-              <p>
-                Giriş adresi her zaman e.yildizskylab.com'dur. SKY LAB parolanı başka bir adreste isteyen sayfaya yazma.
               </p>
             </li>
             <li>

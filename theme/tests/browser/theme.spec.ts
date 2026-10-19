@@ -240,11 +240,9 @@ for (const viewport of [
     await expect(page.getByRole("link", { name: "YTÜ hesabınla devam et Microsoft ile" })).toBeInViewport();
     await expect(page.getByRole("button", { name: "E-postayla devam et" })).toBeInViewport();
     await expect(page.getByRole("button", { name: "Erişim anahtarı ile giriş yap" })).toBeInViewport();
+    await expect(page.getByRole("link", { name: "Okul şifreni sıfırla" })).toBeInViewport();
     await expect(page.getByRole("link", { name: "Parolanı mı unuttun?" })).toHaveCount(0);
-    const help = page.locator("details.sl-legacy-help");
-    await expect(help).not.toHaveAttribute("open", "");
-    await help.locator("summary").click();
-    await expect(help.getByRole("link", { name: "Microsoft'ta sıfırla" })).toBeVisible();
+    await expect(page.locator("details")).toHaveCount(0);
 
     await page.getByRole("button", { name: "E-postayla devam et" }).click();
     const link = page.locator("#kc-form-login").getByRole("link", { name: "Parolanı mı unuttun?" });

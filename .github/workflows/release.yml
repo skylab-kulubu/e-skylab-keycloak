@@ -224,7 +224,7 @@ jobs:
     name: integration (${{ matrix.group }})
     runs-on: ubuntu-latest
     needs: keycloak-build
-    # CI's group timeouts are 80-85 minutes; the release gives the slowest runner more room.
+    # CI's group timeouts are 45 minutes; the release gives the slowest runner more room.
     timeout-minutes: 100
     permissions: { contents: read }
     strategy:

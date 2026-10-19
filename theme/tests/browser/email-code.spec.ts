@@ -45,7 +45,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
         const paths = page.locator('[data-skylab-logo-animation="draw"] path');
         await expect(paths).toHaveCount(19);
         expect(await paths.evaluateAll(elements => elements.every(path => getComputedStyle(path).fillOpacity === "1"))).toBe(true);
-        const box = await page.locator(".sl-legacy-logo__animation").boundingBox();
+        const box = await page.locator(".sl-legacy-logo .sl-legacy-logo__animation").boundingBox();
         expect(box!.height).toBeGreaterThan(0);
 
         const back = page.locator("#sl-back-to-choice");

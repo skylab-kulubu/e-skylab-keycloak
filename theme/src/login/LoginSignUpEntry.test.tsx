@@ -4,6 +4,7 @@ import { getDevKcContext, getDevKcContextForPage } from "../devKcContext";
 import type { KcContext } from "./KcContext";
 import KcPage from "./KcPage";
 import { rememberPasswordChoice } from "./emailCodeChoice";
+import { resetNavigationLoading } from "./navigationLoading";
 
 type LoginContext = Extract<KcContext, { pageId: "login.ftl" }>;
 
@@ -87,6 +88,8 @@ describe("the e-mail registration entry", () => {
       expect(view.container.querySelector('a[href*="/registration"]')).toBeNull();
       view.unmount();
       vi.restoreAllMocks();
+      // The next view is a new page, with nothing on its way.
+      resetNavigationLoading();
     }
   });
 

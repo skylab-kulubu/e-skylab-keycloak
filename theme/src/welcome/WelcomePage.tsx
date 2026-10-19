@@ -160,7 +160,7 @@ export default function WelcomePage() {
               <span className="sl-welcome-step__meta">02 · E-posta kodu</span>
               <h3>
                 <span className="sl-welcome-step__icon">
-                  <span className="sl-authenticator-icon sl-authenticator-icon--password" aria-hidden="true" />
+                  <span className="sl-authenticator-icon sl-authenticator-icon--email" aria-hidden="true" />
                 </span>
                 E-postayla devam et
               </h3>

@@ -8,13 +8,16 @@
  *   disabled: a disabled submit button would drop its own name/value from the POST.
  * - Cleared when the page comes back from the back/forward cache, and after FAILSAFE_MS in case
  *   the navigation was stopped.
- * - Passkey buttons open the browser's dialog without a navigation, so they show nothing; the
- *   passkey form Keycloak submits afterwards is sent with `form.submit()`, which fires no event.
+ * - Passkey buttons open the browser's dialog without a navigation, so they show nothing. Keycloak's
+ *   webauthn scripts then send the result (or the error) with `requestSubmit()` on `#webauth`
+ *   (sign-in) or `#register` (registration), which fires a submit event. Those forms are never
+ *   cancelled: the result must reach Keycloak even if an earlier step is still marked pending.
  */
 
 export const LOADING_DELAY_MS = 150;
 export const FAILSAFE_MS = 20_000;
 export const LOADING_ATTRIBUTE = "data-sl-loading";
+const WEBAUTHN_FORM_IDS = ["webauth", "register"];
 
 let delayTimer: number | undefined;
 let failsafeTimer: number | undefined;
@@ -31,8 +34,9 @@ function show(): void {
   const root = document.documentElement;
   root.setAttribute(LOADING_ATTRIBUTE, "");
   document.querySelectorAll<HTMLElement>(".sl-legacy-card").forEach(card => card.setAttribute("aria-busy", "true"));
-  document.querySelectorAll<HTMLElement>(".sl-legacy-loading__label").forEach(label => {
-    label.textContent = label.dataset.label ?? "";
+  // The live region sits outside the busy card and is empty until now, so this text is announced.
+  document.querySelectorAll<HTMLElement>(".sl-legacy-loading__status").forEach(status => {
+    status.textContent = status.dataset.label ?? "";
   });
 }
 
@@ -42,8 +46,8 @@ export function resetNavigationLoading(): void {
   pending = false;
   document.documentElement.removeAttribute(LOADING_ATTRIBUTE);
   document.querySelectorAll<HTMLElement>(".sl-legacy-card[aria-busy]").forEach(card => card.removeAttribute("aria-busy"));
-  document.querySelectorAll<HTMLElement>(".sl-legacy-loading__label").forEach(label => {
-    label.textContent = "";
+  document.querySelectorAll<HTMLElement>(".sl-legacy-loading__status").forEach(status => {
+    status.textContent = "";
   });
 }
 
@@ -71,7 +75,7 @@ function onSubmit(event: SubmitEvent): void {
   if (event.defaultPrevented) return;
   const form = event.target;
   if (!(form instanceof HTMLFormElement)) return;
-  if (pending) {
+  if (pending && !WEBAUTHN_FORM_IDS.includes(form.getAttribute("id") ?? "")) {
     // The first submission is already on its way.
     event.preventDefault();
     return;

@@ -80,7 +80,7 @@ describe("LegacyFrame SKY LAB identity", () => {
     ]);
   });
 
-  it("carries a quiet loading state in the card: the logo drawn again, a live label filled in only when shown", () => {
+  it("carries a quiet loading state in the card: the logo drawn again, a live region outside the card filled in only when shown", () => {
     const { container } = render(
       <LegacyFrame {...chrome} title="Giriş yap" loadingLabel="Yükleniyor…">
         <p>İçerik</p>
@@ -94,10 +94,14 @@ describe("LegacyFrame SKY LAB identity", () => {
     expect(logo?.querySelectorAll("path")).toHaveLength(19);
     // The page still has exactly one logo for assistive technology and the draw contract.
     expect(container.querySelectorAll('[data-skylab-logo-animation="draw"]')).toHaveLength(1);
-    const label = loading.querySelector(".sl-legacy-loading__label");
-    expect(label).toHaveAttribute("role", "status");
-    expect(label).toHaveAttribute("data-label", "Yükleniyor…");
-    expect(label?.textContent).toBe("");
+    // The visible label (reduced motion) is not what is announced.
+    expect(loading.querySelector(".sl-legacy-loading__label")).toHaveAttribute("aria-hidden", "true");
+    // The live region is on the page from the start, empty and outside the card that turns busy.
+    const status = container.querySelector(".sl-legacy-loading__status");
+    expect(status).toHaveAttribute("role", "status");
+    expect(status).toHaveAttribute("data-label", "Yükleniyor…");
+    expect(status?.textContent).toBe("");
+    expect(status?.closest(".sl-legacy-card")).toBeNull();
   });
 
   it("keeps the KVKK footer landmark and marks translation readiness", () => {

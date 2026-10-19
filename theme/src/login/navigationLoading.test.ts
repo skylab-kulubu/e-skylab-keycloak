@@ -13,19 +13,21 @@ const loading = () => document.documentElement.hasAttribute(LOADING_ATTRIBUTE);
 function frame(): { card: HTMLElement; label: HTMLElement } {
   document.body.innerHTML = `
     <section class="sl-legacy-card">
-      <div class="sl-legacy-loading"><span class="sl-legacy-loading__label" role="status" data-label="Yükleniyor…"></span></div>
-    </section>`;
+      <div class="sl-legacy-loading"><span class="sl-legacy-loading__label" aria-hidden="true">Yükleniyor…</span></div>
+    </section>
+    <span class="sl-legacy-loading__status" role="status" data-label="Yükleniyor…"></span>`;
   return {
     card: document.querySelector(".sl-legacy-card") as HTMLElement,
-    label: document.querySelector(".sl-legacy-loading__label") as HTMLElement
+    label: document.querySelector(".sl-legacy-loading__status") as HTMLElement
   };
 }
 
-function form(action: string, target = ""): HTMLFormElement {
+function form(action: string, target = "", id = ""): HTMLFormElement {
   const element = document.createElement("form");
   element.method = "post";
   element.action = action;
   if (target !== "") element.target = target;
+  if (id !== "") element.id = id;
   document.body.appendChild(element);
   return element;
 }
@@ -91,6 +93,16 @@ describe("the loading state between two steps", () => {
     expect(isNavigationPending()).toBe(true);
     expect(submit(step).defaultPrevented).toBe(true);
     expect(document.querySelectorAll("button[disabled]")).toHaveLength(0);
+  });
+
+  it("never cancels the passkey result Keycloak's webauthn scripts send, even while a step is pending", () => {
+    frame();
+    const action = "/realms/e-skylab/login-actions/authenticate";
+    startNavigationLoading();
+    // webauthnAuthenticate.js and webauthnRegister.js send these with requestSubmit(), which fires submit.
+    expect(submit(form(action, "", "webauth")).defaultPrevented).toBe(false);
+    expect(submit(form("/realms/e-skylab/login-actions/required-action", "", "register")).defaultPrevented).toBe(false);
+    expect(submit(form(action)).defaultPrevented).toBe(true);
   });
 
   it("clears itself when the page comes back from the back/forward cache", () => {

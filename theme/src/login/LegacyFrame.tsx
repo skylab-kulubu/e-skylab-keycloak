@@ -116,10 +116,12 @@ export default function LegacyFrame(props: LegacyFrameProps) {
               {children}
             </div>
 
-            {/* navigationLoading.ts shows this while the next step loads; the label is filled in then, so it is announced. */}
+            {/* navigationLoading.ts shows this while the next step loads; the label is visible with reduced motion only. */}
             <div className="sl-legacy-loading">
               <AnimatedSkyLabLogo variant="loading" />
-              <span className="sl-legacy-loading__label" role="status" aria-live="polite" data-label={loadingLabel} />
+              <span className="sl-legacy-loading__label" aria-hidden="true">
+                {loadingLabel}
+              </span>
             </div>
 
             <div className="sl-legacy-brand">
@@ -160,6 +162,9 @@ export default function LegacyFrame(props: LegacyFrameProps) {
               )}
             </div>
           </section>
+
+          {/* Outside the card that navigationLoading.ts marks busy, and empty until it fills it in, so it is announced. */}
+          <span className="sl-legacy-loading__status sl-sr-only" role="status" data-label={loadingLabel} />
 
           <footer className="sl-legacy-footer" role="contentinfo">
             <p>

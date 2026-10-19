@@ -406,7 +406,56 @@ def assert_integration_all(workflow)
   end
 end
 
+# ci.yml: pushes, PRs into production, the schedule, manual runs and full-ci PRs are full runs;
+# only PRs into main may skip jobs (scope). gate waits for every job, and the integration groups
+# run only in a full run. release.yml requires a fully green full ci.yml run of the release tree
+# before it builds.
+def assert_ci_scope(ci, release)
+  document = YAML.load_file(ci, aliases: true)
+  jobs = document.fetch("jobs")
+  full = "(github.event_name != 'pull_request' || github.base_ref != 'main' || " \
+    "contains(github.event.pull_request.labels.*.name, 'full-ci'))"
+  scope = jobs.fetch("scope")
+  unless scope.fetch("name") == "scope (${{ #{full} && 'full' || 'fast' }})" &&
+      scope.fetch("steps").any? { |step| step.fetch("env", {})["FULL"] == "${{ #{full} && 'true' || 'false' }}" }
+    abort "#{ci} scope must call every run but a pull request into main without full-ci a full run"
+  end
+  unless scope.fetch("steps").any? { |step| step.fetch("run", "").include?("git diff --name-only --no-renames HEAD^1 HEAD") }
+    abort "#{ci} scope must see both sides of a rename"
+  end
+  gate = jobs.fetch("gate")
+  unless gate.fetch("if") == "always()" && Array(gate.fetch("needs")).sort == (jobs.keys - ["gate"]).sort
+    abort "#{ci} gate must wait for every other job, also when one fails"
+  end
+  # gate and integration read full or fast from the event, as scope does, not from scope's output.
+  ["gate", "integration"].each do |name|
+    step = jobs.fetch(name).fetch("steps").first
+    unless step.fetch("env", {})["FULL"] == "${{ #{full} && 'true' || 'false' }}"
+      abort "#{ci} #{name} must read full or fast from the same expression as scope"
+    end
+  end
+  gate_run = jobs.fetch("gate").fetch("steps").first.fetch("run", "")
+  unless gate_run.include?('test "$SCOPE_FULL" = "$FULL"') &&
+      gate_run.include?('($full == "true" or .value.result != "skipped")')
+    abort "#{ci} gate must agree with scope and allow skipped jobs only in a fast run"
+  end
+  unless jobs.fetch("integration-group").fetch("if") == "needs.scope.outputs.full == 'true'"
+    abort "#{ci} integration-group must run in every full run"
+  end
+  build_steps = YAML.load_file(release, aliases: true).fetch("jobs").fetch("keycloak-build").fetch("steps")
+  guard_index = build_steps.index { |step| step.fetch("name", "") == "Require a fully green full CI run of this tree" }
+  build_index = build_steps.index { |step| step["uses"] == "docker/build-push-action@v7" }
+  guard = guard_index && build_steps.fetch(guard_index).fetch("run", "")
+  unless guard && guard_index < build_index && guard.include?("success scope (full)") &&
+      guard.include?("^{tree}") && guard.include?("grep -qv '^success '") &&
+      guard.include?("gh api --paginate -X GET") &&
+      guard.include?('select(.event == "push" or .event == "schedule" or .event == "workflow_dispatch")')
+    abort "#{release} keycloak-build must require a fully green full CI run of the release tree before it builds"
+  end
+end
+
 assert_ci_branches(File.join(root, ".github/workflows/ci.yml"))
+assert_ci_scope(File.join(root, ".github/workflows/ci.yml"), File.join(root, ".github/workflows/release.yml"))
 assert_order(File.join(root, ".github/workflows/ci.yml"), "integration-group")
 assert_integration_groups(File.join(root, ".github/workflows/ci.yml"), File.join(root, "tests/run-integration.sh"))
 assert_release_candidate_flow(File.join(root, ".github/workflows/release.yml"))

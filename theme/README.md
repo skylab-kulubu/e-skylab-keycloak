@@ -38,8 +38,8 @@ Only the two original brand image assets were carried forward.
   a canvas at about 15 fps, still on touch screens, small CPUs, data saver
   and reduced motion). On wide screens the login page alone
   (`getLegacyChromeProps(i18n, { brand: true })`) splits the card: the form
-  on the left, a narrower panel on the right with only the logo and a faint
-  watermark in its corner (no slogan or copy). Every other page keeps one column with the logo on top,
+  on the left, a brand panel on the right (the logo, what one account gives,
+  a faint watermark in its corner). Every other page keeps one column with the logo on top,
   as every page does on a phone.
 - Team strips: on the login page (with the brand panel), both stages of "E-postayla devam et",
   every e-mail sign-up stage and the first YTÜ login's existing-account question/proof page,

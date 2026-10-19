@@ -296,8 +296,7 @@ describe("login page: sign-in choices and trust copy (eskylab-login-ux 05)", () 
       "Postalarına ve dosyalarına erişmeyiz",
       "Okul şifreni bilmiyor musun?",
       "BİDB",
-      "Giriş adresi her zaman",
-      "Tek hesap, tek giriş"
+      "Giriş adresi her zaman"
     ]) {
       expect(view.container, removed).not.toHaveTextContent(removed);
     }
@@ -312,7 +311,7 @@ describe("login page: sign-in choices and trust copy (eskylab-login-ux 05)", () 
       "href",
       "https://passwordreset.microsoftonline.com/"
     );
-    for (const removed of ["SKY LAB never sees it", "What do we take?", "contact YTÜ IT", "The sign-in address is always", "One account, one sign-in"]) {
+    for (const removed of ["SKY LAB never sees it", "What do we take?", "contact YTÜ IT", "The sign-in address is always"]) {
       expect(view.container, removed).not.toHaveTextContent(removed);
     }
   });
@@ -336,12 +335,25 @@ describe("login page: sign-in choices and trust copy (eskylab-login-ux 05)", () 
     expect(view.queryByRole("link", { name: "Okul şifreni sıfırla" })).toBeNull();
   });
 
-  it("keeps the wide panel to the logo alone", async () => {
+  it("keeps the wide brand panel as it was: logo, title, sentence and three features (TR and EN)", async () => {
     const view = await renderPage("login.ftl");
-
     const panel = view.container.querySelector(".sl-legacy-card--brand .sl-legacy-brand") as HTMLElement;
     expect(panel.querySelector('[data-skylab-logo-animation="draw"]')).not.toBeNull();
-    expect(panel.textContent?.trim()).toBe("");
+    expect(panel.querySelector(".sl-legacy-brand__title")).toHaveTextContent("Tek hesap, tek giriş");
+    expect(panel.querySelector(".sl-legacy-brand__text")).toHaveTextContent(
+      "Hesap Merkezi, SkyForms ve kulübün hesap isteyen öteki sitelerine aynı hesapla girersin."
+    );
+    expect(Array.from(panel.querySelectorAll(".sl-legacy-brand__features li")).map(item => item.textContent)).toEqual([
+      "Hesap isteyen kulüp sitelerinde tek hesap",
+      "YTÜ öğrenci hesabınla hızlı giriş",
+      "Erişim anahtarıyla parolasız giriş"
+    ]);
+    view.unmount();
+
+    const english = render(<KcPage kcContext={getDevKcContextForPage("login.ftl", "en")} />);
+    await waitFor(() => expect(english.container.querySelector(".sl-legacy-shell")).toHaveAttribute("data-sl-translations", "ready"));
+    expect(english.container.querySelector(".sl-legacy-brand__title")).toHaveTextContent("One account, one sign-in");
+    expect(english.container.querySelectorAll(".sl-legacy-brand__features li")).toHaveLength(3);
   });
 
   it("points to the KVKK notice itself and says it can be read, not that it was accepted", async () => {

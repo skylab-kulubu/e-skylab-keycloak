@@ -4,6 +4,7 @@ import AnimatedSkyLabLogo from "./AnimatedSkyLabLogo";
 import DeveloperCredit from "./DeveloperCredit";
 import GridBackdrop from "./GridBackdrop";
 import TeamMarquee from "./TeamMarquee";
+import YtuMark from "./YtuMark";
 
 /**
  * The published KVKK notice itself, not the skyl.app short link (eskylab-login-ux 05). The same
@@ -23,12 +24,15 @@ export type LegacyFrameLanguageMenu = {
   languages: LegacyFrameLanguage[];
 };
 
+/** The panel beside the card on wide screens: what one SKY LAB account gives. */
+export type LegacyFrameBrand = {
+  title: string;
+  text: string;
+  features: { sites: string; ytu: string; passkey: string };
+};
+
 type LegacyFrameProps = {
-  /**
-   * The login page's wide layout: a quiet panel beside the card with only the logo (and its faint
-   * watermark). No slogan or copy: the form beside it says what there is to do.
-   */
-  brand?: boolean;
+  brand?: LegacyFrameBrand;
   /** The developer credit links to LinkedIn; false keeps it plain text (Web handoff failure page). */
   creditLinked?: boolean;
   /** Rendered between the title and the card body; can be empty for pages whose body is the message. */
@@ -52,7 +56,7 @@ type LegacyFrameProps = {
 
 export default function LegacyFrame(props: LegacyFrameProps) {
   const {
-    brand = false,
+    brand,
     children,
     creditLinked = true,
     description,
@@ -94,8 +98,8 @@ export default function LegacyFrame(props: LegacyFrameProps) {
 
       <main id={mainId} className="sl-legacy-main" tabIndex={-1}>
         {teams && <TeamMarquee direction="left" />}
-        <div className={brand ? "sl-legacy-stack sl-legacy-stack--wide" : "sl-legacy-stack"}>
-          <section className={brand ? "sl-legacy-card sl-legacy-card--brand" : "sl-legacy-card"} aria-labelledby={titleId}>
+        <div className={brand === undefined ? "sl-legacy-stack" : "sl-legacy-stack sl-legacy-stack--wide"}>
+          <section className={brand === undefined ? "sl-legacy-card" : "sl-legacy-card sl-legacy-card--brand"} aria-labelledby={titleId}>
             <div className="sl-legacy-card__body">
               <div className="sl-legacy-intro">
                 <h1 id={titleId}>{title}</h1>
@@ -110,10 +114,41 @@ export default function LegacyFrame(props: LegacyFrameProps) {
             </div>
 
             <div className="sl-legacy-brand">
-              {brand && <img className="sl-legacy-brand__mark" src={skyLabWatermarkUrl} alt="" />}
+              {brand !== undefined && <img className="sl-legacy-brand__mark" src={skyLabWatermarkUrl} alt="" />}
               <header className="sl-legacy-logo">
                 <AnimatedSkyLabLogo />
               </header>
+              {brand !== undefined && (
+                <div className="sl-legacy-brand__copy">
+                  <p className="sl-legacy-brand__title">{brand.title}</p>
+                  <p className="sl-legacy-brand__text">{brand.text}</p>
+                  <ul className="sl-legacy-brand__features">
+                    <li>
+                      <span className="sl-legacy-brand__icon">
+                        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="3" y="3" width="7" height="7" rx="1.5" />
+                          <rect x="14" y="3" width="7" height="7" rx="1.5" />
+                          <rect x="3" y="14" width="7" height="7" rx="1.5" />
+                          <rect x="14" y="14" width="7" height="7" rx="1.5" />
+                        </svg>
+                      </span>
+                      {brand.features.sites}
+                    </li>
+                    <li>
+                      <span className="sl-legacy-brand__icon">
+                        <YtuMark />
+                      </span>
+                      {brand.features.ytu}
+                    </li>
+                    <li>
+                      <span className="sl-legacy-brand__icon">
+                        <span className="sl-key-icon" aria-hidden="true" />
+                      </span>
+                      {brand.features.passkey}
+                    </li>
+                  </ul>
+                </div>
+              )}
             </div>
           </section>
 

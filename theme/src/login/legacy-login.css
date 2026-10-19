@@ -348,8 +348,43 @@ a:hover {
   justify-content: flex-start;
 }
 
+.sl-legacy-brand__copy,
 .sl-legacy-brand__mark {
   display: none;
+}
+
+.sl-legacy-brand__title {
+  margin: 0;
+  color: var(--sl-legacy-ink);
+  font-size: 1.375rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  text-wrap: balance;
+}
+
+.sl-legacy-brand__text {
+  margin: 0.5rem 0 0;
+  color: var(--sl-legacy-muted);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  text-wrap: pretty;
+}
+
+.sl-legacy-brand__features {
+  display: grid;
+  gap: 0.875rem;
+  margin: 1.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sl-legacy-brand__features li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: var(--sl-legacy-label);
+  font-size: 0.875rem;
 }
 
 .sl-legacy-brand__icon {
@@ -388,12 +423,11 @@ a:hover {
    on the right. Every other page keeps one column with the logo on top. */
 @media (min-width: 56rem) {
   .sl-legacy-stack--wide {
-    max-width: 52rem;
+    max-width: 56rem;
   }
 
-  /* The form takes the room; the panel beside it is a calm frame for the logo. */
   .sl-legacy-card--brand {
-    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 
   .sl-legacy-card--brand .sl-legacy-card__body {
@@ -408,9 +442,7 @@ a:hover {
     display: flex;
     flex-direction: column;
     justify-content: center;
-    align-items: center;
-    text-align: center;
-    padding: 2.5rem 2rem;
+    padding: 2.5rem;
     overflow: hidden;
     border-left: 1px solid var(--sl-legacy-border);
     background:
@@ -419,14 +451,10 @@ a:hover {
   }
 
   .sl-legacy-card--brand .sl-legacy-logo {
-    justify-content: center;
+    margin-bottom: 1.5rem;
   }
 
-  .sl-legacy-card--brand .sl-legacy-logo__animation {
-    width: 7.5rem;
-    height: 7.25rem;
-  }
-
+  .sl-legacy-card--brand .sl-legacy-brand__copy,
   .sl-legacy-card--brand .sl-legacy-brand__mark {
     display: block;
   }

@@ -57,17 +57,27 @@ describe("LegacyFrame SKY LAB identity", () => {
     expect(container.querySelector(".sl-legacy-logo img")).toBeNull();
   });
 
-  it("keeps the wide brand panel to the logo alone: no slogan, no list", () => {
+  it("keeps the wide brand panel: the logo, its title, sentence and three features", () => {
+    const brand = {
+      title: "Tek hesap, tek giriş",
+      text: "Aynı hesapla girersin.",
+      features: { sites: "Siteler", ytu: "YTÜ", passkey: "Erişim anahtarı" }
+    };
     const { container } = render(
-      <LegacyFrame {...chrome} title="Giriş yap" brand>
+      <LegacyFrame {...chrome} title="Giriş yap" brand={brand}>
         <p>İçerik</p>
       </LegacyFrame>
     );
 
     const panel = container.querySelector(".sl-legacy-card--brand .sl-legacy-brand") as HTMLElement;
     expect(panel.querySelector('[data-skylab-logo-animation="draw"]')).not.toBeNull();
-    expect(panel.querySelector("p, ul, li")).toBeNull();
-    expect(panel.textContent?.trim()).toBe("");
+    expect(panel.querySelector(".sl-legacy-brand__title")).toHaveTextContent("Tek hesap, tek giriş");
+    expect(panel.querySelector(".sl-legacy-brand__text")).toHaveTextContent("Aynı hesapla girersin.");
+    expect(Array.from(panel.querySelectorAll(".sl-legacy-brand__features li")).map(item => item.textContent)).toEqual([
+      "Siteler",
+      "YTÜ",
+      "Erişim anahtarı"
+    ]);
   });
 
   it("keeps the KVKK footer landmark and marks translation readiness", () => {

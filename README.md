@@ -674,7 +674,9 @@ edilebileceği), core'un servis hesabına SkyMail'in `skymail:access`, `skymail:
 `skymail:lists:read`, `skymail:lists:write` ve `skymail:tracking:withdraw` (skymail-backend #75, takibi
 geri alma; yalnız `service-account-core`) rollerini verir; SkyMail'in rollerinden yalnız
 `skymail:tracking:withdraw`'u oluşturur, öbürleri eksikse uyarır (runbook §20.1); listelenen servis istemcisinde varsayılan `roles` kapsamı yoksa ekler (runbook §20.1). `skymail:announcements:send` (haber ve duyuruyu Mail onayı olmadan gönderme)
-`skymail:system-mails:read` gibi bir kez tohumlanır ama yalnız ADMIN ve YK'ya (runbook §25). Forms'un
+`skymail:system-mails:read` gibi bir kez tohumlanır ama yalnız ADMIN ve YK'ya (runbook §25).
+`skymail:mails:tracking:read` (gönderimlerin kişi bazındaki açılma ve tıklama raporu) aynı biçimde
+ADMIN, YK ve DK'ya bir kez tohumlanır; okuma rolüdür, DK'da kalır (runbook §25). Forms'un
 salt okur rolü `skyforms:read-all` (DK her formu ve cevabı okur, yazamaz; forms-backend henüz okumuyor)
 aynı biçimde `forms` istemcisinde var edilir ve yalnız DK'ya bir kez verilir (runbook §28).
 

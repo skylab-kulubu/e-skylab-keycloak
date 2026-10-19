@@ -3508,9 +3508,16 @@ reconcile_core_service_roles() {
 #                                  and does not write, grup-yonetimi GY1): they send a News or an
 #                                  announcement without Mail approval; everyone else sends it through
 #                                  Mail approval. Sub-groups inherit the mapping.
+#   skymail:mails:tracking:read    ADMIN, YK, DK: the per-person opening and click report of any send
+#                                  (iletisim-servisi tickets 14b/17, decision T2; the privacy notice:
+#                                  YK, DK, the system administrators and the sending officer see it).
+#                                  A reading role, so DK holds it too; the sender sees their own send
+#                                  without it (SkyMail checks sent_by, skymail-backend
+#                                  internal/handlers/tracking_read.go).
 SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS=(
   'skymail:system-mails:read|ADMIN YK DK|Tekil sistem postalarının (doğrulama, bildirim) içeriğini görür (skymail-backend #61)'
   'skymail:announcements:send|ADMIN YK|Duyuru ve haberi Mail onayı olmadan gönderir (duyuru-haber D4; yalnız ADMIN ve YK, DK yazmaz)'
+  'skymail:mails:tracking:read|ADMIN YK DK|Her gönderimin kişi bazındaki açılma ve tıklama raporunu görür (iletisim-servisi 14b/17, T2; gönderen kendi gönderimini rolsüz görür)'
 )
 
 # Forms' Privileged roles (runbook §28), the same way as SkyMail's (same list format):

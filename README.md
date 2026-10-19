@@ -1049,6 +1049,10 @@ SHA-256'sını birebir söylüyorsa kabul edilir; `keycloak-publish` de tarball'
 GHCR girişinden hemen önce yayının hâlâ güncel `production` commit'ini gösterdiğini
 (`git ls-remote`) yeniden denetler: yeniden koşturulan eski bir yayın `:production`'ı ezemez.
 Yayınlar tek tek koşar (`concurrency: keycloak-release`, koşan iptal edilmez).
+`keycloak-package` ve `keycloak-publish` (GHCR'a itme ve Dokploy kancası) `keycloak-production`
+ortamında koşar: ortamın dal politikası yalnız `production` dalını ve `v*` etiketlerini kabul eder,
+Dokploy kancası (`DOKPLOY_DEPLOY_HOOK`) o ortamın sırrıdır; başka iş akışları sır okuyamaz,
+paket yazamaz (`tests/check-fresh-runner.sh`).
 
 Artifact'lerin ömrü 3 gün. **Touch ID kanıtı 3 günden uzun sürerse** koşu yeniden
 denenemez (indirme adımı düşer); yayın koşusu baştan başlatılır (production'a aynı ağaçla yeni

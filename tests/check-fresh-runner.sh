@@ -131,6 +131,17 @@ def assert_release_boundary(workflow)
   unless publish_job.fetch("permissions", {}).fetch("packages", nil) == "write"
     abort "#{workflow} keycloak-publish must own the package-write permission"
   end
+  # Publishing and the Dokploy deployment run in the keycloak-production environment, whose
+  # branch policy admits only production and v* tags; the hook is read nowhere else.
+  unless publish_job.fetch("environment", nil) == "keycloak-production"
+    abort "#{workflow} keycloak-publish must run in the keycloak-production environment"
+  end
+  jobs.each do |name, job|
+    next if name == "keycloak-publish"
+    if job.to_s.include?("DOKPLOY_DEPLOY_HOOK")
+      abort "#{workflow} #{name} must not read the Dokploy deploy hook"
+    end
+  end
   unless Array(publish_job.fetch("needs", nil)).sort == ["keycloak-build", "keycloak-package"]
     abort "#{workflow} keycloak-publish must depend on the build and the tested and physically approved package job"
   end
@@ -451,6 +462,15 @@ def assert_ci_scope(ci, release)
       guard.include?("gh api --paginate -X GET") &&
       guard.include?('select(.event == "push" or .event == "schedule" or .event == "workflow_dispatch")')
     abort "#{release} keycloak-build must require a fully green full CI run of the release tree before it builds"
+  end
+end
+
+# Only release.yml publishes or deploys: no other workflow reads a secret or may write packages.
+Dir.glob(File.join(root, ".github/workflows/*.yml")).each do |workflow|
+  next if File.basename(workflow) == "release.yml"
+  text = File.read(workflow, encoding: "UTF-8")
+  if text.include?("secrets.") || text =~ /packages:\s*write/ || text.include?("DOKPLOY")
+    abort "#{workflow} must not read secrets, write packages or deploy"
   end
 end
 

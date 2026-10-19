@@ -22,11 +22,13 @@ on:
 permissions:
   contents: read
 
-# A new push to a PR cancels that PR's older run; pushes, the schedule and manual runs are never
-# cancelled (every main and production commit keeps its own full run).
+# A new push to a PR cancels that PR's older run, and a new push to main cancels main's older
+# push run: only main's newest tree is released, so the older one is an intermediate tree. The
+# event is part of the group, so a push run never cancels a schedule, manual or PR run (nor the
+# other way round); production pushes, the schedule and manual runs are never cancelled.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.event_name }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'main' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
 
 jobs:
   # full or fast, and which areas a fast run touches: theme/, spi/, and other (anything outside

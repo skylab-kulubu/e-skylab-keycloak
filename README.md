@@ -1025,7 +1025,9 @@ dışındaki her şey). Uzun Keycloak işleri ve `integration (<grup>)` gruplar�
 elle (`gh workflow run ci.yml --ref <dal>`) ve `full-ci` etiketli PR'larda (etiket PR
 açılırken/push'ta okunur) *tam takım* koşar. Tek zorunlu kontrol `gate`: bir iş düşer ya da
 iptal olursa kırmızı; tam koşuda atlanan iş de kırmızı. Aynı PR'a yeni push eskisini iptal
-eder; push/gece/elle koşular iptal edilmez. `release.yml`, `production` ağacını tamamen
+eder; `main`'e yeni push da `main`'in eski push koşusunu iptal eder (yalnız en yeni ağaç
+yayınlanır, eskisi ara ağaçtır). Grup anahtarında olay adı var: push koşusu gece/elle/PR
+koşusunu iptal etmez; `production` push'u, gece ve elle koşular hiç iptal edilmez. `release.yml`, `production` ağacını tamamen
 yeşil bir tam `ci.yml` push, gece ya da elle koşusu test etmediyse derlemeye başlamaz
 (PR koşuları sayılmaz: GitHub'ın merge commit'ini test ederler; hotfix'te production push'unun
 kendi koşusu ya da `gh workflow run ci.yml --ref <dal>`) (production `main`'in

@@ -14,8 +14,9 @@
 # (the holder's own short links, Y1) to all three, and forms/skyforms:read-all (Forms' Privileged
 # role, the same operator step) to DK alone.
 # competition:manage renames competitor:manage (ADR-0068): it is seeded once wherever the old role is
-# held (groups, users, composite roles, role scopes of clients and client scopes), not to the
-# Privileged groups.
+# held (groups, service accounts, composite roles, role scopes of clients and client scopes), not to
+# the Privileged groups. A person holding the old role directly is counted and warned about, never
+# given the new one (people get roles only through groups).
 
 CR_ATTRIBUTE=skylab.seeded-group-mappings
 # The contract table of sky_lab_genel .scratch/admin-token-authz/spec.md: the write roles, seeded to
@@ -38,6 +39,8 @@ CR_RENAME_GROUP=core-roles-rename-group-fixture
 CR_RENAME_LONG_GROUPS=8
 CR_RENAME_LONG_PREFIX=core-roles-rename-long-team-group-fixture
 CR_RENAME_USER=core-roles-rename-user-fixture
+# A client whose service account holds the old role directly: the one user the new role goes to.
+CR_RENAME_SA_CLIENT=core-roles-rename-service-account-fixture
 CR_RENAME_COMPOSITE=core-roles-rename-composite-fixture
 CR_RENAME_SCOPE=core-roles-rename-scope-fixture
 
@@ -305,10 +308,11 @@ stage_core_roles_seeded_by_operator() {
   kcadm delete "groups/$(cr_group_id "$CR_DK")" -r "$V2_REALM" >/dev/null
 }
 
-# Holders of the old role that are not Privileged groups: a group, a user, a realm composite role
-# and a client scope (the admin panel client's role scope already maps every core role).
+# Holders of the old role that are not Privileged groups: a group, a person, a service account, a
+# realm composite role and a client scope (the admin panel client's role scope already maps every
+# core role).
 cr_rename_fixtures_create() {
-  local core_uuid old_body group_id user_id scope_id
+  local core_uuid old_body group_id user_id scope_id client_id sa_id
   core_uuid=$(lca_client_uuid core)
   old_body=$(v2_role_body "$core_uuid" "$CR_RENAMED_FROM")
   group_id=$(kcadm create groups -r "$V2_REALM" -s "name=$CR_RENAME_GROUP" -i)
@@ -320,6 +324,10 @@ cr_rename_fixtures_create() {
   user_id=$(kcadm create users -r "$V2_REALM" -i -s "username=$CR_RENAME_USER" -s enabled=true \
     -s "email=$CR_RENAME_USER@example.invalid" -s emailVerified=true -s firstName=Rename -s lastName=Fixture)
   kcadm create "users/$user_id/role-mappings/clients/$core_uuid" -r "$V2_REALM" -b "$old_body" >/dev/null
+  client_id=$(kcadm create clients -r "$V2_REALM" -i -s "clientId=$CR_RENAME_SA_CLIENT" -s publicClient=false \
+    -s serviceAccountsEnabled=true -s standardFlowEnabled=false -s directAccessGrantsEnabled=false)
+  sa_id=$(kcadm get "clients/$client_id/service-account-user" -r "$V2_REALM" -c | jq -r .id)
+  kcadm create "users/$sa_id/role-mappings/clients/$core_uuid" -r "$V2_REALM" -b "$old_body" >/dev/null
   kcadm create roles -r "$V2_REALM" -s "name=$CR_RENAME_COMPOSITE" >/dev/null
   kcadm create "roles/$CR_RENAME_COMPOSITE/composites" -r "$V2_REALM" -b "$old_body" >/dev/null
   scope_id=$(kcadm create client-scopes -r "$V2_REALM" -s "name=$CR_RENAME_SCOPE" -s protocol=openid-connect -i)
@@ -337,6 +345,7 @@ cr_rename_fixtures_delete() {
   done
   kcadm delete "users/$(kcadm get users -r "$V2_REALM" -q "username=$CR_RENAME_USER" -q exact=true -c | jq -r '.[0].id')" \
     -r "$V2_REALM" >/dev/null
+  kcadm delete "clients/$(lca_client_uuid "$CR_RENAME_SA_CLIENT")" -r "$V2_REALM" >/dev/null
   kcadm delete "roles/$CR_RENAME_COMPOSITE" -r "$V2_REALM" >/dev/null
   kcadm delete "client-scopes/$(cr_rename_fixture_ids)" -r "$V2_REALM" >/dev/null
 }
@@ -355,7 +364,10 @@ cr_assert_renamed_follows_old() {
     || { printf '%s\n' "$output" >&2; fail "the operator step did not seed $CR_RENAMED where $CR_RENAMED_FROM is held"; }
   ! grep -Fq "core role $CR_RENAMED: seeded once to /ADMIN" <<<"$output" \
     || fail "$CR_RENAMED was seeded to the Privileged groups instead of where $CR_RENAMED_FROM is held"
-  grep -Fq 'users 1;' <<<"$line" || fail "the rename did not count the one user holding $CR_RENAMED_FROM: $line"
+  grep -Fq 'users 2 (people 1 not granted);' <<<"$line" \
+    || fail "the rename did not count the person and the service account holding $CR_RENAMED_FROM: $line"
+  grep -Fq "[reconcile] WARNING: core role $CR_RENAMED not granted to 1 people holding $CR_RENAMED_FROM directly" <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail "the rename did not warn about the person holding $CR_RENAMED_FROM directly"; }
   grep -Eq "composite roles ([^;]*,)?${CR_RENAME_COMPOSITE}[,;]" <<<"$line" || fail "the rename missed the composite role: $line"
   grep -Eq "client scopes ([^(]*,)?${CR_RENAME_SCOPE}[, ]" <<<"$line" || fail "the rename missed the client scope: $line"
   grep -Eq "role scopes ([^;]*,)?${AP_CLIENT}[,;]" <<<"$line" || fail "the rename missed the admin panel's role scope: $line"
@@ -366,20 +378,25 @@ cr_assert_renamed_follows_old() {
     grep -Fq "/$CR_RENAME_LONG_PREFIX-$n" <<<"$line" || fail "the rename log does not name /$CR_RENAME_LONG_PREFIX-$n: $line"
   done
   ((${#mark} <= 255)) || fail "the mark of $CR_RENAMED is ${#mark} characters, more than a role attribute holds: $mark"
-  [[ $mark == *" groups $((${#CR_PRIVILEGED[@]} + 1 + CR_RENAME_LONG_GROUPS)); users 1; composite roles 1; "* ]] \
+  [[ $mark == *" groups $((${#CR_PRIVILEGED[@]} + 1 + CR_RENAME_LONG_GROUPS)); users 2 (people 1 not granted); composite roles 1; "* ]] \
     || fail "the mark of $CR_RENAMED does not count the holders of $CR_RENAMED_FROM: $mark"
   [[ $mark =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\ where\ $CR_RENAMED_FROM\ is\ held: ]] \
     || fail "$CR_RENAMED lacks its mark: $mark"
-  grep -Fq "$CR_RENAME_USER" <<<"$mark$line" && fail 'the rename wrote a user name into its log or mark'
+  grep -Fq "$CR_RENAME_USER" <<<"$mark$output" && fail 'the rename wrote a user name into its log or mark'
   old_groups=$(kcadm get "clients/$core_uuid/roles/$CR_RENAMED_FROM/groups" -r "$V2_REALM" -c | jq -c '[.[].path] | sort')
   new_groups=$(kcadm get "clients/$core_uuid/roles/$CR_RENAMED/groups" -r "$V2_REALM" -c | jq -c '[.[].path] | sort')
   json_assert "$new_groups" '. == $old' "$CR_RENAMED is not mapped to exactly the groups of $CR_RENAMED_FROM" \
     --argjson old "$old_groups"
   json_assert "$new_groups" 'index($g) != null and index("/ADMIN") != null and index("/UYELER/YK") != null' \
     "$CR_RENAMED did not reach the Privileged groups and the fixture group" --arg g "/$CR_RENAME_GROUP"
+  # The service account follows the old role; the person keeps only the old one (no direct roles to
+  # people).
   json_assert "$(kcadm get "clients/$core_uuid/roles/$CR_RENAMED/users" -r "$V2_REALM" -c | jq -c '[.[].username]')" \
-    '. == $u' "$CR_RENAMED is not held directly by exactly the user holding $CR_RENAMED_FROM" \
-    --argjson u "[\"$CR_RENAME_USER\"]"
+    '. == $u' "$CR_RENAMED is not held directly by exactly the service account holding $CR_RENAMED_FROM" \
+    --argjson u "[\"service-account-$CR_RENAME_SA_CLIENT\"]"
+  json_assert "$(kcadm get "clients/$core_uuid/roles/$CR_RENAMED_FROM/users" -r "$V2_REALM" -c | jq -c '[.[].username] | sort')" \
+    '. == ([$p, $s] | sort)' "the holders of $CR_RENAMED_FROM changed" \
+    --arg p "$CR_RENAME_USER" --arg s "service-account-$CR_RENAME_SA_CLIENT"
   json_assert "$(cr_names "roles/$CR_RENAME_COMPOSITE/composites/clients/$core_uuid")" \
     '. == ([$a, $b] | sort)' "the composite role does not contain both names" --arg a "$CR_RENAMED" --arg b "$CR_RENAMED_FROM"
   scope_id=$(cr_rename_fixture_ids)

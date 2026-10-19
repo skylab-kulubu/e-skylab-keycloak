@@ -661,9 +661,10 @@ operatör yapar (`KEYCLOAK_RECONCILE_KCADM_CONFIG` + `KEYCLOAK_RECONCILE_ONLY=se
 `media-attach` de çalışır). `KEYCLOAK_RECONCILE_CHECK=true` aynı adımı kuru koşar: yalnız eksikleri
 `would …` diye yazar, hiçbir şey yazmaz. Adım önce her şeyi okur, okuma hatasında hiçbir şey vermez
 (eksik varsayılan `roles` kapsamı hariç: onu okuma sırasında ve tam uzlaştırmada da ekler, runbook §20.1),
-verdikten sonra rolün `skylab.granted-service-accounts` özniteliğine kaydeder; `users:read` dışındaki
-rolleri taşıyan başka kullanıcı, grup, varsayılan rolü ya da onları içeren bileşik rolü, servis
-hesabının listede olmayan core rollerini bildirir ve hiçbir şey silmez. `forms` yalnız servis hesabıdır (Forms kişileri `skyforms`
+verdikten sonra rolün `skylab.granted-service-accounts` özniteliğine kaydeder; yalnız servis
+hesaplarına ait rolleri (`services` sınıfı; kişilerin de taşıyabildiği `users:read` ve SkyMail'in
+paylaşılan rolleri değil) taşıyan başka kullanıcı, grup, varsayılan rolü ya da onları içeren bileşik
+rolü, servis hesabının listede olmayan rollerini bildirir ve hiçbir şey silmez. `forms` yalnız servis hesabıdır (Forms kişileri `skyforms`
 ile giriş yaptırır; core ürünü `client_id == azp`'den okur): uzlaştırıcı `standardFlowEnabled`,
 `implicitFlowEnabled`, `directAccessGrantsEnabled`'in kapalı olduğunu doğrular, değilse uyarır;
 operatör adımı açık olanları kapatır (kuru koşuda `would set …`). `media:attach`'ın istemci listesi

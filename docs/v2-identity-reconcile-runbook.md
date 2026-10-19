@@ -2897,11 +2897,18 @@ SkyMail satırları eskisi gibi yalnız bildirilir. Yayından sonraki tam uzlaş
 ve `WARNING: communication-preferences:read is not yet granted to service account
 service-account-skymail-backend by the operator step`, `WARNING: skymail:tracking:withdraw is not
 yet granted to service account service-account-core by the operator step` yazar. Operatör
-`service-roles` kuru koşusunda (önce sandbox, sonra production) yalnız şu dört satır beklenir:
-`would grant communication-preferences:read to service account service-account-skymail-backend`,
-`would grant skymail:tracking:withdraw to service account service-account-core` ve ikisinin `would
-record the grant of …`'u. Realm'de roller henüz yoksa (o realm'de tam uzlaştırma koşmadıysa) kuru
-koşu `would create client role …` iki satır daha gösterir ve rolleri uygulayan koşu oluşturur.
+`service-roles` kuru koşusunda (önce sandbox, sonra production) bu iki rol için beklenen satırlar
+şunlardır: `would grant communication-preferences:read to service account
+service-account-skymail-backend`, `would grant skymail:tracking:withdraw to service account
+service-account-core` ve ikisinin `would record the grant of …`'u. Şu durumlarda başka satırlar da
+gelebilir:
+- Realm'de roller henüz yoksa (o realm'de tam uzlaştırma koşmadıysa) kuru koşu iki `would create
+  client role …` satırı daha gösterir; rolleri uygulayan koşu oluşturur.
+- `skymail-backend` ya da `core`'da `fullScopeAllowed=false` ise `would map … in the role scope of …`
+  satırları gelir.
+- Bileşik tarama bu yayınla geldiği için, mevcut başka bir servis rolünü (ör. `media:attach`,
+  `audience:read`) içeren bir bileşik rol varsa onun için de ilk kez `WARNING: … is in the composite
+  roles …` görünebilir.
 Bileşik rol, grup ya da kişi uyarısı çıkarsa uygulamadan önce Admin Console'dan kaldırılır.
 
 Sıra: roller zararsızdır (SkyMail'in bayrağı kapalıyken kimse takip edilmez; core'un geri alma işi

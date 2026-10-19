@@ -13,24 +13,38 @@ set -Eeuo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 
-# job, then the tests/ scripts its steps run.
+# The scripts ci.yml's static job runs in every run, fast or full: a change to them is tested
+# there, so they neither count as a job's own tests nor lead further.
+STATIC_SCRIPTS=(
+  tests/check-version-consistency.sh
+  tests/check-fresh-runner.sh
+  tests/check-theme-contract.sh
+  tests/check-welcome-theme.sh
+  tests/check-production-preflight.sh
+  tests/check-account-center-origin.sh
+  tests/check-operator-login-prompts.sh
+  tests/check-site-editor-grants-team.sh
+)
+
+# job, then the tests/ scripts its steps run (less STATIC_SCRIPTS).
 JOB_ENTRIES=(
   'inscribed-cms-roles tests/inscribed-cms-roles.sh'
   'role-groups tests/role-groups.sh'
   'dk-read-only tests/dk-read-only.sh'
   'sandbox-admin-local-client tests/sandbox-admin-local-client.sh'
   'ytu-first-login tests/ytu-first-login.sh'
-  'after-sign-up-native tests/check-theme-contract.sh tests/after-sign-up.sh'
+  'after-sign-up-native tests/after-sign-up.sh'
   'site-clients tests/site-clients.sh'
   'skyapp-cms-editor tests/skyapp-cms-editor.sh'
   'login-clients tests/login-clients.sh'
-  'integration-group tests/check-version-consistency.sh tests/check-fresh-runner.sh tests/check-theme-contract.sh tests/check-welcome-theme.sh tests/run-integration.sh'
+  'integration-group tests/run-integration.sh'
 )
 
-if [[ ${1:-} == --entries ]]; then
-  printf '%s\n' "${JOB_ENTRIES[@]}"
-  exit 0
-fi
+case ${1:-} in
+  --entries) printf '%s\n' "${JOB_ENTRIES[@]}"; exit 0 ;;
+  --static) printf '%s\n' "${STATIC_SCRIPTS[@]}"; exit 0 ;;
+esac
+static=" ${STATIC_SCRIPTS[*]} "
 
 # references FILE: the tests/ paths FILE names, one per line.
 references() {
@@ -48,7 +62,7 @@ references() {
 
 # closure ENTRY...: the entry scripts and every tests/ path they reach, one per line.
 closure() {
-  local seen=' ' queue=("$@") path reference
+  local seen="$static" queue=("$@") path reference
   while ((${#queue[@]})); do
     path=${queue[0]}
     queue=("${queue[@]:1}")

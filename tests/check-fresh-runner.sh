@@ -462,6 +462,11 @@ def assert_affected_jobs(ci, helper)
   jobs = YAML.load_file(ci, aliases: true).fetch("jobs")
   entries = `bash #{helper} --entries`.lines.map(&:split).to_h { |words| [words.first, words.drop(1).sort] }
   abort "#{helper} --entries failed" unless $?.success?
+  static_scripts = `bash #{helper} --static`.split
+  static_runs = jobs.fetch("static").fetch("steps").flat_map { |step| step.fetch("run", "").scan(%r{bash (?:\.\./)?(tests/[A-Za-z0-9_.-]+\.sh)}).flatten }.uniq.sort
+  unless static_scripts.sort == static_runs
+    abort "#{helper} STATIC_SCRIPTS must be exactly the scripts ci.yml's static job runs (#{static_runs.join(" ")})"
+  end
   whole_suite = jobs.select { |_, job| job.fetch("if", "").to_s.start_with?("needs.scope.outputs.full == 'true'") }
   unless entries.keys.sort == whole_suite.keys.sort
     abort "#{helper} must list exactly ci.yml's whole-suite jobs (#{whole_suite.keys.sort.join(" ")})"
@@ -469,7 +474,7 @@ def assert_affected_jobs(ci, helper)
   whole_suite.each do |name, job|
     expected_if = "needs.scope.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' #{name} ')"
     abort "#{ci} #{name} must also run when scope lists it as affected" unless job.fetch("if") == expected_if
-    scripts = job.fetch("steps").flat_map { |step| step.fetch("run", "").scan(%r{bash (?:\.\./)?(tests/[A-Za-z0-9_.-]+\.sh)}).flatten }.uniq.sort
+    scripts = (job.fetch("steps").flat_map { |step| step.fetch("run", "").scan(%r{bash (?:\.\./)?(tests/[A-Za-z0-9_.-]+\.sh)}).flatten }.uniq - static_scripts).sort
     unless scripts == entries.fetch(name)
       abort "#{helper} must list #{name} with the scripts it runs (#{scripts.join(" ")})"
     end
@@ -482,13 +487,16 @@ def assert_affected_jobs(ci, helper)
   { "tests/kcadm-core-roles-failure.sh" => %w[role-groups dk-read-only integration-group],
     "tests/core-service-roles.sh" => %w[integration-group],
     "tests/fixture-realm.json" => %w[integration-group],
-    "tests/dk-read-only.sh" => %w[dk-read-only] }.each do |path, expected|
+    "tests/dk-read-only.sh" => %w[dk-read-only],
+    "tests/run-integration.sh" => %w[integration-group] }.each do |path, expected|
     affected = IO.popen(["bash", helper], "r+") { |io| io.puts(path); io.close_write; io.read }.split
     missing = expected - affected
     abort "#{helper} does not reach #{missing.join(" ")} from #{path}" unless missing.empty?
   end
-  docs = IO.popen(["bash", helper], "r+") { |io| io.puts("docs/x.md"); io.close_write; io.read }.split
-  abort "#{helper} must not run whole-suite jobs for docs/x.md" unless docs.empty?
+  ["docs/x.md", "tests/check-fresh-runner.sh"].each do |path|
+    affected = IO.popen(["bash", helper], "r+") { |io| io.puts(path); io.close_write; io.read }.split
+    abort "#{helper} must not run whole-suite jobs for #{path} (#{affected.join(" ")})" unless affected.empty?
+  end
 end
 
 assert_affected_jobs(File.join(root, ".github/workflows/ci.yml"), File.join(root, "tests/affected-jobs.sh"))

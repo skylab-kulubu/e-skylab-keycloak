@@ -23,10 +23,12 @@ test("login uses semantic landmarks and preserves remember-me for passkeys", asy
   const logo = page.locator('[data-skylab-logo-animation="draw"]');
   await expect(logo).toBeVisible();
   await expect(logo.locator("path")).toHaveCount(19);
+  // Whole from the first frame: the fill is never animated, only a traced line over it.
   await expect(logo.locator("path").first()).toHaveCSS(
     "animation-name",
-    "sl-legacy-logo-draw, sl-legacy-logo-fill, sl-legacy-logo-stroke-fade"
+    "sl-legacy-logo-draw, sl-legacy-logo-stroke-fade"
   );
+  expect(await logo.locator("path").evaluateAll(paths => paths.every(path => getComputedStyle(path).fillOpacity === "1"))).toBe(true);
 
   await page.getByRole("button", { name: "E-postayla devam et" }).click();
   await expect(page.getByRole("button", { name: "Giriş yap", exact: true })).toBeVisible();
@@ -227,14 +229,22 @@ for (const viewport of [
   { width: 1280, height: 800 },
   { width: 390, height: 844 }
 ]) {
-  test(`forgot password is on the first screen and right below the password field (${viewport.width}px)`, async ({ browser }) => {
+  test(`the first screen fits the viewport; forgot password waits right below the password field (${viewport.width}px)`, async ({ browser }) => {
     const context = await browser.newContext({ viewport, locale: "tr-TR" });
     const page = await context.newPage();
     await page.goto("/?page=login.ftl");
+    await expect(page.locator(".sl-legacy-shell")).toHaveAttribute("data-sl-translations", "ready");
 
-    const firstScreenLink = page.getByRole("link", { name: "Parolanı mı unuttun?" });
-    await expect(firstScreenLink).toBeVisible();
-    await expect(firstScreenLink).toBeInViewport();
+    // Both ways in and the quiet line under them are on the first screen, phone included.
+    await expect(page.getByRole("heading", { name: "SKY LAB'e Hoş Geldin!" })).toBeInViewport();
+    await expect(page.getByRole("link", { name: "YTÜ hesabınla devam et Microsoft ile" })).toBeInViewport();
+    await expect(page.getByRole("button", { name: "E-postayla devam et" })).toBeInViewport();
+    await expect(page.getByRole("button", { name: "Erişim anahtarı ile giriş yap" })).toBeInViewport();
+    await expect(page.getByRole("link", { name: "Parolanı mı unuttun?" })).toHaveCount(0);
+    const help = page.locator("details.sl-legacy-help");
+    await expect(help).not.toHaveAttribute("open", "");
+    await help.locator("summary").click();
+    await expect(help.getByRole("link", { name: "Microsoft'ta sıfırla" })).toBeVisible();
 
     await page.getByRole("button", { name: "E-postayla devam et" }).click();
     const link = page.locator("#kc-form-login").getByRole("link", { name: "Parolanı mı unuttun?" });

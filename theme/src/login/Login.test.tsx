@@ -111,17 +111,13 @@ describe("login page: forgot password link", () => {
     cleanup();
   });
 
-  it("is on the first screen, under the sign-in choices", async () => {
+  it("is not on the first screen: it waits in the password form, where a password is typed", async () => {
     const view = await renderPage("login.ftl");
 
-    const link = view.getByRole("link", { name: "Parolanı mı unuttun?" });
-    expect(link).toHaveAttribute("href", resetUrl);
-    // After the choices (and the passkey button), so the primary choices stay first in reading order.
-    const choices = view.container.querySelector(".sl-legacy-choices");
-    expect(choices?.compareDocumentPosition(link) ?? 0).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(view.container.querySelector("#authenticateWebAuthnButton")?.compareDocumentPosition(link) ?? 0).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING
-    );
+    expect(view.queryByRole("link", { name: "Parolanı mı unuttun?" })).toBeNull();
+    expect(view.container).not.toHaveTextContent("Parolanı mı unuttun?");
+    fireEvent.click(view.getByRole("button", { name: "E-postayla devam et" }));
+    expect(view.getByRole("link", { name: "Parolanı mı unuttun?" })).toHaveAttribute("href", resetUrl);
   });
 
   it("sits directly below the password field in the password form, before the submit button", async () => {
@@ -278,33 +274,54 @@ describe("login page: sign-in choices and trust copy (eskylab-login-ux 05)", () 
     expect(container.querySelector(".sl-legacy-intro p")?.textContent).toBe(text);
   });
 
-  it("says in one sentence under the choices that the school password stays with Microsoft", async () => {
+  it("folds the YTÜ help into one closed area under the choices and the quiet line", async () => {
     const view = await renderPage("login.ftl");
 
-    const trust = view.container.querySelector(".sl-legacy-trust") as HTMLElement;
-    expect(trust).not.toBeNull();
-    expect(view.container.querySelector(".sl-legacy-choices")?.compareDocumentPosition(trust)).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING
-    );
-    expect(trust.querySelector(":scope > p")?.textContent).toBe("Okul şifreni yalnız Microsoft'a yazarsın; SKY LAB görmez.");
+    const helps = view.container.querySelectorAll("details");
+    expect(helps).toHaveLength(1);
+    const help = helps[0] as HTMLDetailsElement;
+    expect(help).toHaveClass("sl-legacy-help");
+    expect(help.open).toBe(false);
+    expect(help.querySelector("summary")?.textContent).toBe("YTÜ girişi hakkında");
 
-    const details = within(trust).getByText("Neleri alıyoruz?").closest("details") as HTMLDetailsElement;
-    expect(details).not.toBeNull();
-    expect(details.open).toBe(false);
-    expect(details.querySelector("p")?.textContent).toBe(
-      "Adın, okul e-postan, bölümün ve Microsoft kimlik numaran. Postalarına ve dosyalarına erişmeyiz."
-    );
+    // Reading order: the two choices, the quiet line, the help, the sign-in address.
+    const choices = view.container.querySelector(".sl-legacy-choices") as Element;
+    const alternatives = view.container.querySelector(".sl-legacy-alternatives") as Element;
+    const domain = view.container.querySelector(".sl-legacy-domain") as Element;
+    expect(choices.compareDocumentPosition(alternatives)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(alternatives.compareDocumentPosition(help)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(help.compareDocumentPosition(domain)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+
+    // Every decided sentence is still there, word for word, just folded.
+    const paragraphs = Array.from(help.querySelectorAll("p")).map(paragraph => paragraph.textContent);
+    expect(paragraphs).toEqual([
+      "Okul şifreni yalnız Microsoft'a yazarsın; SKY LAB görmez.",
+      "Neleri alıyoruz? Adın, okul e-postan, bölümün ve Microsoft kimlik numaran. Postalarına ve dosyalarına erişmeyiz.",
+      "Okul şifreni bilmiyor musun? Microsoft'ta sıfırla ya da BİDB'ye başvur."
+    ]);
   });
 
-  it("helps someone who does not know the school password in one line, in a new tab", async () => {
+  it("folds the same help in English", async () => {
+    const kcContext = getDevKcContextForPage("login.ftl", "en");
+    const { container } = render(<KcPage kcContext={kcContext} />);
+    await waitFor(() => expect(container.querySelector(".sl-legacy-shell")).toHaveAttribute("data-sl-translations", "ready"));
+
+    const help = container.querySelector("details.sl-legacy-help") as HTMLDetailsElement;
+    expect(help.querySelector("summary")?.textContent).toBe("About YTÜ sign-in");
+    expect(Array.from(help.querySelectorAll("p")).map(paragraph => paragraph.textContent)).toEqual([
+      "You type your school password only at Microsoft; SKY LAB never sees it.",
+      "What do we take? Your name, school email, department and Microsoft ID. We don't access your mail or files.",
+      "Don't know your school password? Reset it at Microsoft or contact YTÜ IT."
+    ]);
+  });
+
+  it("helps someone who does not know the school password inside that area, in a new tab", async () => {
     const view = await renderPage("login.ftl");
 
-    const details = view.getByText("Okul şifreni bilmiyor musun?").closest("details") as HTMLElement;
-    expect(details).not.toBeNull();
-    expect(details.querySelector("p")?.textContent).toBe("Microsoft'ta sıfırla ya da BİDB'ye başvur.");
-    const reset = within(details).getByRole("link", { name: "Microsoft'ta sıfırla" });
+    const help = view.container.querySelector("details.sl-legacy-help") as HTMLElement;
+    const reset = within(help).getByRole("link", { name: "Microsoft'ta sıfırla" });
     expect(reset).toHaveAttribute("href", "https://passwordreset.microsoftonline.com/");
-    const support = within(details).getByRole("link", { name: "BİDB'ye başvur" });
+    const support = within(help).getByRole("link", { name: "BİDB'ye başvur" });
     expect(support).toHaveAttribute("href", "https://teknikdestek.yildiz.edu.tr/");
     for (const link of [reset, support]) {
       expect(link).toHaveAttribute("target", "_blank");
@@ -312,13 +329,36 @@ describe("login page: sign-in choices and trust copy (eskylab-login-ux 05)", () 
     }
   });
 
-  it("names the sign-in address on both screens", async () => {
+  it("puts the passkey on one quiet line under the two choices", async () => {
+    const view = await renderPage("login.ftl");
+
+    const alternatives = view.container.querySelector(".sl-legacy-alternatives") as HTMLElement;
+    const passkey = within(alternatives).getByRole("button", { name: "Erişim anahtarı ile giriş yap" });
+    expect(passkey).toHaveAttribute("id", "authenticateWebAuthnButton");
+    // Only the two main choices are big buttons.
+    expect(view.container.querySelectorAll(".sl-legacy-choice")).toHaveLength(2);
+  });
+
+  it("drops the help area without a YTÜ provider, since it is about Microsoft", async () => {
+    const kcContext = loginContext();
+    kcContext.social = undefined;
+    const view = render(<KcPage kcContext={kcContext} />);
+    await waitFor(() => expect(view.container.querySelector(".sl-legacy-choices")).not.toBeNull());
+
+    expect(view.container.querySelector("details.sl-legacy-help")).toBeNull();
+    expect(view.getByText("Giriş adresi her zaman e.yildizskylab.com'dur.")).toBeInTheDocument();
+  });
+
+  it("names the sign-in address on both screens, last on the card above the footer", async () => {
     const view = await renderPage("login.ftl");
     const notice = "Giriş adresi her zaman e.yildizskylab.com'dur.";
 
     expect(view.getByText(notice)).toBeInTheDocument();
+    const lastVisible = () => cardChildren(view.container).filter(element => !element.hasAttribute("hidden")).at(-1);
+    expect(lastVisible()).toHaveTextContent(notice);
     fireEvent.click(view.getByRole("button", { name: "E-postayla devam et" }));
     expect(view.getByText(notice)).toBeInTheDocument();
+    expect(lastVisible()).toHaveTextContent(notice);
   });
 
   it("points to the KVKK notice itself and says it can be read, not that it was accepted", async () => {

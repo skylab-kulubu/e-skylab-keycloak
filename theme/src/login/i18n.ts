@@ -57,6 +57,9 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     kvkkNoticeLinkText: "KVKK Aydınlatma Metni",
     kvkkSuffix: "'nde okuyabilirsin.",
     // Under the sign-in choices (eskylab-login-ux 05; kept short on purpose, the KVKK notice has the detail).
+    // Folded into one help area under the choices: its summary, then the trust sentence, what we take
+    // and the school password help.
+    skylabHelpSummary: "YTÜ girişi hakkında",
     skylabTrust: "Okul şifreni yalnız Microsoft'a yazarsın; SKY LAB görmez.",
     skylabTrustMore: "Neleri alıyoruz?",
     skylabTrustTaken: "Adın, okul e-postan, bölümün ve Microsoft kimlik numaran. Postalarına ve dosyalarına erişmeyiz.",
@@ -78,9 +81,6 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     // The brand panel beside the card on wide screens
     skylabBrandTitle: "Tek hesap, tek giriş",
     skylabBrandText: "Hesap Merkezi, SkyForms ve kulübün hesap isteyen öteki sitelerine aynı hesapla girersin.",
-    skylabBrandSites: "Hesap isteyen kulüp sitelerinde tek hesap",
-    skylabBrandYtu: "YTÜ öğrenci hesabınla hızlı giriş",
-    skylabBrandPasskey: "Erişim anahtarıyla parolasız giriş",
     // The KVKK sentence outside the login and passkey offer pages
     kvkkActionPrefix: "Bu işlemi yaparak ",
     kvkkActionSuffix: "'ni okuduğunu ve kabul ettiğini onaylıyorsun.",
@@ -149,6 +149,8 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     // "E-postayla devam et": sign-in with a code mailed to the account (SPI sky-email-code, eskylab-login-ux 08)
     emailCodeTitle: "E-postayla devam et",
     emailCodeSignUpLink: "E-postayla hesap aç",
+    // The login page's first screen, after "Hesabın yok mu?" on one quiet line with the passkey.
+    emailCodeSignUpShort: "Hesap aç",
     emailCodeSignUpTitle: "Hesap aç",
     emailCodeSignUpDescription:
       "E-posta adresini ya da kullanıcı adını yaz. Hesabın varsa giriş yaparsın; yoksa e-posta adresini doğruladıktan sonra hesabını açabilirsin.",
@@ -465,6 +467,7 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     kvkkLinkText: "KVKK Policy",
     kvkkNoticeLinkText: "KVKK Privacy Notice",
     kvkkSuffix: ".",
+    skylabHelpSummary: "About YTÜ sign-in",
     skylabTrust: "You type your school password only at Microsoft; SKY LAB never sees it.",
     skylabTrustMore: "What do we take?",
     skylabTrustTaken: "Your name, school email, department and Microsoft ID. We don't access your mail or files.",
@@ -484,9 +487,6 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     // The brand panel beside the card on wide screens
     skylabBrandTitle: "One account, one sign-in",
     skylabBrandText: "The same account opens the Account Center, SkyForms and the club's other member sites.",
-    skylabBrandSites: "One account for the club's member sites",
-    skylabBrandYtu: "Quick sign-in with your YTÜ student account",
-    skylabBrandPasskey: "Passwordless sign-in with a passkey",
     // The KVKK sentence outside the login and passkey offer pages
     kvkkActionPrefix: "By continuing, you confirm that you have read and accept the ",
     kvkkActionSuffix: ".",
@@ -552,6 +552,7 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
 
     emailCodeTitle: "Continue with email",
     emailCodeSignUpLink: "Create an account with email",
+    emailCodeSignUpShort: "Create one",
     emailCodeSignUpTitle: "Create an account",
     emailCodeSignUpDescription:
       "Type your email or username. If you have an account, you will sign in; otherwise, verify your email to create one.",

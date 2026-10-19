@@ -56,7 +56,8 @@ async function code(context: BrowserContext, email: string, previousId: string) 
 }
 async function emailCode(page: Page, context: BrowserContext, email: string, auth: Auth, registration: boolean) {
   await page.goto(auth.url);
-  await page.getByRole("button", { name: registration ? "E-postayla hesap aç" : "E-postayla devam et", exact: true }).click();
+  // The first screen's sign-up entry is "Hesabın yok mu? Hesap aç" on its quiet line under the choices.
+  await page.getByRole("button", { name: registration ? "Hesap aç" : "E-postayla devam et", exact: true }).click();
   await page.locator("#username").fill(email);
   const before = await (await context.request.get(`${config.mailUrl}/api/v1/messages?limit=200`)).json();
   const previousId = before.messages?.find((m: { To?: { Address: string }[] }) => m.To?.some(to => to.Address === email))?.ID ?? "";

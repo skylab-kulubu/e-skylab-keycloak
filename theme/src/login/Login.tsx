@@ -8,6 +8,7 @@ import YtuMark from "./YtuMark";
 import LegacyFrame from "./LegacyFrame";
 import PageMessage from "./PageMessage";
 import BrokerLinkEscape from "./BrokerLinkEscape";
+import { BackArrow } from "./BackToChoice";
 import { getLegacyChromeProps, useLegacyChrome } from "./legacyChrome";
 import { chooseExecution, emailCodeExecutionId, takePasswordChoice } from "./emailCodeChoice";
 
@@ -111,46 +112,56 @@ export default function Login(props: LoginProps) {
                   </button>
                 </div>
 
-                <div className="sl-legacy-trust">
-                  <p>{msgStr("skylabTrust")}</p>
-                  <details>
-                    <summary>{msgStr("skylabTrustMore")}</summary>
-                    <p>{msgStr("skylabTrustTaken")}</p>
-                  </details>
-                </div>
-
-                {hasPasskey && (
-                  <div className="sl-legacy-passkey-wrap">
-                    <button
-                      id={webAuthnButtonId}
-                      className="sl-legacy-passkey"
-                      type="button"
-                    >
-                      <span className="sl-key-icon" aria-hidden="true" />
-                      {msgStr("passkeyChoice")}
-                    </button>
+                {/*
+                  The other ways in, on one quiet line under the two main choices. "Parolanı mı
+                  unuttun?" lives in the password form, under the password field.
+                */}
+                {(hasPasskey || signUpExecution !== undefined) && (
+                  <div className="sl-legacy-alternatives">
+                    {hasPasskey && (
+                      <button
+                        id={webAuthnButtonId}
+                        className="sl-legacy-passkey"
+                        type="button"
+                      >
+                        <span className="sl-key-icon" aria-hidden="true" />
+                        {msgStr("passkeyChoice")}
+                      </button>
+                    )}
+                    {signUpExecution !== undefined && (
+                      <p className="sl-legacy-alternatives__sign-up">
+                        {msgStr("noAccount")}{" "}
+                        <button className="sl-text-button" type="button"
+                          onClick={() => chooseExecution(url.loginAction, signUpExecution, "sign-up")}>
+                          {msgStr("emailCodeSignUpShort")}
+                        </button>
+                      </p>
+                    )}
                   </div>
                 )}
 
-                {resetPasswordUrl !== undefined && (
-                  <p className="sl-legacy-choice-help">
-                    <a href={resetPasswordUrl}>{msg("doForgotPassword")}</a>
-                  </p>
+                {/* One folded help area: the trust sentence, what we take and the school password help. */}
+                {microsoftProvider !== undefined && (
+                  <details className="sl-legacy-help">
+                    <summary>{msgStr("skylabHelpSummary")}</summary>
+                    <p>{msgStr("skylabTrust")}</p>
+                    <p>
+                      <strong>{msgStr("skylabTrustMore")}</strong>{" "}
+                      {msgStr("skylabTrustTaken")}
+                    </p>
+                    <p>
+                      <strong>{msgStr("skylabSchoolPasswordHelp")}</strong>{" "}
+                      <a href={SCHOOL_PASSWORD_RESET_URL} target="_blank" rel="noopener noreferrer">
+                        {msgStr("skylabSchoolPasswordReset")}
+                      </a>{" "}
+                      {msgStr("skylabSchoolPasswordOr")}{" "}
+                      <a href={SCHOOL_SUPPORT_URL} target="_blank" rel="noopener noreferrer">
+                        {msgStr("skylabSchoolPasswordSupport")}
+                      </a>
+                      .
+                    </p>
+                  </details>
                 )}
-
-                <details className="sl-legacy-school-help">
-                  <summary>{msgStr("skylabSchoolPasswordHelp")}</summary>
-                  <p>
-                    <a href={SCHOOL_PASSWORD_RESET_URL} target="_blank" rel="noopener noreferrer">
-                      {msgStr("skylabSchoolPasswordReset")}
-                    </a>{" "}
-                    {msgStr("skylabSchoolPasswordOr")}{" "}
-                    <a href={SCHOOL_SUPPORT_URL} target="_blank" rel="noopener noreferrer">
-                      {msgStr("skylabSchoolPasswordSupport")}
-                    </a>
-                    .
-                  </p>
-                </details>
               </>
             )}
 
@@ -161,15 +172,7 @@ export default function Login(props: LoginProps) {
                   type="button"
                   onClick={() => setView("choice")}
                 >
-                  <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
-                    <path
-                      d="m15 19-7-7 7-7"
-                      stroke="currentColor"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                    />
-                  </svg>
+                  <BackArrow />
                   {msgStr("goBack")}
                 </button>}
 
@@ -294,7 +297,7 @@ export default function Login(props: LoginProps) {
               </div>
             )}
 
-            {signUpExecution !== undefined && (
+            {view === "password" && signUpExecution !== undefined && (
               <div className="sl-legacy-no-account">
                 <p className="sl-legacy-no-account__title">{msgStr("noAccount")}</p>
                 <p>

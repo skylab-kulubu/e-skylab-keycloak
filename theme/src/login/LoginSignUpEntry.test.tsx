@@ -7,6 +7,9 @@ import { rememberPasswordChoice } from "./emailCodeChoice";
 
 type LoginContext = Extract<KcContext, { pageId: "login.ftl" }>;
 
+/** The sign-up entry on either screen: "Hesap aç" on the first screen, "E-postayla hesap aç" in the password view. */
+const signUpEntry = /^(E-postayla hesap aç|Hesap aç)$/;
+
 async function renderLogin({
   flag,
   offersCode = true,
@@ -66,8 +69,13 @@ describe("the e-mail registration entry", () => {
     for (const passwordView of [false, true]) {
       const forms = submissions();
       const view = await renderLogin({ flag, passwordView });
-      const entry = view.getByRole("button", { name: "E-postayla hesap aç" });
-      expect(entry.closest(".sl-legacy-no-account")).toHaveTextContent("Hesabın yok mu?");
+      // The first screen says it on the one quiet line under the choices; the password view keeps its block.
+      const entry = passwordView
+        ? view.getByRole("button", { name: "E-postayla hesap aç" })
+        : view.getByRole("button", { name: "Hesap aç" });
+      expect(entry.closest(passwordView ? ".sl-legacy-no-account" : ".sl-legacy-alternatives__sign-up"))
+        .toHaveTextContent("Hesabın yok mu?");
+      expect(view.getAllByRole("button", { name: signUpEntry })).toHaveLength(1);
 
       fireEvent.click(entry);
 
@@ -85,7 +93,7 @@ describe("the e-mail registration entry", () => {
   it.each([undefined, false, "false", "on", "1", "TRUE", "true "])("hides the entry for absent, false or malformed flag %s", async flag => {
     for (const passwordView of [false, true]) {
       const view = await renderLogin({ flag, passwordView });
-      expect(view.queryByRole("button", { name: "E-postayla hesap aç" })).toBeNull();
+      expect(view.queryByRole("button", { name: signUpEntry })).toBeNull();
       expect(view.container.querySelector('a[href*="/registration"]')).toBeNull();
       view.unmount();
     }
@@ -93,12 +101,12 @@ describe("the e-mail registration entry", () => {
 
   it("hides the entry when Keycloak offers no e-mail code execution, even if registration is flagged on", async () => {
     const view = await renderLogin({ flag: "true", offersCode: false });
-    expect(view.queryByRole("button", { name: "E-postayla hesap aç" })).toBeNull();
+    expect(view.queryByRole("button", { name: signUpEntry })).toBeNull();
   });
 
   it("does not need a Microsoft provider for e-mail registration", async () => {
     const view = await renderLogin({ flag: "true", microsoft: false });
-    expect(view.getByRole("button", { name: "E-postayla hesap aç" })).toBeInTheDocument();
+    expect(view.getByRole("button", { name: "Hesap aç" })).toBeInTheDocument();
     expect(view.queryByRole("link", { name: "YTÜ hesabınla devam et" })).toBeNull();
   });
 
@@ -115,15 +123,21 @@ describe("the e-mail registration entry", () => {
 
   it("offers the same registration action in English", async () => {
     const view = await renderLogin({ flag: "true", language: "en" });
-    expect(view.getByRole("button", { name: "Create an account with email" })).toBeInTheDocument();
-    expect(view.container).not.toHaveTextContent("emailCodeSignUpLink");
+    expect(view.getByRole("button", { name: "Create one" }).closest(".sl-legacy-alternatives__sign-up"))
+      .toHaveTextContent("No account yet? Create one");
+    expect(view.container).not.toHaveTextContent("emailCodeSignUpShort");
+    view.unmount();
+
+    const passwordView = await renderLogin({ flag: "true", language: "en", passwordView: true });
+    expect(passwordView.getByRole("button", { name: "Create an account with email" })).toBeInTheDocument();
+    expect(passwordView.container).not.toHaveTextContent("emailCodeSignUpLink");
   });
 
   it("keeps broker proof on its explicit escape POST even when sign-up and an ordinary code execution are offered", async () => {
     const forms = submissions();
     const view = await renderLogin({ flag: "true", brokerProof: true });
 
-    expect(view.queryByRole("button", { name: "E-postayla hesap aç" })).toBeNull();
+    expect(view.queryByRole("button", { name: signUpEntry })).toBeNull();
     expect(view.container.querySelector(".sl-legacy-no-account")).toBeNull();
     const escape = view.container.querySelector('button[name="sky-existing-account-action"][value="new-account"]');
     expect(escape).toHaveTextContent("Bağlanamadım, yeni hesap aç");

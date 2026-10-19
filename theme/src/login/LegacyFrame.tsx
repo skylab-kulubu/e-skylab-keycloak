@@ -4,7 +4,6 @@ import AnimatedSkyLabLogo from "./AnimatedSkyLabLogo";
 import DeveloperCredit from "./DeveloperCredit";
 import GridBackdrop from "./GridBackdrop";
 import TeamMarquee from "./TeamMarquee";
-import YtuMark from "./YtuMark";
 
 /**
  * The published KVKK notice itself, not the skyl.app short link (eskylab-login-ux 05). The same
@@ -24,11 +23,13 @@ export type LegacyFrameLanguageMenu = {
   languages: LegacyFrameLanguage[];
 };
 
-/** The panel beside the card on wide screens: what one SKY LAB account gives. */
+/**
+ * The quiet panel beside the card on wide screens: the logo, one slogan and one sentence. It does
+ * not list the ways in again; the form beside it already offers them.
+ */
 export type LegacyFrameBrand = {
   title: string;
   text: string;
-  features: { sites: string; ytu: string; passkey: string };
 };
 
 type LegacyFrameProps = {
@@ -122,31 +123,6 @@ export default function LegacyFrame(props: LegacyFrameProps) {
                 <div className="sl-legacy-brand__copy">
                   <p className="sl-legacy-brand__title">{brand.title}</p>
                   <p className="sl-legacy-brand__text">{brand.text}</p>
-                  <ul className="sl-legacy-brand__features">
-                    <li>
-                      <span className="sl-legacy-brand__icon">
-                        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <rect x="3" y="3" width="7" height="7" rx="1.5" />
-                          <rect x="14" y="3" width="7" height="7" rx="1.5" />
-                          <rect x="3" y="14" width="7" height="7" rx="1.5" />
-                          <rect x="14" y="14" width="7" height="7" rx="1.5" />
-                        </svg>
-                      </span>
-                      {brand.features.sites}
-                    </li>
-                    <li>
-                      <span className="sl-legacy-brand__icon">
-                        <YtuMark />
-                      </span>
-                      {brand.features.ytu}
-                    </li>
-                    <li>
-                      <span className="sl-legacy-brand__icon">
-                        <span className="sl-key-icon" aria-hidden="true" />
-                      </span>
-                      {brand.features.passkey}
-                    </li>
-                  </ul>
                 </div>
               )}
             </div>

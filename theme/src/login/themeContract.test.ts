@@ -203,4 +203,61 @@ describe("SKY LAB theme: one design system", () => {
     expect(css).toContain("@media (forced-colors: active)");
     expect(css).toContain("@media (max-width: 39.999rem)");
   });
+
+  /** The body of one `@media` block, comments removed. */
+  function mediaBlock(query: string): string {
+    const source = css.replace(/\/\*[\s\S]*?\*\//g, "");
+    const start = source.indexOf(`@media ${query} {`);
+    expect(start, `missing @media ${query}`).toBeGreaterThanOrEqual(0);
+    let depth = 0;
+    for (let index = source.indexOf("{", start); index < source.length; index += 1) {
+      if (source[index] === "{") depth += 1;
+      if (source[index] === "}") depth -= 1;
+      if (depth === 0) return source.slice(start, index + 1);
+    }
+    throw new Error(`unterminated @media ${query}`);
+  }
+
+  it("shows the whole logo from the first frame; the animation only traces a line over it", () => {
+    const path = rules.find(rule => rule.selectors.includes(".sl-legacy-logo__svg path"))!.body;
+    expect(path).toMatch(/(?:^|;)\s*fill-opacity:\s*1\s*;/);
+    expect(path).not.toMatch(/fill-opacity:\s*0\s*;/);
+    expect(declaration(".sl-legacy-logo__svg path", "animation-name")).toBe("sl-legacy-logo-draw, sl-legacy-logo-stroke-fade");
+    // Nothing fades the fill in any more.
+    expect(css).not.toContain("sl-legacy-logo-fill");
+    expect(mediaBlock("(prefers-reduced-motion: reduce)")).toMatch(
+      /\.sl-legacy-logo__svg path\s*\{[^}]*animation:\s*none;[^}]*fill-opacity:\s*1;[^}]*stroke-opacity:\s*0;/
+    );
+  });
+
+  it("keeps help copy at 14px or more", () => {
+    for (const selector of [
+      ".sl-legacy-help",
+      ".sl-legacy-alternatives",
+      ".sl-legacy-no-account",
+      ".sl-legacy-domain",
+      ".sl-legacy-choice__hint",
+      ".sl-legacy-field-error",
+      ".sl-helper-text",
+      ".sl-legacy-required-note",
+      ".sl-passkey-offer__privacy",
+      ".sl-personal-email-offer__note",
+      ".sl-stay-signed-in__warning",
+      ".sl-email-code-sign-up__note",
+      ".sl-auth-item__description"
+    ]) {
+      const size = declaration(selector, "font-size");
+      expect(size, selector).toMatch(/rem$/);
+      expect(Number.parseFloat(size) * 16, selector).toBeGreaterThanOrEqual(14);
+    }
+  });
+
+  it("keeps the team strips quiet, inside the window and, on a phone, below the form", () => {
+    expect(Number(declaration(".sl-legacy-teams__item", "opacity"))).toBeLessThanOrEqual(0.2);
+    const base = rules.find(rule => rule.selectors.includes(".sl-legacy-teams"))!.body;
+    expect(base).toMatch(/width:\s*min\(100% - 2rem,/);
+    const phone = mediaBlock("(max-width: 39.999rem)");
+    expect(phone).toMatch(/\.sl-legacy-teams--left\s*\{\s*display:\s*none;/);
+    expect(phone).not.toMatch(/\.sl-legacy-teams--right\s*\{\s*display:\s*none;/);
+  });
 });

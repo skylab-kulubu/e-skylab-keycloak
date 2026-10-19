@@ -4,14 +4,14 @@ import YtuMark from "../login/YtuMark";
 
 /**
  * The page Keycloak serves at https://e.yildizskylab.com/ (the e-skylab-welcome theme, see
- * template.tsx): what e-SKY LAB is, where the account is used, how to sign in today and what
- * happens to the school password. Rendered once at build time to static HTML; it has no state,
- * no script and no form, and it never links to the Admin Console.
+ * template.tsx): where the account is used, how to sign in and how to open an account. Rendered
+ * once at build time to static HTML; it has no state, no script and no form, and it never links to
+ * the Admin Console.
  *
- * The copy follows today's login page (theme/src/login/i18n.ts: "YTÜ hesabınla devam et",
- * "E-postayla devam et", "Erişim anahtarı ile giriş yap") and the trust copy of the login spec
- * (ADR-0063). When the login buttons change (e-postayla kodla giriş, kayıt), this page changes
- * with them.
+ * Copy is functional only (Yusuf, 2026-10-19): headings, the login page's own button labels
+ * (theme/src/login/i18n.ts: "YTÜ hesabınla devam et", "E-postayla devam et", "Parolanla gir",
+ * "Erişim anahtarı ile giriş yap", "Hesabın yok mu? Hesap aç") and one short line each. When those
+ * buttons change, this page changes with them.
  */
 
 export const ACCOUNT_CENTER_URL = "https://my.yildizskylab.com/";
@@ -21,24 +21,12 @@ export const KVKK_URL = "https://yildizskylab.com/kvkk-metni.pdf";
 type App = { name: string; host: string; text: string };
 
 const apps: App[] = [
-  {
-    name: "Hesap Merkezi",
-    host: "my.yildizskylab.com",
-    text: "Adın, e-posta adreslerin, parolan, erişim anahtarların ve oturumların. Hesabını buradan yönetir, istersen silersin."
-  },
-  { name: "SkyForms", host: "forms.yildizskylab.com", text: "Etkinlik başvuruları ve kulübün formları." },
-  {
-    name: "Yönetim paneli",
-    host: "admin.yildizskylab.com",
-    text: "Yönetim ve ekip liderleri için: üyeler, etkinlikler, biletler ve sertifikalar."
-  },
-  { name: "SkyMail", host: "mail.yildizskylab.com", text: "Kulübün e-posta gönderim paneli, yetkisi olanlar için." },
-  { name: "YıldızPlace", host: "place.yildizskylab.com", text: "Etkinliğin yöneticileri bu hesapla girer." },
-  {
-    name: "Kulüp siteleri",
-    host: "yildizskylab.com",
-    text: "Sitelerin editörleri içeriği bu hesapla düzenler. Siteleri okumak için hesap gerekmez."
-  }
+  { name: "Hesap Merkezi", host: "my.yildizskylab.com", text: "Hesabını yönet." },
+  { name: "SkyForms", host: "forms.yildizskylab.com", text: "Başvurular ve formlar." },
+  { name: "Yönetim paneli", host: "admin.yildizskylab.com", text: "Yönetim ve ekip liderleri." },
+  { name: "SkyMail", host: "mail.yildizskylab.com", text: "Kulübün e-posta paneli." },
+  { name: "YıldızPlace", host: "place.yildizskylab.com", text: "Etkinlik yönetimi." },
+  { name: "Kulüp siteleri", host: "yildizskylab.com", text: "Site editörleri." }
 ];
 
 function SectionKicker(props: { path: string; label: string }) {
@@ -65,26 +53,6 @@ function LockIcon() {
     <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="4" y="11" width="16" height="10" rx="2" />
       <path d="M8 11V7a4 4 0 0 1 8 0v4" />
-    </svg>
-  );
-}
-
-function MailIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="5" width="18" height="14" rx="2" />
-      <path d="m3 7 9 6 9-6" />
-    </svg>
-  );
-}
-
-function DocumentIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" />
-      <path d="M14 3v5h5" />
-      <path d="M9 13h6" />
-      <path d="M9 17h4" />
     </svg>
   );
 }
@@ -122,11 +90,7 @@ export default function WelcomePage() {
             <h1 id="sl-welcome-title">
               Tek hesap, <span>bütün SKY LAB.</span>
             </h1>
-            <p className="sl-welcome-lead">
-              e-SKY LAB, SKY LAB'in giriş hizmetidir. Kulübün uygulamalarına ve sitelerine aynı hesapla girersin. Bir
-              uygulamada "Giriş yap"a bastığında bu adresteki giriş ekranı açılır; giriş bitince seni geldiğin yere geri
-              gönderir.
-            </p>
+            <p className="sl-welcome-lead">SKY LAB'in tüm platformlarına tek hesapla gir.</p>
             <div className="sl-welcome-actions">
               <a className="sl-legacy-choice sl-legacy-choice--primary" href={ACCOUNT_CENTER_URL}>
                 Hesap Merkezi'ne git
@@ -155,9 +119,6 @@ export default function WelcomePage() {
                 <AnimatedSkyLabLogo />
               </div>
               <p className="sl-welcome-window__title">Tek hesap, tek giriş</p>
-              <p className="sl-welcome-window__text">
-                Okul şifren yalnız Microsoft'ta kalır. SKY LAB'in giriş adresi bu: e.yildizskylab.com.
-              </p>
             </div>
           </div>
         </section>
@@ -165,10 +126,6 @@ export default function WelcomePage() {
         <section id="uygulamalar" className="sl-welcome-container sl-welcome-section" aria-labelledby="sl-welcome-apps-title">
           <SectionKicker path="./uygulamalar" label="nerede" />
           <h2 id="sl-welcome-apps-title">Nerede kullanılır?</h2>
-          <p className="sl-welcome-section__intro">
-            Kulübün hesap isteyen uygulamalarına ve sitelerine aynı e-SKY LAB hesabıyla girersin. Birine girdiğinde
-            ötekilerde de çoğu zaman yeniden giriş yapman gerekmez.
-          </p>
           <ul className="sl-welcome-apps" aria-label="e-SKY LAB hesabıyla girilen uygulamalar">
             {apps.map(app => (
               <li key={app.host}>
@@ -188,9 +145,6 @@ export default function WelcomePage() {
         <section id="giris" className="sl-welcome-container sl-welcome-section" aria-labelledby="sl-welcome-signin-title">
           <SectionKicker path="./giris" label="giriş yolları" />
           <h2 id="sl-welcome-signin-title">Nasıl giriş yapılır?</h2>
-          <p className="sl-welcome-section__intro">
-            Bir uygulamada "Giriş yap"a bas; giriş ekranında şu yollardan birini seç.
-          </p>
           <ol className="sl-welcome-steps" aria-label="Giriş yolları">
             <li className="sl-welcome-step">
               <span className="sl-welcome-step__meta">01 · YTÜ hesabı</span>
@@ -198,29 +152,21 @@ export default function WelcomePage() {
                 <span className="sl-welcome-step__icon">
                   <YtuMark />
                 </span>
-                YTÜ öğrencisiysen
+                YTÜ hesabınla devam et
               </h3>
-              <p>
-                <strong>YTÜ hesabınla devam et</strong>'i seç. Microsoft'un sayfası açılır, okul hesabınla girersin. İlk girişinde
-                SKY LAB hesabın açılır; adını onaylaman ve e-posta adresini doğrulaman istenebilir.
-              </p>
-              <p>
-                İlk girişte Microsoft bir izin ekranı gösterebilir ve SKY LAB için "profilini okuma" izni ister. Profilinden
-                yalnız adını, okul e-postanı ve bölümünü alırız.
-              </p>
+              <p>Okul hesabınla Microsoft üzerinden gir.</p>
             </li>
             <li className="sl-welcome-step">
-              <span className="sl-welcome-step__meta">02 · Parola</span>
+              <span className="sl-welcome-step__meta">02 · E-posta kodu</span>
               <h3>
                 <span className="sl-welcome-step__icon">
                   <span className="sl-authenticator-icon sl-authenticator-icon--password" aria-hidden="true" />
                 </span>
-                Parolan varsa
+                E-postayla devam et
               </h3>
               <p>
-                <strong>E-postayla devam et</strong>'i seç; e-posta adresini (okul ya da kişisel) ya da kullanıcı adını
-                ve parolanı yaz. Parolanı unuttuysan aynı ekrandaki <strong>Parolanı mı unuttun?</strong> bağlantısını
-                kullan. Parolayı Hesap Merkezi'nden eklersin.
+                E-postana gelen 6 haneli kodla gir. Parolan varsa <strong>Parolanla gir</strong>; unuttuysan{" "}
+                <strong>Parolanı mı unuttun?</strong>
               </p>
             </li>
             <li className="sl-welcome-step">
@@ -229,47 +175,20 @@ export default function WelcomePage() {
                 <span className="sl-welcome-step__icon">
                   <span className="sl-key-icon" aria-hidden="true" />
                 </span>
-                Erişim anahtarın varsa
+                Erişim anahtarı ile giriş yap
               </h3>
-              <p>
-                <strong>Erişim anahtarı ile giriş yap</strong>'ı seç; Touch ID, Face ID ya da Windows Hello ile parolasız
-                girersin. Erişim anahtarını (passkey) Hesap Merkezi'nden eklersin.
-              </p>
+              <p>Touch ID, Face ID ya da Windows Hello ile gir.</p>
             </li>
           </ol>
-          <p className="sl-welcome-note">
-            Hesabın yoksa giriş ekranında <strong>Hesap aç</strong>'ı seç.
-          </p>
         </section>
 
-        <section id="guven" className="sl-welcome-container sl-welcome-section" aria-labelledby="sl-welcome-trust-title">
-          <SectionKicker path="./guven" label="şifren ve verilerin" />
-          <h2 id="sl-welcome-trust-title">Okul şifren yalnız Microsoft'ta.</h2>
-          <ul className="sl-welcome-trust" aria-label="Şifren ve verilerin">
-            <li>
-              <span className="sl-legacy-brand__icon">
-                <LockIcon />
-              </span>
-              <p>Okul şifreni yalnız Microsoft'un sayfasına yazarsın; SKY LAB onu hiçbir zaman görmez.</p>
-            </li>
-            <li>
-              <span className="sl-legacy-brand__icon">
-                <MailIcon />
-              </span>
-              <p>
-                YTÜ hesabından yalnız adını, okul e-postanı ve bölümünü alırız; postalarına ve dosyalarına erişmeyiz.
-                Hesabını tanımak için Microsoft hesabının değişmez kimlik numarasını da saklarız.
-              </p>
-            </li>
-            <li>
-              <span className="sl-legacy-brand__icon">
-                <DocumentIcon />
-              </span>
-              <p>
-                Kişisel verilerinin nasıl işlendiğini <a href={KVKK_URL}>KVKK Aydınlatma Metni</a>'nde okuyabilirsin.
-              </p>
-            </li>
-          </ul>
+        <section id="hesap-ac" className="sl-welcome-container sl-welcome-section" aria-labelledby="sl-welcome-signup-title">
+          <SectionKicker path="./hesap-ac" label="yeni hesap" />
+          <h2 id="sl-welcome-signup-title">Hesap aç</h2>
+          <p className="sl-welcome-note">
+            Giriş ekranında <strong>Hesabın yok mu? Hesap aç</strong>: e-posta adresin, adın ve soyadın, e-postana gelen
+            6 haneli kod. Parola ve erişim anahtarı isteğe bağlı.
+          </p>
         </section>
       </main>
 

@@ -15,8 +15,7 @@ const allowedLinks = new Set([
   KVKK_URL,
   "#sl-welcome-main",
   "#uygulamalar",
-  "#giris",
-  "#guven"
+  "#giris"
 ]);
 
 afterEach(() => {
@@ -41,15 +40,15 @@ describe("the e-SKY LAB landing page", () => {
     expect(logo).toHaveAttribute("role", "img");
     expect(logo?.querySelectorAll("path")).toHaveLength(19);
 
-    for (const name of ["Nerede kullanılır?", "Nasıl giriş yapılır?", "Okul şifren yalnız Microsoft'ta."]) {
+    for (const name of ["Nerede kullanılır?", "Nasıl giriş yapılır?", "Hesap aç"]) {
       expect(screen.getByRole("heading", { level: 2, name })).toBeInTheDocument();
     }
   });
 
-  it("says what e-SKY LAB is and links to Account Center", () => {
+  it("says it in one line and links to Account Center", () => {
     render(<WelcomePage />);
 
-    expect(screen.getByText(/e-SKY LAB, SKY LAB'in giriş hizmetidir\./)).toBeInTheDocument();
+    expect(document.querySelector(".sl-welcome-lead")?.textContent).toBe("SKY LAB'in tüm platformlarına tek hesapla gir.");
     const accountCenter = screen.getAllByRole("link", { name: /Hesap Merkezi/ });
     expect(accountCenter.length).toBeGreaterThan(0);
     for (const link of accountCenter) {
@@ -86,31 +85,32 @@ describe("the e-SKY LAB landing page", () => {
     // The labels are the login page's (theme/src/login/i18n.ts: microsoft, continueWithEmail, passkeyChoice).
     expect(steps[0]).toHaveTextContent("YTÜ hesabınla devam et");
     expect(steps[0]).toHaveTextContent("Microsoft");
+    // The e-mail way is a 6-digit code first; the password is optional ("Parolanla gir").
     expect(steps[1]).toHaveTextContent("E-postayla devam et");
+    expect(steps[1]).toHaveTextContent("6 haneli kod");
+    expect(steps[1]).toHaveTextContent("Parolanla gir");
     expect(steps[1]).toHaveTextContent("Parolanı mı unuttun?");
     expect(steps[2]).toHaveTextContent("Erişim anahtarı ile giriş yap");
-    // Self-registration (ADR-0063) is live: the note names the login page's "Hesap aç" entry, nothing more.
-    const note = document.querySelector(".sl-welcome-note");
-    expect(note?.textContent).toBe("Hesabın yoksa giriş ekranında Hesap aç'ı seç.");
-    expect(screen.queryByText(/kendin hesap açamazsın/)).toBeNull();
   });
 
-  it("carries the trust copy of the login spec word for word", () => {
+  it("says how to open an account: Hesap aç, by e-mail, password and passkey optional", () => {
     render(<WelcomePage />);
 
-    const trust = within(screen.getByRole("list", { name: "Şifren ve verilerin" }));
-    expect(
-      trust.getByText("Okul şifreni yalnız Microsoft'un sayfasına yazarsın; SKY LAB onu hiçbir zaman görmez.")
-    ).toBeInTheDocument();
-    expect(
-      trust.getByText(
-        "YTÜ hesabından yalnız adını, okul e-postanı ve bölümünü alırız; postalarına ve dosyalarına erişmeyiz.",
-        { exact: false }
-      )
-    ).toBeInTheDocument();
-    expect(trust.getByText(/değişmez kimlik numarasını/)).toBeInTheDocument();
-    // The sign-in address line was removed from the login theme (Yusuf, 2026-10-19), here too.
-    expect(screen.queryByText(/Giriş adresi her zaman/)).toBeNull();
+    const note = document.querySelector("#hesap-ac .sl-welcome-note");
+    expect(note).toHaveTextContent("Hesabın yok mu? Hesap aç");
+    expect(note).toHaveTextContent("6 haneli kod");
+    expect(note).toHaveTextContent("Parola ve erişim anahtarı isteğe bağlı.");
+    expect(screen.queryByText(/kendin hesap açamazsın|hazırlanıyor/)).toBeNull();
+  });
+
+  it("has no explanatory trust paragraphs any more; the KVKK notice stays linked", () => {
+    const { container } = render(<WelcomePage />);
+
+    // Functional copy only (Yusuf, 2026-10-19).
+    for (const removed of ["Okul şifreni yalnız", "Giriş adresi her zaman", "izin ekranı", "değişmez kimlik numarası", "giriş hizmetidir"]) {
+      expect(container, removed).not.toHaveTextContent(removed);
+    }
+    expect(container.querySelector("#guven")).toBeNull();
 
     const kvkk = screen.getAllByRole("link", { name: "KVKK Aydınlatma Metni" });
     expect(kvkk.length).toBeGreaterThan(0);

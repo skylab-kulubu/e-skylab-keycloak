@@ -52,6 +52,8 @@ type LegacyFrameProps = {
   titleId: string;
   /** False while Keycloakify is still fetching the current locale's base messages. */
   translationsReady?: boolean;
+  /** What the loading state between two steps says to a screen reader ("Yükleniyor…"). */
+  loadingLabel?: string;
 };
 
 export default function LegacyFrame(props: LegacyFrameProps) {
@@ -70,7 +72,8 @@ export default function LegacyFrame(props: LegacyFrameProps) {
     teams = false,
     title,
     titleId,
-    translationsReady = true
+    translationsReady = true,
+    loadingLabel = "Yükleniyor…"
   } = props;
 
   const showLanguageMenu = languageMenu !== undefined && languageMenu.languages.length > 1;
@@ -111,6 +114,12 @@ export default function LegacyFrame(props: LegacyFrameProps) {
               {headerExtras}
 
               {children}
+            </div>
+
+            {/* navigationLoading.ts shows this while the next step loads; the label is filled in then, so it is announced. */}
+            <div className="sl-legacy-loading">
+              <AnimatedSkyLabLogo variant="loading" />
+              <span className="sl-legacy-loading__label" role="status" aria-live="polite" data-label={loadingLabel} />
             </div>
 
             <div className="sl-legacy-brand">

@@ -69,7 +69,7 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     skylabLoading: "Yükleniyor…",
     // The brand panel beside the card on wide screens
     skylabBrandTitle: "Tek hesap, tek giriş",
-    skylabBrandText: "Hesap Merkezi, SkyForms ve kulübün hesap isteyen öteki sitelerine aynı hesapla girersin.",
+    skylabBrandText: "SKY LAB'in tüm platformlarına tek hesapla gir.",
     skylabBrandSites: "Hesap isteyen kulüp sitelerinde tek hesap",
     skylabBrandYtu: "YTÜ öğrenci hesabınla hızlı giriş",
     skylabBrandPasskey: "Erişim anahtarıyla parolasız giriş",
@@ -465,7 +465,7 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     skylabLoading: "Loading…",
     // The brand panel beside the card on wide screens
     skylabBrandTitle: "One account, one sign-in",
-    skylabBrandText: "The same account opens the Account Center, SkyForms and the club's other member sites.",
+    skylabBrandText: "Sign in to every SKY LAB platform with one account.",
     skylabBrandSites: "One account for the club's member sites",
     skylabBrandYtu: "Quick sign-in with your YTÜ student account",
     skylabBrandPasskey: "Passwordless sign-in with a passkey",

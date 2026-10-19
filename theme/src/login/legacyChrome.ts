@@ -34,6 +34,7 @@ export function getLegacyChromeProps(i18n: I18n, options: LegacyChromeOptions = 
         }
       : undefined,
     skipToContent: msgStr("skipToContent"),
+    loadingLabel: msgStr("skylabLoading"),
     teams: brand,
     translationsReady: !i18n.isFetchingTranslations
   };

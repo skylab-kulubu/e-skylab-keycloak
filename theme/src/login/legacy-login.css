@@ -326,6 +326,7 @@ a:hover {
 }
 
 .sl-legacy-card {
+  position: relative;
   display: grid;
   overflow: hidden;
   border-radius: calc(var(--sl-legacy-radius) * 2);
@@ -1861,6 +1862,202 @@ i.sl-auth-item__arrow-mark {
   }
 }
 
+/* 4b. One page across steps -------------------------------------------------
+   Keycloak's steps are separate page loads (pageTransitions.ts, navigationLoading.ts).
+   - The entrance animations play on a tab's first page only (`data-sl-entered`).
+   - While a step loads (after 150 ms), the card's content fades and the logo draws in its middle.
+   - With View Transitions (no reduced motion), the frame stays put across steps and only the
+     card's content slides; "Geri dön" and the browser's back button slide it the other way. */
+
+html[data-sl-entered] .sl-legacy-background__layers,
+html[data-sl-entered] .sl-legacy-background__stars {
+  animation: none;
+  opacity: 1;
+}
+
+html[data-sl-entered] .sl-legacy-background__iris {
+  animation: none;
+  opacity: 0.3;
+  transform: translateX(-50%) scale(1);
+}
+
+html[data-sl-entered] .sl-legacy-background__grain {
+  animation: none;
+  opacity: 0.55;
+}
+
+html[data-sl-entered] .sl-legacy-brand__mark {
+  animation: none;
+  opacity: 0.07;
+}
+
+html[data-sl-entered] .sl-legacy-logo .sl-legacy-logo__svg path {
+  animation: none;
+  stroke-opacity: 0;
+}
+
+.sl-legacy-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  pointer-events: none;
+}
+
+html[data-sl-loading] .sl-legacy-loading {
+  display: flex;
+}
+
+html[data-sl-loading] .sl-legacy-card__body {
+  opacity: 0.25;
+  pointer-events: none;
+  transition: opacity 150ms ease;
+}
+
+.sl-legacy-loading .sl-legacy-logo__animation {
+  width: 4.5rem;
+  height: 4.25rem;
+}
+
+.sl-legacy-loading .sl-legacy-logo__svg path {
+  fill-opacity: 0;
+  stroke: currentColor;
+  stroke-opacity: 1;
+  stroke-dashoffset: 1;
+  animation: sl-legacy-loading-draw 1.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  animation-delay: calc(var(--sl-logo-path-index) * 0.05s);
+}
+
+/* Visually hidden until reduced motion asks for a plain text indicator instead of the drawing. */
+.sl-legacy-loading__label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@keyframes sl-legacy-loading-draw {
+  0% {
+    stroke-dashoffset: 1;
+    fill-opacity: 0;
+  }
+  55% {
+    stroke-dashoffset: 0;
+    fill-opacity: 0;
+  }
+  80%,
+  100% {
+    stroke-dashoffset: 0;
+    fill-opacity: 0.85;
+  }
+}
+
+.sl-legacy-background {
+  view-transition-name: sl-backdrop;
+}
+
+.sl-legacy-teams--left {
+  view-transition-name: sl-teams-top;
+}
+
+.sl-legacy-teams--right {
+  view-transition-name: sl-teams-bottom;
+}
+
+.sl-legacy-card {
+  view-transition-name: sl-card;
+}
+
+.sl-legacy-card__body {
+  view-transition-name: sl-card-body;
+}
+
+.sl-legacy-logo {
+  view-transition-name: sl-logo;
+}
+
+.sl-legacy-footer {
+  view-transition-name: sl-footer;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @view-transition {
+    navigation: auto;
+  }
+
+  ::view-transition-group(*) {
+    animation-duration: 220ms;
+    animation-timing-function: cubic-bezier(0.2, 0.7, 0.3, 1);
+  }
+
+  /* The frame is the same on both pages: swap it at once instead of cross-fading. */
+  ::view-transition-old(root),
+  ::view-transition-old(sl-backdrop),
+  ::view-transition-old(sl-teams-top),
+  ::view-transition-old(sl-teams-bottom),
+  ::view-transition-old(sl-footer) {
+    display: none;
+  }
+
+  ::view-transition-new(root),
+  ::view-transition-new(sl-backdrop),
+  ::view-transition-new(sl-teams-top),
+  ::view-transition-new(sl-teams-bottom),
+  ::view-transition-new(sl-footer) {
+    animation: none;
+  }
+
+  ::view-transition-old(sl-card-body) {
+    animation: sl-legacy-step-out 150ms ease-in both;
+  }
+
+  ::view-transition-new(sl-card-body) {
+    animation: sl-legacy-step-in 220ms cubic-bezier(0.2, 0.7, 0.3, 1) 60ms both;
+  }
+
+  html[data-sl-vt-direction="back"]::view-transition-old(sl-card-body) {
+    animation-name: sl-legacy-step-out-back;
+  }
+
+  html[data-sl-vt-direction="back"]::view-transition-new(sl-card-body) {
+    animation-name: sl-legacy-step-in-back;
+  }
+}
+
+@keyframes sl-legacy-step-out {
+  to {
+    opacity: 0;
+    transform: translateX(-1.5rem);
+  }
+}
+
+@keyframes sl-legacy-step-in {
+  from {
+    opacity: 0;
+    transform: translateX(1.5rem);
+  }
+}
+
+@keyframes sl-legacy-step-out-back {
+  to {
+    opacity: 0;
+    transform: translateX(1.5rem);
+  }
+}
+
+@keyframes sl-legacy-step-in-back {
+  from {
+    opacity: 0;
+    transform: translateX(-1.5rem);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .sl-legacy-background__layers,
   .sl-legacy-background__iris,
@@ -1894,6 +2091,28 @@ i.sl-auth-item__arrow-mark {
     fill-opacity: 1;
     stroke-opacity: 0;
     stroke-dashoffset: 0;
+  }
+
+  /* The loading state: a still logo and a plain "Yükleniyor…" under it, no drawing. */
+  .sl-legacy-loading .sl-legacy-logo__svg path {
+    animation: none;
+    fill-opacity: 0.85;
+    stroke-opacity: 0;
+    stroke-dashoffset: 0;
+  }
+
+  .sl-legacy-loading__label {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+    color: var(--sl-legacy-muted);
+    font-size: 0.875rem;
+  }
+
+  html[data-sl-loading] .sl-legacy-card__body {
+    transition: none;
   }
 
   .sl-legacy-shell *,

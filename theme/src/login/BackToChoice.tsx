@@ -1,5 +1,6 @@
 import type { KcContext } from "./KcContext";
 import { chooseExecution, passwordFormExecutionId } from "./emailCodeChoice";
+import { markBackNavigation } from "./pageTransitions";
 
 /** The "Geri dön" arrow, shared with the password view's own back button (Login.tsx). */
 export function BackArrow() {
@@ -30,7 +31,10 @@ export default function BackToChoice(props: { kcContext: KcContext; label: strin
         id="sl-back-to-choice"
         className="sl-legacy-back"
         type="button"
-        onClick={() => chooseExecution(kcContext.url.loginAction, passwordExecution)}
+        onClick={() => {
+          markBackNavigation();
+          chooseExecution(kcContext.url.loginAction, passwordExecution);
+        }}
       >
         <BackArrow />
         {label}
@@ -39,7 +43,7 @@ export default function BackToChoice(props: { kcContext: KcContext; label: strin
   }
   if (restartUrl) {
     return (
-      <a id="sl-back-to-choice" className="sl-legacy-back" href={restartUrl}>
+      <a id="sl-back-to-choice" className="sl-legacy-back" href={restartUrl} onClick={markBackNavigation}>
         <BackArrow />
         {label}
       </a>

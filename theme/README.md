@@ -139,6 +139,16 @@ Only the two original brand image assets were carried forward.
   headers (no framing, `no-store`, `no-referrer`, the inline page context
   allowed by hash only) and falls back to a built-in page when a realm's login
   theme lacks it.
+- One page across steps (`src/login/pageTransitions.ts`, `src/login/navigationLoading.ts`): Keycloak's
+  steps stay separate page loads and every form still posts natively, but where the browser supports
+  cross-document View Transitions (and motion is welcome) the frame (background, team strips, card,
+  logo, footer) stays put and only the card's content slides, backwards for "Geri dön" and the back
+  button. The entry script is render-blocking (`vite.config.ts`) and the first render synchronous
+  (`main.tsx`), so the new page's first frame already holds the card. Entrance animations play on a
+  tab's first page only; the team strips take their phase from the wall clock. A step that takes
+  longer than 150 ms fades the card's content and draws the logo in its middle (`aria-busy`, a
+  "Yükleniyor…" live region; a still logo and plain text with reduced motion); a second submission
+  is cancelled meanwhile, and the state clears on a back/forward-cache return.
 - Every visible string comes from `src/login/i18n.ts` (Turkish first, English
   second); the Turkish keys that Keycloakify's default set lacks live there.
 - The translations are one object literal written inside

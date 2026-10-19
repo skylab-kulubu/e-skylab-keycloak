@@ -9,6 +9,7 @@ import LegacyFrame from "./LegacyFrame";
 import PageMessage from "./PageMessage";
 import BrokerLinkEscape from "./BrokerLinkEscape";
 import { BackArrow } from "./BackToChoice";
+import { withViewTransition } from "./pageTransitions";
 import { getLegacyChromeProps, useLegacyChrome } from "./legacyChrome";
 import { chooseExecution, emailCodeExecutionId, takePasswordChoice } from "./emailCodeChoice";
 
@@ -89,7 +90,7 @@ export default function Login(props: LoginProps) {
                     type="button"
                     onClick={() =>
                       emailCodeExecution === undefined
-                        ? setView("password")
+                        ? withViewTransition(() => setView("password"))
                         : chooseExecution(url.loginAction, emailCodeExecution)
                     }
                   >
@@ -155,7 +156,7 @@ export default function Login(props: LoginProps) {
                 {!isBrokerProof && <button
                   className="sl-legacy-back"
                   type="button"
-                  onClick={() => setView("choice")}
+                  onClick={() => withViewTransition(() => setView("choice"), "back")}
                 >
                   <BackArrow />
                   {msgStr("goBack")}

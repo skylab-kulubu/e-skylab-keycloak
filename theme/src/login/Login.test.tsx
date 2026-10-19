@@ -340,9 +340,7 @@ describe("login page: sign-in choices and trust copy (eskylab-login-ux 05)", () 
     const panel = view.container.querySelector(".sl-legacy-card--brand .sl-legacy-brand") as HTMLElement;
     expect(panel.querySelector('[data-skylab-logo-animation="draw"]')).not.toBeNull();
     expect(panel.querySelector(".sl-legacy-brand__title")).toHaveTextContent("Tek hesap, tek giriş");
-    expect(panel.querySelector(".sl-legacy-brand__text")).toHaveTextContent(
-      "Hesap Merkezi, SkyForms ve kulübün hesap isteyen öteki sitelerine aynı hesapla girersin."
-    );
+    expect(panel.querySelector(".sl-legacy-brand__text")?.textContent).toBe("SKY LAB'in tüm platformlarına tek hesapla gir.");
     expect(Array.from(panel.querySelectorAll(".sl-legacy-brand__features li")).map(item => item.textContent)).toEqual([
       "Hesap isteyen kulüp sitelerinde tek hesap",
       "YTÜ öğrenci hesabınla hızlı giriş",
@@ -353,6 +351,9 @@ describe("login page: sign-in choices and trust copy (eskylab-login-ux 05)", () 
     const english = render(<KcPage kcContext={getDevKcContextForPage("login.ftl", "en")} />);
     await waitFor(() => expect(english.container.querySelector(".sl-legacy-shell")).toHaveAttribute("data-sl-translations", "ready"));
     expect(english.container.querySelector(".sl-legacy-brand__title")).toHaveTextContent("One account, one sign-in");
+    expect(english.container.querySelector(".sl-legacy-brand__text")?.textContent).toBe(
+      "Sign in to every SKY LAB platform with one account."
+    );
     expect(english.container.querySelectorAll(".sl-legacy-brand__features li")).toHaveLength(3);
   });
 

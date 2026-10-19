@@ -22,7 +22,22 @@ const animatedSkyLabLogo = skyLabLogoSource
 // Keep the same object so countdowns and form updates preserve the paths and their animation clock.
 const logoMarkup = { __html: animatedSkyLabLogo };
 
-export default function AnimatedSkyLabLogo() {
+/**
+ * The page's logo (`draw`: whole from the first frame, a light trace on top), or the loading
+ * state's copy of it (`loading`: drawn over and over while a step is on its way; decorative, the
+ * loading state's own text speaks for it).
+ */
+export default function AnimatedSkyLabLogo(props: { variant?: "draw" | "loading" }) {
+  if (props.variant === "loading") {
+    return (
+      <div
+        className="sl-legacy-logo__animation"
+        data-skylab-logo-animation="loading"
+        aria-hidden="true"
+        dangerouslySetInnerHTML={logoMarkup}
+      />
+    );
+  }
   return (
     <div
       className="sl-legacy-logo__animation"

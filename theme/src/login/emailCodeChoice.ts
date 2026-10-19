@@ -1,4 +1,5 @@
 import type { KcContext } from "./KcContext";
+import { startNavigationLoading } from "./navigationLoading";
 
 /**
  * "E-postayla devam et" (eskylab-login-ux 08): the SPI's sky-email-code step runs in its own
@@ -63,6 +64,8 @@ export function chooseExecution(action: string, executionId: string, intent?: "s
     form.appendChild(signUp);
   }
   document.body.appendChild(form);
+  // form.submit() fires no submit event, so the loading state is started here.
+  startNavigationLoading();
   form.submit();
 }
 

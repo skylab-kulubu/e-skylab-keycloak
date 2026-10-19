@@ -1424,16 +1424,18 @@ if group_runs erasure; then
     via_rest=$(kcadm_rest_get "$@" | jq -S -c "$normalize")
     [[ $via_kcadm == "$via_rest" ]] || fail "kcadm REST read differs from kcadm for get $*"
   }
-  rest_account_center=$(kcadm_rest_get clients -r e-skylab-test -q clientId=account-center -c | jq -r '.[0].id')
+  rest_account=$(kcadm_rest_get clients -r e-skylab-test -q clientId=account -c | jq -r '.[] | select(.clientId == "account") | .id')
+  [[ -n $rest_account ]] || fail 'kcadm REST did not find the built-in account client'
   rest_profile_scope=$(kcadm_rest_get client-scopes -r e-skylab-test -c | jq -r '.[] | select(.name == "profile") | .id')
+  [[ -n $rest_profile_scope ]] || fail 'kcadm REST did not find the profile client scope'
   kcadm_rest_same realms/e-skylab-test -c
   kcadm_rest_same realms/master
   kcadm_rest_same clients -r e-skylab-test -c
-  kcadm_rest_same clients -r e-skylab-test -q clientId=account-center -c
-  kcadm_rest_same "clients/$rest_account_center" -r e-skylab-test
-  kcadm_rest_same "clients/$rest_account_center/roles" -r e-skylab-test -c
-  kcadm_rest_same "clients/$rest_account_center/default-client-scopes" -r e-skylab-test -c
-  kcadm_rest_same "clients/$rest_account_center/optional-client-scopes" -r e-skylab-test -c
+  kcadm_rest_same clients -r e-skylab-test -q clientId=account -c
+  kcadm_rest_same "clients/$rest_account" -r e-skylab-test
+  kcadm_rest_same "clients/$rest_account/roles" -r e-skylab-test -c
+  kcadm_rest_same "clients/$rest_account/default-client-scopes" -r e-skylab-test -c
+  kcadm_rest_same "clients/$rest_account/optional-client-scopes" -r e-skylab-test -c
   kcadm_rest_same client-scopes -r e-skylab-test -c
   kcadm_rest_same "client-scopes/$rest_profile_scope/protocol-mappers/models" -r e-skylab-test -c
   kcadm_rest_same users -r e-skylab-test -q max=5 -q briefRepresentation=false -c

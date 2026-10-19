@@ -33,6 +33,8 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=kcadm-jvm.sh
+source "$SCRIPT_DIR/kcadm-jvm.sh"
 REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 IMAGE=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' "$REPOSITORY_ROOT/Dockerfile")
 MAVEN_IMAGE=$(sed -n 's/^FROM \(maven:[^ ]*\) AS providers$/\1/p' "$REPOSITORY_ROOT/Dockerfile")
@@ -176,6 +178,7 @@ start_keycloak() {
   done
   docker rm -fv "$CONTAINER" >/dev/null 2>&1 || true
   docker run --rm -d --name "$CONTAINER" --memory "$MEMORY" -p "127.0.0.1:$PORT:8080" \
+    -e KC_OPTS="$KCADM_JVM_OPTS" \
     -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
     ${environment[@]+"${environment[@]}"} \
     -v "$SPI_JAR:/opt/keycloak/providers/e-skylab-spi.jar:ro" \

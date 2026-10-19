@@ -50,6 +50,8 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=kcadm-jvm.sh
+source "$SCRIPT_DIR/kcadm-jvm.sh"
 REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 OPERATOR_SCRIPT="$REPOSITORY_ROOT/config/create-place-client.sh"
 USER_PROFILE_FILE="$REPOSITORY_ROOT/config/account-center-user-profile.json"
@@ -223,6 +225,7 @@ CURRENT_STAGE='Keycloak start'
 [[ -n $IMAGE ]] || fail 'Dockerfile has no ARG KEYCLOAK_IMAGE'
 for tool in jq curl openssl base64; do command -v "$tool" >/dev/null || fail "$tool is required"; done
 docker run --rm -d --name "$CONTAINER" -p "127.0.0.1:$PORT:8080" \
+  -e KC_OPTS="$KCADM_JVM_OPTS" \
   -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
   "$IMAGE" start-dev >/dev/null
 for _ in $(seq 1 90); do

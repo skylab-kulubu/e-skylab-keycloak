@@ -1015,6 +1015,23 @@ CI günlüğüne `[harness <grup> +12m34s] <aşama>` diye geçer. Tek grup yerel
 INTEGRATION_GROUP=login KEYCLOAK_TEST_IMAGE=account-keycloak:test bash tests/run-integration.sh
 ```
 
+**CI'ın iki boyu (`ci.yml`, `scope (full|fast)` işi hangisi olduğunu söyler).**
+`main`'e açılan PR'lar *hızlı kümeyi* koşar: `static` (sürüm sabitleri, iş akışı
+bağlantıları, tema sözleşmeleri, imaj derlemesi ve içindeki SPI/RabbitMQ Maven testleri,
+operatör betiklerinin statik denetimleri), `theme` ve kısa sözleşme işleri; her biri yalnız
+okuduğu yollar değiştiyse (`theme/`, `spi/`, ya da `theme/`, `spi/`, `docs/`, `*.md`
+dışındaki her şey). Uzun Keycloak işleri ve `integration (<grup>)` grupları PR'da koşmaz;
+`main`/`production` push'unda, `production`'a açılan PR'larda, her gece (01:23 UTC),
+elle (`gh workflow run ci.yml --ref <dal>`) ve `full-ci` etiketli PR'larda (etiket PR
+açılırken/push'ta okunur) *tam takım* koşar. Tek zorunlu kontrol `gate`: bir iş düşer ya da
+iptal olursa kırmızı; tam koşuda atlanan iş de kırmızı. Aynı PR'a yeni push eskisini iptal
+eder; push/gece/elle koşular iptal edilmez. `release.yml`, `production` ağacını tamamen
+yeşil bir tam `ci.yml` push, gece ya da elle koşusu test etmediyse derlemeye başlamaz
+(PR koşuları sayılmaz: GitHub'ın merge commit'ini test ederler; hotfix'te production push'unun
+kendi koşusu ya da `gh workflow run ci.yml --ref <dal>`) (production `main`'in
+squash'ı olduğu için commit değil ağaç karşılaştırılır; fiziksel WebAuthn kapısı exact
+production commit'ine bağlı kalır).
+
 `release.yml` de aynı grupları paralel koşar, ama imajı bir kez derler:
 `keycloak-build` aday imajı derleyip `docker save` ile kaydeder ve
 `keycloak-test-candidate-<commit>` artifact'i olarak yükler (SHA-256'sı ve imaj kimliği

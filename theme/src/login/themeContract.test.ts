@@ -230,8 +230,12 @@ describe("SKY LAB theme: one design system", () => {
     );
   });
 
-  it("keeps help copy at 14px or more", () => {
+  it("keeps help copy, field labels and the KVKK line at 14px or more", () => {
+    // The developer credit, the language links and the attempted-account label may stay at 12-13px.
     for (const selector of [
+      ".sl-legacy-label",
+      ".sl-legacy-field > label",
+      ".sl-legacy-footer p",
       ".sl-legacy-school-reset",
       ".sl-legacy-alternatives",
       ".sl-legacy-no-account",

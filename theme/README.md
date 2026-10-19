@@ -170,8 +170,9 @@ Only the two original brand image assets were carried forward.
   "Hesabın yok mu? Hesap aç") and a plain "Okul şifreni sıfırla" link
   (Microsoft's self-service reset, in a new tab). The address stage of "E-postayla
   devam et" has no sentence under its heading; the code stage keeps "E-postana
-  gelen 6 haneli kodu yaz." and "Kod {0} dakika geçerli.". Small copy is never
-  smaller than 14px (`themeContract.test.ts`).
+  gelen 6 haneli kodu yaz." and "Kod {0} dakika geçerli.". Help copy, field
+  labels and the KVKK line are at least 14px; the developer credit, the language
+  links and the attempted-account label may stay at 12-13px (`themeContract.test.ts`).
 - "Parolanı mı unuttun?" (`url.loginResetCredentialsUrl`, when the realm allows
   resetting) is in the password form only, directly below the password field,
   right-aligned, beside "Beni hatırla".

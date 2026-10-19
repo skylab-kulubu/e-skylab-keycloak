@@ -89,8 +89,10 @@ describe("the e-SKY LAB landing page", () => {
     expect(steps[1]).toHaveTextContent("E-postayla devam et");
     expect(steps[1]).toHaveTextContent("Parolanı mı unuttun?");
     expect(steps[2]).toHaveTextContent("Erişim anahtarı ile giriş yap");
-    // Self-registration (ADR-0063) is not live yet; the page does not promise it.
-    expect(screen.getByText(/YTÜ hesabın yoksa bugün kendin hesap açamazsın/)).toBeInTheDocument();
+    // Self-registration (ADR-0063) is live: the note names the login page's "Hesap aç" entry, nothing more.
+    const note = document.querySelector(".sl-welcome-note");
+    expect(note?.textContent).toBe("Hesabın yoksa giriş ekranında Hesap aç'ı seç.");
+    expect(screen.queryByText(/kendin hesap açamazsın/)).toBeNull();
   });
 
   it("carries the trust copy of the login spec word for word", () => {

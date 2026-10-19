@@ -238,8 +238,7 @@ export default function WelcomePage() {
             </li>
           </ol>
           <p className="sl-welcome-note">
-            YTÜ hesabın yoksa bugün kendin hesap açamazsın. E-postayla hesap açma ve e-postana gelen kodla giriş
-            hazırlanıyor.
+            Hesabın yoksa giriş ekranında <strong>Hesap aç</strong>'ı seç.
           </p>
         </section>
 

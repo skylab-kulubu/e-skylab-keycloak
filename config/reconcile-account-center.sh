@@ -2937,7 +2937,7 @@ core_role_seed_rename() {
   local core_uuid=$1 name=$2 old=$3
   local role_ids new_id old_id new_ref old_groups new_groups old_users new_users line id rest
   local composite role_name realm_roles clients client_uuid client_id full_scope client_roles held scopes
-  local scope_id scope_name stamp mark kind target label count=0 granted=0 people=0 user_json sa_client
+  local scope_id scope_name stamp mark kind target label count=0 granted=0 people=0 username sa_client sa_id lookup
   local groups_text composites_text role_scopes_text client_scopes_text roles_file old_seed
   local plan=() group_paths=() composite_labels=() role_scope_labels=() client_scope_labels=()
   role_ids=$(core_rename_read "The roles of client $CORE_CLIENT_ID" "clients/$core_uuid/roles" --fields id,name) || return 1
@@ -2975,18 +2975,28 @@ core_role_seed_rename() {
     grep -Eq "^$id," <<<"$new_groups" || plan+=("group"$'\t'"$id"$'\t'"$rest")
   done <<<"$old_groups"
   old_users=$(core_rename_read "The users of core role $old" "clients/$core_uuid/roles/$old/users" \
-    -q first=0 -q max=100000 --fields id) || return 1
+    -q first=0 -q max=100000 --fields id,username) || return 1
   new_users=$(core_rename_read "The users of core role $name" "clients/$core_uuid/roles/$name/users" \
     -q first=0 -q max=100000 --fields id) || return 1
-  while IFS= read -r id; do
+  # A service account is the user named service-account-<clientId> that is that client's own
+  # service-account-user; anyone else (the name alone proves nothing) is a person.
+  while IFS=, read -r id username; do
     [[ -n $id ]] || continue
     count=$((count + 1))
-    user_json=$(kcadm_json "users/$id" -r "$TARGET_REALM") || {
-      printf 'A user holding core role %s could not be read in realm %s; nothing was granted\n' "$old" "$TARGET_REALM" >&2
-      return 1
-    }
-    sa_client=$(json_tool field serviceAccountClientId <<<"$user_json") || return 1
-    if [[ -z $sa_client ]]; then
+    sa_id=''
+    if [[ $username == service-account-* ]]; then
+      # client_id_by_client_id: 0 found, 1 no such client (a person), 2 the clients could not be read.
+      lookup=0
+      sa_client=$(client_id_by_client_id "${username#service-account-}") || lookup=$?
+      if ((lookup == 0)); then
+        sa_id=$(core_rename_read "The service account of client ${username#service-account-}" \
+          "clients/$sa_client/service-account-user" --fields id) || return 1
+      elif ((lookup != 1)); then
+        printf 'The clients could not be read in realm %s; nothing was granted\n' "$TARGET_REALM" >&2
+        return 1
+      fi
+    fi
+    if [[ $sa_id != "$id" ]]; then
       people=$((people + 1))
       continue
     fi

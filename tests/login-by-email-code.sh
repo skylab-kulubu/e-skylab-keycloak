@@ -76,6 +76,8 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=kcadm-jvm.sh
+source "$SCRIPT_DIR/kcadm-jvm.sh"
 REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 IMAGE=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' "$REPOSITORY_ROOT/Dockerfile")
 MAVEN_IMAGE=$(sed -n 's/^FROM \(maven:[^ ]*\) AS providers$/\1/p' "$REPOSITORY_ROOT/Dockerfile")
@@ -486,11 +488,23 @@ if [[ $PERSISTENT_ONLY == 1 ]]; then
       docker-entrypoint.sh postgres &
       # Keep PID 1 alive when pg_ctl restarts the postgres child; tmpfs stays mounted.
       while :; do sleep 60 & wait $! || true; done' >/dev/null
-  for _ in $(seq 1 60); do
-    docker exec "$DB_CONTAINER" pg_isready -U keycloak -d keycloak >/dev/null 2>&1 && break
+  # The image's entrypoint first runs a temporary server that listens on the Unix socket only
+  # (initdb, POSTGRES_DB), stops it, then starts the real one. A probe over the socket could pass on
+  # the temporary server and the next one fall into the gap between the two ("PostgreSQL did not
+  # start"). Keycloak connects over TCP, so the server is ready when it answers on TCP; the loop's
+  # own probe decides, and a server that never answers leaves its log in the output.
+  postgres_ready=''
+  for _ in $(seq 1 120); do
+    if docker exec "$DB_CONTAINER" pg_isready -h 127.0.0.1 -p 5432 -U keycloak -d keycloak >/dev/null 2>&1; then
+      postgres_ready=1
+      break
+    fi
     sleep 1
   done
-  docker exec "$DB_CONTAINER" pg_isready -U keycloak -d keycloak >/dev/null || fail 'PostgreSQL did not start'
+  if [[ -z $postgres_ready ]]; then
+    docker logs --tail 40 "$DB_CONTAINER" >&2 || true
+    fail 'PostgreSQL did not start'
+  fi
   database_arguments=(--cache=local --db=postgres "--db-url=jdbc:postgresql://$DB_CONTAINER:5432/keycloak"
     --db-username=keycloak "--db-password=$DB_PASSWORD")
 fi
@@ -500,6 +514,7 @@ fi
 start_keycloak() {
   local instance=$1 port=$2
   docker run "${pull_arguments[@]}" --rm -d --name "$instance" --network "$NETWORK" --memory "$MEMORY" -p "127.0.0.1:$port:$port" \
+    -e KC_OPTS="$KCADM_JVM_OPTS" \
     -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
     -e SKY_EMAIL_CODE_DAILY_LIMIT="$DAILY_LIMIT" -e SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT="$WRONG_CEILING" \
     -e SKY_HARNESS=1 -e SKY_MAIL_ENABLED=true -e "SKY_MAIL_BASE_URL=http://$SKYMAIL_CONTAINER:8080" \

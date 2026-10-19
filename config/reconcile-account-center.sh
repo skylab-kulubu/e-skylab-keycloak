@@ -447,23 +447,43 @@ kcadm_json() {
   return "$status"
 }
 
-client_id_by_client_id() {
-  local wanted=$1
-  local clients_csv id client_id
-  if ! clients_csv=$(kcadm get clients -r "$TARGET_REALM" \
-    --fields id,clientId \
-    --format csv \
-    --noquotes); then
-    printf 'Failed to read clients while looking up %s\n' "$wanted" >&2
-    return 2
-  fi
-  while IFS=, read -r id client_id; do
-    if [[ $client_id == "$wanted" ]]; then
+# id_from_csv WANTED CSV: the id of the "id,name" line whose name is WANTED (status 1: none).
+id_from_csv() {
+  local wanted=$1 csv=$2 id name
+  while IFS=, read -r id name; do
+    if [[ $name == "$wanted" ]]; then
       printf '%s\n' "$id"
       return 0
     fi
-  done <<<"$clients_csv"
+  done <<<"$csv"
   return 1
+}
+
+# cached_id_by_name PATH FIELD WANTED WHAT: the id of the PATH entry (clients, client-scopes) whose
+# FIELD is WANTED; status 1 when there is none, 2 when the list cannot be read. Each kcadm call starts
+# a JVM, and a run looks the same few clients up some twenty times, so the "id,FIELD" list is kept in
+# WORK_DIR (a file, since most callers run in a command substitution) and an id found there is used
+# again: a run deletes no client and no client scope, and Keycloak never changes an id. A name not in
+# the kept list is read again, because a step of the run may have created it since.
+cached_id_by_name() {
+  local path=$1 field=$2 wanted=$3 what=$4
+  local cache="$WORK_DIR/ids-$path.csv" csv
+  if [[ -f $cache ]] && id_from_csv "$wanted" "$(<"$cache")"; then
+    return 0
+  fi
+  if ! csv=$(kcadm get "$path" -r "$TARGET_REALM" \
+    --fields "id,$field" \
+    --format csv \
+    --noquotes); then
+    printf 'Failed to read %s while looking up %s\n' "$what" "$wanted" >&2
+    return 2
+  fi
+  printf '%s\n' "$csv" >"$cache"
+  id_from_csv "$wanted" "$csv"
+}
+
+client_id_by_client_id() {
+  cached_id_by_name clients clientId "$1" clients
 }
 
 flow_id_by_alias() {
@@ -486,22 +506,7 @@ flow_id_by_alias() {
 }
 
 client_scope_id_by_name() {
-  local wanted=$1
-  local scopes_csv id name
-  if ! scopes_csv=$(kcadm get client-scopes -r "$TARGET_REALM" \
-    --fields id,name \
-    --format csv \
-    --noquotes); then
-    printf 'Failed to read client scopes while looking up %s\n' "$wanted" >&2
-    return 2
-  fi
-  while IFS=, read -r id name; do
-    if [[ $name == "$wanted" ]]; then
-      printf '%s\n' "$id"
-      return 0
-    fi
-  done <<<"$scopes_csv"
-  return 1
+  cached_id_by_name client-scopes name "$1" 'client scopes'
 }
 
 client_role_id_by_name() {

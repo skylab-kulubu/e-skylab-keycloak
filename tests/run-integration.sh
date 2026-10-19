@@ -87,6 +87,16 @@ chmod 0755 "$sky_mail_dir"
 printf 'placeholder-until-the-operator-script-runs\n' >"$sky_mail_dir/client.secret"
 chmod 0644 "$sky_mail_dir/client.secret"
 
+# kcadm's JVM options and AppCDS archive (tests/kcadm-jvm.sh): the keycloak service writes the
+# archive into this directory once Keycloak is up (its user is not the runner's, hence 0777, as the
+# state directory is the run's own); keycloak-config and keycloak-bootstrap mount it read-only.
+# shellcheck source=kcadm-jvm.sh
+source "$SCRIPT_DIR/kcadm-jvm.sh"
+mkdir -p "$TEST_STATE_DIR/kcadm-cds"
+chmod 0777 "$TEST_STATE_DIR/kcadm-cds"
+KCADM_COMPOSE_KC_OPTS=$(kcadm_jvm_archive_options use)
+export KCADM_COMPOSE_KC_OPTS
+
 "$SCRIPT_DIR/check-version-consistency.sh"
 "$SCRIPT_DIR/check-fresh-runner.sh"
 "$SCRIPT_DIR/check-production-preflight.sh"
@@ -1351,6 +1361,10 @@ curl --fail --silent --show-error --retry 10 --retry-delay 2 --retry-all-errors 
   --realm master \
   --user admin \
   --password integration-admin-password >/dev/null
+# One call with the archive's dump options writes kcadm's AppCDS archive for the rest of the run;
+# its status is ignored (without the archive every call still works, only slower).
+"${COMPOSE[@]}" exec -T -e "KC_OPTS=$(kcadm_jvm_archive_options dump)" keycloak \
+  /opt/keycloak/bin/kcadm.sh get realms/master --config "$ADMIN_CONFIG" --fields realm >/dev/null 2>&1 || true
 
 kcadm() {
   local command=$1

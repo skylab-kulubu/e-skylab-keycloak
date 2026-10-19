@@ -59,6 +59,8 @@ set -Eeuo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=kcadm-jvm.sh
 source "$SCRIPT_DIR/kcadm-jvm.sh"
+# shellcheck source=kcadm-rest.sh
+source "$SCRIPT_DIR/kcadm-rest.sh"
 REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 OPERATOR_SCRIPT="$REPOSITORY_ROOT/config/inscribed-cms-roles.sh"
 IMAGE=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' "$REPOSITORY_ROOT/Dockerfile")
@@ -83,6 +85,7 @@ fail() {
   exit 1
 }
 cleanup() {
+  kcadm_rest_cleanup
   docker rm -fv "$CONTAINER" >/dev/null 2>&1 || true
 }
 trap 'status=$?; trap - EXIT; cleanup; exit "$status"' EXIT
@@ -93,10 +96,17 @@ on_error() {
 }
 trap 'on_error "$LINENO"' ERR
 
+# kcadm "get" reads go to Admin REST from the host (tests/kcadm-rest.sh); writes stay on kcadm.
+kcadm_rest_setup "$BASE_URL" "$ADMIN_PASSWORD"
+
 # kcadm's "Created new ..." notices go to stderr; they are dropped, errors are kept.
 kcadm() {
   local command=$1
   shift
+  if kcadm_rest_handles "$command" "$@"; then
+    kcadm_rest_get "$@"
+    return
+  fi
   docker exec -i "$CONTAINER" /opt/keycloak/bin/kcadm.sh "$command" --config "$KCADM_CONFIG" "$@" \
     2> >(grep -v '^Created new ' >&2 || true)
 }

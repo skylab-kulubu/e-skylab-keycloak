@@ -59,7 +59,7 @@ jobs:
             echo 'full run: every job'
             everything
           fi
-          if ! changed=$(git diff --name-only HEAD^1 HEAD) || [[ -z $changed ]]; then
+          if ! changed=$(git diff --name-only --no-renames HEAD^1 HEAD) || [[ -z $changed ]]; then
             echo 'the PR diff could not be read: every fast job' >&2
             everything
           fi
@@ -714,10 +714,13 @@ jobs:
       - name: Every selected job passed
         env:
           NEEDS: ${{ toJSON(needs) }}
-          FULL: ${{ needs.scope.outputs.full }}
+          # The same expression as scope's and integration's, not scope's output.
+          FULL: ${{ (github.event_name != 'pull_request' || github.base_ref != 'main' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && 'true' || 'false' }}
+          SCOPE_FULL: ${{ needs.scope.outputs.full }}
         run: |
           jq -r 'to_entries[] | "\(.key)=\(.value.result)"' <<<"$NEEDS"
           test "$(jq -r '.scope.result' <<<"$NEEDS")" = success
+          test "$SCOPE_FULL" = "$FULL"
           bad=$(jq -r --arg full "$FULL" \
             'to_entries[] | select(.value.result != "success" and ($full == "true" or .value.result != "skipped")) | .key' \
             <<<"$NEEDS")

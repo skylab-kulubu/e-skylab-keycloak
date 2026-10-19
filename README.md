@@ -1026,7 +1026,9 @@ elle (`gh workflow run ci.yml --ref <dal>`) ve `full-ci` etiketli PR'larda (etik
 açılırken/push'ta okunur) *tam takım* koşar. Tek zorunlu kontrol `gate`: bir iş düşer ya da
 iptal olursa kırmızı; tam koşuda atlanan iş de kırmızı. Aynı PR'a yeni push eskisini iptal
 eder; push/gece/elle koşular iptal edilmez. `release.yml`, `production` ağacını tamamen
-yeşil bir tam `ci.yml` koşusu test etmediyse derlemeye başlamaz (production `main`'in
+yeşil bir tam `ci.yml` push, gece ya da elle koşusu test etmediyse derlemeye başlamaz
+(PR koşuları sayılmaz: GitHub'ın merge commit'ini test ederler; hotfix'te production push'unun
+kendi koşusu ya da `gh workflow run ci.yml --ref <dal>`) (production `main`'in
 squash'ı olduğu için commit değil ağaç karşılaştırılır; fiziksel WebAuthn kapısı exact
 production commit'ine bağlı kalır).
 

@@ -87,9 +87,10 @@ jobs:
           fi
 
       # Pull requests into main run only ci.yml's fast set; the whole suite runs on the push to
-      # main (and on PRs into production, nightly, by hand). production is a squash of main, so the
-      # tree is compared, not the commit: some ci.yml run whose job "scope (full)" passed and whose
-      # every job passed must have tested exactly this tree. The physical WebAuthn gate in
+      # main (also nightly and by hand). production is a squash of main, so the tree is compared,
+      # not the commit: some push, schedule or workflow_dispatch run of ci.yml whose job
+      # "scope (full)" passed and whose every job passed must have tested exactly this tree (a
+      # hotfix: the production push's own run, or gh workflow run ci.yml --ref <branch>). The physical WebAuthn gate in
       # keycloak-package still binds the exact production commit.
       - name: Require a fully green full CI run of this tree
         env:
@@ -98,9 +99,11 @@ jobs:
           set -o pipefail
           tree=$(git rev-parse "${GITHUB_SHA}^{tree}")
           since=$(date -u -d '21 days ago' +%Y-%m-%d)
-          runs=$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
+          # Only runs whose tested tree is head_sha's own: a pull_request run tests GitHub's merge
+          # commit, not its head.
+          runs=$(gh api --paginate -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
             -f status=success -f "created=>=$since" -f per_page=100 \
-            --jq '.workflow_runs[] | "\(.id) \(.head_sha)"')
+            --jq '.workflow_runs[] | select(.event == "push" or .event == "schedule" or .event == "workflow_dispatch") | "\(.id) \(.head_sha)"')
           declare -A tree_of=()
           while read -r run_id head_sha; do
             [[ $run_id =~ ^[0-9]+$ && $head_sha =~ ^[0-9a-f]{40}$ ]] || continue

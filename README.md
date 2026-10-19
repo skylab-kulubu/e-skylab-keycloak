@@ -1021,9 +1021,12 @@ bağlantıları, tema sözleşmeleri, imaj derlemesi ve içindeki SPI/RabbitMQ M
 operatör betiklerinin statik denetimleri), `theme` ve kısa sözleşme işleri; her biri yalnız
 okuduğu yollar değiştiyse (`theme/`, `spi/`, ya da `theme/`, `spi/`, `docs/`, `*.md`
 dışındaki her şey). Uzun Keycloak işleri ve `integration (<grup>)` grupları PR'da koşmaz;
-ancak PR bir işin kendi test betiğine ya da onun (doğrudan veya dolaylı) okuduğu bir `tests/`
-dosyasına dokunuyorsa o iş hızlı koşuda da koşar (`tests/affected-jobs.sh`; entegrasyon
-harness'ına dokunmak dört grubu da koşturur);
+ancak PR bir işin kendi test betiğine ya da onun (doğrudan veya dolaylı, yorum satırları hariç)
+okuduğu ya da çalıştırdığı bir `tests/`, `config/` veya harness Playwright dosyasına
+(`theme/tests/`) dokunuyorsa o iş hızlı koşuda da koşar (`tests/affected-jobs.sh`; entegrasyon
+harness'ına ya da tam uzlaştırmaya dokunmak dört grubu da koşturur). Hiçbir iş akışının ulaşmadığı
+bir `tests/` ya da `config/` dosyası bütün tam takım işlerini koşturur; izlenen her dosya ya bir
+işe ulaşır ya da `LOCAL_ONLY` listesindedir (`check-fresh-runner.sh` denetler);
 `main`/`production` push'unda, `production`'a açılan PR'larda, her gece (01:23 UTC),
 elle (`gh workflow run ci.yml --ref <dal>`) ve `full-ci` etiketli PR'larda (etiket PR
 açılırken/push'ta okunur) *tam takım* koşar. Tek zorunlu kontrol `gate`: bir iş düşer ya da

@@ -454,52 +454,106 @@ def assert_ci_scope(ci, release)
   end
 end
 
-# Affected tests: a fast run also runs every job of the whole suite whose own tests its diff
-# touches. tests/affected-jobs.sh lists each such job with the tests/ scripts its steps run; that
-# list must be exactly ci.yml's whole-suite jobs and their scripts, every such job must run on its
-# own name in scope's affected output, and a harness change must reach its jobs.
-def assert_affected_jobs(ci, helper)
+# Affected tests: a fast run also runs every job of the whole suite whose own tests or config its
+# diff touches, and all of them for a tests/ or config/ path no workflow reaches. tests/affected-
+# jobs.sh lists the jobs with the tests/ scripts their steps run; the lists must equal the
+# workflows, every whole-suite job must run on its own name in scope's affected output, every
+# tracked tests/ and config/ file must be reached or local only, and sample changes must reach the
+# right jobs.
+def assert_affected_jobs(root, helper)
+  workflows = File.join(root, ".github/workflows")
+  ci = File.join(workflows, "ci.yml")
   jobs = YAML.load_file(ci, aliases: true).fetch("jobs")
-  entries = `bash #{helper} --entries`.lines.map(&:split).to_h { |words| [words.first, words.drop(1).sort] }
-  abort "#{helper} --entries failed" unless $?.success?
-  static_scripts = `bash #{helper} --static`.split
-  static_runs = jobs.fetch("static").fetch("steps").flat_map { |step| step.fetch("run", "").scan(%r{bash (?:\.\./)?(tests/[A-Za-z0-9_.-]+\.sh)}).flatten }.uniq.sort
-  unless static_scripts.sort == static_runs
-    abort "#{helper} STATIC_SCRIPTS must be exactly the scripts ci.yml's static job runs (#{static_runs.join(" ")})"
+  scripts_of = lambda do |job|
+    job.fetch("steps").flat_map { |step| step.fetch("run", "").scan(%r{bash (?:\.\./)?(tests/[A-Za-z0-9_.-]+\.sh)}).flatten }.uniq.sort
+  end
+  listing = lambda do |option|
+    output = `bash #{helper} #{option}`
+    abort "#{helper} #{option} failed" unless $?.success?
+    output
+  end
+  entries_of = ->(option) { listing.(option).lines.map(&:split).to_h { |words| [words.first, words.drop(1).sort] } }
+  static_scripts = listing.("--static").split.sort
+  unless static_scripts == scripts_of.(jobs.fetch("static"))
+    abort "#{helper} STATIC_SCRIPTS must be exactly the scripts ci.yml's static job runs (#{scripts_of.(jobs.fetch("static")).join(" ")})"
   end
   whole_suite = jobs.select { |_, job| job.fetch("if", "").to_s.start_with?("needs.scope.outputs.full == 'true'") }
+  entries = entries_of.("--entries")
   unless entries.keys.sort == whole_suite.keys.sort
     abort "#{helper} must list exactly ci.yml's whole-suite jobs (#{whole_suite.keys.sort.join(" ")})"
   end
   whole_suite.each do |name, job|
     expected_if = "needs.scope.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' #{name} ')"
     abort "#{ci} #{name} must also run when scope lists it as affected" unless job.fetch("if") == expected_if
-    scripts = (job.fetch("steps").flat_map { |step| step.fetch("run", "").scan(%r{bash (?:\.\./)?(tests/[A-Za-z0-9_.-]+\.sh)}).flatten }.uniq - static_scripts).sort
-    unless scripts == entries.fetch(name)
-      abort "#{helper} must list #{name} with the scripts it runs (#{scripts.join(" ")})"
+    unless (scripts_of.(job) - static_scripts) == entries.fetch(name)
+      abort "#{helper} must list #{name} with the scripts it runs (#{(scripts_of.(job) - static_scripts).join(" ")})"
     end
+  end
+  fast = jobs.reject { |name, _| whole_suite.key?(name) || %w[static scope].include?(name) }
+    .to_h { |name, job| [name, scripts_of.(job) - static_scripts] }.reject { |_, scripts| scripts.empty? }
+  unless entries_of.("--fast") == fast
+    abort "#{helper} FAST_ENTRIES must be exactly ci.yml's other jobs and their scripts (#{fast.map { |n, s| "#{n}: #{s.join(" ")}" }.join("; ")})"
+  end
+  ci_scripts = jobs.values.flat_map { |job| scripts_of.(job) }
+  other = ["release.yml", "integration-all.yml"].flat_map do |name|
+    YAML.load_file(File.join(workflows, name), aliases: true).fetch("jobs").values.flat_map { |job| scripts_of.(job) }
+  end.uniq.sort - ci_scripts
+  unless listing.("--other").split.sort == other
+    abort "#{helper} OTHER_SCRIPTS must be exactly the scripts only release.yml and integration-all.yml run (#{other.join(" ")})"
+  end
+  reconcile = File.read(File.join(root, "config/reconcile-account-center.sh"), encoding: "UTF-8")
+  unless reconcile.include?('if [[ $RECONCILE_ONLY == role-groups || $RECONCILE_ONLY == leader-app-roles ]]; then') &&
+      reconcile.scan('"$CONFIG_DIR/$RECONCILE_ONLY.sh"').length == 1 &&
+      File.read(helper, encoding: "UTF-8").include?("'config/reconcile-account-center.sh config/role-groups.sh config/leader-app-roles.sh'")
+    abort "#{helper} EXTRA_EDGES must name the operator steps the reconciler runs as $CONFIG_DIR/$RECONCILE_ONLY.sh"
+  end
+  unreached = listing.("--unreached").split
+  unless unreached.empty?
+    abort "#{helper}: no workflow reaches #{unreached.join(" ")}; run it from a job or list it in LOCAL_ONLY"
   end
   scope_run = jobs.fetch("scope").fetch("steps").map { |step| step.fetch("run", "") }.join("\n")
   unless scope_run.include?('affected=$(bash tests/affected-jobs.sh <<<"$changed")') &&
       scope_run.include?("bash tests/affected-jobs.sh --entries")
     abort "#{ci} scope must name the affected jobs of a fast run, and every one when its diff cannot be read"
   end
-  { "tests/kcadm-core-roles-failure.sh" => %w[role-groups dk-read-only integration-group],
-    "tests/core-service-roles.sh" => %w[integration-group],
-    "tests/fixture-realm.json" => %w[integration-group],
-    "tests/dk-read-only.sh" => %w[dk-read-only],
-    "tests/run-integration.sh" => %w[integration-group] }.each do |path, expected|
-    affected = IO.popen(["bash", helper], "r+") { |io| io.puts(path); io.close_write; io.read }.split
-    missing = expected - affected
+  # The sample paths are split ("tests/" "x") so that this script's own text names none of them.
+  everything = whole_suite.keys
+  reaches = {
+    "tests/" "kcadm-core-roles-failure.sh" => %w[role-groups dk-read-only integration-group],
+    "tests/" "core-service-roles.sh" => %w[integration-group],
+    "tests/" "fixture-realm.json" => %w[integration-group],
+    "tests/" "dk-read-only.sh" => %w[dk-read-only],
+    "tests/" "run-integration.sh" => %w[integration-group],
+    "theme/tests/" "integration/real-keycloak.spec.ts" => %w[integration-group],
+    "config/" "reconcile-account-center.sh" => %w[integration-group role-groups dk-read-only login-clients],
+    "config/" "role-groups.json" => %w[role-groups],
+    "config/" "not-read-by-any-job.sh" => everything,
+    "tests/" "not-run-by-any-job.sh" => everything,
+  }
+  # Exactly these (a narrow config file, and paths no whole-suite job reads: a comment-only mention,
+  # the static checks, a fast job's config, docs, local only, theme sources).
+  exactly = {
+    "config/" "sandbox-admin-local-client.sh" => %w[sandbox-admin-local-client],
+    "docs/x.md" => [], "tests/" "check-fresh-runner.sh" => [], "tests/" "microsoft-reauthentication.sh" => [],
+    "tests/" "welcome-page.sh" => [], "config/" "create-place-client.sh" => [], "tests/" "sudo-email-code.sh" => [],
+    "theme/src/login/x.tsx" => [],
+  }
+  paths = reaches.keys + exactly.keys
+  output = IO.popen(["bash", helper, "--each"], "r+") { |io| io.puts(paths); io.close_write; io.read }
+  abort "#{helper} --each failed" unless $?.success?
+  got = output.lines.to_h { |line| path, jobs = line.chomp.split(":", 2); [path, jobs.to_s.split] }
+  reaches.each do |path, expected|
+    missing = expected - got.fetch(path, [])
     abort "#{helper} does not reach #{missing.join(" ")} from #{path}" unless missing.empty?
   end
-  ["docs/x.md", "tests/check-fresh-runner.sh"].each do |path|
-    affected = IO.popen(["bash", helper], "r+") { |io| io.puts(path); io.close_write; io.read }.split
-    abort "#{helper} must not run whole-suite jobs for #{path} (#{affected.join(" ")})" unless affected.empty?
+  exactly.each do |path, expected|
+    unless got.fetch(path, nil).to_a.sort == expected.sort
+      abort "#{helper} must run exactly #{expected.join(" ")} for #{path} (runs #{got.fetch(path, []).join(" ")})"
+    end
   end
 end
 
-assert_affected_jobs(File.join(root, ".github/workflows/ci.yml"), File.join(root, "tests/affected-jobs.sh"))
+assert_affected_jobs(root, File.join(root, "tests/affected-jobs.sh"))
 assert_ci_branches(File.join(root, ".github/workflows/ci.yml"))
 assert_ci_scope(File.join(root, ".github/workflows/ci.yml"), File.join(root, ".github/workflows/release.yml"))
 assert_order(File.join(root, ".github/workflows/ci.yml"), "integration-group")

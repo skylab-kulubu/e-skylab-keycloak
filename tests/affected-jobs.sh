@@ -64,9 +64,13 @@ OTHER_SCRIPTS=(
   tests/check-physical-webauthn-release.sh
 )
 
-# Calls no pattern sees: the reconciler runs an operator step as "$CONFIG_DIR/$RECONCILE_ONLY.sh".
+# Calls no pattern sees, from the test that makes them: tests/role-groups.sh runs the operator
+# steps KEYCLOAK_RECONCILE_ONLY=role-groups and leader-app-roles (the reconciler execs
+# "$CONFIG_DIR/$RECONCILE_ONLY.sh") and its scripts as "$IN_CONTAINER_CONFIG/$script";
+# tests/login-clients.sh runs operator scripts as "/tmp/config/$script".
 EXTRA_EDGES=(
-  'config/reconcile-account-center.sh config/role-groups.sh config/leader-app-roles.sh'
+  'tests/role-groups.sh config/role-groups.sh config/leader-app-roles.sh'
+  'tests/login-clients.sh config/inscribed-cms-roles.sh config/sandbox-site-clients.sh config/site-clients.sh config/skyapp-cms-editor.sh'
 )
 
 # Tracked files no workflow runs: local acceptance only (docs/sudo-email-code-test-plan.md) and
@@ -82,7 +86,8 @@ case ${1:-} in
   --entries) printf '%s\n' "${JOB_ENTRIES[@]}"; exit 0 ;;
   --fast) printf '%s\n' "${FAST_ENTRIES[@]}"; exit 0 ;;
   --static) printf '%s\n' "${STATIC_SCRIPTS[@]}"; exit 0 ;;
-  --other) printf '%s\n' "${OTHER_SCRIPTS[@]}"; exit 0 ;;
+  --other) printf '%s\n' ${OTHER_SCRIPTS[@]+"${OTHER_SCRIPTS[@]}"}; exit 0 ;;
+  --edges) printf '%s\n' ${EXTRA_EDGES[@]+"${EXTRA_EDGES[@]}"}; exit 0 ;;
 esac
 
 # references FILE: the tests/ and config/ paths FILE reads or runs, one per line. The harness runs
@@ -98,21 +103,30 @@ references() {
   return 0
 }
 
+# code_lines FILE: FILE without its comment lines (# in shell, YAML and the like; //, /* and *
+# in Java, JavaScript and TypeScript).
+code_lines() {
+  case $1 in
+    *.java | *.js | *.mjs | *.ts) grep -vE '^[[:space:]]*(//|/\*|\*)' "$REPOSITORY_ROOT/$1" || true ;;
+    *) grep -v '^[[:space:]]*#' "$REPOSITORY_ROOT/$1" || true ;;
+  esac
+}
+
 raw_references() {
   local file=$1 directory
   directory=$(dirname -- "$file")
   [[ -f $REPOSITORY_ROOT/$file ]] || return 0
-  grep -v '^[[:space:]]*#' "$REPOSITORY_ROOT/$file" \
+  code_lines "$file" \
     | grep -oE '(\$SCRIPT_DIR|\$\{SCRIPT_DIR\}|\$CONFIG_DIR|\$\{CONFIG_DIR\}|\$IN_CONTAINER_CONFIG|\$\{IN_CONTAINER_CONFIG\}|tests|config)/[A-Za-z0-9_][A-Za-z0-9_./-]*' \
     | sed -E "s#^(\\\$SCRIPT_DIR|\\\$\\{SCRIPT_DIR\\})/#$directory/#; s#^(\\\$CONFIG_DIR|\\\$\\{CONFIG_DIR\\}|\\\$IN_CONTAINER_CONFIG|\\\$\\{IN_CONTAINER_CONFIG\\})/#config/#; s#[./]+\$##" \
     | grep -Ev '/\.\.(/|$)' || true
   if [[ $file == *.yml ]]; then
-    grep -v '^[[:space:]]*#' "$REPOSITORY_ROOT/$file" \
+    code_lines "$file" \
       | grep -oE '\./[A-Za-z0-9_][A-Za-z0-9_./-]*' \
       | sed -E "s#^\\./#$directory/#; s#[./]+\$##" || true
   fi
   local edge
-  for edge in "${EXTRA_EDGES[@]}"; do
+  for edge in ${EXTRA_EDGES[@]+"${EXTRA_EDGES[@]}"}; do
     read -r -a words <<<"$edge"
     [[ ${words[0]} == "$file" ]] && printf '%s\n' "${words[@]:1}"
   done

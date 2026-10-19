@@ -501,11 +501,37 @@ def assert_affected_jobs(root, helper)
   unless listing.("--other").split.sort == other
     abort "#{helper} OTHER_SCRIPTS must be exactly the scripts only release.yml and integration-all.yml run (#{other.join(" ")})"
   end
-  reconcile = File.read(File.join(root, "config/reconcile-account-center.sh"), encoding: "UTF-8")
+  # EXTRA_EDGES: every test that calls config/ scripts dynamically ("/tmp/config/$x",
+  # "$CONFIG_DIR/$x", "$IN_CONTAINER_CONFIG/$x") is an edge whose targets include every config/
+  # script its code names; a test that sets KEYCLOAK_RECONCILE_ONLY and names the operator step
+  # role-groups or leader-app-roles (the reconciler execs "$CONFIG_DIR/$RECONCILE_ONLY.sh") has
+  # both as targets. Static checks
+  # (STATIC_SCRIPTS) are tested in every run and need no edge.
+  edges = listing.("--edges").lines.map(&:split).to_h { |words| [words.first, words.drop(1)] }
+  code = ->(path) { File.readlines(File.join(root, path), encoding: "UTF-8").reject { |line| line =~ /\A\s*#/ }.join }
+  dynamic = %r{(?:/tmp/config|/opt/keycloak/(?:sky-)?config|\$\{?CONFIG_DIR\}?|\$\{?IN_CONTAINER_CONFIG\}?)/"?\$}
+  config_scripts = Dir.children(File.join(root, "config")).grep(/\.sh\z/)
+  Dir.glob(File.join(root, "tests/*.sh")).map { |path| path.delete_prefix("#{root}/") }.sort.each do |path|
+    next if static_scripts.include?(path) || path == "tests/affected-jobs.sh"
+    text = code.(path)
+    needed = []
+    if text.match?(dynamic)
+      needed += text.scan(/(?<![A-Za-z0-9_\/-])([a-z][a-z0-9-]*\.sh)\b/).flatten.uniq.select { |name| config_scripts.include?(name) }
+        .map { |name| "config/#{name}" } - ["config/reconcile-account-center.sh"]
+    end
+    if text.include?("KEYCLOAK_RECONCILE_ONLY=") && text.match?(/(?<![A-Za-z0-9_\/.-])(?:role-groups|leader-app-roles)(?![A-Za-z0-9_.-])/)
+      needed += %w[config/role-groups.sh config/leader-app-roles.sh]
+    end
+    next if needed.empty?
+    missing = needed.uniq - edges.fetch(path, [])
+    unless missing.empty?
+      abort "#{helper} EXTRA_EDGES must give #{path} the config scripts it runs dynamically (#{missing.join(" ")})"
+    end
+  end
+  reconcile = code.("config/reconcile-account-center.sh")
   unless reconcile.include?('if [[ $RECONCILE_ONLY == role-groups || $RECONCILE_ONLY == leader-app-roles ]]; then') &&
-      reconcile.scan('"$CONFIG_DIR/$RECONCILE_ONLY.sh"').length == 1 &&
-      File.read(helper, encoding: "UTF-8").include?("'config/reconcile-account-center.sh config/role-groups.sh config/leader-app-roles.sh'")
-    abort "#{helper} EXTRA_EDGES must name the operator steps the reconciler runs as $CONFIG_DIR/$RECONCILE_ONLY.sh"
+      reconcile.scan('"$CONFIG_DIR/$RECONCILE_ONLY.sh"').length == 1 && reconcile.scan(dynamic).length == 1
+    abort "#{helper}: the reconciler's only dynamic call must be the operator steps role-groups and leader-app-roles"
   end
   unreached = listing.("--unreached").split
   unless unreached.empty?
@@ -526,7 +552,6 @@ def assert_affected_jobs(root, helper)
     "tests/" "run-integration.sh" => %w[integration-group],
     "theme/tests/" "integration/real-keycloak.spec.ts" => %w[integration-group],
     "config/" "reconcile-account-center.sh" => %w[integration-group role-groups dk-read-only login-clients],
-    "config/" "role-groups.json" => %w[role-groups],
     "config/" "not-read-by-any-job.sh" => everything,
     "tests/" "not-run-by-any-job.sh" => everything,
   }
@@ -534,6 +559,10 @@ def assert_affected_jobs(root, helper)
   # the static checks, a fast job's config, docs, local only, theme sources).
   exactly = {
     "config/" "sandbox-admin-local-client.sh" => %w[sandbox-admin-local-client],
+    "config/" "role-groups.json" => %w[role-groups],
+    "config/" "leader-app-roles.sh" => %w[role-groups],
+    "config/" "sandbox-site-clients.sh" => %w[login-clients],
+    "config/" "skyapp-cms-editor.sh" => %w[skyapp-cms-editor login-clients],
     "docs/x.md" => [], "tests/" "check-fresh-runner.sh" => [], "tests/" "microsoft-reauthentication.sh" => [],
     "tests/" "welcome-page.sh" => [], "config/" "create-place-client.sh" => [], "tests/" "sudo-email-code.sh" => [],
     "theme/src/login/x.tsx" => [],

@@ -60,9 +60,16 @@ fail() {
 # shellcheck disable=SC2154  # status is assigned inside the trap string itself
 trap 'status=$?; printf "erasure event PII command failed during %s (line %s)\n" "$CURRENT_STAGE" "$LINENO" >&2; exit "$status"' ERR
 
+# Reads go to Admin REST with the harness's token (tests/kcadm-rest.sh); writes stay on kcadm.
+# shellcheck source=kcadm-rest.sh
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/kcadm-rest.sh"
 kcadm() {
   local command=$1
   shift
+  if kcadm_rest_handles "$command" "$@"; then
+    kcadm_rest_get "$@"
+    return
+  fi
   "${COMPOSE[@]}" exec -T keycloak /opt/keycloak/bin/kcadm.sh "$command" --config "$ADMIN_CONFIG" "$@"
 }
 

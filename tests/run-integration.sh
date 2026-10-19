@@ -1366,9 +1366,19 @@ curl --fail --silent --show-error --retry 10 --retry-delay 2 --retry-all-errors 
 "${COMPOSE[@]}" exec -T -e "KC_OPTS=$(kcadm_jvm_archive_options dump)" keycloak \
   /opt/keycloak/bin/kcadm.sh get realms/master --config "$ADMIN_CONFIG" --fields realm >/dev/null 2>&1 || true
 
+# Reads ("get" with -r, -q, -c only) go to Admin REST from the host with one cached master token
+# (tests/kcadm-rest.sh): no docker exec, no JVM. Writes and every other read stay on kcadm.sh. The
+# setup is exported, so the contract scripts this harness starts reuse it. KCADM_REST=0 turns it off.
+# shellcheck source=kcadm-rest.sh
+source "$SCRIPT_DIR/kcadm-rest.sh"
+kcadm_rest_setup http://localhost:18080 integration-admin-password "$TEST_STATE_DIR"
 kcadm() {
   local command=$1
   shift
+  if kcadm_rest_handles "$command" "$@"; then
+    kcadm_rest_get "$@"
+    return
+  fi
   "${KCADM[@]}" "$command" --config "$ADMIN_CONFIG" "$@"
 }
 
@@ -1400,6 +1410,48 @@ active_browser_flow_before=$(kcadm get \
 [[ $(rbe_bound_flow) == "$RBE_BUILT_IN" ]] \
   || fail "the fixture realm is not bound to the built-in '$RBE_BUILT_IN' flow"
 reset_flow_before=$(rbe_flow "$RBE_BUILT_IN" | jq -S -c '.')
+
+# kcadm_rest_get answers what kcadm.sh get answers (tests/kcadm-rest.sh): the same JSON for the
+# shapes the tests read (a list, a list with a query, one object, sub-resources, the realm, master),
+# compared with sorted keys and arrays (some Keycloak lists have no fixed order), and the same
+# failure for a missing resource. Once, in the erasure group (the shortest) and in a full run.
+if group_runs erasure; then
+  CURRENT_STAGE='kcadm REST reads equal kcadm reads'
+  kcadm_rest_same() {
+    local normalize='walk(if type == "array" then sort_by(tojson) else . end)' via_kcadm via_rest
+    kcadm_rest_handles get "$@" || fail "kcadm_rest_handles refuses get $*"
+    via_kcadm=$("${KCADM[@]}" get --config "$ADMIN_CONFIG" "$@" | jq -S -c "$normalize")
+    via_rest=$(kcadm_rest_get "$@" | jq -S -c "$normalize")
+    [[ $via_kcadm == "$via_rest" ]] || fail "kcadm REST read differs from kcadm for get $*"
+  }
+  rest_account_center=$(kcadm_rest_get clients -r e-skylab-test -q clientId=account-center -c | jq -r '.[0].id')
+  rest_profile_scope=$(kcadm_rest_get client-scopes -r e-skylab-test -c | jq -r '.[] | select(.name == "profile") | .id')
+  kcadm_rest_same realms/e-skylab-test -c
+  kcadm_rest_same realms/master
+  kcadm_rest_same clients -r e-skylab-test -c
+  kcadm_rest_same clients -r e-skylab-test -q clientId=account-center -c
+  kcadm_rest_same "clients/$rest_account_center" -r e-skylab-test
+  kcadm_rest_same "clients/$rest_account_center/roles" -r e-skylab-test -c
+  kcadm_rest_same "clients/$rest_account_center/default-client-scopes" -r e-skylab-test -c
+  kcadm_rest_same "clients/$rest_account_center/optional-client-scopes" -r e-skylab-test -c
+  kcadm_rest_same client-scopes -r e-skylab-test -c
+  kcadm_rest_same "client-scopes/$rest_profile_scope/protocol-mappers/models" -r e-skylab-test -c
+  kcadm_rest_same users -r e-skylab-test -q max=5 -q briefRepresentation=false -c
+  kcadm_rest_same users/profile -r e-skylab-test -c
+  kcadm_rest_same roles/default-roles-e-skylab-test -r e-skylab-test -c
+  kcadm_rest_same groups -r e-skylab-test -c
+  kcadm_rest_same authentication/flows -r e-skylab-test -c
+  kcadm_rest_same 'authentication/flows/browser%20plus%20passkey/executions' -r e-skylab-test -c
+  kcadm_rest_same authentication/required-actions -r e-skylab-test -c
+  kcadm_rest_same admin-events -r e-skylab-test -q max=5 -c
+  kcadm_rest_same default-default-client-scopes -r e-skylab-test -c
+  if kcadm_rest_get clients/no-such-client -r e-skylab-test >/dev/null 2>"$TEST_STATE_DIR/kcadm-rest-404.log"; then
+    fail 'kcadm REST read of a missing client succeeded'
+  fi
+  grep -qi 'not found' "$TEST_STATE_DIR/kcadm-rest-404.log" \
+    || fail 'kcadm REST read of a missing client did not say "not found"'
+  unset -f kcadm_rest_same
+fi
 
 # Reproduce the production drift that originally caused every Account REST
 # request to return 403. Client scope mappings only limit roles which may enter

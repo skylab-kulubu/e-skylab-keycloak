@@ -1015,44 +1015,49 @@ CI günlüğüne `[harness <grup> +12m34s] <aşama>` diye geçer. Tek grup yerel
 INTEGRATION_GROUP=login KEYCLOAK_TEST_IMAGE=account-keycloak:test bash tests/run-integration.sh
 ```
 
-**CI'ın iki boyu (`ci.yml`, `scope (full|fast)` işi hangisi olduğunu söyler).**
+**CI'ın iki boyu (`ci.yml`; `mode` karar verir, `scope (full|fast)` işi hangisi olduğunu söyler).**
 `main`'e açılan PR'lar *hızlı kümeyi* koşar: `static` (sürüm sabitleri, iş akışı
 bağlantıları, tema sözleşmeleri, imaj derlemesi ve içindeki SPI/RabbitMQ Maven testleri,
 operatör betiklerinin statik denetimleri), `theme` ve kısa sözleşme işleri; her biri yalnız
 okuduğu yollar değiştiyse (`theme/`, `spi/`, ya da `theme/`, `spi/`, `docs/`, `*.md`
-dışındaki her şey). Uzun Keycloak işleri ve `integration (<grup>)` grupları PR'da koşmaz;
-`main`/`production` push'unda, `production`'a açılan PR'larda, her gece (01:23 UTC),
-elle (`gh workflow run ci.yml --ref <dal>`) ve `full-ci` etiketli PR'larda (etiket PR
-açılırken/push'ta okunur) *tam takım* koşar. Tek zorunlu kontrol `gate`: bir iş düşer ya da
-iptal olursa kırmızı; tam koşuda atlanan iş de kırmızı. Aynı PR'a yeni push eskisini iptal
-eder; push/gece/elle koşular iptal edilmez. `release.yml`, `production` ağacını tamamen
-yeşil bir tam `ci.yml` push, gece ya da elle koşusu test etmediyse derlemeye başlamaz
-(PR koşuları sayılmaz: GitHub'ın merge commit'ini test ederler; hotfix'te production push'unun
-kendi koşusu ya da `gh workflow run ci.yml --ref <dal>`) (production `main`'in
-squash'ı olduğu için commit değil ağaç karşılaştırılır; fiziksel WebAuthn kapısı exact
-production commit'ine bağlı kalır).
+dışındaki her şey). Uzun Keycloak işleri ve `integration (<grup>)` grupları PR'da koşmaz.
+*Tam takım* `main` push'unda, her gece (01:23 UTC), elle (`gh workflow run ci.yml --ref <dal>`)
+ve `full-ci` etiketli PR'larda (etiket PR açılırken/push'ta okunur) koşar. `production`'a açılan
+PR'lar ve `production` push'u, ağaçlarını tamamen yeşil bir tam koşu zaten test ettiyse (yayın
+PR'ı ve yayın push'u, `main` push koşusundan sonra) hızlı kümeyi koşar; etmediyse (hotfix) tam
+takımı. Kanıtı `tests/find-green-full-ci-run.sh` bulur: yalnız push, gece ya da elle koşuları
+sayılır (PR koşusu GitHub'ın merge commit'ini test eder), `scope (full)` ve her iş başarılı
+olmalı. Tek zorunlu kontrol `gate`: bir iş düşer ya da iptal olursa kırmızı; tam koşuda atlanan
+iş de kırmızı; `mode`'un seçimini olayla karşılaştırır, terfi eden bir production koşusunda
+bulucuyu yeniden koşar. Aynı PR'a yeni push eskisini iptal eder; push/gece/elle koşular iptal
+edilmez.
 
-`release.yml` de aynı grupları paralel koşar, ama imajı bir kez derler:
-`keycloak-build` aday imajı derleyip `docker save` ile kaydeder ve
-`keycloak-test-candidate-<commit>` artifact'i olarak yükler (SHA-256'sı ve imaj kimliği
-işin çıktısıdır); grup listesini `tests/run-integration.sh`'ın `INTEGRATION_GROUPS` satırından
-okur. `integration (<grup>)` işleri bu tarball'ı indirir, SHA-256'sını ve yüklenen imajın
-kimliğini doğrular, kendi grubunu koşar ve test ettiği imajın kimliğini bir makbuz artifact'ine
-yazar. `keycloak-package` yalnız bütün gruplar başarılıysa koşar: listedeki her grubun makbuzunun
-aynı commit'i ve aynı imaj kimliğini söylediğini doğrular, sonra fiziksel WebAuthn kapısını
-(`keycloak-production` ortamının değişkenleri) koşar ve grupların yüklediği tarball'ın kendisini
-paketler; `keycloak-publish` önceki gibi onu doğrulayıp yayımlar. Düşen grup tek başına yeniden
-koşturulabilir (`gh run rerun <run> --failed`): `keycloak-build` yeniden koşmaz, yeniden koşan
-grup aynı tarball'ı yükler. Bir makbuz ancak bu koşunun derlediği imaj kimliğini ve tarball
-SHA-256'sını birebir söylüyorsa kabul edilir; `keycloak-publish` de tarball'ı `keycloak-build`'in
-çıktılarına karşı yeniden doğrular. `keycloak-package` Touch ID kapısından, `keycloak-publish`
-GHCR girişinden hemen önce yayının hâlâ güncel `production` commit'ini gösterdiğini
-(`git ls-remote`) yeniden denetler: yeniden koşturulan eski bir yayın `:production`'ı ezemez.
-Yayınlar tek tek koşar (`concurrency: keycloak-release`, koşan iptal edilmez).
+**Test edilen baytlar terfi eder.** Tam koşuda `candidate` imajı bir kez derler, `docker save`
+ile kaydeder ve `keycloak-ci-candidate` artifact'i olarak 14 gün saklar (SHA-256'sı ve imaj
+kimliği işin çıktısıdır). Her `integration (<grup>)` işi bu tarball'ı indirir, SHA-256'sını ve
+yüklenen imajın kimliğini doğrular, kendi grubunu koşar ve geçerse `keycloak-ci-tested-<grup>`
+makbuzuna grubu, ağacı, imaj kimliğini ve SHA-256'yı yazar.
 
-Artifact'lerin ömrü 3 gün. **Touch ID kanıtı 3 günden uzun sürerse** koşu yeniden
-denenemez (indirme adımı düşer); yayın koşusu baştan başlatılır (production'a aynı ağaçla yeni
-bir commit).
+`release.yml` hiçbir şey derlemez ve test etmez. `keycloak-build` yayının güncel `production`
+commit'ini gösterdiğini denetler, aynı ağacın tamamen yeşil tam `ci.yml` koşusunu bulur
+(production `main`'in squash'ı olduğu için commit değil ağaç karşılaştırılır), o koşunun
+adayını ve bütün makbuzlarını indirir; `tests/run-integration.sh`'ın `INTEGRATION_GROUPS`
+satırındaki her grubun makbuzunun bu ağacı, bu imaj kimliğini ve tarball SHA-256'sını birebir
+söylediğini, tarball'ın SHA-256'sını ve yüklenen imajın kimliğini doğrular. `keycloak-package`
+aynı tarball'ı o koşudan indirir, fiziksel WebAuthn kapısını (`keycloak-production` ortamının
+değişkenleri, exact production commit'i) koşar ve tarball'ın kendisini paketler;
+`keycloak-publish` önceki gibi onu `keycloak-build`'in çıktılarına karşı doğrulayıp yayımlar.
+`keycloak-package` Touch ID kapısından, `keycloak-publish` GHCR girişinden hemen önce yayının
+hâlâ güncel `production` commit'ini gösterdiğini (`git ls-remote`) yeniden denetler: yeniden
+koşturulan eski bir yayın `:production`'ı ezemez. Yayınlar tek tek koşar
+(`concurrency: keycloak-release`, koşan iptal edilmez). Hotfix'te (ağaç `main`'de test
+edilmedi) `production` push'unun kendi `ci.yml` koşusu tam koşar; yeşil olunca yayın yeniden
+koşturulur (`gh run rerun <run> --failed`).
+
+Yayının paket artifact'inin ömrü 3 gün, CI adayınınki 14 gün. **Touch ID kanıtı 3 günden uzun
+sürerse** koşu yeniden denenemez (indirme adımı düşer); yayın koşusu baştan başlatılır
+(production'a aynı ağaçla yeni bir commit). Ağacın tam koşusu 14 günden eskiyse
+`gh workflow run ci.yml --ref main` ile yenisi alınır.
 
 Tek Keycloak'ta bütün aşamaların sırayla koşusu (`INTEGRATION_GROUP=all`) artık ne CI'da ne
 yayında var; `.github/workflows/integration-all.yml` onu haftada bir (pazartesi 03:17 UTC, main)

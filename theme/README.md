@@ -31,19 +31,23 @@ Only the two original brand image assets were carried forward.
   ships with the package (`node_modules/@fontsource-variable/space-grotesk/LICENSE`).
   `Template.tsx` renders every Keycloakify `DefaultPage` inside the same
   `LegacyFrame` chrome as `Login.tsx` and `PasskeyOffer.tsx`: a glass card
-  with the animated SKY LAB logo, the KVKK footer and the language menu, over
+  with the SKY LAB logo (whole from the first frame; the animation only traces a
+  light line over it once, and none with reduced motion), the KVKK footer and
+  the language menu, over
   a grid of blinking squares (`GridBackdrop.tsx`: lines in CSS, lit cells on
   a canvas at about 15 fps, still on touch screens, small CPUs, data saver
   and reduced motion). On wide screens the login page alone
   (`getLegacyChromeProps(i18n, { brand: true })`) splits the card: the form
   on the left, a brand panel on the right (the logo, what one account gives,
-  a faint watermark in its corner). Every other page keeps one column with
-  the logo on top, as every page does on a phone.
+  a faint watermark in its corner). Every other page keeps one column with the logo on top,
+  as every page does on a phone.
 - Team strips: on the login page (with the brand panel), both stages of "E-postayla devam et",
   every e-mail sign-up stage and the first YTÜ login's existing-account question/proof page,
-  `TeamMarquee.tsx` runs two slow rows of SKY LAB team logos
-  above and below the card (one row on a phone; still with reduced motion,
-  hidden in forced colors, `aria-hidden`). Which teams, in what order, comes
+  `TeamMarquee.tsx` runs two slow, faint rows of SKY LAB team logos
+  above and below the card, each in a band narrower than the window that fades
+  out before its ends (on a phone only the row below the card and footer, so the
+  form comes first; still with reduced motion, hidden in forced colors,
+  `aria-hidden`). Which teams, in what order, comes
   from the main site's CMS `teams` collection: `npm run teams`
   (`scripts/fetch-teams.mjs`) writes `src/login/teams.json`, which is
   committed. Builds never call the CMS, so CI and the release image build only
@@ -80,8 +84,9 @@ Only the two original brand image assets were carried forward.
   `…-existing-form`, `…-unavailable-form`) and `data-sky-sign-up-stage` /
   `data-sky-sign-up-error` match the SPI's own fallback template, which the harness drives.
   Previews: `?page=sky-email-code-sign-up.ftl&signup=ytu|existing|unavailable|error`. The
-  password form's page carries `skyEmailCodeSignUp=true` while a realm offers it. On both the
-  first choice screen and the password view, "Hesabın yok mu? E-postayla hesap aç" appears only
+  password form's page carries `skyEmailCodeSignUp=true` while a realm offers it. The first
+  choice screen says "Hesabın yok mu? Hesap aç" on its one quiet line beside the passkey; the
+  password view says "Hesabın yok mu? E-postayla hesap aç". Either appears only
   with that explicit flag and an offered `sky-email-code` execution. It posts that execution
   and `sky-email-code-intent=sign-up` to the current `url.loginAction`, preserving the login
   session. Keycloak's built-in registration route is never offered. Broker account-proof mode
@@ -108,7 +113,11 @@ Only the two original brand image assets were carried forward.
   `auth.authenticationSelections` (display name `sky-email-code-display-name`) and
   keeps opening the password view otherwise; "Parolanla gir" switches to the password
   form the same way and the login page then opens on its password view with the
-  field filled (one session-storage entry, read once). The shared logo keeps one stable SVG markup
+  field filled (one session-storage entry, read once). Both stages open with "Geri dön"
+  (`BackToChoice.tsx`), back to the login page's first screen: the same execution switch to
+  the password form, without the remembered choice, so the login page opens on its choice; the
+  login session and a code already sent stay as they are. Only where Keycloak offers no password
+  form there does it link `url.loginRestartFlowUrl` instead. The shared logo keeps one stable SVG markup
   object across re-renders, so the resend countdown never restarts its drawing animation. `tests/login-by-email-code.sh`
   proves this contract against a real Keycloak with the built theme.
 - `sky-stay-signed-in.ftl` is the SPI's "Bu cihazda oturumum açık kalsın mı?" at
@@ -130,6 +139,16 @@ Only the two original brand image assets were carried forward.
   headers (no framing, `no-store`, `no-referrer`, the inline page context
   allowed by hash only) and falls back to a built-in page when a realm's login
   theme lacks it.
+- One page across steps (`src/login/pageTransitions.ts`, `src/login/navigationLoading.ts`): Keycloak's
+  steps stay separate page loads and every form still posts natively, but where the browser supports
+  cross-document View Transitions (and motion is welcome) the frame (background, team strips, card,
+  logo, footer) stays put and only the card's content slides, backwards for "Geri dön" and the back
+  button. The entry script is render-blocking (`vite.config.ts`) and the first render synchronous
+  (`main.tsx`), so the new page's first frame already holds the card. Entrance animations play on a
+  tab's first page only; the team strips take their phase from the wall clock. A step that takes
+  longer than 150 ms fades the card's content and draws the logo in its middle (`aria-busy`, a
+  "Yükleniyor…" live region; a still logo and plain text with reduced motion); a second submission
+  is cancelled meanwhile, and the state clears on a back/forward-cache return.
 - Every visible string comes from `src/login/i18n.ts` (Turkish first, English
   second); the Turkish keys that Keycloakify's default set lacks live there.
 - The translations are one object literal written inside
@@ -153,10 +172,20 @@ Only the two original brand image assets were carried forward.
   for errors, `role="status"` otherwise, focused on load unless the page
   autofocused a field. Wrong credentials stay on the fields, once (Keycloak's
   own `displayMessage` rules).
+- Copy is functional only: headings, at most one short line under a heading,
+  labels, buttons, errors and the links someone needs. No explanatory or
+  reassuring paragraphs (Yusuf, 2026-10-19). The login page's first screen is
+  the two ways in ("YTÜ hesabınla devam et", "E-postayla devam et"), one quiet
+  line under them ("Erişim anahtarı ile giriş yap" and, with sign-up on,
+  "Hesabın yok mu? Hesap aç") and a plain "Okul şifreni sıfırla" link
+  (Microsoft's self-service reset, in a new tab). The address stage of "E-postayla
+  devam et" has no sentence under its heading; the code stage keeps "E-postana
+  gelen 6 haneli kodu yaz." and "Kod {0} dakika geçerli.". Help copy, field
+  labels and the KVKK line are at least 14px; the developer credit, the language
+  links and the attempted-account label may stay at 12-13px (`themeContract.test.ts`).
 - "Parolanı mı unuttun?" (`url.loginResetCredentialsUrl`, when the realm allows
-  resetting) is on the login page's first screen under the sign-in choices and,
-  in the password form, directly below the password field, right-aligned,
-  beside "Beni hatırla".
+  resetting) is in the password form only, directly below the password field,
+  right-aligned, beside "Beni hatırla".
 - `src/login/pageIds.ts` lists every themed page id; `src/devKcContext.ts`
   serves realistic Turkish mock data for each of them at `?page=<id>.ftl`
   (`&lang=en` switches locale; `&reason=<code>` picks the Web handoff failure

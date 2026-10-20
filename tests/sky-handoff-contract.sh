@@ -53,9 +53,16 @@ fail() {
 }
 trap 'status=$?; printf "web handoff command failed during %s (line %s)\n" "$CURRENT_STAGE" "$LINENO" >&2; keycloak_log_tail; exit "$status"' ERR
 
+# Reads go to Admin REST with the harness's token (tests/kcadm-rest.sh); writes stay on kcadm.
+# shellcheck source=kcadm-rest.sh
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/kcadm-rest.sh"
 kcadm() {
   local command=$1
   shift
+  if kcadm_rest_handles "$command" "$@"; then
+    kcadm_rest_get "$@"
+    return
+  fi
   "${COMPOSE[@]}" exec -T keycloak /opt/keycloak/bin/kcadm.sh "$command" --config "$ADMIN_CONFIG" "$@"
 }
 

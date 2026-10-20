@@ -57,10 +57,9 @@ describe("E-postayla devam et (sky-email-code.ftl)", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const { container } = await renderEmailCode(getEmailCodePreview("sent"));
 
-    expect(container.querySelector("#sky-email-code-sent")).toHaveTextContent(
-      "Kodu gönderdik. Bu adresle bir hesabın varsa kod, hesabının birincil e-posta adresine gider."
-    );
-    expect(container.querySelector("#sky-email-code-sent")).toHaveTextContent("Kod 10 dakika geçerli.");
+    // One functional line; the page stays the same whether or not the address has an account.
+    expect(container.querySelector("#sky-email-code-sent")?.textContent).toBe("Kod 10 dakika geçerli.");
+    expect(container.querySelector(".sl-legacy-intro p")?.textContent).toBe("E-postana gelen 6 haneli kodu yaz.");
     expect(container.querySelector("#sky-email-code-identifier")).toHaveTextContent("Yazdığın: ada.lovelace@example.org");
     const code = container.querySelector("input#sky-email-code");
     expect(code).toHaveAttribute("name", "code");
@@ -149,6 +148,56 @@ describe("E-postayla devam et (sky-email-code.ftl)", () => {
     expect(new FormData(submitted[0]).get("authenticationExecution")).toBe("exec-password");
     expect(takePasswordChoice()).toEqual({ identifier: "ada" });
     expect(takePasswordChoice(), "the choice is read once").toBeUndefined();
+  });
+
+  it.each(["identifier", "sent"] as const)(
+    "goes back to the sign-in choice from the %s stage with Keycloak's execution switch",
+    async preview => {
+      const submitted: HTMLFormElement[] = [];
+      vi.spyOn(HTMLFormElement.prototype, "submit").mockImplementation(function (this: HTMLFormElement) {
+        submitted.push(this);
+      });
+      const { container, kcContext } = await renderEmailCode({
+        ...getEmailCodePreview(preview),
+        auth: { authenticationSelections: [passwordSelection] }
+      });
+
+      // Right under the heading, before the step's own form.
+      const back = container.querySelector("#sl-back-to-choice") as HTMLButtonElement;
+      expect(back.tagName).toBe("BUTTON");
+      expect(back).toHaveTextContent("Geri dön");
+      expect(back.previousElementSibling).toHaveClass("sl-legacy-intro");
+      expect(back.nextElementSibling?.tagName).toBe("FORM");
+
+      fireEvent.click(back);
+
+      expect(submitted).toHaveLength(1);
+      expect(submitted[0]).toHaveAttribute("method", "post");
+      expect(submitted[0].action).toBe(new URL(kcContext.url.loginAction, window.location.href).href);
+      expect([...new FormData(submitted[0]).entries()]).toEqual([["authenticationExecution", "exec-password"]]);
+      // Unlike "Parolanla gir" nothing is remembered, so the login page opens on its first screen.
+      expect(takePasswordChoice()).toBeUndefined();
+    }
+  );
+
+  it("restarts the flow for the way back when Keycloak offers no password form here", async () => {
+    const { container, kcContext } = await renderEmailCode({
+      ...getEmailCodePreview("identifier"),
+      url: { ...getDevKcContextForPage("sky-email-code.ftl").url, loginRestartFlowUrl: "/realms/e-skylab/login-actions/restart?tab_id=x" }
+    });
+
+    const back = container.querySelector("#sl-back-to-choice");
+    expect(back?.tagName).toBe("A");
+    expect(back).toHaveAttribute("href", kcContext.url.loginRestartFlowUrl);
+    expect(back).toHaveTextContent("Geri dön");
+  });
+
+  it("says Go back in English", async () => {
+    const { container } = await renderEmailCode(
+      { ...getEmailCodePreview("identifier"), auth: { authenticationSelections: [passwordSelection] } },
+      "en"
+    );
+    expect(container.querySelector("#sl-back-to-choice")).toHaveTextContent("Go back");
   });
 
   it("offers no password switch when Keycloak lists none", async () => {

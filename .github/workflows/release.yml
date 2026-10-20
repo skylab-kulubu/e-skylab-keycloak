@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: theme
     timeout-minutes: 30
-    permissions: { contents: read }
+    permissions: { contents: read, actions: read }
     outputs:
       version: ${{ steps.get_version.outputs.VERSION }}
       integration-groups: ${{ steps.integration_groups.outputs.groups }}
@@ -85,6 +85,41 @@ jobs:
             echo "The Keycloak release must point at the current production commit." >&2
             exit 1
           fi
+
+      # Pull requests into main run only ci.yml's fast set; the whole suite runs on the push to
+      # main (also nightly and by hand). production is a squash of main, so the tree is compared,
+      # not the commit: some push, schedule or workflow_dispatch run of ci.yml whose job
+      # "scope (full)" passed and whose every job passed must have tested exactly this tree (a
+      # hotfix: the production push's own run, or gh workflow run ci.yml --ref <branch>). The physical WebAuthn gate in
+      # keycloak-package still binds the exact production commit.
+      - name: Require a fully green full CI run of this tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          tree=$(git rev-parse "${GITHUB_SHA}^{tree}")
+          since=$(date -u -d '21 days ago' +%Y-%m-%d)
+          # Only runs whose tested tree is head_sha's own: a pull_request run tests GitHub's merge
+          # commit, not its head.
+          runs=$(gh api --paginate -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
+            -f status=success -f "created=>=$since" -f per_page=100 \
+            --jq '.workflow_runs[] | select(.event == "push" or .event == "schedule" or .event == "workflow_dispatch") | "\(.id) \(.head_sha)"')
+          declare -A tree_of=()
+          while read -r run_id head_sha; do
+            [[ $run_id =~ ^[0-9]+$ && $head_sha =~ ^[0-9a-f]{40}$ ]] || continue
+            if [[ -z ${tree_of[$head_sha]+set} ]]; then
+              tree_of[$head_sha]=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$head_sha" --jq .tree.sha)
+            fi
+            [[ ${tree_of[$head_sha]} == "$tree" ]] || continue
+            jobs=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?per_page=100" \
+              --jq '.jobs[] | "\(.conclusion) \(.name)"')
+            if grep -qxF 'success scope (full)' <<<"$jobs" && ! grep -qv '^success ' <<<"$jobs"; then
+              echo "CI run $run_id ($head_sha) tested tree $tree in full; every job passed."
+              exit 0
+            fi
+          done <<<"$runs"
+          echo "No fully green full ci.yml run of tree $tree since $since; run CI on main (or gh workflow run ci.yml) first." >&2
+          exit 1
 
       - name: Verify Keycloak and fixture image pins
         run: |
@@ -189,7 +224,7 @@ jobs:
     name: integration (${{ matrix.group }})
     runs-on: ubuntu-latest
     needs: keycloak-build
-    # CI's group timeouts are 80-85 minutes; the release gives the slowest runner more room.
+    # CI's group timeouts are 45 minutes; the release gives the slowest runner more room.
     timeout-minutes: 100
     permissions: { contents: read }
     strategy:

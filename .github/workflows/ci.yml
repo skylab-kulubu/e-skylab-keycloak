@@ -1,15 +1,135 @@
 name: CI
 
+# Two sizes of the same workflow (job "scope (full|fast)" says which one a run is):
+# - full: every job below. Pushes to main and production, pull requests into anything but main
+#   (release PRs into production), the nightly schedule, a manual run (workflow_dispatch, also on
+#   a PR branch: gh workflow run ci.yml --ref <branch>) and pull requests into main labelled
+#   full-ci (the label is read when the PR is opened or pushed to).
+# - fast: pull requests into main. Static checks, the image build and the short contract jobs,
+#   each only when the paths it reads changed (scope). The long Keycloak jobs and the integration
+#   groups run after the merge, on the push to main.
+# One required check: gate. It fails when any job fails or is cancelled, and in a full run also
+# when any job was skipped. release.yml publishes only a tree a fully green full run has tested.
 on:
   pull_request:
   push:
     branches: [main, production]
+  schedule:
+    # Every night 01:23 UTC on main.
+    - cron: '23 1 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# A new push to a PR cancels that PR's older run, and a new push to main cancels main's older
+# push run: only main's newest tree is released, so the older one is an intermediate tree. The
+# event is part of the group, so a push run never cancels a schedule, manual or PR run (nor the
+# other way round); production pushes, the schedule and manual runs are never cancelled.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'main' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+
 jobs:
+  # full or fast, and which areas a fast run touches: theme/, spi/, and other (anything outside
+  # theme/, spi/, docs/ and *.md). A full run, or a diff that cannot be read, selects everything.
+  scope:
+    name: scope (${{ (github.event_name != 'pull_request' || github.base_ref != 'main' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && 'full' || 'fast' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      full: ${{ steps.scope.outputs.full }}
+      theme: ${{ steps.scope.outputs.theme }}
+      spi: ${{ steps.scope.outputs.spi }}
+      other: ${{ steps.scope.outputs.other }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # A pull request checks out GitHub's merge commit: HEAD^1 is the base it merges into.
+          fetch-depth: 2
+
+      - name: Choose the full or the fast set
+        id: scope
+        env:
+          FULL: ${{ (github.event_name != 'pull_request' || github.base_ref != 'main' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && 'true' || 'false' }}
+        run: |
+          everything() {
+            printf 'full=%s\ntheme=true\nspi=true\nother=true\n' "$FULL" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          if [[ $FULL == true ]]; then
+            echo 'full run: every job'
+            everything
+          fi
+          if ! changed=$(git diff --name-only --no-renames HEAD^1 HEAD) || [[ -z $changed ]]; then
+            echo 'the PR diff could not be read: every fast job' >&2
+            everything
+          fi
+          theme=false spi=false other=false
+          while IFS= read -r path; do
+            case $path in
+              theme/*) theme=true ;;
+              spi/*) spi=true ;;
+              docs/* | *.md) ;;
+              *) other=true ;;
+            esac
+          done <<<"$changed"
+          printf 'fast run: theme=%s spi=%s other=%s\n' "$theme" "$spi" "$other"
+          printf 'full=false\ntheme=%s\nspi=%s\nother=%s\n' "$theme" "$spi" "$other" >> "$GITHUB_OUTPUT"
+
+  # Every run: the version pins, the workflow wiring, the theme contracts, the image build (which
+  # runs the SPI's and the RabbitMQ provider's Maven tests) and the operator scripts' static
+  # checks that tests/run-integration.sh also runs first.
+  static:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      KEYCLOAK_TEST_IMAGE: account-keycloak:static
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Verify Keycloak and fixture image pins and the workflow wiring
+        run: |
+          bash tests/check-version-consistency.sh
+          bash tests/check-fresh-runner.sh
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.22.1
+          cache: npm
+          cache-dependency-path: theme/package-lock.json
+
+      - name: Build the login and landing page themes and check their contracts
+        working-directory: theme
+        run: |
+          npm ci --ignore-scripts
+          npm run build-keycloak-theme
+          bash ../tests/check-theme-contract.sh
+          npm run build-welcome-theme
+          bash ../tests/check-welcome-theme.sh
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build the Keycloak image (SPI and RabbitMQ provider tests included)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          platforms: linux/amd64
+          tags: ${{ env.KEYCLOAK_TEST_IMAGE }}
+          # Reads the layers the integration groups cache on main; writes none.
+          cache-from: type=gha
+
+      - name: Operator script static checks
+        run: |
+          bash tests/check-production-preflight.sh
+          bash tests/check-account-center-origin.sh
+          bash tests/check-operator-login-prompts.sh
+          bash tests/check-site-editor-grants-team.sh
+
   theme:
+    needs: scope
+    if: needs.scope.outputs.theme == 'true' || needs.scope.outputs.other == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # The visual baselines in theme/tests/browser/visual.spec.ts-snapshots are rendered in this
@@ -54,6 +174,8 @@ jobs:
   # config/inscribed-cms-roles.sh against the stock Keycloak image (Dockerfile KEYCLOAK_IMAGE) in
   # dev mode; needs no build of this repository's image.
   inscribed-cms-roles:
+    needs: scope
+    if: needs.scope.outputs.full == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -65,6 +187,8 @@ jobs:
   # config/sandbox-site-clients.sh (and inscribed-cms-roles.sh after it) against the stock Keycloak
   # image in dev mode, with a real authorization code flow; needs no build of this repository's image.
   sandbox-site-clients:
+    needs: scope
+    if: needs.scope.outputs.other == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -76,6 +200,8 @@ jobs:
   # config/create-place-client.sh (Place's login client, ADR-0060) against the stock Keycloak image
   # in dev mode, with a real authorization code flow (PKCE); needs no build of this repository's image.
   place-client:
+    needs: scope
+    if: needs.scope.outputs.other == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -88,6 +214,8 @@ jobs:
   # stock Keycloak image in dev mode, with real client-credentials tokens and userinfo; needs no build
   # of this repository's image.
   forms-skymail-grants:
+    needs: scope
+    if: needs.scope.outputs.other == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -101,6 +229,8 @@ jobs:
   # Keycloak image in dev mode, with real password-grant tokens; needs no build of this repository's
   # image.
   role-groups:
+    needs: scope
+    if: needs.scope.outputs.full == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -114,6 +244,8 @@ jobs:
   # --restore, --forms), against the stock Keycloak image in dev mode with real password-grant
   # tokens; needs no build of this repository's image.
   dk-read-only:
+    needs: scope
+    if: needs.scope.outputs.full == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -126,6 +258,8 @@ jobs:
   # sandbox realm only) against the stock Keycloak image in dev mode, with real authorization code
   # flows (PKCE) through admin-local and the panel's client; needs no build of this repository's image.
   sandbox-admin-local-client:
+    needs: scope
+    if: needs.scope.outputs.full == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -138,6 +272,8 @@ jobs:
   # e-mail gets its School e-mail) against the stock Keycloak image in dev mode, with the production
   # User Profile and one account per case; needs no build of this repository's image.
   fill-missing-primary-from-school:
+    needs: scope
+    if: needs.scope.outputs.other == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -156,6 +292,8 @@ jobs:
   # kalsın mı?" question after every YTÜ login (required action sky-stay-signed-in,
   # KEYCLOAK_STAY_SIGNED_IN).
   ytu-first-login:
+    needs: scope
+    if: needs.scope.outputs.full == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -171,6 +309,8 @@ jobs:
   # and real logins (password, code, code then TOTP); needs no build of this repository's image.
   # The login theme is built too, so the last stage proves its contract with the step (08b).
   login-by-email-code:
+    needs: scope
+    if: needs.scope.outputs.spi == 'true' || needs.scope.outputs.theme == 'true' || needs.scope.outputs.other == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -195,6 +335,8 @@ jobs:
   # account-counter races/restarts, real UserProfile API negatives and token/reset fault gates.
   # The targeted baseline took 149s / 70 assertions on the developer Mac; no old login gate is removed.
   email-code-persistent-counter:
+    needs: scope
+    if: needs.scope.outputs.spi == 'true' || needs.scope.outputs.theme == 'true' || needs.scope.outputs.other == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -247,6 +389,8 @@ jobs:
   # Registration continuation: native AIA cancellation, policy/password/passkey choices,
   # original OIDC state/nonce/PKCE, closed partial swaps and unchanged ordinary-login offers.
   after-sign-up-native:
+    needs: scope
+    if: needs.scope.outputs.full == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -287,6 +431,8 @@ jobs:
   # in dev mode with the SPI jar built from spi/ in the Dockerfile's Maven image; only Keycloak's
   # redirect is read, Microsoft is never called.
   microsoft-reauthentication:
+    needs: scope
+    if: needs.scope.outputs.spi == 'true' || needs.scope.outputs.other == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -302,6 +448,8 @@ jobs:
   # a YTÜ address, "Hesap aç" with an account and two sign-ups of one address at once. Needs no build of
   # this repository's image.
   sign-up-by-email-code:
+    needs: scope
+    if: needs.scope.outputs.spi == 'true' || needs.scope.outputs.other == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -314,6 +462,8 @@ jobs:
   # callback transaction guard, including real PG locks/rollback and a resident passkey.
   # The Microsoft transport/barrier fixtures are compiled into a separate test-only JAR.
   existing-account-link:
+    needs: scope
+    if: needs.scope.outputs.spi == 'true' || needs.scope.outputs.theme == 'true' || needs.scope.outputs.other == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -360,6 +510,8 @@ jobs:
   # inscribed-cms-roles.sh between them) against the stock Keycloak image in dev mode, with a real
   # authorization code flow (PKCE); needs no build of this repository's image.
   site-clients:
+    needs: scope
+    if: needs.scope.outputs.full == 'true'
     runs-on: ubuntu-latest
     # 19-28 minutes on main before the --shared-scope stage (about 5 more).
     timeout-minutes: 45
@@ -373,6 +525,8 @@ jobs:
   # 2026-10-03), with inscribed-cms-roles.sh before it, against the stock Keycloak image in dev mode,
   # with SkyApp's real public-client login (PKCE) and refresh; needs no build of this repository's image.
   skyapp-cms-editor:
+    needs: scope
+    if: needs.scope.outputs.full == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -386,6 +540,8 @@ jobs:
   # mode, with production-shaped full-scope clients, real logins (PKCE) before and after, userinfo,
   # and the operator scripts that share these clients; needs no build of this repository's image.
   login-clients:
+    needs: scope
+    if: needs.scope.outputs.full == 'true'
     runs-on: ubuntu-latest
     # ~21 minutes on a loaded developer Mac (2026-10-05); every kcadm call starts a JVM.
     timeout-minutes: 45
@@ -399,6 +555,8 @@ jobs:
   # the stock Keycloak image in dev mode with the built theme mounted; needs no build of this
   # repository's image.
   welcome-page:
+    needs: scope
+    if: needs.scope.outputs.theme == 'true' || needs.scope.outputs.other == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -427,23 +585,34 @@ jobs:
   # minutes; about 57 on one that takes 22), spi 53 minutes. Timeouts are about 1.5 times that;
   # the "[harness <group> +MmSSs]" lines of the log show where a group grows. Each job builds the
   # candidate itself from the GitHub Actions cache (about 30 s warm), which is cheaper than a build
-  # job with an image artifact that every group would wait for and download.
+  # job with an image artifact that every group would wait for and download (2026-10-19, last 24
+  # runs: the build took 0.8-1.6 minutes of a 60-75 minute group; the harness is the rest).
+  # After the host-side Admin REST reads (#130) and the split into six groups (2026-10-20) a group
+  # takes about 20-28 minutes; timeouts are about 1.5 times that. The groups do not wait for the
+  # theme job: they are the longest jobs of a full run, and behind the theme job they queued after
+  # the short jobs (run 39262199516: 31 minutes before the first group started).
+  # Full runs only (scope).
   integration-group:
     name: integration (${{ matrix.group }})
     runs-on: ubuntu-latest
-    needs: theme
+    needs: scope
+    if: needs.scope.outputs.full == 'true'
     strategy:
       fail-fast: false
       matrix:
         include:
           - group: erasure
-            timeout: 80
+            timeout: 45
           - group: roles
-            timeout: 85
+            timeout: 45
+          - group: roles-noop
+            timeout: 45
           - group: login
-            timeout: 85
+            timeout: 45
+          - group: login-rollback
+            timeout: 45
           - group: spi
-            timeout: 80
+            timeout: 45
     timeout-minutes: ${{ matrix.timeout }}
     env:
       KEYCLOAK_TEST_IMAGE: account-keycloak:ci
@@ -504,7 +673,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  # One check named integration, green only when every group is.
+  # One check named integration, green only when every group is. A fast run (a pull request into
+  # main, scope) skips the groups; then a skipped matrix passes here too.
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -514,6 +684,57 @@ jobs:
       - name: Every integration group passed
         env:
           GROUPS_RESULT: ${{ needs.integration-group.result }}
+          FULL: ${{ (github.event_name != 'pull_request' || github.base_ref != 'main' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && 'true' || 'false' }}
         run: |
-          echo "integration groups: $GROUPS_RESULT"
-          test "$GROUPS_RESULT" = success
+          echo "integration groups: $GROUPS_RESULT (full run: $FULL)"
+          test "$GROUPS_RESULT" = success || { test "$FULL" = false && test "$GROUPS_RESULT" = skipped; }
+
+  # The one required check. Green when no job failed or was cancelled; a fast run may skip jobs
+  # (scope), a full run may not. Pushes to main are full runs, so a release still needs every job.
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: always()
+    needs:
+      - scope
+      - static
+      - theme
+      - inscribed-cms-roles
+      - sandbox-site-clients
+      - place-client
+      - forms-skymail-grants
+      - role-groups
+      - dk-read-only
+      - sandbox-admin-local-client
+      - fill-missing-primary-from-school
+      - ytu-first-login
+      - login-by-email-code
+      - email-code-persistent-counter
+      - after-sign-up-native
+      - microsoft-reauthentication
+      - sign-up-by-email-code
+      - existing-account-link
+      - site-clients
+      - skyapp-cms-editor
+      - login-clients
+      - welcome-page
+      - integration-group
+      - integration
+    steps:
+      - name: Every selected job passed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          # The same expression as scope's and integration's, not scope's output.
+          FULL: ${{ (github.event_name != 'pull_request' || github.base_ref != 'main' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && 'true' || 'false' }}
+          SCOPE_FULL: ${{ needs.scope.outputs.full }}
+        run: |
+          jq -r 'to_entries[] | "\(.key)=\(.value.result)"' <<<"$NEEDS"
+          test "$(jq -r '.scope.result' <<<"$NEEDS")" = success
+          test "$SCOPE_FULL" = "$FULL"
+          bad=$(jq -r --arg full "$FULL" \
+            'to_entries[] | select(.value.result != "success" and ($full == "true" or .value.result != "skipped")) | .key' \
+            <<<"$NEEDS")
+          if [[ -n $bad ]]; then
+            echo "not passed (full run: $FULL): $bad" >&2
+            exit 1
+          fi

@@ -1,13 +1,18 @@
 name: CI
 
-# Two sizes of the same workflow (job "scope (full|fast)" says which one a run is):
-# - full: every job below. Pushes to main and production, pull requests into anything but main
-#   (release PRs into production), the nightly schedule, a manual run (workflow_dispatch, also on
-#   a PR branch: gh workflow run ci.yml --ref <branch>) and pull requests into main labelled
-#   full-ci (the label is read when the PR is opened or pushed to).
-# - fast: pull requests into main. Static checks, the image build and the short contract jobs,
-#   each only when the paths it reads changed (scope). The long Keycloak jobs and the integration
-#   groups run after the merge, on the push to main.
+# Two sizes of the same workflow (job "scope (full|fast)" says which one a run is; mode decides):
+# - full: every job below. Pushes to main, the nightly schedule, a manual run (workflow_dispatch,
+#   also on a PR branch: gh workflow run ci.yml --ref <branch>), pull requests into main labelled
+#   full-ci (the label is read when the PR is opened or pushed to), and pull requests into and
+#   pushes to production whose tree no fully green full run has tested yet (a hotfix).
+# - fast: pull requests into main, and pull requests into and pushes to production whose tree a
+#   fully green full push, schedule or workflow_dispatch run already tested (the release PR and
+#   the release push after main's push run; tests/find-green-full-ci-run.sh). Static checks, the
+#   image build and the short contract jobs, each only when the paths it reads changed (scope);
+#   in a pull request into main also the whole suite's jobs its diff affects (tests/affected-
+#   jobs.sh). A fast production run runs none of them.
+# A full run builds the candidate image once (candidate); every integration group tests those
+# bytes and leaves a receipt, and release.yml promotes them instead of building and testing again.
 # One required check: gate. It fails when any job fails or is cancelled, and in a full run also
 # when any job was skipped. release.yml publishes only a tree a fully green full run has tested.
 on:
@@ -22,17 +27,57 @@ on:
 permissions:
   contents: read
 
-# A new push to a PR cancels that PR's older run; pushes, the schedule and manual runs are never
-# cancelled (every main and production commit keeps its own full run).
+# A new push to a PR cancels that PR's older run, and a new push to main cancels main's older
+# push run: only main's newest tree is released, so the older one is an intermediate tree. The
+# event is part of the group, so a push run never cancels a schedule, manual or PR run (nor the
+# other way round); production pushes, the schedule and manual runs are never cancelled.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.event_name }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'main' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
 
 jobs:
-  # full or fast, and which areas a fast run touches: theme/, spi/, and other (anything outside
-  # theme/, spi/, docs/ and *.md). A full run, or a diff that cannot be read, selects everything.
+  # full or fast. Every run but a pull request into main without full-ci may be full (ELIGIBLE);
+  # a production one (PRODUCTION) is fast when a fully green full run already tested its tree.
+  mode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: { contents: read, actions: read }
+    outputs:
+      full: ${{ steps.mode.outputs.full }}
+      promoted-from: ${{ steps.mode.outputs.promoted-from }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Choose the full or the fast set
+        id: mode
+        env:
+          ELIGIBLE: ${{ (github.event_name != 'pull_request' || github.base_ref != 'main' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && 'true' || 'false' }}
+          PRODUCTION: ${{ ((github.event_name == 'pull_request' && github.base_ref == 'production') || (github.event_name == 'push' && github.ref == 'refs/heads/production')) && 'true' || 'false' }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          full=$ELIGIBLE
+          promoted_from=''
+          if [[ $ELIGIBLE == true && $PRODUCTION == true ]]; then
+            tree=$(git rev-parse 'HEAD^{tree}')
+            if promoted_from=$(bash tests/find-green-full-ci-run.sh "$tree") && [[ $promoted_from =~ ^[0-9]+$ ]]; then
+              echo "tree $tree passed CI run $promoted_from in full: the fast set"
+              full=false
+            else
+              echo "no full green run of tree $tree yet: the whole suite"
+              promoted_from=''
+            fi
+          fi
+          printf 'full=%s\npromoted-from=%s\n' "$full" "$promoted_from" >> "$GITHUB_OUTPUT"
+
+  # Which areas a fast run touches: theme/, spi/, and other (anything outside theme/, spi/, docs/
+  # and *.md). A full run, or a diff that cannot be read, selects everything.
+  # affected (pull requests into main only): the whole suite's jobs whose own tests a fast run's
+  # diff touches (tests/affected-jobs.sh); they run in that fast run too (integration-group: every
+  # group, on candidate's image). A fast production run promotes a tree a full run already tested,
+  # so it runs none of them (affected is empty).
   scope:
-    name: scope (${{ (github.event_name != 'pull_request' || github.base_ref != 'main' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && 'full' || 'fast' }})
+    name: scope (${{ needs.mode.outputs.full == 'true' && 'full' || 'fast' }})
+    needs: mode
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -40,19 +85,28 @@ jobs:
       theme: ${{ steps.scope.outputs.theme }}
       spi: ${{ steps.scope.outputs.spi }}
       other: ${{ steps.scope.outputs.other }}
+      affected: ${{ steps.scope.outputs.affected }}
     steps:
       - uses: actions/checkout@v7
         with:
-          # A pull request checks out GitHub's merge commit: HEAD^1 is the base it merges into.
+          # A pull request checks out GitHub's merge commit: HEAD^1 is the base it merges into; a
+          # push to production its squash commit: HEAD^1 is the production it replaces.
           fetch-depth: 2
 
       - name: Choose the full or the fast set
         id: scope
         env:
-          FULL: ${{ (github.event_name != 'pull_request' || github.base_ref != 'main' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && 'true' || 'false' }}
+          FULL: ${{ needs.mode.outputs.full }}
+          # Only a pull request into main runs affected whole-suite jobs; a fast production run
+          # promotes a tree a full run already tested.
+          AFFECTED_RUN: ${{ (github.event_name == 'pull_request' && github.base_ref == 'main') && 'true' || 'false' }}
         run: |
           everything() {
-            printf 'full=%s\ntheme=true\nspi=true\nother=true\n' "$FULL" >> "$GITHUB_OUTPUT"
+            all=' '
+            if [[ $FULL == true || $AFFECTED_RUN == true ]]; then
+              all=" $(bash tests/affected-jobs.sh --entries | cut -d' ' -f1 | tr '\n' ' ')"
+            fi
+            printf 'full=%s\ntheme=true\nspi=true\nother=true\naffected=%s\n' "$FULL" "$all" >> "$GITHUB_OUTPUT"
             exit 0
           }
           if [[ $FULL == true ]]; then
@@ -60,7 +114,7 @@ jobs:
             everything
           fi
           if ! changed=$(git diff --name-only --no-renames HEAD^1 HEAD) || [[ -z $changed ]]; then
-            echo 'the PR diff could not be read: every fast job' >&2
+            echo 'the diff could not be read: every fast job' >&2
             everything
           fi
           theme=false spi=false other=false
@@ -72,8 +126,12 @@ jobs:
               *) other=true ;;
             esac
           done <<<"$changed"
-          printf 'fast run: theme=%s spi=%s other=%s\n' "$theme" "$spi" "$other"
-          printf 'full=false\ntheme=%s\nspi=%s\nother=%s\n' "$theme" "$spi" "$other" >> "$GITHUB_OUTPUT"
+          affected=' '
+          if [[ $AFFECTED_RUN == true ]]; then
+            affected=$(bash tests/affected-jobs.sh <<<"$changed")
+          fi
+          printf 'fast run: theme=%s spi=%s other=%s affected=[%s]\n' "$theme" "$spi" "$other" "$affected"
+          printf 'full=false\ntheme=%s\nspi=%s\nother=%s\naffected=%s\n' "$theme" "$spi" "$other" "$affected" >> "$GITHUB_OUTPUT"
 
   # Every run: the version pins, the workflow wiring, the theme contracts, the image build (which
   # runs the SPI's and the RabbitMQ provider's Maven tests) and the operator scripts' static
@@ -172,8 +230,8 @@ jobs:
   # config/inscribed-cms-roles.sh against the stock Keycloak image (Dockerfile KEYCLOAK_IMAGE) in
   # dev mode; needs no build of this repository's image.
   inscribed-cms-roles:
-    needs: scope
-    if: needs.scope.outputs.full == 'true'
+    needs: [mode, scope]
+    if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' inscribed-cms-roles ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -227,8 +285,8 @@ jobs:
   # Keycloak image in dev mode, with real password-grant tokens; needs no build of this repository's
   # image.
   role-groups:
-    needs: scope
-    if: needs.scope.outputs.full == 'true'
+    needs: [mode, scope]
+    if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' role-groups ')
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -242,8 +300,8 @@ jobs:
   # --restore, --forms), against the stock Keycloak image in dev mode with real password-grant
   # tokens; needs no build of this repository's image.
   dk-read-only:
-    needs: scope
-    if: needs.scope.outputs.full == 'true'
+    needs: [mode, scope]
+    if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' dk-read-only ')
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -256,8 +314,8 @@ jobs:
   # sandbox realm only) against the stock Keycloak image in dev mode, with real authorization code
   # flows (PKCE) through admin-local and the panel's client; needs no build of this repository's image.
   sandbox-admin-local-client:
-    needs: scope
-    if: needs.scope.outputs.full == 'true'
+    needs: [mode, scope]
+    if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' sandbox-admin-local-client ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -290,8 +348,8 @@ jobs:
   # kalsın mı?" question after every YTÜ login (required action sky-stay-signed-in,
   # KEYCLOAK_STAY_SIGNED_IN).
   ytu-first-login:
-    needs: scope
-    if: needs.scope.outputs.full == 'true'
+    needs: [mode, scope]
+    if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' ytu-first-login ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -387,8 +445,8 @@ jobs:
   # Registration continuation: native AIA cancellation, policy/password/passkey choices,
   # original OIDC state/nonce/PKCE, closed partial swaps and unchanged ordinary-login offers.
   after-sign-up-native:
-    needs: scope
-    if: needs.scope.outputs.full == 'true'
+    needs: [mode, scope]
+    if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' after-sign-up-native ')
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -508,8 +566,8 @@ jobs:
   # inscribed-cms-roles.sh between them) against the stock Keycloak image in dev mode, with a real
   # authorization code flow (PKCE); needs no build of this repository's image.
   site-clients:
-    needs: scope
-    if: needs.scope.outputs.full == 'true'
+    needs: [mode, scope]
+    if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' site-clients ')
     runs-on: ubuntu-latest
     # 19-28 minutes on main before the --shared-scope stage (about 5 more).
     timeout-minutes: 45
@@ -523,8 +581,8 @@ jobs:
   # 2026-10-03), with inscribed-cms-roles.sh before it, against the stock Keycloak image in dev mode,
   # with SkyApp's real public-client login (PKCE) and refresh; needs no build of this repository's image.
   skyapp-cms-editor:
-    needs: scope
-    if: needs.scope.outputs.full == 'true'
+    needs: [mode, scope]
+    if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' skyapp-cms-editor ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -538,8 +596,8 @@ jobs:
   # mode, with production-shaped full-scope clients, real logins (PKCE) before and after, userinfo,
   # and the operator scripts that share these clients; needs no build of this repository's image.
   login-clients:
-    needs: scope
-    if: needs.scope.outputs.full == 'true'
+    needs: [mode, scope]
+    if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' login-clients ')
     runs-on: ubuntu-latest
     # ~21 minutes on a loaded developer Mac (2026-10-05); every kcadm call starts a JVM.
     timeout-minutes: 45
@@ -575,38 +633,108 @@ jobs:
       - name: Landing page at / against a throwaway Keycloak
         run: bash tests/welcome-page.sh
 
+  # Full runs, and fast pull requests into main whose diff affects the harness (scope's affected):
+  # the candidate image is built once. Every integration group loads these bytes
+  # (SHA-256 and image ID checked) and uploads a receipt naming them; release.yml (keycloak-build)
+  # promotes this artifact of the run that tested its tree, so the published bytes are the tested
+  # bytes (only a full push, schedule or manual run counts; never a pull request's). Kept 14 days,
+  # as long as tests/find-green-full-ci-run.sh looks back.
+  candidate:
+    needs: [mode, scope]
+    if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' integration-group ')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      image-id: ${{ steps.candidate.outputs.image-id }}
+      image-sha256: ${{ steps.candidate.outputs.image-sha256 }}
+    env:
+      KEYCLOAK_TEST_IMAGE: e-skylab-keycloak-candidate:ci
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Verify Keycloak and fixture image pins
+        run: |
+          bash tests/check-version-consistency.sh
+          bash tests/check-fresh-runner.sh
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build candidate image once
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          push: false
+          platforms: linux/amd64
+          tags: ${{ env.KEYCLOAK_TEST_IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Save the built candidate for the integration groups and the release
+        id: candidate
+        run: |
+          set -o pipefail
+          candidate_dir="$RUNNER_TEMP/keycloak-ci-candidate"
+          mkdir -p "$candidate_dir"
+          docker save "$KEYCLOAK_TEST_IMAGE" | gzip -1 > "$candidate_dir/candidate-image.tar.gz"
+          image_id=$(docker image inspect --format '{{.Id}}' "$KEYCLOAK_TEST_IMAGE")
+          image_sha256=$(sha256sum "$candidate_dir/candidate-image.tar.gz" | cut -d' ' -f1)
+          printf '%s\n' "$image_id" > "$candidate_dir/image-id"
+          printf '%s\n' "$image_sha256" > "$candidate_dir/image-sha256"
+          git rev-parse 'HEAD^{tree}' > "$candidate_dir/tree"
+          echo "image-id=$image_id" >> "$GITHUB_OUTPUT"
+          echo "image-sha256=$image_sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the built candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: keycloak-ci-candidate
+          path: ${{ runner.temp }}/keycloak-ci-candidate
+          if-no-files-found: error
+          retention-days: 14
+          # The tarball is gzip already.
+          compression-level: 0
+
   # tests/run-integration.sh in parallel groups (INTEGRATION_GROUP; the list and what each group
   # runs are at the top of the script). In one job the harness took 96-124 minutes (#79, #80 and
   # main 6321258 on 2026-10-07). Each group starts its own Keycloak and runs the shared realm
   # prefix (17-22 minutes, by runner), so a group takes that prefix plus its share. First split
   # run (#81, run 37656800805): erasure 53, roles 55, login 44 (on a runner whose prefix took 17
   # minutes; about 57 on one that takes 22), spi 53 minutes. Timeouts are about 1.5 times that;
-  # the "[harness <group> +MmSSs]" lines of the log show where a group grows. Each job builds the
-  # candidate itself from the GitHub Actions cache (about 30 s warm), which is cheaper than a build
-  # job with an image artifact that every group would wait for and download (2026-10-19, last 24
-  # runs: the build took 0.8-1.6 minutes of a 60-75 minute group; the harness is the rest).
-  # Full runs only (scope).
+  # the "[harness <group> +MmSSs]" lines of the log show where a group grows.
+  # After the host-side Admin REST reads (#130) and the split into six groups (2026-10-20) a group
+  # takes about 20-28 minutes; timeouts are about 1.5 times that. The groups do not wait for the
+  # theme job: they are the longest jobs of a full run, and behind the theme job they queued after
+  # the short jobs (run 39262199516: 31 minutes before the first group started).
+  # Full runs and affected fast runs (as candidate); every group tests candidate's bytes and
+  # records them in a receipt that release.yml requires (of a full push, schedule or manual run).
   integration-group:
     name: integration (${{ matrix.group }})
     runs-on: ubuntu-latest
-    needs: [scope, theme]
-    if: needs.scope.outputs.full == 'true'
+    needs: [mode, scope, candidate]
+    if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' integration-group ')
     strategy:
       fail-fast: false
       matrix:
         include:
           - group: erasure
-            timeout: 80
+            timeout: 45
           - group: roles
-            timeout: 85
+            timeout: 45
+          - group: roles-noop
+            timeout: 45
           - group: login
-            timeout: 85
+            timeout: 45
+          - group: login-rollback
+            timeout: 45
           - group: spi
-            timeout: 80
+            timeout: 45
     timeout-minutes: ${{ matrix.timeout }}
     env:
-      KEYCLOAK_TEST_IMAGE: account-keycloak:ci
+      KEYCLOAK_TEST_IMAGE: e-skylab-keycloak-candidate:ci
       INTEGRATION_GROUP: ${{ matrix.group }}
+      IMAGE_ID: ${{ needs.candidate.outputs.image-id }}
+      IMAGE_SHA256: ${{ needs.candidate.outputs.image-sha256 }}
     steps:
       - uses: actions/checkout@v7
 
@@ -638,21 +766,44 @@ jobs:
           npm run build-welcome-theme
           bash ../tests/check-welcome-theme.sh
 
-      - uses: docker/setup-buildx-action@v4
-
-      - name: Build optimized Keycloak image
-        uses: docker/build-push-action@v7
+      - name: Download the built candidate
+        uses: actions/download-artifact@v5
         with:
-          context: .
-          load: true
-          platforms: linux/amd64
-          tags: ${{ env.KEYCLOAK_TEST_IMAGE }}
-          cache-from: type=gha
-          # One writer: the groups build the same layers.
-          cache-to: ${{ matrix.group == 'erasure' && 'type=gha,mode=max' || '' }}
+          name: keycloak-ci-candidate
+          path: ${{ runner.temp }}/keycloak-ci-candidate
+
+      - name: Verify and load the built candidate
+        run: |
+          set -o pipefail
+          [[ $IMAGE_SHA256 =~ ^[0-9a-f]{64}$ && $IMAGE_ID =~ ^sha256:[0-9a-f]{64}$ ]]
+          candidate="$RUNNER_TEMP/keycloak-ci-candidate/candidate-image.tar.gz"
+          printf '%s  %s\n' "$IMAGE_SHA256" "$candidate" | sha256sum --check --strict
+          if docker image inspect "$KEYCLOAK_TEST_IMAGE" >/dev/null 2>&1; then
+            echo "$KEYCLOAK_TEST_IMAGE exists before the candidate is loaded." >&2
+            exit 1
+          fi
+          gzip -dc "$candidate" | docker load
+          test "$(docker image inspect --format '{{.Id}}' "$KEYCLOAK_TEST_IMAGE")" = "$IMAGE_ID"
 
       - name: Run Keycloak, OIDC and RabbitMQ contracts
         run: bash tests/run-integration.sh
+
+      - name: Record the image this group tested
+        run: |
+          receipt_dir="$RUNNER_TEMP/keycloak-ci-tested"
+          mkdir -p "$receipt_dir"
+          tested_id=$(docker image inspect --format '{{.Id}}' "$KEYCLOAK_TEST_IMAGE")
+          printf 'group=%s\ntree=%s\nimage-id=%s\nimage-sha256=%s\n' \
+            "$INTEGRATION_GROUP" "$(git rev-parse 'HEAD^{tree}')" "$tested_id" "$IMAGE_SHA256" \
+            > "$receipt_dir/$INTEGRATION_GROUP"
+
+      - name: Upload this group's receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: keycloak-ci-tested-${{ matrix.group }}
+          path: ${{ runner.temp }}/keycloak-ci-tested
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Keep only the whitelisted WebAuthn failure diagnostic
         if: failure() && matrix.group == 'spi'
@@ -663,29 +814,33 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  # One check named integration, green only when every group is. A fast run (a pull request into
-  # main, scope) skips the groups; then a skipped matrix passes here too.
+  # One check named integration, green only when every group is. A fast run (mode) skips the
+  # groups; then a skipped matrix passes here too.
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: integration-group
+    needs: [mode, integration-group]
     if: always()
     steps:
       - name: Every integration group passed
         env:
           GROUPS_RESULT: ${{ needs.integration-group.result }}
-          FULL: ${{ (github.event_name != 'pull_request' || github.base_ref != 'main' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && 'true' || 'false' }}
+          FULL: ${{ needs.mode.outputs.full }}
         run: |
           echo "integration groups: $GROUPS_RESULT (full run: $FULL)"
           test "$GROUPS_RESULT" = success || { test "$FULL" = false && test "$GROUPS_RESULT" = skipped; }
 
-  # The one required check. Green when no job failed or was cancelled; a fast run may skip jobs
-  # (scope), a full run may not. Pushes to main are full runs, so a release still needs every job.
+  # The one required check. Green when no job failed or was cancelled; a fast run may skip jobs, a
+  # full run may not. mode's choice is checked against the event: only a run that may be full is
+  # full, and an eligible run is fast only on production, when the finder (run again here) still
+  # names a fully green full run of the tree. Pushes to main are always full.
   gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     if: always()
+    permissions: { contents: read, actions: read }
     needs:
+      - mode
       - scope
       - static
       - theme
@@ -708,19 +863,34 @@ jobs:
       - skyapp-cms-editor
       - login-clients
       - welcome-page
+      - candidate
       - integration-group
       - integration
     steps:
+      - uses: actions/checkout@v7
+
       - name: Every selected job passed
         env:
           NEEDS: ${{ toJSON(needs) }}
-          # The same expression as scope's and integration's, not scope's output.
-          FULL: ${{ (github.event_name != 'pull_request' || github.base_ref != 'main' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && 'true' || 'false' }}
-          SCOPE_FULL: ${{ needs.scope.outputs.full }}
+          ELIGIBLE: ${{ (github.event_name != 'pull_request' || github.base_ref != 'main' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && 'true' || 'false' }}
+          PRODUCTION: ${{ ((github.event_name == 'pull_request' && github.base_ref == 'production') || (github.event_name == 'push' && github.ref == 'refs/heads/production')) && 'true' || 'false' }}
+          FULL: ${{ needs.mode.outputs.full }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           jq -r 'to_entries[] | "\(.key)=\(.value.result)"' <<<"$NEEDS"
+          test "$(jq -r '.mode.result' <<<"$NEEDS")" = success
           test "$(jq -r '.scope.result' <<<"$NEEDS")" = success
-          test "$SCOPE_FULL" = "$FULL"
+          case "$ELIGIBLE/$PRODUCTION/$FULL" in
+            true/*/true | false/*/false) ;;
+            true/true/false)
+              run_id=$(bash tests/find-green-full-ci-run.sh "$(git rev-parse 'HEAD^{tree}')")
+              [[ $run_id =~ ^[0-9]+$ ]]
+              ;;
+            *)
+              echo "mode chose full=$FULL for a run with eligible=$ELIGIBLE production=$PRODUCTION" >&2
+              exit 1
+              ;;
+          esac
           bad=$(jq -r --arg full "$FULL" \
             'to_entries[] | select(.value.result != "success" and ($full == "true" or .value.result != "skipped")) | .key' \
             <<<"$NEEDS")

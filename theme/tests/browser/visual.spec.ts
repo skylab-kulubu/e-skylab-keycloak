@@ -100,7 +100,7 @@ test.describe("visual baselines", () => {
       test("login-registration-entry", async ({ page }) => {
         await page.goto("/?page=login.ftl&registration=on");
         await stabilise(page, "login.ftl");
-        await expect(page.getByRole("button", { name: "E-postayla hesap aç", exact: true })).toBeVisible();
+        await expect(page.getByRole("button", { name: "Hesap aç", exact: true })).toBeVisible();
         await expect(page).toHaveScreenshot(`login-registration-entry-${viewportName}.png`, screenshotOptions);
       });
 

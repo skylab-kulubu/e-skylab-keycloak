@@ -89,9 +89,15 @@ services:
       SKY_MAIL_CLIENT_SECRET_FILE: /run/secrets/sky-mail/client.secret
       SKY_MAIL_TOKEN_URL: http://keycloak:8080/realms/e-skylab-test/protocol/openid-connect/token
       SKY_MAIL_TIMEOUT_MILLISECONDS: 2000
+      # kcadm's JVM options (tests/kcadm-jvm.sh): every docker compose exec of kcadm.sh, and the
+      # operator reconciliations run here, start the CLI with them. The server (kc.sh) ignores
+      # KC_OPTS. run-integration.sh sets KCADM_COMPOSE_KC_OPTS; unset, kcadm runs as in production.
+      KC_OPTS: ${KCADM_COMPOSE_KC_OPTS:-}
     volumes:
       - ./fixture-realm.json:/opt/keycloak/data/import/e-skylab-test-realm.json:ro
       - ${TEST_STATE_DIR:?set the integration state directory}/sky-mail:/run/secrets/sky-mail:ro
+      # kcadm's AppCDS archive, written here once by the harness (tests/kcadm-jvm.sh).
+      - ${TEST_STATE_DIR:?set the integration state directory}/kcadm-cds:/opt/kcadm-cds
     ports:
       - "127.0.0.1:18080:8080"
       - "127.0.0.1:19000:9000"
@@ -118,6 +124,9 @@ services:
       # and extra origin follow the harness origin instead of the production defaults.
       KEYCLOAK_PASSKEY_RP_ID: localhost
       KEYCLOAK_PASSKEY_EXTRA_ORIGINS: http://localhost:18080
+      KC_OPTS: ${KCADM_COMPOSE_KC_OPTS:-}
+    volumes:
+      - ${TEST_STATE_DIR:?set the integration state directory}/kcadm-cds:/opt/kcadm-cds:ro
     depends_on:
       keycloak:
         condition: service_started
@@ -133,6 +142,9 @@ services:
       KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD: integration-admin-password
       KEYCLOAK_CONFIG_CLIENT_ID: account-center-config
       KEYCLOAK_CONFIG_CLIENT_SECRET: integration-config-client-secret
+      KC_OPTS: ${KCADM_COMPOSE_KC_OPTS:-}
+    volumes:
+      - ${TEST_STATE_DIR:?set the integration state directory}/kcadm-cds:/opt/kcadm-cds:ro
     depends_on:
       keycloak:
         condition: service_started

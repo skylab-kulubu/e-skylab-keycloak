@@ -30,10 +30,14 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
     test("hides the entry while off and posts only the offered execution with explicit registration intent while on", async ({ page }) => {
       await ready(page, "/?page=login.ftl");
       await expect(page.getByRole("button", { name: "E-postayla hesap aç" })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Hesap aç", exact: true })).toHaveCount(0);
       await expect(page.locator('a[href*="/registration"]')).toHaveCount(0);
 
       await ready(page, "/?page=login.ftl&registration=on");
-      const fields = await postFrom(page, "E-postayla hesap aç");
+      // The first screen's quiet line: "Hesabın yok mu? Hesap aç".
+      await expect(page.locator(".sl-legacy-alternatives__sign-up")).toHaveText("Hesabın yok mu? Hesap aç");
+      await expect(page.getByRole("button", { name: "Hesap aç", exact: true })).toBeInViewport();
+      const fields = await postFrom(page, "Hesap aç");
       expect([...fields.entries()]).toEqual([
         ["authenticationExecution", "preview-email-code"],
         ["sky-email-code-intent", "sign-up"]
@@ -61,9 +65,9 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
         await expect(page.locator(".sl-legacy-teams")).toHaveCount(2);
         if (suffix === "") {
           await expect(page.locator("#username")).toBeVisible();
-          await expect(page.locator(".sl-legacy-intro")).toContainText("Hesabın varsa giriş yaparsın; yoksa");
+          await expect(page.locator(".sl-legacy-intro p")).toHaveCount(0);
         } else {
-          await expect(page.locator("#sky-email-code-sent")).toContainText("Bu adresle bir hesabın varsa");
+          await expect(page.locator("#sky-email-code-sent")).toHaveText("Kod 10 dakika geçerli.");
           await expect(page.locator("#sky-email-code-error")).toContainText("Kod yanlış. 4 deneme hakkın kaldı.");
           await expect(page.locator("#sky-email-code")).toHaveAttribute("autocomplete", "one-time-code");
           await expect(page.locator("#kc-email-code-sign-up-form")).toHaveCount(0);
@@ -81,23 +85,26 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
         await ready(page, url);
         const rows = page.locator(".sl-legacy-teams");
         await expect(rows).toHaveCount(2);
-        await expect(rows.first()).toBeVisible();
-        await expect(rows.first()).toHaveAttribute("aria-hidden", "true");
-        const images = rows.first().locator("img");
+        // A phone keeps only the strip under the form; wider screens show the one above too.
+        const shown = viewport.width < 640 ? rows.last() : rows.first();
+        await expect(shown).toBeVisible();
+        await expect(shown).toHaveAttribute("aria-hidden", "true");
+        const images = shown.locator("img");
         expect(await images.count()).toBeGreaterThan(10);
         await expect.poll(() => images.evaluateAll(elements => elements.every(element => {
           const image = element as HTMLImageElement;
           return image.complete && image.naturalWidth > 0;
         }))).toBe(true);
-        await expect(rows.first().locator(".sl-legacy-teams__track")).toHaveCSS("animation-name", "none");
+        await expect(shown.locator(".sl-legacy-teams__track")).toHaveCSS("animation-name", "none");
         await expect(page.locator(".sl-legacy-stack--wide")).toHaveCount(0);
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-        if (viewport.width < 640) await expect(rows.last()).toBeHidden();
+        if (viewport.width < 640) await expect(rows.first()).toBeHidden();
       }
       await page.emulateMedia({ reducedMotion: "no-preference" });
       await expect(page.locator(".sl-legacy-teams__track").first()).not.toHaveCSS("animation-name", "none");
       await page.emulateMedia({ forcedColors: "active" });
       await expect(page.locator(".sl-legacy-teams").first()).toBeHidden();
+      await expect(page.locator(".sl-legacy-teams").last()).toBeHidden();
       await expect(page.locator("#sky-existing-code")).toBeVisible();
     });
   });

@@ -15,19 +15,26 @@ ADMIN_CONFIG=/tmp/integration-kcadm.config
 # (bootstrap, first reconciliation, drift, second reconciliation and their assertions); the stages
 # after it are split as below. A group that runs later stages without an earlier group's stages
 # first gets the state those stages leave (their writes, not their assertions), so it finds the
-# realm as the full run does. The order inside a group is the order of the full run.
-#   erasure  core-erasure client contract, legacy personal e-mail adoption, erasure event PII
-#   roles    (core-erasure fixture) admin panel tokens, core resource roles, core service roles,
-#            exchange claims, no-op reconciliation, identity guardrails, group overage mapper
-#   login    (core-erasure fixture, operator state) OIDC/PAR basics, K4 sign-in by e-mail with
-#            its reconciler runs, re-authentication forwarded to Microsoft (PR #89)
-#   spi      (core-erasure fixture, operator state) OIDC/PAR basics, web handoff, browser login
-#            and token contracts, Chromium, passkey cleanup, K5, K4b, sky-account SPI, passkey
-#            ceremonies
+# realm as the full run does. The order inside a group is the order of the full run. The prefix
+# ends with the mailer flag drift stage, which leaves the realm as it found it; only erasure runs it.
+#   erasure         mailer flag drift, core-erasure client contract, legacy personal e-mail
+#                   adoption, erasure event PII
+#   roles           (core-erasure fixture) admin panel tokens, core resource roles, SkyMail
+#                   Privileged roles, group overage mapper
+#   roles-noop      (core-erasure fixture, operator state without core's service roles) core
+#                   service roles, exchange claims, no-op reconciliation, identity guardrails
+#   login           (core-erasure fixture, operator state) OIDC/PAR basics, K4 sign-in by e-mail,
+#                   the K4 reconciler's refusal and interrupted swap, re-authentication forwarded
+#                   to Microsoft (PR #89)
+#   login-rollback  (core-erasure fixture, operator state, the K4 person) OIDC/PAR basics, the K4
+#                   and K4b reconciler rollback, forward again and no-op
+#   spi             (core-erasure fixture, operator state) OIDC/PAR basics, web handoff, browser
+#                   login and token contracts, Chromium, passkey cleanup, K5, K4b, sky-account SPI,
+#                   passkey ceremonies
 # Every group ends with the RabbitMQ provider contract. tests/check-fresh-runner.sh keeps this
 # list and the CI matrix equal; release.yml reads its matrix from this line, and its package job
 # requires a passed run of every group listed here.
-INTEGRATION_GROUPS=(erasure roles login spi)
+INTEGRATION_GROUPS=(erasure roles roles-noop login login-rollback spi)
 INTEGRATION_GROUP=${INTEGRATION_GROUP:-all}
 if [[ $INTEGRATION_GROUP != all && " ${INTEGRATION_GROUPS[*]} " != *" $INTEGRATION_GROUP "* ]]; then
   printf 'INTEGRATION_GROUP must be all or one of: %s (got %s)\n' "${INTEGRATION_GROUPS[*]}" "$INTEGRATION_GROUP" >&2
@@ -86,6 +93,16 @@ mkdir -p "$sky_mail_dir"
 chmod 0755 "$sky_mail_dir"
 printf 'placeholder-until-the-operator-script-runs\n' >"$sky_mail_dir/client.secret"
 chmod 0644 "$sky_mail_dir/client.secret"
+
+# kcadm's JVM options and AppCDS archive (tests/kcadm-jvm.sh): the keycloak service writes the
+# archive into this directory once Keycloak is up (its user is not the runner's, hence 0777, as the
+# state directory is the run's own); keycloak-config and keycloak-bootstrap mount it read-only.
+# shellcheck source=kcadm-jvm.sh
+source "$SCRIPT_DIR/kcadm-jvm.sh"
+mkdir -p "$TEST_STATE_DIR/kcadm-cds"
+chmod 0777 "$TEST_STATE_DIR/kcadm-cds"
+KCADM_COMPOSE_KC_OPTS=$(kcadm_jvm_archive_options use)
+export KCADM_COMPOSE_KC_OPTS
 
 "$SCRIPT_DIR/check-version-consistency.sh"
 "$SCRIPT_DIR/check-fresh-runner.sh"
@@ -1296,7 +1313,8 @@ finish_group() {
 # contracts, for the groups that run later stages without them: the admin panel's forms role in its
 # scope, core's resource roles seeded to the Privileged groups (with /UYELER/DK for the run, as the
 # core-roles stage has it, so that DK's read roles are seeded and marked too), core's service roles
-# granted to the forms service account (service account only).
+# granted to the forms service account (service account only). With without-service-roles, the
+# roles-noop group's setup: core's service roles stay ungranted (its own stage grants them).
 setup_operator_state() {
   CURRENT_STAGE='operator state of the roles group (group setup, no contract)'
   local forms_uuid output dk_id
@@ -1309,6 +1327,7 @@ setup_operator_state() {
   dk_id=$(kcadm create "groups/$(cr_group_id /UYELER)/children" -r "$V2_REALM" -s name=DK -i)
   output=$(cr_operator_reconcile) || { printf '%s\n' "$output" >&2; fail 'the core roles operator step failed'; }
   kcadm delete "groups/$dk_id" -r "$V2_REALM" >/dev/null
+  [[ ${1:-} != without-service-roles ]] || return 0
   output=$(csr_operator) || { printf '%s\n' "$output" >&2; fail 'the service-roles operator step failed'; }
 }
 
@@ -1351,10 +1370,24 @@ curl --fail --silent --show-error --retry 10 --retry-delay 2 --retry-all-errors 
   --realm master \
   --user admin \
   --password integration-admin-password >/dev/null
+# One call with the archive's dump options writes kcadm's AppCDS archive for the rest of the run;
+# its status is ignored (without the archive every call still works, only slower).
+"${COMPOSE[@]}" exec -T -e "KC_OPTS=$(kcadm_jvm_archive_options dump)" keycloak \
+  /opt/keycloak/bin/kcadm.sh get realms/master --config "$ADMIN_CONFIG" --fields realm >/dev/null 2>&1 || true
 
+# Reads ("get" with -r, -q, -c only) go to Admin REST from the host with one cached master token
+# (tests/kcadm-rest.sh): no docker exec, no JVM. Writes and every other read stay on kcadm.sh. The
+# setup is exported, so the contract scripts this harness starts reuse it. KCADM_REST=0 turns it off.
+# shellcheck source=kcadm-rest.sh
+source "$SCRIPT_DIR/kcadm-rest.sh"
+kcadm_rest_setup http://localhost:18080 integration-admin-password "$TEST_STATE_DIR"
 kcadm() {
   local command=$1
   shift
+  if kcadm_rest_handles "$command" "$@"; then
+    kcadm_rest_get "$@"
+    return
+  fi
   "${KCADM[@]}" "$command" --config "$ADMIN_CONFIG" "$@"
 }
 
@@ -1386,6 +1419,50 @@ active_browser_flow_before=$(kcadm get \
 [[ $(rbe_bound_flow) == "$RBE_BUILT_IN" ]] \
   || fail "the fixture realm is not bound to the built-in '$RBE_BUILT_IN' flow"
 reset_flow_before=$(rbe_flow "$RBE_BUILT_IN" | jq -S -c '.')
+
+# kcadm_rest_get answers what kcadm.sh get answers (tests/kcadm-rest.sh): the same JSON for the
+# shapes the tests read (a list, a list with a query, one object, sub-resources, the realm, master),
+# compared with sorted keys and arrays (some Keycloak lists have no fixed order), and the same
+# failure for a missing resource. Once, in the erasure group (the shortest) and in a full run.
+if group_runs erasure; then
+  CURRENT_STAGE='kcadm REST reads equal kcadm reads'
+  kcadm_rest_same() {
+    local normalize='walk(if type == "array" then sort_by(tojson) else . end)' via_kcadm via_rest
+    kcadm_rest_handles get "$@" || fail "kcadm_rest_handles refuses get $*"
+    via_kcadm=$("${KCADM[@]}" get --config "$ADMIN_CONFIG" "$@" | jq -S -c "$normalize")
+    via_rest=$(kcadm_rest_get "$@" | jq -S -c "$normalize")
+    [[ $via_kcadm == "$via_rest" ]] || fail "kcadm REST read differs from kcadm for get $*"
+  }
+  rest_account=$(kcadm_rest_get clients -r e-skylab-test -q clientId=account -c | jq -r '.[] | select(.clientId == "account") | .id')
+  [[ -n $rest_account ]] || fail 'kcadm REST did not find the built-in account client'
+  rest_profile_scope=$(kcadm_rest_get client-scopes -r e-skylab-test -c | jq -r '.[] | select(.name == "profile") | .id')
+  [[ -n $rest_profile_scope ]] || fail 'kcadm REST did not find the profile client scope'
+  kcadm_rest_same realms/e-skylab-test -c
+  kcadm_rest_same realms/master
+  kcadm_rest_same clients -r e-skylab-test -c
+  kcadm_rest_same clients -r e-skylab-test -q clientId=account -c
+  kcadm_rest_same "clients/$rest_account" -r e-skylab-test
+  kcadm_rest_same "clients/$rest_account/roles" -r e-skylab-test -c
+  kcadm_rest_same "clients/$rest_account/default-client-scopes" -r e-skylab-test -c
+  kcadm_rest_same "clients/$rest_account/optional-client-scopes" -r e-skylab-test -c
+  kcadm_rest_same client-scopes -r e-skylab-test -c
+  kcadm_rest_same "client-scopes/$rest_profile_scope/protocol-mappers/models" -r e-skylab-test -c
+  kcadm_rest_same users -r e-skylab-test -q max=5 -q briefRepresentation=false -c
+  kcadm_rest_same users/profile -r e-skylab-test -c
+  kcadm_rest_same roles/default-roles-e-skylab-test -r e-skylab-test -c
+  kcadm_rest_same groups -r e-skylab-test -c
+  kcadm_rest_same authentication/flows -r e-skylab-test -c
+  kcadm_rest_same 'authentication/flows/browser%20plus%20passkey/executions' -r e-skylab-test -c
+  kcadm_rest_same authentication/required-actions -r e-skylab-test -c
+  kcadm_rest_same admin-events -r e-skylab-test -q max=5 -c
+  kcadm_rest_same default-default-client-scopes -r e-skylab-test -c
+  if kcadm_rest_get clients/no-such-client -r e-skylab-test >/dev/null 2>"$TEST_STATE_DIR/kcadm-rest-404.log"; then
+    fail 'kcadm REST read of a missing client succeeded'
+  fi
+  grep -qi 'not found' "$TEST_STATE_DIR/kcadm-rest-404.log" \
+    || fail 'kcadm REST read of a missing client did not say "not found"'
+  unset -f kcadm_rest_same
+fi
 
 # Reproduce the production drift that originally caused every Account REST
 # request to return 403. Client scope mappings only limit roles which may enter
@@ -1852,7 +1929,11 @@ stage_reset_choose_user_after_second_reconciliation
 stage_v2_assert_user_profile
 stage_v2_assert_account_api_scope
 stage_v2_assert_mailer_client
-stage_v2_mailer_drift_is_reported
+# A drift that the reconciler reports and the operator script repairs: the realm ends as it began,
+# so one group proves it.
+if group_runs erasure; then
+  stage_v2_mailer_drift_is_reported
+fi
 
 # The shared realm prefix of every group ends here.
 
@@ -1883,6 +1964,12 @@ if group_runs roles; then
   stage_core_roles_seeded_by_operator
   # The same operator runs seeded SkyMail's Privileged role.
   stage_skymail_roles_seeded_by_operator
+elif group_runs roles-noop; then
+  # What the roles group's operator stages leave, but core's service roles, which come next.
+  setup_operator_state without-service-roles
+fi
+
+if group_runs roles-noop; then
   # The operator grants core's service roles to the forms service account (forms exists since
   # core-erasure-client.sh); the no-op reconciliation after it must only verify.
   stage_core_service_roles_granted_by_operator
@@ -1894,7 +1981,7 @@ if group_runs roles; then
   stage_event_retention_after_noop_reconciliation
   stage_reset_choose_user_after_noop_reconciliation
   stage_v2_identity_guardrails
-elif group_runs login spi; then
+elif group_runs login login-rollback spi; then
   # The later reconciliations of these groups (K4's no-op runs among them) must find what the
   # operator stages above leave; without it they would warn about unseeded roles.
   setup_operator_state
@@ -1923,7 +2010,7 @@ if group_runs roles; then
   stage_group_overage_mapper
 fi
 
-group_runs login spi || finish_group
+group_runs login login-rollback spi || finish_group
 
 CURRENT_STAGE='minimal openid PAR contract'
 discovery=$(curl --fail --silent --show-error \
@@ -2062,8 +2149,11 @@ stage_microsoft_reauthentication() {
 }
 
 if group_runs login; then
+  # In a full run this also runs the reconciler's rollback half (login-rollback's stage).
   stage_login_by_either_email "$client_secret"
   stage_microsoft_reauthentication "$client_secret"
+elif group_runs login-rollback; then
+  stage_password_form_rollback_group "$client_secret"
 fi
 
 group_runs spi || finish_group

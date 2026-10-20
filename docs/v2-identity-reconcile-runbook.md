@@ -2921,16 +2921,17 @@ satırı listeden çıkaran sürümdür.
 
 **`realm-management` rolleri.** Production'da `service-account-skymail-backend` iki rolü 2026-09-23'ten
 beri taşıdığı için operatör kuru koşusu bunlar için yalnız `service account
-service-account-skymail-backend: view-users unchanged (held)` (ve `view-clients`) ile ilk kez iki
-`would record the grant of view-users (skylab.granted-service-accounts=<now>
-service-account-skymail-backend)` / `view-clients` satırı gösterir; kayıt rolün özniteliğidir, izin
-değiştirmez. `skymail-backend`'de `fullScopeAllowed=false` ise ve rol kapsamında eşli değilse `would
-map realm-management/view-users in the role scope of skymail-backend …` da gelir (Admin REST rolü
-token'ın kapsamından da ister). `would grant view-users …` görünürse production'da rol yok demektir:
-uygulamadan önce durulur. Bu iki rol için `NOTE: … also holds …` yazılmaz (etkin rollerde
-`query-users`, `query-groups`, `query-clients` bileşen olarak gelir). Uzlaştırıcı kimliği servis
-hesabının rollerini okuyamadığı için kayıt yazılana kadar `WARNING: view-users is not yet granted …`
-uyarır.
+service-account-skymail-backend: view-users unchanged (held)` (ve `view-clients`) ile ilk kez bir
+`would record the grant of realm-management roles view-clients,view-users on client skymail-backend
+(skylab.granted-realm-management-roles=<now> view-clients,view-users)` satırı gösterir. Keycloak
+realm-management rollerinin güncellenmesini reddettiği (403) için kayıt, öbür rollerdeki gibi rolün
+değil `skymail-backend` istemcisinin özniteliğidir; izin değiştirmez. `skymail-backend`'de
+`fullScopeAllowed=false` ise ve rol kapsamında eşli değilse `would map realm-management/view-users in
+the role scope of skymail-backend …` da gelir (Admin REST rolü token'ın kapsamından da ister). `would
+grant view-users …` görünürse production'da rol yok demektir: uygulamadan önce durulur. Bu iki rol
+için `NOTE: … also holds …` yazılmaz (etkin rollerde `query-users`, `query-groups`, `query-clients`
+bileşen olarak gelir). Uzlaştırıcı kimliği servis hesabının rollerini okuyamadığı için kayıt
+yazılana kadar `WARNING: view-users is not yet granted …` uyarır.
 
 Harness (`tests/core-service-roles.sh`): ilk tam koşu iki rolü açıklamasıyla oluşturur, kimseye
 vermez ve uyarır; `skymail:tracking:withdraw` bir realm rolünün bileşeniyken operatörün kuru ve

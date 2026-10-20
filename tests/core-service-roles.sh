@@ -65,6 +65,8 @@ CSR_SKYMAIL_SORTED='["skymail:access","skymail:lists:read","skymail:lists:write"
 CSR_ADMIN_ROLES=(view-users view-clients)
 CSR_ADMIN_HAND=view-users
 CSR_ADMIN_SORTED='["view-clients","view-users"]'
+# Keycloak refuses to update a realm-management role: their grant record is on the client.
+CSR_ADMIN_ATTRIBUTE=skylab.granted-realm-management-roles
 CSR_FLAGS_OFF='.standardFlowEnabled == false and .implicitFlowEnabled == false and .directAccessGrantsEnabled == false'
 CSR_FLAGS_PRODUCTION='.standardFlowEnabled == true and .implicitFlowEnabled == false and .directAccessGrantsEnabled == false'
 
@@ -289,7 +291,7 @@ stage_core_service_roles_after_first_reconciliation() {
 stage_core_service_roles_granted_by_operator() {
   CURRENT_STAGE='core service roles: the reconciler identity reports, it does not grant'
   local roles_scope_id audience_uuid output core_uuid forms_uuid account_id user_id admin_id new_body hand_body extra_body before markers role
-  local realm_management_uuid audience_account_id
+  local realm_management_uuid audience_account_id admin_marker
   local reconciler_lines=() operator_lines=()
   core_uuid=$(lca_client_uuid core)
   forms_uuid=$(lca_client_uuid "$CSR_CLIENT")
@@ -400,7 +402,7 @@ stage_core_service_roles_granted_by_operator() {
   before=$(csr_newest_event)
   output=$(csr_operator -e KEYCLOAK_RECONCILE_CHECK=true) || { printf '%s\n' "$output" >&2; fail 'the dry run failed'; }
   operator_lines=('Core service roles are checked; nothing was written.'
-    '[reconcile] check: 23 change(s) pending; nothing was written'
+    '[reconcile] check: 22 change(s) pending; nothing was written'
     "[reconcile] would grant $CSR_AUDIENCE_ROLE to service account $CSR_AUDIENCE_ACCOUNT"
     "[reconcile] would record the grant of $CSR_AUDIENCE_ROLE ($CSR_ATTRIBUTE=<now> $CSR_AUDIENCE_ACCOUNT)"
     "[reconcile] would grant $CSR_TRACKING_ROLE to service account $CSR_AUDIENCE_ACCOUNT"
@@ -416,9 +418,7 @@ stage_core_service_roles_granted_by_operator() {
     "[reconcile] NOTE: service account $CSR_ACCOUNT also holds the core roles url:create, which this step does not manage (nothing was removed)"
     "[reconcile] service account $CSR_AUDIENCE_ACCOUNT: $CSR_ADMIN_HAND unchanged (held)"
     "[reconcile] would grant view-clients to service account $CSR_AUDIENCE_ACCOUNT")
-  for role in "${CSR_ADMIN_ROLES[@]}"; do
-    operator_lines+=("[reconcile] would record the grant of $role ($CSR_ATTRIBUTE=<now> $CSR_AUDIENCE_ACCOUNT)")
-  done
+  operator_lines+=("[reconcile] would record the grant of realm-management roles view-clients,view-users on client $CSR_AUDIENCE_CLIENT ($CSR_ADMIN_ATTRIBUTE=<now> view-clients,view-users)")
   for role in "${CSR_ROLES[@]}"; do
     operator_lines+=("[reconcile] would record the grant of $role ($CSR_ATTRIBUTE=<now> $CSR_ACCOUNT)")
     [[ $role == "$CSR_HAND_ROLE" ]] || operator_lines+=("[reconcile] would grant $role to service account $CSR_ACCOUNT")
@@ -450,7 +450,7 @@ stage_core_service_roles_granted_by_operator() {
   CURRENT_STAGE='core service roles: granted by the operator step, other holders reported and kept'
   output=$(csr_operator) || { printf '%s\n' "$output" >&2; fail 'the service-roles operator step failed'; }
   operator_lines=('Core service roles are reconciled.'
-    '[reconcile] applied 23 change(s)'
+    '[reconcile] applied 22 change(s)'
     "[reconcile] service account $CSR_AUDIENCE_ACCOUNT: $CSR_ADMIN_HAND unchanged (held)"
     "[reconcile] service account $CSR_AUDIENCE_ACCOUNT: view-clients granted"
     "[reconcile] service account $CSR_AUDIENCE_ACCOUNT: $CSR_AUDIENCE_ROLE granted"
@@ -475,9 +475,9 @@ stage_core_service_roles_granted_by_operator() {
   csr_expect_lines "$output" 'the operator step' "${operator_lines[@]}"
   json_assert "$(csr_forms_client)" "$CSR_FLAGS_OFF and .serviceAccountsEnabled == true and .fullScopeAllowed == true and .publicClient == false" \
     'the operator step did not make forms service account only (or changed another of its settings)'
-  # forms is the only client the step updated.
-  [[ $(csr_client_updates_since "$before") == "[\"clients/$forms_uuid\"]" ]] \
-    || fail "the operator step updated another client than forms: $(csr_client_updates_since "$before")"
+  # forms is the only client the step updated, and skymail-backend for its realm-management record.
+  [[ $(csr_client_updates_since "$before") == "$(jq -cn --arg f "clients/$forms_uuid" --arg s "clients/$audience_uuid" '[$f, $s] | sort')" ]] \
+    || fail "the operator step updated another client than forms and $CSR_AUDIENCE_CLIENT: $(csr_client_updates_since "$before")"
   [[ $(csr_account_roles) == '["media:attach","ticket:forms","url:create","url:forms","users:read"]' ]] \
     || fail "$CSR_ACCOUNT does not hold exactly the four core service roles and the hand-made url:create: $(csr_account_roles)"
   markers=$(csr_markers)
@@ -495,10 +495,12 @@ stage_core_service_roles_granted_by_operator() {
     || fail "$CSR_CORE_ACCOUNT does not hold exactly SkyMail's five roles: $(csr_account_roles_of core skymail)"
   [[ $(csr_account_roles_of "$CSR_AUDIENCE_CLIENT" realm-management) == "$CSR_ADMIN_SORTED" ]] \
     || fail "$CSR_AUDIENCE_ACCOUNT does not hold exactly view-users and view-clients: $(csr_account_roles_of "$CSR_AUDIENCE_CLIENT" realm-management)"
+  csr_expect_lines "$output" 'the operator step' "[reconcile] client $CSR_AUDIENCE_CLIENT: realm-management grants recorded ($CSR_ADMIN_ATTRIBUTE="
+  admin_marker=$(kcadm get "clients/$audience_uuid" -r "$V2_REALM" -c | jq -r --arg a "$CSR_ADMIN_ATTRIBUTE" '(.attributes // {})[$a] // ""')
+  [[ $admin_marker =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\ view-clients,view-users$ ]] \
+    || fail "the realm-management grant record of $CSR_AUDIENCE_CLIENT is wrong: $admin_marker"
   for role in "${CSR_ADMIN_ROLES[@]}"; do
-    csr_expect_lines "$output" 'the operator step' "[reconcile] client role $role of realm-management: grant recorded ($CSR_ATTRIBUTE="
-    [[ $(csr_marker_of realm-management "$role") =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\ $CSR_AUDIENCE_ACCOUNT$ ]] \
-      || fail "the grant record of $role is wrong: $(csr_marker_of realm-management "$role")"
+    [[ -z $(csr_marker_of realm-management "$role") ]] || fail "the step wrote a grant record on realm-management/$role"
   done
   for role in "${CSR_SKYMAIL_ROLES[@]}"; do
     [[ $(csr_marker_of skymail "$role") =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\ $CSR_CORE_ACCOUNT$ ]] \

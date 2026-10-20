@@ -23,21 +23,10 @@ const animatedSkyLabLogo = skyLabLogoSource
 const logoMarkup = { __html: animatedSkyLabLogo };
 
 /**
- * The page's logo (`draw`: whole from the first frame, a light trace on top), or the loading
- * state's copy of it (`loading`: drawn over and over while a step is on its way; decorative, the
- * loading state's own text speaks for it).
+ * The page's logo: whole from the first frame, a light trace on top. While the next step loads it
+ * draws itself over and over (legacy-login.css, navigationLoading.ts).
  */
-export default function AnimatedSkyLabLogo(props: { variant?: "draw" | "loading" }) {
-  if (props.variant === "loading") {
-    return (
-      <div
-        className="sl-legacy-logo__animation"
-        data-skylab-logo-animation="loading"
-        aria-hidden="true"
-        dangerouslySetInnerHTML={logoMarkup}
-      />
-    );
-  }
+export default function AnimatedSkyLabLogo() {
   return (
     <div
       className="sl-legacy-logo__animation"

@@ -92,7 +92,9 @@ Only the two original brand image assets were carried forward.
   session. Keycloak's built-in registration route is never offered. Broker account-proof mode
   never shows this ordinary entry; its explicit "Bağlanamadım, yeni hesap aç" POST stays separate.
   On the shared code page, only the enabled sign-up intent changes the heading to "Hesap aç"
-  and the address-stage description; the code-stage notice, errors, budgets and proof-before-
+  and the address stage: its field is "E-posta adresin" (`type="email"`), a username or a
+  malformed address is not sent ("Geçerli bir e-posta adresi yaz." on the field; the SPI mails a
+  sign-up code to an address only), and it offers neither "Parolanla gir" nor the passkey; the code-stage notice, errors, budgets and proof-before-
   account-disclosure behavior remain the same. Ordinary e-mail/password switches carry no
   registration intent. Preview the enabled entry with `?page=login.ftl&registration=on`, or
   its address/code page with `?page=sky-email-code.ftl&registration=sign-up[&code=sent|wrong]`.
@@ -145,10 +147,14 @@ Only the two original brand image assets were carried forward.
   logo, footer) stays put and only the card's content slides, backwards for "Geri dön" and the back
   button. The entry script is render-blocking (`vite.config.ts`) and the first render synchronous
   (`main.tsx`), so the new page's first frame already holds the card. Entrance animations play on a
-  tab's first page only; the team strips take their phase from the wall clock. A step that takes
-  longer than 150 ms fades the card's content and draws the logo in its middle (`aria-busy`, a
-  "Yükleniyor…" live region; a still logo and plain text with reduced motion); a second submission
-  is cancelled meanwhile, and the state clears on a back/forward-cache return.
+  tab's first page only; the team strips take their phase from the wall clock. Every step (a form
+  post, a same-tab link, an execution switch such as "Hesap aç", "E-postayla devam et" or "Geri dön")
+  at once dims the card's content and makes the card's own logo draw itself over and over (`aria-busy`,
+  a "Yükleniyor…" live region; a still logo and a plain "Yükleniyor…" with reduced motion). It shows
+  for 600 ms at least: when Keycloak answers sooner, the next page keeps it for the rest (one
+  session-storage entry, read once) with the logo at the same point of its drawing, and the logo
+  swaps without a cross-fade, so it reads as one animation. A second submission is cancelled
+  meanwhile, and the state clears on a back/forward-cache return.
 - Every visible string comes from `src/login/i18n.ts` (Turkish first, English
   second); the Turkish keys that Keycloakify's default set lacks live there.
 - The translations are one object literal written inside
@@ -161,7 +167,7 @@ Only the two original brand image assets were carried forward.
   `tests/check-theme-contract.sh` runs `scripts/check-message-bundles.mjs`
   against the built JAR.
 - The custom template owns the semantic main/content-info landmarks, the skip
-  link, the plain-link language menu, the document title (page heading plus
+  link, the plain-link language menu (Türkçe first, although Keycloak lists English first), the document title (page heading plus
   " · SKY LAB"), visible focus treatment, WCAG AA contrast including the blue
   and pink submit states (`themeContract.test.ts`) and `prefers-reduced-motion`
   behavior.

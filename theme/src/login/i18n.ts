@@ -146,6 +146,9 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     emailCodeSignUpTitle: "Hesap aç",
     emailCodeCodeDescription: "E-postana gelen 6 haneli kodu yaz.",
     emailCodeIdentifierLabel: "E-posta adresin ya da kullanıcı adın",
+    // "Hesap aç" opens an account for an e-mail address only; a username names nobody new.
+    emailCodeSignUpAddressLabel: "E-posta adresin",
+    emailCodeSignUpInvalidAddress: "Geçerli bir e-posta adresi yaz.",
     emailCodeSend: "Kod gönder",
     emailCodePassword: "Parolanla gir",
     emailCodeSent: "Kod {0} dakika geçerli.",
@@ -538,6 +541,8 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     emailCodeSignUpTitle: "Create an account",
     emailCodeCodeDescription: "Type the 6-digit code from your email.",
     emailCodeIdentifierLabel: "Your email or username",
+    emailCodeSignUpAddressLabel: "Your email address",
+    emailCodeSignUpInvalidAddress: "Type a valid email address.",
     emailCodeSend: "Send code",
     emailCodePassword: "Sign in with your password",
     emailCodeSent: "The code is valid for {0} minutes.",

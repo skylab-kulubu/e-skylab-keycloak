@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  continueNavigationLoading,
   FAILSAFE_MS,
   installNavigationLoading,
   isNavigationPending,
   LOADING_ATTRIBUTE,
-  LOADING_DELAY_MS,
+  MIN_VISIBLE_MS,
+  PHASE_PROPERTY,
   startNavigationLoading
 } from "./navigationLoading";
 
@@ -57,7 +59,16 @@ describe("the loading state between two steps", () => {
   // jsdom cannot navigate; stop the default after every listener on the page has seen the click.
   const stayHere = (event: Event) => event.preventDefault();
 
+  // A new document in the same tab: this module's state is gone, the tab's session storage stays.
+  const nextPage = () => {
+    const handedOver = window.sessionStorage.getItem("sl-loading-since");
+    uninstall();
+    if (handedOver !== null) window.sessionStorage.setItem("sl-loading-since", handedOver);
+    uninstall = installNavigationLoading();
+  };
+
   beforeEach(() => {
+    window.sessionStorage.clear();
     vi.useFakeTimers();
     uninstall = installNavigationLoading();
     window.addEventListener("click", stayHere);
@@ -70,20 +81,75 @@ describe("the loading state between two steps", () => {
     document.body.innerHTML = "";
   });
 
-  it("shows only after the delay, so a fast step does not flicker", () => {
+  it("shows at once on every step, the live region filled in so it is announced", () => {
     const { card, label } = frame();
+    expect(loading()).toBe(false);
     submit(form("/realms/e-skylab/login-actions/authenticate"));
 
-    vi.advanceTimersByTime(LOADING_DELAY_MS - 1);
-    expect(loading()).toBe(false);
-    expect(card).not.toHaveAttribute("aria-busy");
-    expect(label.textContent).toBe("");
-
-    vi.advanceTimersByTime(1);
     expect(loading()).toBe(true);
     expect(card).toHaveAttribute("aria-busy", "true");
-    // Filled in now, so the live region announces it.
     expect(label.textContent).toBe("Yükleniyor…");
+    expect(document.documentElement.style.getPropertyValue(PHASE_PROPERTY)).toBe("0ms");
+  });
+
+  it("keeps showing on the next page for the rest of its minimum, with the drawing where it was", () => {
+    frame();
+    startNavigationLoading(1_000);
+    // The next page: a new document, nothing pending, the same tab's session storage.
+    nextPage();
+    const { card, label } = frame();
+
+    continueNavigationLoading(1_000 + 200);
+    expect(loading()).toBe(true);
+    expect(card).toHaveAttribute("aria-busy", "true");
+    // Not announced again: the page's content is already there.
+    expect(label.textContent).toBe("");
+    expect(document.documentElement.style.getPropertyValue(PHASE_PROPERTY)).toBe("-200ms");
+    expect(isNavigationPending()).toBe(false);
+
+    vi.advanceTimersByTime(MIN_VISIBLE_MS - 200 - 1);
+    expect(loading()).toBe(true);
+    vi.advanceTimersByTime(1);
+    expect(loading()).toBe(false);
+    expect(card).not.toHaveAttribute("aria-busy");
+    expect(document.documentElement.style.getPropertyValue(PHASE_PROPERTY)).toBe("");
+  });
+
+  it("shows nothing on the next page once the minimum has passed, and reads the start only once", () => {
+    frame();
+    startNavigationLoading(1_000);
+    nextPage();
+    frame();
+    continueNavigationLoading(1_000 + MIN_VISIBLE_MS);
+    expect(loading()).toBe(false);
+
+    startNavigationLoading(5_000);
+    nextPage();
+    frame();
+    continueNavigationLoading(5_100);
+    expect(loading()).toBe(true);
+    vi.advanceTimersByTime(MIN_VISIBLE_MS);
+    continueNavigationLoading(5_200);
+    expect(loading()).toBe(false);
+  });
+
+  it("shows nothing on a page that no step led to", () => {
+    frame();
+    continueNavigationLoading();
+    expect(loading()).toBe(false);
+  });
+
+  it("lets a submit on the next page through while it is still showing, and keeps showing for that step", () => {
+    frame();
+    startNavigationLoading(1_000);
+    nextPage();
+    frame();
+    continueNavigationLoading(1_100);
+
+    expect(submit(form("/realms/e-skylab/login-actions/authenticate")).defaultPrevented).toBe(false);
+    expect(isNavigationPending()).toBe(true);
+    vi.advanceTimersByTime(MIN_VISIBLE_MS);
+    expect(loading()).toBe(true);
   });
 
   it("cancels a second submission while the first is on its way, without disabling any button", () => {
@@ -108,7 +174,6 @@ describe("the loading state between two steps", () => {
   it("clears itself when the page comes back from the back/forward cache", () => {
     const { card, label } = frame();
     submit(form("/realms/e-skylab/login-actions/authenticate"));
-    vi.advanceTimersByTime(LOADING_DELAY_MS);
     expect(loading()).toBe(true);
 
     window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
@@ -117,13 +182,15 @@ describe("the loading state between two steps", () => {
     expect(card).not.toHaveAttribute("aria-busy");
     expect(label.textContent).toBe("");
     expect(isNavigationPending()).toBe(false);
+    // Nothing is handed to the page that comes next.
+    continueNavigationLoading();
+    expect(loading()).toBe(false);
   });
 
   it("ignores an ordinary first page show", () => {
     frame();
     startNavigationLoading();
     window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: false }));
-    vi.advanceTimersByTime(LOADING_DELAY_MS);
     expect(loading()).toBe(true);
   });
 
@@ -143,7 +210,6 @@ describe("the loading state between two steps", () => {
     submit(form("/realms/e-skylab/login-actions/authenticate", "_blank"));
     submit(form("https://login.microsoftonline.com/common/oauth2"));
 
-    vi.advanceTimersByTime(LOADING_DELAY_MS);
     expect(loading()).toBe(false);
   });
 
@@ -156,11 +222,9 @@ describe("the loading state between two steps", () => {
     const handled = link("/realms/e-skylab/login-actions/reset-credentials");
     handled.addEventListener("click", event => event.preventDefault());
     click(handled);
-    vi.advanceTimersByTime(LOADING_DELAY_MS);
     expect(loading()).toBe(false);
 
     click(link("/realms/e-skylab/login-actions/reset-credentials"));
-    vi.advanceTimersByTime(LOADING_DELAY_MS);
     expect(loading()).toBe(true);
   });
 });

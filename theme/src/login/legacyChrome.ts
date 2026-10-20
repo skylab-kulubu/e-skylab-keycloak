@@ -40,13 +40,24 @@ export function getLegacyChromeProps(i18n: I18n, options: LegacyChromeOptions = 
   };
 }
 
+/** Turkish first, then the rest as Keycloak lists them (Keycloak sorts by label, which puts English first). */
+const LANGUAGE_ORDER = ["tr"];
+
+function languageRank(languageTag: string): number {
+  const rank = LANGUAGE_ORDER.indexOf(languageTag.toLowerCase().split("-")[0]);
+  return rank === -1 ? LANGUAGE_ORDER.length : rank;
+}
+
 export function getLegacyLanguageMenu(i18n: I18n): LegacyFrameLanguageMenu {
   const { currentLanguage, enabledLanguages, msgStr } = i18n;
 
   return {
     currentLanguageTag: currentLanguage.languageTag,
     label: msgStr("languages"),
-    languages: enabledLanguages.map(({ href, label, languageTag }) => ({ href, label, languageTag }))
+    languages: enabledLanguages
+      .map(({ href, label, languageTag }) => ({ href, label, languageTag }))
+      // Array.prototype.sort is stable, so languages of the same rank keep Keycloak's order.
+      .sort((a, b) => languageRank(a.languageTag) - languageRank(b.languageTag))
   };
 }
 

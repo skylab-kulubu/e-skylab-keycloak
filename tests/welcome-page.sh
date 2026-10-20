@@ -95,7 +95,7 @@ grep -Eiq 'no-cache|no-store' <<<"$(header root cache-control)" || fail 'GET / m
 expect_in_page '<html lang="tr" class="sl-html">'
 expect_in_page "<title>e-SKY LAB · SKY LAB'in giriş hizmeti</title>"
 expect_in_page '<h1 id="sl-welcome-title">Tek hesap, <span>bütün SKY LAB.</span></h1>'
-expect_in_page 'Okul şifreni yalnız Microsoft&#x27;un sayfasına yazarsın; SKY LAB onu hiçbir zaman görmez.'
+expect_in_page 'SKY LAB&#x27;in tüm platformlarına tek hesapla gir.'
 expect_in_page 'href="https://my.yildizskylab.com/"'
 expect_in_page 'href="https://yildizskylab.com/kvkk-metni.pdf"'
 expect_in_page 'data-skylab-logo-animation="draw"'

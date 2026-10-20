@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { chooseExecution } from "./emailCodeChoice";
+import { resetNavigationLoading } from "./navigationLoading";
 
 const action = "/realms/e-skylab/login-actions/authenticate?session_code=session&execution=password&tab_id=tab";
 
@@ -12,6 +13,7 @@ function captureSubmissions(): HTMLFormElement[] {
 }
 
 afterEach(() => {
+  resetNavigationLoading();
   vi.restoreAllMocks();
   document.body.replaceChildren();
   window.sessionStorage.clear();
@@ -40,6 +42,7 @@ describe("switching to the shared e-mail code step", () => {
     const submitted = captureSubmissions();
 
     chooseExecution(action, "offered-email-code");
+    resetNavigationLoading();
     chooseExecution(action, "offered-password");
 
     expect(submitted).toHaveLength(2);
@@ -51,9 +54,19 @@ describe("switching to the shared e-mail code step", () => {
     const submitted = captureSubmissions();
 
     chooseExecution(action, "offered-email-code", "sign-up");
+    resetNavigationLoading();
     chooseExecution(action, "offered-email-code");
 
     expect(new FormData(submitted[0]).get("sky-email-code-intent")).toBe("sign-up");
     expect(new FormData(submitted[1]).get("sky-email-code-intent")).toBeNull();
+  });
+
+  it("posts once when the choice is clicked twice", () => {
+    const submitted = captureSubmissions();
+
+    chooseExecution(action, "offered-email-code");
+    chooseExecution(action, "offered-email-code");
+
+    expect(submitted).toHaveLength(1);
   });
 });

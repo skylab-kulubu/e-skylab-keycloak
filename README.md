@@ -661,18 +661,23 @@ operatör yapar (`KEYCLOAK_RECONCILE_KCADM_CONFIG` + `KEYCLOAK_RECONCILE_ONLY=se
 `media-attach` de çalışır). `KEYCLOAK_RECONCILE_CHECK=true` aynı adımı kuru koşar: yalnız eksikleri
 `would …` diye yazar, hiçbir şey yazmaz. Adım önce her şeyi okur, okuma hatasında hiçbir şey vermez
 (eksik varsayılan `roles` kapsamı hariç: onu okuma sırasında ve tam uzlaştırmada da ekler, runbook §20.1),
-verdikten sonra rolün `skylab.granted-service-accounts` özniteliğine kaydeder; `users:read` dışındaki
-rolleri taşıyan başka kullanıcı, grup ya da varsayılan rolü, servis hesabının listede olmayan core
-rollerini bildirir ve hiçbir şey silmez. `forms` yalnız servis hesabıdır (Forms kişileri `skyforms`
+verdikten sonra rolün `skylab.granted-service-accounts` özniteliğine kaydeder; yalnız servis
+hesaplarına ait rolleri (`services` sınıfı; kişilerin de taşıyabildiği `users:read` ve SkyMail'in
+paylaşılan rolleri değil) taşıyan başka kullanıcı, grup, varsayılan rolü ya da onları içeren bileşik
+rolü, servis hesabının listede olmayan rollerini bildirir ve hiçbir şey silmez. `forms` yalnız servis hesabıdır (Forms kişileri `skyforms`
 ile giriş yaptırır; core ürünü `client_id == azp`'den okur): uzlaştırıcı `standardFlowEnabled`,
 `implicitFlowEnabled`, `directAccessGrantsEnabled`'in kapalı olduğunu doğrular, değilse uyarır;
 operatör adımı açık olanları kapatır (kuru koşuda `would set …`). `media:attach`'ın istemci listesi
 core'un `MEDIA_SERVICE_CLIENTS`'ıyla aynı tutulur (runbook §20).
 Aynı adım SkyMail'in servis hesabına (`skymail-backend`) core'un `audience:read` rolünü (core #242,
-haber ve duyuru kitlesi) ve core'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`,
-`skymail:lists:read`, `skymail:lists:write` rollerini verir; SkyMail'in rollerini oluşturmaz, eksikse
-uyarır; listelenen servis istemcisinde varsayılan `roles` kapsamı yoksa ekler (runbook §20.1). `skymail:announcements:send` (haber ve duyuruyu Mail onayı olmadan gönderme)
-`skymail:system-mails:read` gibi bir kez tohumlanır ama yalnız ADMIN ve YK'ya (runbook §25). Forms'un
+haber ve duyuru kitlesi) ve `communication-preferences:read` rolünü (core #256, kimin takip
+edilebileceği), core'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`,
+`skymail:lists:read`, `skymail:lists:write` ve `skymail:tracking:withdraw` (skymail-backend #75, takibi
+geri alma; yalnız `service-account-core`) rollerini verir; SkyMail'in rollerinden yalnız
+`skymail:tracking:withdraw`'u oluşturur, öbürleri eksikse uyarır (runbook §20.1); listelenen servis istemcisinde varsayılan `roles` kapsamı yoksa ekler (runbook §20.1). `skymail:announcements:send` (haber ve duyuruyu Mail onayı olmadan gönderme)
+`skymail:system-mails:read` gibi bir kez tohumlanır ama yalnız ADMIN ve YK'ya (runbook §25).
+`skymail:mails:tracking:read` (gönderimlerin kişi bazındaki açılma ve tıklama raporu) aynı biçimde
+ADMIN, YK ve DK'ya bir kez tohumlanır; okuma rolüdür, DK'da kalır (runbook §25). Forms'un
 salt okur rolü `skyforms:read-all` (DK her formu ve cevabı okur, yazamaz; forms-backend henüz okumuyor)
 aynı biçimde `forms` istemcisinde var edilir ve yalnız DK'ya bir kez verilir (runbook §28).
 
@@ -1003,8 +1008,9 @@ KEYCLOAK_TEST_IMAGE=account-keycloak:test bash tests/run-integration.sh
 ```
 
 Harness tek koşuda bütün aşamaları sırayla koşar (varsayılan `INTEGRATION_GROUP=all`).
-CI aynı betiği dört paralel işte koşar
-(`integration (erasure|roles|login|spi)`, sonra hepsini bekleyen `integration`):
+CI aynı betiği altı paralel işte koşar
+(`integration (erasure|roles|roles-noop|login|login-rollback|spi)`, sonra hepsini bekleyen
+`integration`; gruplar `theme` işini beklemez):
 her grup kendi Keycloak'ını açar, ortak realm önekini (bootstrap, ilk uzlaştırma,
 drift, ikinci uzlaştırma) koşar, sonra kendi aşamalarını. Önceki bir grubun
 aşamalarına dayanan grup önce o aşamaların yazdığı durumu kurar (sözleşmelerini
@@ -1015,50 +1021,62 @@ CI günlüğüne `[harness <grup> +12m34s] <aşama>` diye geçer. Tek grup yerel
 INTEGRATION_GROUP=login KEYCLOAK_TEST_IMAGE=account-keycloak:test bash tests/run-integration.sh
 ```
 
-**CI'ın iki boyu (`ci.yml`, `scope (full|fast)` işi hangisi olduğunu söyler).**
+**CI'ın iki boyu (`ci.yml`; `mode` karar verir, `scope (full|fast)` işi hangisi olduğunu söyler).**
 `main`'e açılan PR'lar *hızlı kümeyi* koşar: `static` (sürüm sabitleri, iş akışı
 bağlantıları, tema sözleşmeleri, imaj derlemesi ve içindeki SPI/RabbitMQ Maven testleri,
 operatör betiklerinin statik denetimleri), `theme` ve kısa sözleşme işleri; her biri yalnız
 okuduğu yollar değiştiyse (`theme/`, `spi/`, ya da `theme/`, `spi/`, `docs/`, `*.md`
 dışındaki her şey). Uzun Keycloak işleri ve `integration (<grup>)` grupları PR'da koşmaz;
-ancak PR bir işin kendi test betiğine ya da onun (doğrudan veya dolaylı, yorum satırları hariç)
-okuduğu ya da çalıştırdığı bir `tests/`, `config/` veya harness Playwright dosyasına
-(`theme/tests/`) dokunuyorsa o iş hızlı koşuda da koşar (`tests/affected-jobs.sh`; entegrasyon
-harness'ına ya da tam uzlaştırmaya dokunmak dört grubu da koşturur). Hiçbir iş akışının ulaşmadığı
-bir `tests/` ya da `config/` dosyası bütün tam takım işlerini koşturur; izlenen her dosya ya bir
-işe ulaşır ya da `LOCAL_ONLY` listesindedir (`check-fresh-runner.sh` denetler);
-`main`/`production` push'unda, `production`'a açılan PR'larda, her gece (01:23 UTC),
-elle (`gh workflow run ci.yml --ref <dal>`) ve `full-ci` etiketli PR'larda (etiket PR
-açılırken/push'ta okunur) *tam takım* koşar. Tek zorunlu kontrol `gate`: bir iş düşer ya da
-iptal olursa kırmızı; tam koşuda atlanan iş de kırmızı. Aynı PR'a yeni push eskisini iptal
-eder; push/gece/elle koşular iptal edilmez. `release.yml`, `production` ağacını tamamen
-yeşil bir tam `ci.yml` push, gece ya da elle koşusu test etmediyse derlemeye başlamaz
-(PR koşuları sayılmaz: GitHub'ın merge commit'ini test ederler; hotfix'te production push'unun
-kendi koşusu ya da `gh workflow run ci.yml --ref <dal>`) (production `main`'in
-squash'ı olduğu için commit değil ağaç karşılaştırılır; fiziksel WebAuthn kapısı exact
-production commit'ine bağlı kalır).
+ancak `main`'e açılan PR bir işin kendi test betiğine ya da onun (doğrudan veya dolaylı, yorum
+satırları hariç) okuduğu ya da çalıştırdığı bir `tests/`, `config/` veya harness Playwright
+dosyasına (`theme/tests/`) dokunuyorsa o iş hızlı koşuda da koşar (`tests/affected-jobs.sh`;
+entegrasyon harness'ına ya da tam uzlaştırmaya dokunmak `candidate` imajını derletip bütün grupları
+koşturur). Hiçbir iş akışının ulaşmadığı bir `tests/` ya da `config/` dosyası bütün tam takım
+işlerini koşturur; izlenen her dosya ya bir işe ulaşır ya da `LOCAL_ONLY` listesindedir
+(`check-fresh-runner.sh` denetler). Hızlı `production` koşusu (terfi) etkilenen iş koşturmaz:
+ağacı zaten tam test edildi. Bu koşuların makbuzları yayın kanıtı sayılmaz (bulucu yalnız tam
+push, gece ve elle koşularına bakar).
+*Tam takım* `main` push'unda, her gece (01:23 UTC), elle (`gh workflow run ci.yml --ref <dal>`)
+ve `full-ci` etiketli PR'larda (etiket PR açılırken/push'ta okunur) koşar. `production`'a açılan
+PR'lar ve `production` push'u, ağaçlarını tamamen yeşil bir tam koşu zaten test ettiyse (yayın
+PR'ı ve yayın push'u, `main` push koşusundan sonra) hızlı kümeyi koşar; etmediyse (hotfix) tam
+takımı. Kanıtı `tests/find-green-full-ci-run.sh` bulur: yalnız push, gece ya da elle koşuları
+sayılır (PR koşusu GitHub'ın merge commit'ini test eder), `scope (full)` ve her iş başarılı
+olmalı. Tek zorunlu kontrol `gate`: bir iş düşer ya da iptal olursa kırmızı; tam koşuda atlanan
+iş de kırmızı; `mode`'un seçimini olayla karşılaştırır, terfi eden bir production koşusunda
+bulucuyu yeniden koşar. Aynı PR'a yeni push eskisini iptal eder; `main`'e yeni push da `main`'in eski push koşusunu
+iptal eder (yalnız en yeni ağaç yayınlanır, eskisi ara ağaçtır). Grup anahtarında olay adı var:
+push koşusu gece/elle/PR koşusunu iptal etmez; `production` push'u, gece ve elle koşular hiç
+iptal edilmez.
 
-`release.yml` de aynı grupları paralel koşar, ama imajı bir kez derler:
-`keycloak-build` aday imajı derleyip `docker save` ile kaydeder ve
-`keycloak-test-candidate-<commit>` artifact'i olarak yükler (SHA-256'sı ve imaj kimliği
-işin çıktısıdır); grup listesini `tests/run-integration.sh`'ın `INTEGRATION_GROUPS` satırından
-okur. `integration (<grup>)` işleri bu tarball'ı indirir, SHA-256'sını ve yüklenen imajın
-kimliğini doğrular, kendi grubunu koşar ve test ettiği imajın kimliğini bir makbuz artifact'ine
-yazar. `keycloak-package` yalnız bütün gruplar başarılıysa koşar: listedeki her grubun makbuzunun
-aynı commit'i ve aynı imaj kimliğini söylediğini doğrular, sonra fiziksel WebAuthn kapısını
-(`keycloak-production` ortamının değişkenleri) koşar ve grupların yüklediği tarball'ın kendisini
-paketler; `keycloak-publish` önceki gibi onu doğrulayıp yayımlar. Düşen grup tek başına yeniden
-koşturulabilir (`gh run rerun <run> --failed`): `keycloak-build` yeniden koşmaz, yeniden koşan
-grup aynı tarball'ı yükler. Bir makbuz ancak bu koşunun derlediği imaj kimliğini ve tarball
-SHA-256'sını birebir söylüyorsa kabul edilir; `keycloak-publish` de tarball'ı `keycloak-build`'in
-çıktılarına karşı yeniden doğrular. `keycloak-package` Touch ID kapısından, `keycloak-publish`
-GHCR girişinden hemen önce yayının hâlâ güncel `production` commit'ini gösterdiğini
-(`git ls-remote`) yeniden denetler: yeniden koşturulan eski bir yayın `:production`'ı ezemez.
-Yayınlar tek tek koşar (`concurrency: keycloak-release`, koşan iptal edilmez).
+**Test edilen baytlar terfi eder.** Tam koşuda `candidate` imajı bir kez derler, `docker save`
+ile kaydeder ve `keycloak-ci-candidate` artifact'i olarak 14 gün saklar (SHA-256'sı ve imaj
+kimliği işin çıktısıdır). Her `integration (<grup>)` işi bu tarball'ı indirir, SHA-256'sını ve
+yüklenen imajın kimliğini doğrular, kendi grubunu koşar ve geçerse `keycloak-ci-tested-<grup>`
+makbuzuna grubu, ağacı, imaj kimliğini ve SHA-256'yı yazar.
 
-Artifact'lerin ömrü 3 gün. **Touch ID kanıtı 3 günden uzun sürerse** koşu yeniden
-denenemez (indirme adımı düşer); yayın koşusu baştan başlatılır (production'a aynı ağaçla yeni
-bir commit).
+`release.yml` hiçbir şey derlemez ve test etmez. `keycloak-build` yayının güncel `production`
+commit'ini gösterdiğini denetler, aynı ağacın tamamen yeşil tam `ci.yml` koşusunu bulur
+(production `main`'in squash'ı olduğu için commit değil ağaç karşılaştırılır), o koşunun
+adayını ve bütün makbuzlarını indirir; `tests/run-integration.sh`'ın `INTEGRATION_GROUPS`
+satırındaki her grubun makbuzunun bu ağacı, bu imaj kimliğini ve tarball SHA-256'sını birebir
+söylediğini, tarball'ın SHA-256'sını ve yüklenen imajın kimliğini doğrular. `keycloak-package`
+aynı tarball'ı o koşudan indirir, fiziksel WebAuthn kapısını (`keycloak-production` ortamının
+değişkenleri, exact production commit'i) koşar ve tarball'ın kendisini paketler;
+`keycloak-publish` önceki gibi onu `keycloak-build`'in çıktılarına karşı doğrulayıp yayımlar.
+`keycloak-package` Touch ID kapısından, `keycloak-publish` GHCR girişinden hemen önce yayının
+hâlâ güncel `production` commit'ini gösterdiğini (`git ls-remote`) yeniden denetler: yeniden
+koşturulan eski bir yayın `:production`'ı ezemez. Yayınlar tek tek koşar
+(`concurrency: keycloak-release`, koşan iptal edilmez). Hotfix'te (ağaç `main`'de test
+edilmedi) `production` push'unun kendi `ci.yml` koşusu tam koşar; yeşil olunca yayın yeniden
+koşturulur (`gh run rerun <run> --failed`).
+
+CI adayının ömrü 14 gün: Touch ID kanıtı beklenirken yayın (`gh run rerun <run> --failed`, Touch
+ID adımı yeniden koşar) adayın kalan ömrü boyunca yeniden denenebilir. Paket artifact'i Touch ID
+geçtikten sonra oluşur ve 3 gün yaşar; 3 gün yalnız paket ile `keycloak-publish`'in yeniden
+denenmesi arasındaki sınırdır, daha geçse yayın koşusu baştan başlatılır. Ağacın tam koşusu 14 günden eskiyse (adayı silinmişse
+bulucu onu kanıt saymaz) `gh workflow run ci.yml --ref production` ile yenisi alınır: `production`'ın
+ağacını test eder (`main` o zamana kadar ayrışmış olabilir).
 
 Tek Keycloak'ta bütün aşamaların sırayla koşusu (`INTEGRATION_GROUP=all`) artık ne CI'da ne
 yayında var; `.github/workflows/integration-all.yml` onu haftada bir (pazartesi 03:17 UTC, main)

@@ -45,8 +45,11 @@ JOB_ENTRIES=(
   'integration-group tests/run-integration.sh'
 )
 
-# The fast set's jobs (they run in a fast run whenever their area changes): job, then scripts.
+# Every other ci.yml job that runs tests/ scripts: the fast set's jobs (they run in a fast run
+# whenever their area changes), and mode and gate (every run; the finder of a tree's full run).
+# Job, then scripts.
 FAST_ENTRIES=(
+  'mode tests/find-green-full-ci-run.sh'
   'sandbox-site-clients tests/sandbox-site-clients.sh'
   'place-client tests/place-client.sh'
   'forms-skymail-grants tests/forms-skymail-grants.sh'
@@ -57,6 +60,7 @@ FAST_ENTRIES=(
   'sign-up-by-email-code tests/sign-up-by-email-code.sh'
   'existing-account-link tests/existing-account-link.sh'
   'welcome-page tests/welcome-page.sh'
+  'gate tests/find-green-full-ci-run.sh'
 )
 
 # Scripts other workflows run that no ci.yml job runs (release.yml).

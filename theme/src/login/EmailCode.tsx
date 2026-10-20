@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useScript } from "keycloakify/login/pages/Login.useScript";
 import type { KcContext } from "./KcContext";
 import type { I18n } from "./i18n";
+import BackToChoice from "./BackToChoice";
 import LegacyFrame from "./LegacyFrame";
 import { getLegacyChromeProps, useLegacyChrome } from "./legacyChrome";
 import {
@@ -39,7 +40,8 @@ const webAuthnButtonId = "authenticateWebAuthnButton";
  * "E-postayla devam et" (the SPI's sky-email-code step, eskylab-login-ux 08). Two stages share one
  * page: the address or username ("Kod gönder", "Parolanla gir", the passkey as on the login page)
  * and the code (six digits, "Giriş yap", "Kodu yeniden gönder" once its minute is up, "Başka bir
- * adres yaz"). The SPI decides the stage, the error and how long a resend waits; the page is the same
+ * adres yaz"). Both stages open with "Geri dön" back to the login page's choice (BackToChoice.tsx).
+ * The SPI decides the stage, the error and how long a resend waits; the page is the same
  * whether or not the address belongs to an account, and never says where the code went.
  */
 export default function EmailCode(props: EmailCodeProps) {
@@ -71,6 +73,8 @@ export default function EmailCode(props: EmailCodeProps) {
   }, [resendAfter]);
 
   const fieldId = stage === "code" ? "sky-email-code" : "username";
+  // The address stage needs no sentence: its label and "Kod gönder" say it. The code stage keeps one line.
+  const description = stage === "code" ? msgStr("emailCodeCodeDescription") : undefined;
 
   return (
     <LegacyFrame
@@ -79,9 +83,9 @@ export default function EmailCode(props: EmailCodeProps) {
       mainId="sl-email-code-main"
       titleId="sl-email-code-title"
       title={title}
-      description={msgStr(stage === "code" ? "emailCodeCodeDescription"
-        : signUpIntent ? "emailCodeSignUpDescription" : "emailCodeDescription")}
+      description={description}
     >
+      <BackToChoice kcContext={kcContext} label={msgStr("goBack")} />
       <form
         id={stage === "code" ? "kc-email-code-form" : "kc-email-code-identifier-form"}
         className="sl-email-code"

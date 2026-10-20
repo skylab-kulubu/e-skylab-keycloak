@@ -1,4 +1,5 @@
 import type { KcContext } from "./KcContext";
+import { isNavigationPending, startNavigationLoading } from "./navigationLoading";
 
 /**
  * "E-postayla devam et" (eskylab-login-ux 08): the SPI's sky-email-code step runs in its own
@@ -46,6 +47,8 @@ export function passwordFormExecutionId(kcContext: KcContext): string | undefine
  * code step with its existing SPI intent; ordinary sign-in switches carry no registration intent.
  */
 export function chooseExecution(action: string, executionId: string, intent?: "sign-up"): void {
+  // A double click would post the switch twice.
+  if (isNavigationPending()) return;
   const form = document.createElement("form");
   form.method = "post";
   form.action = action;
@@ -63,6 +66,8 @@ export function chooseExecution(action: string, executionId: string, intent?: "s
     form.appendChild(signUp);
   }
   document.body.appendChild(form);
+  // form.submit() fires no submit event, so the loading state is started here.
+  startNavigationLoading();
   form.submit();
 }
 

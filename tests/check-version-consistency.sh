@@ -108,12 +108,13 @@ grep -Fq 'branches: [main, production]' "$KEYCLOAK_CI" \
   || fail 'Keycloak CI must run on main and production pushes'
 
 # The theme screenshot baselines are rendered and compared in the Playwright image of
-# the pinned @playwright/test release; both workflows and the baseline script follow it.
+# the pinned @playwright/test release; CI's theme job and the baseline script follow it
+# (release.yml runs no tests: it promotes the candidate CI tested).
 playwright_version=$(jq -r '.devDependencies["@playwright/test"]' "$KEYCLOAK_DIR/theme/package.json")
 [[ $playwright_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
   || fail 'theme @playwright/test must be pinned to an exact version'
 PLAYWRIGHT_IMAGE="mcr.microsoft.com/playwright:v${playwright_version}-jammy"
-for workflow in "$KEYCLOAK_CI" "$KEYCLOAK_DIR/.github/workflows/release.yml"; do
+for workflow in "$KEYCLOAK_CI"; do
   grep -Fq "image: $PLAYWRIGHT_IMAGE" "$workflow" \
     || fail "$(basename -- "$workflow") theme job must run in $PLAYWRIGHT_IMAGE"
   if grep -Eo 'mcr\.microsoft\.com/playwright:[^[:space:]]+' "$workflow" | grep -Fvq "$PLAYWRIGHT_IMAGE"; then

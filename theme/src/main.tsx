@@ -2,7 +2,7 @@ import { StrictMode } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import KcLoginPage from "./login/KcPage";
-import { installNavigationLoading } from "./login/navigationLoading";
+import { continueNavigationLoading, installNavigationLoading } from "./login/navigationLoading";
 import { installPageTransitions } from "./login/pageTransitions";
 
 const root = document.getElementById("root");
@@ -36,3 +36,6 @@ flushSync(() => {
     </StrictMode>
   );
 });
+
+// Still before the first frame: a step that answered in less than its minimum keeps loading here.
+continueNavigationLoading();

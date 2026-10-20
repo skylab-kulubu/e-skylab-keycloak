@@ -14,63 +14,25 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  theme:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions: { contents: read }
-    # Same image as ci.yml and theme/scripts/update-visual-baselines.sh: the committed
-    # screenshot baselines are compared byte for byte here, not on the bare runner.
-    container:
-      image: mcr.microsoft.com/playwright:v1.63.0-jammy
-    env:
-      SL_VISUAL_BASELINE_ENV: "1"
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22.22.1
-          cache: npm
-          cache-dependency-path: theme/package-lock.json
-
-      - name: Pin the screenshot fonts exactly as the baseline script does
-        run: |
-          mkdir -p "$HOME/.config/fontconfig"
-          cp theme/tests/browser/fonts.conf "$HOME/.config/fontconfig/fonts.conf"
-
-      - name: Unit, Chromium and screenshot baseline tests of the login theme
-        working-directory: theme
-        run: |
-          npm ci --ignore-scripts
-          npm audit --audit-level=high
-          npm test
-          npm run test:browser
-
-      - name: Keep screenshot diffs when the visual baselines drift
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: theme-visual-diffs
-          path: theme/test-results
-          if-no-files-found: ignore
-          retention-days: 7
-
-  # The candidate is built here once. keycloak-integration runs the harness's groups on its exact
-  # bytes in parallel and keycloak-package approves and packages them; neither rebuilds it. Every
-  # later job loads this one tarball only after checking its SHA-256 against this job's output, and
-  # checks the loaded image ID against the built one.
+  # No build and no tests here: ci.yml tested this tree in full (every job, every integration
+  # group on one candidate image) on the push to main, and that run's candidate artifact is
+  # promoted. keycloak-build finds the run (tests/find-green-full-ci-run.sh), downloads the
+  # candidate and every group's receipt, and requires each receipt to name exactly these bytes
+  # (SHA-256 and image ID) and this tree. keycloak-package then requires the physical WebAuthn
+  # evidence of this exact production commit and packages the same bytes; keycloak-publish pushes
+  # them. A hotfix tree main never tested: production's own push run of ci.yml is full; re-run this
+  # release (gh run rerun --failed) once it is green.
   keycloak-build:
     runs-on: ubuntu-latest
-    needs: theme
     timeout-minutes: 30
     permissions: { contents: read, actions: read }
     outputs:
       version: ${{ steps.get_version.outputs.VERSION }}
-      integration-groups: ${{ steps.integration_groups.outputs.groups }}
+      ci-run: ${{ steps.ci_run.outputs.run-id }}
       image-id: ${{ steps.candidate.outputs.image-id }}
       image-sha256: ${{ steps.candidate.outputs.image-sha256 }}
     env:
-      KEYCLOAK_TEST_IMAGE: e-skylab-keycloak-candidate:${{ github.sha }}
+      KEYCLOAK_TEST_IMAGE: e-skylab-keycloak-candidate:ci
     steps:
       - uses: actions/checkout@v7
         with:
@@ -86,63 +48,21 @@ jobs:
             exit 1
           fi
 
-      # Pull requests into main run only ci.yml's fast set; the whole suite runs on the push to
-      # main (also nightly and by hand). production is a squash of main, so the tree is compared,
-      # not the commit: some push, schedule or workflow_dispatch run of ci.yml whose job
-      # "scope (full)" passed and whose every job passed must have tested exactly this tree (a
-      # hotfix: the production push's own run, or gh workflow run ci.yml --ref <branch>). The physical WebAuthn gate in
-      # keycloak-package still binds the exact production commit.
+      # production is a squash of main, so the tree is compared, not the commit.
       - name: Require a fully green full CI run of this tree
+        id: ci_run
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -o pipefail
           tree=$(git rev-parse "${GITHUB_SHA}^{tree}")
-          since=$(date -u -d '21 days ago' +%Y-%m-%d)
-          # Only runs whose tested tree is head_sha's own: a pull_request run tests GitHub's merge
-          # commit, not its head.
-          runs=$(gh api --paginate -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
-            -f status=success -f "created=>=$since" -f per_page=100 \
-            --jq '.workflow_runs[] | select(.event == "push" or .event == "schedule" or .event == "workflow_dispatch") | "\(.id) \(.head_sha)"')
-          declare -A tree_of=()
-          while read -r run_id head_sha; do
-            [[ $run_id =~ ^[0-9]+$ && $head_sha =~ ^[0-9a-f]{40}$ ]] || continue
-            if [[ -z ${tree_of[$head_sha]+set} ]]; then
-              tree_of[$head_sha]=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$head_sha" --jq .tree.sha)
-            fi
-            [[ ${tree_of[$head_sha]} == "$tree" ]] || continue
-            jobs=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?per_page=100" \
-              --jq '.jobs[] | "\(.conclusion) \(.name)"')
-            if grep -qxF 'success scope (full)' <<<"$jobs" && ! grep -qv '^success ' <<<"$jobs"; then
-              echo "CI run $run_id ($head_sha) tested tree $tree in full; every job passed."
-              exit 0
-            fi
-          done <<<"$runs"
-          echo "No fully green full ci.yml run of tree $tree since $since; run CI on main (or gh workflow run ci.yml) first." >&2
-          exit 1
+          run_id=$(bash tests/find-green-full-ci-run.sh "$tree")
+          [[ $run_id =~ ^[0-9]+$ ]]
+          echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
 
       - name: Verify Keycloak and fixture image pins
         run: |
           bash tests/check-version-consistency.sh
           bash tests/check-fresh-runner.sh
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22.22.1
-          cache: npm
-          cache-dependency-path: theme/package-lock.json
-
-      # Chromium is installed where the harness runs (keycloak-integration), not here.
-      - name: Build the source-controlled login theme and check its contract
-        working-directory: theme
-        run: |
-          npm ci --ignore-scripts
-          npm run build-keycloak-theme
-          bash ../tests/check-theme-contract.sh
-          npm run build-welcome-theme
-          bash ../tests/check-welcome-theme.sh
-
-      - uses: docker/setup-buildx-action@v4
 
       - name: Extract and validate version
         id: get_version
@@ -170,155 +90,68 @@ jobs:
 
           echo "VERSION=$version" >> "$GITHUB_OUTPUT"
 
-      # The same list CI's integration-group matrix is held to (tests/check-fresh-runner.sh).
-      - name: Read the integration groups from the harness
-        id: integration_groups
-        run: |
-          groups=$(sed -n 's/^INTEGRATION_GROUPS=(\([^)]*\))$/\1/p' tests/run-integration.sh)
-          if [[ -z $groups ]]; then
-            echo "tests/run-integration.sh lists no INTEGRATION_GROUPS." >&2
-            exit 1
-          fi
-          read -r -a group_list <<<"$groups"
-          echo "groups=$(printf '%s\n' "${group_list[@]}" | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
-
-      - name: Build candidate image once
-        uses: docker/build-push-action@v7
+      - name: Download the tested candidate of that run
+        uses: actions/download-artifact@v5
         with:
-          context: .
-          load: true
-          push: false
-          platforms: linux/amd64
-          tags: ${{ env.KEYCLOAK_TEST_IMAGE }}
+          name: keycloak-ci-candidate
+          path: ${{ runner.temp }}/keycloak-ci-candidate
+          run-id: ${{ steps.ci_run.outputs.run-id }}
+          github-token: ${{ github.token }}
 
-      - name: Save the built candidate for the integration groups
+      - name: Download the integration groups' receipts of that run
+        uses: actions/download-artifact@v5
+        with:
+          pattern: keycloak-ci-tested-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/keycloak-ci-tested
+          run-id: ${{ steps.ci_run.outputs.run-id }}
+          github-token: ${{ github.token }}
+
+      - name: Require every integration group to have tested these bytes
         id: candidate
         run: |
           set -o pipefail
-          candidate_dir="$RUNNER_TEMP/keycloak-test-candidate"
-          mkdir -p "$candidate_dir"
-          docker save "$KEYCLOAK_TEST_IMAGE" | gzip -1 > "$candidate_dir/candidate-image.tar.gz"
-          image_id=$(docker image inspect --format '{{.Id}}' "$KEYCLOAK_TEST_IMAGE")
-          image_sha256=$(sha256sum "$candidate_dir/candidate-image.tar.gz" | cut -d' ' -f1)
+          candidate_dir="$RUNNER_TEMP/keycloak-ci-candidate"
+          receipt_dir="$RUNNER_TEMP/keycloak-ci-tested"
+          tree=$(git rev-parse "${GITHUB_SHA}^{tree}")
+          image_id=$(cat "$candidate_dir/image-id")
+          image_sha256=$(cat "$candidate_dir/image-sha256")
+          [[ $image_sha256 =~ ^[0-9a-f]{64}$ && $image_id =~ ^sha256:[0-9a-f]{64}$ ]]
+          test "$(cat "$candidate_dir/tree")" = "$tree"
+          printf '%s  %s\n' "$image_sha256" "$candidate_dir/candidate-image.tar.gz" | sha256sum --check --strict
+          groups=$(sed -n 's/^INTEGRATION_GROUPS=(\([^)]*\))$/\1/p' tests/run-integration.sh)
+          read -r -a group_list <<<"$groups"
+          if [[ ${#group_list[@]} -eq 0 ]]; then
+            echo "tests/run-integration.sh lists no INTEGRATION_GROUPS." >&2
+            exit 1
+          fi
+          for group in "${group_list[@]}"; do
+            expected=$(printf 'group=%s\ntree=%s\nimage-id=%s\nimage-sha256=%s\n' \
+              "$group" "$tree" "$image_id" "$image_sha256")
+            if [[ ! -f "$receipt_dir/$group" || "$(cat "$receipt_dir/$group")" != "$expected" ]]; then
+              echo "Integration group $group has no receipt for image $image_id of tree $tree." >&2
+              exit 1
+            fi
+          done
+          test "$(find "$receipt_dir" -type f | wc -l | tr -d ' ')" = "${#group_list[@]}"
+          gzip -dc "$candidate_dir/candidate-image.tar.gz" | docker load
+          test "$(docker image inspect --format '{{.Id}}' "$KEYCLOAK_TEST_IMAGE")" = "$image_id"
           echo "image-id=$image_id" >> "$GITHUB_OUTPUT"
           echo "image-sha256=$image_sha256" >> "$GITHUB_OUTPUT"
 
-      - name: Upload the built candidate for the integration groups
-        uses: actions/upload-artifact@v4
-        with:
-          name: keycloak-test-candidate-${{ github.sha }}
-          path: ${{ runner.temp }}/keycloak-test-candidate
-          if-no-files-found: error
-          # Three days: long enough for the physical WebAuthn evidence and a re-run of a failed
-          # job (README); a later re-run must start the whole run again.
-          retention-days: 3
-          # The tarball is gzip already.
-          compression-level: 0
-
-  # tests/run-integration.sh in the groups CI runs (INTEGRATION_GROUP; .github/workflows/ci.yml,
-  # integration-group), one job per group, all on the bytes keycloak-build saved. The whole harness
-  # in one job took over two hours (run 38293603610); a group takes 40-66 minutes in CI on
-  # 2026-10-12. A failed group can be re-run alone (gh run rerun --failed): keycloak-build is not
-  # re-run, so the re-run group loads the same tarball and its receipt must name the same image.
-  keycloak-integration:
-    name: integration (${{ matrix.group }})
-    runs-on: ubuntu-latest
-    needs: keycloak-build
-    # CI's group timeouts are 45 minutes; the release gives the slowest runner more room.
-    timeout-minutes: 100
-    permissions: { contents: read }
-    strategy:
-      fail-fast: false
-      matrix:
-        group: ${{ fromJSON(needs.keycloak-build.outputs.integration-groups) }}
-    env:
-      KEYCLOAK_TEST_IMAGE: e-skylab-keycloak-candidate:${{ github.sha }}
-      INTEGRATION_GROUP: ${{ matrix.group }}
-      IMAGE_ID: ${{ needs.keycloak-build.outputs.image-id }}
-      IMAGE_SHA256: ${{ needs.keycloak-build.outputs.image-sha256 }}
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Verify Keycloak and fixture image pins
-        run: |
-          bash tests/check-version-consistency.sh
-          bash tests/check-fresh-runner.sh
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22.22.1
-          cache: npm
-          cache-dependency-path: theme/package-lock.json
-
-      # The harness's browser stages run Playwright from theme/.
-      - name: Install Chromium for the harness
-        working-directory: theme
-        timeout-minutes: 20
-        run: |
-          npm ci --ignore-scripts
-          # The runner's apt mirror can hang (CI run 37664358276): each attempt gets 5 minutes,
-          # three attempts.
-          for attempt in 1 2 3; do
-            timeout 300 npx playwright install --with-deps chromium && break
-            if [ "$attempt" = 3 ]; then exit 1; fi
-            echo "playwright install attempt $attempt failed or timed out; retrying" >&2
-          done
-
-      - name: Download the built candidate
-        uses: actions/download-artifact@v5
-        with:
-          name: keycloak-test-candidate-${{ github.sha }}
-          path: ${{ runner.temp }}/keycloak-test-candidate
-
-      - name: Verify and load the built candidate
-        run: |
-          set -o pipefail
-          [[ $IMAGE_SHA256 =~ ^[0-9a-f]{64}$ && $IMAGE_ID =~ ^sha256:[0-9a-f]{64}$ ]]
-          candidate="$RUNNER_TEMP/keycloak-test-candidate/candidate-image.tar.gz"
-          printf '%s  %s\n' "$IMAGE_SHA256" "$candidate" | sha256sum --check --strict
-          if docker image inspect "$KEYCLOAK_TEST_IMAGE" >/dev/null 2>&1; then
-            echo "$KEYCLOAK_TEST_IMAGE exists before the candidate is loaded." >&2
-            exit 1
-          fi
-          gzip -dc "$candidate" | docker load
-          test "$(docker image inspect --format '{{.Id}}' "$KEYCLOAK_TEST_IMAGE")" = "$IMAGE_ID"
-
-      - name: Test candidate image
-        run: bash tests/run-integration.sh
-
-      - name: Record the image this group tested
-        run: |
-          receipt_dir="$RUNNER_TEMP/keycloak-tested"
-          mkdir -p "$receipt_dir"
-          tested_id=$(docker image inspect --format '{{.Id}}' "$KEYCLOAK_TEST_IMAGE")
-          printf 'group=%s\ncommit=%s\nimage-id=%s\nimage-sha256=%s\n' \
-            "$INTEGRATION_GROUP" "$GITHUB_SHA" "$tested_id" "$IMAGE_SHA256" \
-            > "$receipt_dir/$INTEGRATION_GROUP"
-
-      - name: Upload this group's receipt
-        uses: actions/upload-artifact@v4
-        with:
-          name: keycloak-tested-${{ github.sha }}-${{ matrix.group }}
-          path: ${{ runner.temp }}/keycloak-tested
-          if-no-files-found: error
-          # Three days: long enough for the physical WebAuthn evidence and a re-run of a failed
-          # job (README); a later re-run must start the whole run again.
-          retention-days: 3
-
-  # Runs only when every integration group passed (needs). It loads the same tarball, requires a
-  # receipt from every group of the harness naming exactly that image, then the physical WebAuthn
-  # evidence (the keycloak-production environment's variables), and only then packages those bytes
-  # for keycloak-publish.
+  # Runs only when keycloak-build found and checked the tested candidate (needs). It loads the same
+  # tarball, then requires the physical WebAuthn evidence (the keycloak-production environment's
+  # variables), and only then packages those bytes for keycloak-publish.
   keycloak-package:
     runs-on: ubuntu-latest
-    needs: [keycloak-build, keycloak-integration]
+    needs: keycloak-build
     environment: keycloak-production
     timeout-minutes: 30
-    permissions: { contents: read }
+    permissions: { contents: read, actions: read }
     outputs:
       version: ${{ steps.package.outputs.version }}
     env:
-      KEYCLOAK_TEST_IMAGE: e-skylab-keycloak-candidate:${{ github.sha }}
+      KEYCLOAK_TEST_IMAGE: e-skylab-keycloak-candidate:ci
       IMAGE_ID: ${{ needs.keycloak-build.outputs.image-id }}
       IMAGE_SHA256: ${{ needs.keycloak-build.outputs.image-sha256 }}
       VERSION: ${{ needs.keycloak-build.outputs.version }}
@@ -328,38 +161,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Download the built candidate
+      - name: Download the tested candidate
         uses: actions/download-artifact@v5
         with:
-          name: keycloak-test-candidate-${{ github.sha }}
-          path: ${{ runner.temp }}/keycloak-test-candidate
-
-      - name: Download the integration groups' receipts
-        uses: actions/download-artifact@v5
-        with:
-          pattern: keycloak-tested-${{ github.sha }}-*
-          merge-multiple: true
-          path: ${{ runner.temp }}/keycloak-tested
-
-      - name: Require every integration group to have tested these bytes
-        run: |
-          [[ $IMAGE_SHA256 =~ ^[0-9a-f]{64}$ && $IMAGE_ID =~ ^sha256:[0-9a-f]{64}$ ]]
-          receipt_dir="$RUNNER_TEMP/keycloak-tested"
-          groups=$(sed -n 's/^INTEGRATION_GROUPS=(\([^)]*\))$/\1/p' tests/run-integration.sh)
-          read -r -a group_list <<<"$groups"
-          if [[ ${#group_list[@]} -eq 0 ]]; then
-            echo "tests/run-integration.sh lists no INTEGRATION_GROUPS." >&2
-            exit 1
-          fi
-          for group in "${group_list[@]}"; do
-            expected=$(printf 'group=%s\ncommit=%s\nimage-id=%s\nimage-sha256=%s\n' \
-              "$group" "$GITHUB_SHA" "$IMAGE_ID" "$IMAGE_SHA256")
-            if [[ ! -f "$receipt_dir/$group" || "$(cat "$receipt_dir/$group")" != "$expected" ]]; then
-              echo "Integration group $group has no receipt for image $IMAGE_ID of commit $GITHUB_SHA." >&2
-              exit 1
-            fi
-          done
-          test "$(find "$receipt_dir" -type f | wc -l | tr -d ' ')" = "${#group_list[@]}"
+          name: keycloak-ci-candidate
+          path: ${{ runner.temp }}/keycloak-ci-candidate
+          run-id: ${{ needs.keycloak-build.outputs.ci-run }}
+          github-token: ${{ github.token }}
 
       - name: Require the release to still point at current production
         run: |
@@ -377,7 +185,8 @@ jobs:
         run: |
           set -o pipefail
           [[ -n $VERSION ]]
-          tested="$RUNNER_TEMP/keycloak-test-candidate/candidate-image.tar.gz"
+          [[ $IMAGE_SHA256 =~ ^[0-9a-f]{64}$ && $IMAGE_ID =~ ^sha256:[0-9a-f]{64}$ ]]
+          tested="$RUNNER_TEMP/keycloak-ci-candidate/candidate-image.tar.gz"
           printf '%s  %s\n' "$IMAGE_SHA256" "$tested" | sha256sum --check --strict
           gzip -dc "$tested" | docker load
           test "$(docker image inspect --format '{{.Id}}' "$KEYCLOAK_TEST_IMAGE")" = "$IMAGE_ID"
@@ -387,7 +196,7 @@ jobs:
           docker image inspect --format '{{.Id}}' "$KEYCLOAK_TEST_IMAGE" > "$artifact_dir/image-id"
           printf '%s\n' "$GITHUB_SHA" > "$artifact_dir/commit-sha"
           printf '%s\n' "$VERSION" > "$artifact_dir/version"
-          # The tarball every integration group loaded, not a fresh docker save.
+          # The tarball every integration group of the CI run loaded, not a fresh docker save.
           cp "$tested" "$artifact_dir/candidate-image.tar.gz"
 
           provider_dir="$RUNNER_TEMP/tested-keycloak-providers"
@@ -417,12 +226,15 @@ jobs:
 
   # Re-runs of a failed publish (gh run rerun --failed) run only this job, so it checks again that
   # the release still points at current production and binds the bytes to keycloak-build's outputs.
+  # In the keycloak-production environment (deployments only from the production branch and v*
+  # tags): its secrets, the Dokploy deploy hook among them, reach no job of another branch.
   keycloak-publish:
     needs: [keycloak-build, keycloak-package]
     runs-on: ubuntu-latest
+    environment: keycloak-production
     permissions: { contents: read, packages: write }
     env:
-      KEYCLOAK_TEST_IMAGE: e-skylab-keycloak-candidate:${{ github.sha }}
+      KEYCLOAK_TEST_IMAGE: e-skylab-keycloak-candidate:ci
       PUBLISH_IMAGE: ghcr.io/skylab-kulubu/e-skylab-keycloak
       IMAGE_ID: ${{ needs.keycloak-build.outputs.image-id }}
       IMAGE_SHA256: ${{ needs.keycloak-build.outputs.image-sha256 }}

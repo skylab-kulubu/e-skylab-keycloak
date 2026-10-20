@@ -116,9 +116,8 @@ export default function LegacyFrame(props: LegacyFrameProps) {
               {children}
             </div>
 
-            {/* navigationLoading.ts shows this while the next step loads; the label is visible with reduced motion only. */}
+            {/* While the next step loads the card's logo draws itself (legacy-login.css); this plain label shows with reduced motion only. */}
             <div className="sl-legacy-loading">
-              <AnimatedSkyLabLogo variant="loading" />
               <span className="sl-legacy-loading__label" aria-hidden="true">
                 {loadingLabel}
               </span>

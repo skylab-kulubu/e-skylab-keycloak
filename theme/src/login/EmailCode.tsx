@@ -37,12 +37,23 @@ const CODE_INPUT_MAX_LENGTH = 20;
 const webAuthnButtonId = "authenticateWebAuthnButton";
 
 /**
+ * The shape of an address "Hesap aç" accepts before asking the SPI: something@something.tld. The SPI
+ * has the last word (Keycloak's e-mail validator); this only keeps a username or a typo from
+ * reaching it, where it would get a code page and a code that never comes.
+ */
+export function looksLikeEmailAddress(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
+/**
  * "E-postayla devam et" (the SPI's sky-email-code step, eskylab-login-ux 08). Two stages share one
  * page: the address or username ("Kod gönder", "Parolanla gir", the passkey as on the login page)
  * and the code (six digits, "Giriş yap", "Kodu yeniden gönder" once its minute is up, "Başka bir
  * adres yaz"). Both stages open with "Geri dön" back to the login page's choice (BackToChoice.tsx).
  * The SPI decides the stage, the error and how long a resend waits; the page is the same
  * whether or not the address belongs to an account, and never says where the code went.
+ * Reached through "Hesap aç" (the sign-up intent), the first stage is "Hesap aç": an e-mail
+ * address only (checked here before it is sent), without "Parolanla gir" and the passkey.
  */
 export default function EmailCode(props: EmailCodeProps) {
   const { kcContext, i18n } = props;
@@ -54,15 +65,26 @@ export default function EmailCode(props: EmailCodeProps) {
   const error = toEmailCodeError(kcContext.skyEmailCodeError);
   const identifier = kcContext.skyEmailCodeIdentifier ?? "";
   const minutes = kcContext.skyEmailCodeMinutes ?? "10";
-  const passkeys = stage === "identifier" && kcContext.enableWebAuthnConditionalUI === true;
-  const passwordExecution = passwordFormExecutionId(kcContext);
+  const passkeys = stage === "identifier" && !signUpIntent && kcContext.enableWebAuthnConditionalUI === true;
+  const passwordExecution = signUpIntent ? undefined : passwordFormExecutionId(kcContext);
   const identifierInput = useRef<HTMLInputElement>(null);
+  const [addressInvalid, setAddressInvalid] = useState(false);
+  const signUpAddress = signUpIntent && stage === "identifier";
+  const errorText = addressInvalid || (signUpAddress && error === "invalid_identifier")
+    ? msgStr("emailCodeSignUpInvalidAddress")
+    : error === undefined
+      ? undefined
+      : msgStr(errorKey[error], kcContext.skyEmailCodeAttemptsLeft ?? "");
   const [resendAfter, setResendAfter] = useState(() => secondsOf(kcContext.skyEmailCodeResendAfter));
 
   useLegacyChrome(i18n, title);
   // Keycloak's passkey scripts, exactly as the login page runs them; they do nothing unless the SPI
-  // put the passkey challenge on this page (Keycloak's conditional UI).
-  useScript({ webAuthnButtonId, kcContext: kcContext as never, i18n });
+  // put the passkey challenge on this page (Keycloak's conditional UI). "Hesap aç" offers no passkey.
+  useScript({
+    webAuthnButtonId,
+    kcContext: (signUpIntent ? { ...kcContext, enableWebAuthnConditionalUI: false } : kcContext) as never,
+    i18n
+  });
 
   useEffect(() => {
     if (resendAfter <= 0) {
@@ -91,6 +113,14 @@ export default function EmailCode(props: EmailCodeProps) {
         className="sl-email-code"
         action={kcContext.url.loginAction}
         method="post"
+        noValidate={signUpAddress}
+        onSubmit={event => {
+          if (!signUpAddress || looksLikeEmailAddress(identifierInput.current?.value ?? "")) return;
+          // Not sent: the navigation loading state never starts for a cancelled submit.
+          event.preventDefault();
+          setAddressInvalid(true);
+          identifierInput.current?.focus();
+        }}
       >
         {stage === "code" && (
           <>
@@ -104,8 +134,10 @@ export default function EmailCode(props: EmailCodeProps) {
             )}
           </>
         )}
-        <div className={error === undefined ? "sl-legacy-field" : "sl-legacy-field sl-legacy-field--error"}>
-          <label htmlFor={fieldId}>{msgStr(stage === "code" ? "emailCodeCodeLabel" : "emailCodeIdentifierLabel")}</label>
+        <div className={errorText === undefined ? "sl-legacy-field" : "sl-legacy-field sl-legacy-field--error"}>
+          <label htmlFor={fieldId}>
+            {msgStr(stage === "code" ? "emailCodeCodeLabel" : signUpAddress ? "emailCodeSignUpAddressLabel" : "emailCodeIdentifierLabel")}
+          </label>
           {stage === "code" ? (
             <input
               key="code"
@@ -118,8 +150,8 @@ export default function EmailCode(props: EmailCodeProps) {
               pattern="[0-9 ]*"
               maxLength={CODE_INPUT_MAX_LENGTH}
               autoFocus
-              aria-invalid={error !== undefined}
-              aria-describedby={error === undefined ? undefined : "sky-email-code-error"}
+              aria-invalid={errorText !== undefined}
+              aria-describedby={errorText === undefined ? undefined : "sky-email-code-error"}
             />
           ) : (
             <input
@@ -128,24 +160,25 @@ export default function EmailCode(props: EmailCodeProps) {
               id="username"
               className="sl-legacy-input"
               name="username"
-              type="text"
-              autoComplete={passkeys ? "username webauthn" : "username"}
+              type={signUpAddress ? "email" : "text"}
+              autoComplete={signUpAddress ? "email" : passkeys ? "username webauthn" : "username"}
               maxLength={255}
               defaultValue={identifier}
               autoFocus
-              aria-invalid={error !== undefined}
-              aria-describedby={error === undefined ? undefined : "sky-email-code-error"}
+              onInput={() => setAddressInvalid(false)}
+              aria-invalid={errorText !== undefined}
+              aria-describedby={errorText === undefined ? undefined : "sky-email-code-error"}
             />
           )}
         </div>
-        {error !== undefined && (
+        {errorText !== undefined && (
           <p
             id="sky-email-code-error"
             className="sl-legacy-field-error sl-legacy-field-error--after-field"
             role="alert"
-            data-sky-email-code-error={error}
+            data-sky-email-code-error={addressInvalid ? "invalid_identifier" : error}
           >
-            {msgStr(errorKey[error], kcContext.skyEmailCodeAttemptsLeft ?? "")}
+            {errorText}
           </p>
         )}
         <div className="sl-email-code__actions">

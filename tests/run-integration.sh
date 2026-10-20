@@ -15,19 +15,26 @@ ADMIN_CONFIG=/tmp/integration-kcadm.config
 # (bootstrap, first reconciliation, drift, second reconciliation and their assertions); the stages
 # after it are split as below. A group that runs later stages without an earlier group's stages
 # first gets the state those stages leave (their writes, not their assertions), so it finds the
-# realm as the full run does. The order inside a group is the order of the full run.
-#   erasure  core-erasure client contract, legacy personal e-mail adoption, erasure event PII
-#   roles    (core-erasure fixture) admin panel tokens, core resource roles, core service roles,
-#            exchange claims, no-op reconciliation, identity guardrails, group overage mapper
-#   login    (core-erasure fixture, operator state) OIDC/PAR basics, K4 sign-in by e-mail with
-#            its reconciler runs, re-authentication forwarded to Microsoft (PR #89)
-#   spi      (core-erasure fixture, operator state) OIDC/PAR basics, web handoff, browser login
-#            and token contracts, Chromium, passkey cleanup, K5, K4b, sky-account SPI, passkey
-#            ceremonies
+# realm as the full run does. The order inside a group is the order of the full run. The prefix
+# ends with the mailer flag drift stage, which leaves the realm as it found it; only erasure runs it.
+#   erasure         mailer flag drift, core-erasure client contract, legacy personal e-mail
+#                   adoption, erasure event PII
+#   roles           (core-erasure fixture) admin panel tokens, core resource roles, SkyMail
+#                   Privileged roles, group overage mapper
+#   roles-noop      (core-erasure fixture, operator state without core's service roles) core
+#                   service roles, exchange claims, no-op reconciliation, identity guardrails
+#   login           (core-erasure fixture, operator state) OIDC/PAR basics, K4 sign-in by e-mail,
+#                   the K4 reconciler's refusal and interrupted swap, re-authentication forwarded
+#                   to Microsoft (PR #89)
+#   login-rollback  (core-erasure fixture, operator state, the K4 person) OIDC/PAR basics, the K4
+#                   and K4b reconciler rollback, forward again and no-op
+#   spi             (core-erasure fixture, operator state) OIDC/PAR basics, web handoff, browser
+#                   login and token contracts, Chromium, passkey cleanup, K5, K4b, sky-account SPI,
+#                   passkey ceremonies
 # Every group ends with the RabbitMQ provider contract. tests/check-fresh-runner.sh keeps this
 # list and the CI matrix equal; release.yml reads its matrix from this line, and its package job
 # requires a passed run of every group listed here.
-INTEGRATION_GROUPS=(erasure roles login spi)
+INTEGRATION_GROUPS=(erasure roles roles-noop login login-rollback spi)
 INTEGRATION_GROUP=${INTEGRATION_GROUP:-all}
 if [[ $INTEGRATION_GROUP != all && " ${INTEGRATION_GROUPS[*]} " != *" $INTEGRATION_GROUP "* ]]; then
   printf 'INTEGRATION_GROUP must be all or one of: %s (got %s)\n' "${INTEGRATION_GROUPS[*]}" "$INTEGRATION_GROUP" >&2
@@ -1306,7 +1313,8 @@ finish_group() {
 # contracts, for the groups that run later stages without them: the admin panel's forms role in its
 # scope, core's resource roles seeded to the Privileged groups (with /UYELER/DK for the run, as the
 # core-roles stage has it, so that DK's read roles are seeded and marked too), core's service roles
-# granted to the forms service account (service account only).
+# granted to the forms service account (service account only). With without-service-roles, the
+# roles-noop group's setup: core's service roles stay ungranted (its own stage grants them).
 setup_operator_state() {
   CURRENT_STAGE='operator state of the roles group (group setup, no contract)'
   local forms_uuid output dk_id
@@ -1319,6 +1327,7 @@ setup_operator_state() {
   dk_id=$(kcadm create "groups/$(cr_group_id /UYELER)/children" -r "$V2_REALM" -s name=DK -i)
   output=$(cr_operator_reconcile) || { printf '%s\n' "$output" >&2; fail 'the core roles operator step failed'; }
   kcadm delete "groups/$dk_id" -r "$V2_REALM" >/dev/null
+  [[ ${1:-} != without-service-roles ]] || return 0
   output=$(csr_operator) || { printf '%s\n' "$output" >&2; fail 'the service-roles operator step failed'; }
 }
 
@@ -1920,7 +1929,11 @@ stage_reset_choose_user_after_second_reconciliation
 stage_v2_assert_user_profile
 stage_v2_assert_account_api_scope
 stage_v2_assert_mailer_client
-stage_v2_mailer_drift_is_reported
+# A drift that the reconciler reports and the operator script repairs: the realm ends as it began,
+# so one group proves it.
+if group_runs erasure; then
+  stage_v2_mailer_drift_is_reported
+fi
 
 # The shared realm prefix of every group ends here.
 
@@ -1951,6 +1964,12 @@ if group_runs roles; then
   stage_core_roles_seeded_by_operator
   # The same operator runs seeded SkyMail's Privileged role.
   stage_skymail_roles_seeded_by_operator
+elif group_runs roles-noop; then
+  # What the roles group's operator stages leave, but core's service roles, which come next.
+  setup_operator_state without-service-roles
+fi
+
+if group_runs roles-noop; then
   # The operator grants core's service roles to the forms service account (forms exists since
   # core-erasure-client.sh); the no-op reconciliation after it must only verify.
   stage_core_service_roles_granted_by_operator
@@ -1962,7 +1981,7 @@ if group_runs roles; then
   stage_event_retention_after_noop_reconciliation
   stage_reset_choose_user_after_noop_reconciliation
   stage_v2_identity_guardrails
-elif group_runs login spi; then
+elif group_runs login login-rollback spi; then
   # The later reconciliations of these groups (K4's no-op runs among them) must find what the
   # operator stages above leave; without it they would warn about unseeded roles.
   setup_operator_state
@@ -1991,7 +2010,7 @@ if group_runs roles; then
   stage_group_overage_mapper
 fi
 
-group_runs login spi || finish_group
+group_runs login login-rollback spi || finish_group
 
 CURRENT_STAGE='minimal openid PAR contract'
 discovery=$(curl --fail --silent --show-error \
@@ -2130,8 +2149,11 @@ stage_microsoft_reauthentication() {
 }
 
 if group_runs login; then
+  # In a full run this also runs the reconciler's rollback half (login-rollback's stage).
   stage_login_by_either_email "$client_secret"
   stage_microsoft_reauthentication "$client_secret"
+elif group_runs login-rollback; then
+  stage_password_form_rollback_group "$client_secret"
 fi
 
 group_runs spi || finish_group

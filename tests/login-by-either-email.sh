@@ -171,21 +171,32 @@ lbe_link_ytu() {
     -b "{\"identityProvider\":\"OBS\",\"userId\":\"ms-$1\",\"userName\":\"$2\"}" >/dev/null
 }
 
+# The OBS identity provider the K4 stages link people to (made again from scratch).
+lbe_obs_provider() {
+  kcadm delete identity-provider/instances/OBS -r "$V2_REALM" >/dev/null 2>&1 || true
+  kcadm create identity-provider/instances -r "$V2_REALM" \
+    -s alias=OBS -s providerId=microsoft -s enabled=true \
+    -s 'config.clientId=integration-client' -s 'config.clientSecret=integration-secret' >/dev/null
+}
+
+# k4-person, linked to OBS with a School e-mail and a proven Personal e-mail; prints the id.
+lbe_create_k4_person() {
+  local person
+  person=$(lbe_create_person k4-person k4.personal@example.invalid "$LBE_PASSWORD" \
+    schoolEmail=K4.School@std.example.edu.tr personalEmail=k4.personal@example.invalid \
+    "personalEmailVerifiedAt=$LBE_VERIFIED_AT")
+  lbe_link_ytu "$person" K4.School@std.example.edu.tr
+  printf '%s\n' "$person"
+}
+
 stage_login_by_either_email() {
   CURRENT_STAGE='K4 login by username, Primary, School or Personal e-mail'
   local client_secret=$1
   local person other holder unproven_personal unlinked_school locked attempt
   local wrong_password_answer locked_answer reset_url reset_page events
-  kcadm delete identity-provider/instances/OBS -r "$V2_REALM" >/dev/null 2>&1 || true
-  kcadm create identity-provider/instances -r "$V2_REALM" \
-    -s alias=OBS -s providerId=microsoft -s enabled=true \
-    -s 'config.clientId=integration-client' -s 'config.clientSecret=integration-secret' >/dev/null
-
+  lbe_obs_provider
   # Primary = Personal; the School e-mail is stored the way Microsoft may write it (mixed case).
-  person=$(lbe_create_person k4-person k4.personal@example.invalid "$LBE_PASSWORD" \
-    schoolEmail=K4.School@std.example.edu.tr personalEmail=k4.personal@example.invalid \
-    "personalEmailVerifiedAt=$LBE_VERIFIED_AT")
-  lbe_link_ytu "$person" K4.School@std.example.edu.tr
+  person=$(lbe_create_k4_person)
 
   lbe_expect_signed_in_as k4-username k4-person "$client_secret" "$person"
   lbe_expect_signed_in_as k4-primary-personal k4.personal@example.invalid "$client_secret" "$person"
@@ -312,7 +323,8 @@ stage_login_by_either_email() {
 }
 
 # The reconciler side: refusal, interrupted swap, rollback and forward again, each a no-op when
-# run twice.
+# run twice. The rollback half runs in the login-rollback group (one reconciler run takes minutes);
+# a full run and the login group run the first half, the full run then the second.
 stage_password_form_reconciler() {
   CURRENT_STAGE='K4 password form reconciler: refusal, interrupted swap, rollback'
   local client_secret=$1 person=$2
@@ -363,9 +375,21 @@ stage_password_form_reconciler() {
     || { cat "$log_file" >&2; fail 'K4: the reconciler did not report finishing the interrupted swap'; }
   [[ $(lbe_flow | lbe_flow_shape) == "$shape_before" ]] || fail 'K4: finishing the swap left the flow different'
 
-  # Rollback: Keycloak's own form back in the same place; addresses stop signing in, the
-  # username does not. The same runs roll K4b's reset step and the reset OTP step back and forward
-  # (one reconciler run takes minutes; tests/reset-by-either-email.sh).
+  if group_runs login-rollback; then
+    stage_password_form_rollback "$client_secret" "$person"
+  fi
+}
+
+# Rollback: Keycloak's own form back in the same place; addresses stop signing in, the
+# username does not. The same runs roll K4b's reset step and the reset OTP step back and forward
+# (one reconciler run takes minutes; tests/reset-by-either-email.sh).
+stage_password_form_rollback() {
+  CURRENT_STAGE='K4 password form reconciler: rollback, forward again'
+  local client_secret=$1 person=$2
+  local shape_before flow priority log_file
+  shape_before=$(lbe_flow | lbe_flow_shape)
+  flow=$(lbe_flow)
+  priority=$(jq -r --arg sky "$LBE_SKY_FORM" '.[] | select(.providerId == $sky) | .priority' <<<"$flow")
   log_file="$TEST_STATE_DIR/reconcile-password-form-rollback.log"
   lbe_run_reconciler "$log_file" -e "KEYCLOAK_PASSWORD_FORM=$LBE_STOCK_FORM" -e "KEYCLOAK_RESET_CHOOSE_USER=$RBE_STOCK_STEP" \
     -e KEYCLOAK_RESET_OTP_STEP=reset \
@@ -400,4 +424,17 @@ stage_password_form_reconciler() {
   [[ $(lbe_form_census) == "0 1 REQUIRED" && $(lbe_flow | lbe_flow_shape) == "$shape_before" ]] \
     || fail 'K4: the flow did not come back to the SKY LAB form in its place'
   lbe_expect_signed_in_as k4-forward-personal k4.personal@example.invalid "$client_secret" "$person"
+}
+
+# The login-rollback group: the rollback half of the reconciler stage on the state the login group's
+# sign-in contracts leave before it (OBS, k4-person with the School e-mail as Primary).
+stage_password_form_rollback_group() {
+  CURRENT_STAGE='K4 person for the rollback (group setup, no contract)'
+  local client_secret=$1 person
+  lbe_obs_provider
+  person=$(lbe_create_k4_person)
+  kcadm update "users/$person" -r "$V2_REALM" -s email=k4.school@std.example.edu.tr -s emailVerified=true >/dev/null
+  stage_password_form_rollback "$client_secret" "$person"
+  kcadm delete "users/$person" -r "$V2_REALM" >/dev/null
+  kcadm delete identity-provider/instances/OBS -r "$V2_REALM" >/dev/null
 }

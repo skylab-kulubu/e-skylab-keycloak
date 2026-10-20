@@ -1008,8 +1008,9 @@ KEYCLOAK_TEST_IMAGE=account-keycloak:test bash tests/run-integration.sh
 ```
 
 Harness tek koşuda bütün aşamaları sırayla koşar (varsayılan `INTEGRATION_GROUP=all`).
-CI aynı betiği dört paralel işte koşar
-(`integration (erasure|roles|login|spi)`, sonra hepsini bekleyen `integration`):
+CI aynı betiği altı paralel işte koşar
+(`integration (erasure|roles|roles-noop|login|login-rollback|spi)`, sonra hepsini bekleyen
+`integration`; gruplar `theme` işini beklemez):
 her grup kendi Keycloak'ını açar, ortak realm önekini (bootstrap, ilk uzlaştırma,
 drift, ikinci uzlaştırma) koşar, sonra kendi aşamalarını. Önceki bir grubun
 aşamalarına dayanan grup önce o aşamaların yazdığı durumu kurar (sözleşmelerini

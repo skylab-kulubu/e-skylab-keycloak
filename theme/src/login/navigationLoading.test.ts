@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  CARRY_OVER,
   continueNavigationLoading,
   FAILSAFE_MS,
   installNavigationLoading,
@@ -87,12 +88,14 @@ describe("the loading state between two steps", () => {
     submit(form("/realms/e-skylab/login-actions/authenticate"));
 
     expect(loading()).toBe(true);
+    // The busy card: no clicks (legacy-login.css), aria-busy.
+    expect(document.documentElement.getAttribute(LOADING_ATTRIBUTE)).toBe("");
     expect(card).toHaveAttribute("aria-busy", "true");
     expect(label.textContent).toBe("Yükleniyor…");
     expect(document.documentElement.style.getPropertyValue(PHASE_PROPERTY)).toBe("0ms");
   });
 
-  it("keeps showing on the next page for the rest of its minimum, with the drawing where it was", () => {
+  it("keeps the look on the next page for the rest of its minimum, with the drawing where it was", () => {
     frame();
     startNavigationLoading(1_000);
     // The next page: a new document, nothing pending, the same tab's session storage.
@@ -101,7 +104,9 @@ describe("the loading state between two steps", () => {
 
     continueNavigationLoading(1_000 + 200);
     expect(loading()).toBe(true);
-    expect(card).toHaveAttribute("aria-busy", "true");
+    // Only the look: the card takes clicks (legacy-login.css) and is not busy.
+    expect(document.documentElement.getAttribute(LOADING_ATTRIBUTE)).toBe(CARRY_OVER);
+    expect(card).not.toHaveAttribute("aria-busy");
     // Not announced again: the page's content is already there.
     expect(label.textContent).toBe("");
     expect(document.documentElement.style.getPropertyValue(PHASE_PROPERTY)).toBe("-200ms");
@@ -143,11 +148,14 @@ describe("the loading state between two steps", () => {
     frame();
     startNavigationLoading(1_000);
     nextPage();
-    frame();
+    const { card } = frame();
     continueNavigationLoading(1_100);
 
     expect(submit(form("/realms/e-skylab/login-actions/authenticate")).defaultPrevented).toBe(false);
     expect(isNavigationPending()).toBe(true);
+    // Busy again: this page's own step is on its way.
+    expect(document.documentElement.getAttribute(LOADING_ATTRIBUTE)).toBe("");
+    expect(card).toHaveAttribute("aria-busy", "true");
     vi.advanceTimersByTime(MIN_VISIBLE_MS);
     expect(loading()).toBe(true);
   });

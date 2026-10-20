@@ -317,7 +317,11 @@ describe("SKY LAB theme: one design system", () => {
     const order = rules.map(rule => rule.selectors);
     expect(order.findIndex(selectors => selectors.includes("html[data-sl-loading] .sl-legacy-logo .sl-legacy-logo__svg path")))
       .toBeGreaterThan(order.findIndex(selectors => selectors.includes("html[data-sl-entered] .sl-legacy-logo .sl-legacy-logo__svg path")));
-    expect(declaration("html[data-sl-loading] .sl-legacy-card__body", "pointer-events")).toBe("none");
+    expect(declaration("html[data-sl-loading] .sl-legacy-card__body", "opacity")).toBe("0.4");
+    // No clicks only while a step is on its way; the next page's remainder is a look (navigationLoading.ts).
+    expect(rulesFor("html[data-sl-loading] .sl-legacy-card__body").some(rule => /pointer-events/.test(rule.body))).toBe(false);
+    expect(declaration('html[data-sl-loading]:not([data-sl-loading="carry-over"]) .sl-legacy-card__body', "pointer-events"))
+      .toBe("none");
     expect(declaration(".sl-legacy-loading", "display")).toBe("none");
     const reduced = mediaBlock("(prefers-reduced-motion: reduce)");
     expect(reduced).toMatch(/html\[data-sl-loading\] \.sl-legacy-logo \.sl-legacy-logo__svg path\s*\{\s*animation:\s*none;/);

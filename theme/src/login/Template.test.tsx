@@ -90,6 +90,11 @@ describe("every Keycloak page renders inside the login page chrome", () => {
       expect(footer?.querySelector("nav.sl-legacy-languages")).toBeNull();
     } else {
       expect(footer?.querySelectorAll("nav.sl-legacy-languages a")).toHaveLength(2);
+      // Türkçe on the left although Keycloak (and the preview context) lists English first.
+      expect(Array.from(footer?.querySelectorAll("nav.sl-legacy-languages a") ?? [], link => link.getAttribute("lang"))).toEqual([
+        "tr",
+        "en"
+      ]);
       expect(footer?.querySelector('nav.sl-legacy-languages a[aria-current="page"]')).toHaveAttribute("lang", "tr");
     }
 

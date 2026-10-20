@@ -35,7 +35,9 @@ describe("switching to the shared e-mail code step", () => {
       ["authenticationExecution", "offered-email-code"],
       ["sky-email-code-intent", "sign-up"]
     ]);
-    expect(window.sessionStorage.length, "the server's authentication session owns the intent").toBe(0);
+    // Only the loading state's start time (navigationLoading.ts) is kept in the tab.
+    const stored = Object.keys(window.sessionStorage).filter(key => key !== "sl-loading-since");
+    expect(stored, "the server's authentication session owns the intent").toEqual([]);
   });
 
   it("keeps an ordinary e-mail or password switch free of sign-up intent", () => {

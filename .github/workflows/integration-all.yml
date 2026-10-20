@@ -1,8 +1,8 @@
 name: Integration (all stages)
 
 # tests/run-integration.sh with INTEGRATION_GROUP=all: every stage in sequence in one Keycloak, the
-# order the groups are split from. CI and the release run only the groups (ci.yml integration-group,
-# release.yml keycloak-integration), so this run is what still proves that the groups' setup
+# order the groups are split from. CI runs only the groups (ci.yml integration-group; release.yml
+# promotes that run's tested candidate), so this run is what still proves that the groups' setup
 # stand-ins (ERASURE_FIXTURE_ONLY, setup_operator_state) match the real stages and that one
 # long-lived realm survives every stage. Weekly on main and by hand; it only tests: no secrets, no
 # environment, no registry, no deployment.

@@ -8,7 +8,9 @@ name: CI
 # - fast: pull requests into main, and pull requests into and pushes to production whose tree a
 #   fully green full push, schedule or workflow_dispatch run already tested (the release PR and
 #   the release push after main's push run; tests/find-green-full-ci-run.sh). Static checks, the
-#   image build and the short contract jobs, each only when the paths it reads changed (scope).
+#   image build and the short contract jobs, each only when the paths it reads changed (scope);
+#   in a pull request into main also the whole suite's jobs its diff affects (tests/affected-
+#   jobs.sh). A fast production run runs none of them.
 # A full run builds the candidate image once (candidate); every integration group tests those
 # bytes and leaves a receipt, and release.yml promotes them instead of building and testing again.
 # One required check: gate. It fails when any job fails or is cancelled, and in a full run also
@@ -69,6 +71,10 @@ jobs:
 
   # Which areas a fast run touches: theme/, spi/, and other (anything outside theme/, spi/, docs/
   # and *.md). A full run, or a diff that cannot be read, selects everything.
+  # affected (pull requests into main only): the whole suite's jobs whose own tests a fast run's
+  # diff touches (tests/affected-jobs.sh); they run in that fast run too (integration-group: every
+  # group, on candidate's image). A fast production run promotes a tree a full run already tested,
+  # so it runs none of them (affected is empty).
   scope:
     name: scope (${{ needs.mode.outputs.full == 'true' && 'full' || 'fast' }})
     needs: mode
@@ -79,6 +85,7 @@ jobs:
       theme: ${{ steps.scope.outputs.theme }}
       spi: ${{ steps.scope.outputs.spi }}
       other: ${{ steps.scope.outputs.other }}
+      affected: ${{ steps.scope.outputs.affected }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -90,9 +97,16 @@ jobs:
         id: scope
         env:
           FULL: ${{ needs.mode.outputs.full }}
+          # Only a pull request into main runs affected whole-suite jobs; a fast production run
+          # promotes a tree a full run already tested.
+          AFFECTED_RUN: ${{ (github.event_name == 'pull_request' && github.base_ref == 'main') && 'true' || 'false' }}
         run: |
           everything() {
-            printf 'full=%s\ntheme=true\nspi=true\nother=true\n' "$FULL" >> "$GITHUB_OUTPUT"
+            all=' '
+            if [[ $FULL == true || $AFFECTED_RUN == true ]]; then
+              all=" $(bash tests/affected-jobs.sh --entries | cut -d' ' -f1 | tr '\n' ' ')"
+            fi
+            printf 'full=%s\ntheme=true\nspi=true\nother=true\naffected=%s\n' "$FULL" "$all" >> "$GITHUB_OUTPUT"
             exit 0
           }
           if [[ $FULL == true ]]; then
@@ -112,8 +126,12 @@ jobs:
               *) other=true ;;
             esac
           done <<<"$changed"
-          printf 'fast run: theme=%s spi=%s other=%s\n' "$theme" "$spi" "$other"
-          printf 'full=false\ntheme=%s\nspi=%s\nother=%s\n' "$theme" "$spi" "$other" >> "$GITHUB_OUTPUT"
+          affected=' '
+          if [[ $AFFECTED_RUN == true ]]; then
+            affected=$(bash tests/affected-jobs.sh <<<"$changed")
+          fi
+          printf 'fast run: theme=%s spi=%s other=%s affected=[%s]\n' "$theme" "$spi" "$other" "$affected"
+          printf 'full=false\ntheme=%s\nspi=%s\nother=%s\naffected=%s\n' "$theme" "$spi" "$other" "$affected" >> "$GITHUB_OUTPUT"
 
   # Every run: the version pins, the workflow wiring, the theme contracts, the image build (which
   # runs the SPI's and the RabbitMQ provider's Maven tests) and the operator scripts' static
@@ -212,8 +230,8 @@ jobs:
   # config/inscribed-cms-roles.sh against the stock Keycloak image (Dockerfile KEYCLOAK_IMAGE) in
   # dev mode; needs no build of this repository's image.
   inscribed-cms-roles:
-    needs: scope
-    if: needs.scope.outputs.full == 'true'
+    needs: [mode, scope]
+    if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' inscribed-cms-roles ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -267,8 +285,8 @@ jobs:
   # Keycloak image in dev mode, with real password-grant tokens; needs no build of this repository's
   # image.
   role-groups:
-    needs: scope
-    if: needs.scope.outputs.full == 'true'
+    needs: [mode, scope]
+    if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' role-groups ')
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -282,8 +300,8 @@ jobs:
   # --restore, --forms), against the stock Keycloak image in dev mode with real password-grant
   # tokens; needs no build of this repository's image.
   dk-read-only:
-    needs: scope
-    if: needs.scope.outputs.full == 'true'
+    needs: [mode, scope]
+    if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' dk-read-only ')
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -296,8 +314,8 @@ jobs:
   # sandbox realm only) against the stock Keycloak image in dev mode, with real authorization code
   # flows (PKCE) through admin-local and the panel's client; needs no build of this repository's image.
   sandbox-admin-local-client:
-    needs: scope
-    if: needs.scope.outputs.full == 'true'
+    needs: [mode, scope]
+    if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' sandbox-admin-local-client ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -330,8 +348,8 @@ jobs:
   # kalsın mı?" question after every YTÜ login (required action sky-stay-signed-in,
   # KEYCLOAK_STAY_SIGNED_IN).
   ytu-first-login:
-    needs: scope
-    if: needs.scope.outputs.full == 'true'
+    needs: [mode, scope]
+    if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' ytu-first-login ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -427,8 +445,8 @@ jobs:
   # Registration continuation: native AIA cancellation, policy/password/passkey choices,
   # original OIDC state/nonce/PKCE, closed partial swaps and unchanged ordinary-login offers.
   after-sign-up-native:
-    needs: scope
-    if: needs.scope.outputs.full == 'true'
+    needs: [mode, scope]
+    if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' after-sign-up-native ')
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -548,8 +566,8 @@ jobs:
   # inscribed-cms-roles.sh between them) against the stock Keycloak image in dev mode, with a real
   # authorization code flow (PKCE); needs no build of this repository's image.
   site-clients:
-    needs: scope
-    if: needs.scope.outputs.full == 'true'
+    needs: [mode, scope]
+    if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' site-clients ')
     runs-on: ubuntu-latest
     # 19-28 minutes on main before the --shared-scope stage (about 5 more).
     timeout-minutes: 45
@@ -563,8 +581,8 @@ jobs:
   # 2026-10-03), with inscribed-cms-roles.sh before it, against the stock Keycloak image in dev mode,
   # with SkyApp's real public-client login (PKCE) and refresh; needs no build of this repository's image.
   skyapp-cms-editor:
-    needs: scope
-    if: needs.scope.outputs.full == 'true'
+    needs: [mode, scope]
+    if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' skyapp-cms-editor ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -578,8 +596,8 @@ jobs:
   # mode, with production-shaped full-scope clients, real logins (PKCE) before and after, userinfo,
   # and the operator scripts that share these clients; needs no build of this repository's image.
   login-clients:
-    needs: scope
-    if: needs.scope.outputs.full == 'true'
+    needs: [mode, scope]
+    if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' login-clients ')
     runs-on: ubuntu-latest
     # ~21 minutes on a loaded developer Mac (2026-10-05); every kcadm call starts a JVM.
     timeout-minutes: 45
@@ -615,13 +633,15 @@ jobs:
       - name: Landing page at / against a throwaway Keycloak
         run: bash tests/welcome-page.sh
 
-  # Full runs only: the candidate image is built once. Every integration group loads these bytes
+  # Full runs, and fast pull requests into main whose diff affects the harness (scope's affected):
+  # the candidate image is built once. Every integration group loads these bytes
   # (SHA-256 and image ID checked) and uploads a receipt naming them; release.yml (keycloak-build)
   # promotes this artifact of the run that tested its tree, so the published bytes are the tested
-  # bytes. Kept 14 days, as long as tests/find-green-full-ci-run.sh looks back.
+  # bytes (only a full push, schedule or manual run counts; never a pull request's). Kept 14 days,
+  # as long as tests/find-green-full-ci-run.sh looks back.
   candidate:
-    needs: mode
-    if: needs.mode.outputs.full == 'true'
+    needs: [mode, scope]
+    if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' integration-group ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
@@ -686,13 +706,13 @@ jobs:
   # takes about 20-28 minutes; timeouts are about 1.5 times that. The groups do not wait for the
   # theme job: they are the longest jobs of a full run, and behind the theme job they queued after
   # the short jobs (run 39262199516: 31 minutes before the first group started).
-  # Full runs only; every group tests candidate's bytes and records them in a receipt that
-  # release.yml requires.
+  # Full runs and affected fast runs (as candidate); every group tests candidate's bytes and
+  # records them in a receipt that release.yml requires (of a full push, schedule or manual run).
   integration-group:
     name: integration (${{ matrix.group }})
     runs-on: ubuntu-latest
-    needs: [mode, candidate]
-    if: needs.mode.outputs.full == 'true'
+    needs: [mode, scope, candidate]
+    if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' integration-group ')
     strategy:
       fail-fast: false
       matrix:

@@ -445,13 +445,16 @@ def assert_ci_scope(ci)
     abort "#{ci} integration must wait for every group, also when one fails, and read mode's choice"
   end
 
+  # A full run, or a fast pull request into main whose diff affects the harness (scope's affected),
+  # builds the candidate and runs every group on it; mode is the one source of full.
+  group_if = "needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' integration-group ')"
   candidate = jobs.fetch("candidate")
   steps = candidate.fetch("steps")
   static_index = steps.index { |step| step.fetch("run", "").include?("tests/check-fresh-runner.sh") }
   build_index = steps.index { |step| step["uses"] == "docker/build-push-action@v7" }
   save_index = steps.index { |step| step.fetch("run", "").include?("docker save") }
   upload_index = steps.index { |step| step["uses"] == "actions/upload-artifact@v4" }
-  unless candidate.fetch("if") == "needs.mode.outputs.full == 'true'" &&
+  unless candidate.fetch("if") == group_if && Array(candidate.fetch("needs")).sort == %w[mode scope] &&
       static_index && build_index && save_index && upload_index &&
       static_index < build_index && build_index < save_index && save_index < upload_index &&
       steps.fetch(build_index).fetch("with")["tags"] == "${{ env.KEYCLOAK_TEST_IMAGE }}" &&
@@ -463,7 +466,7 @@ def assert_ci_scope(ci)
   group = jobs.fetch("integration-group")
   steps = group.fetch("steps")
   env = group.fetch("env")
-  unless group.fetch("if") == "needs.mode.outputs.full == 'true'" && Array(group.fetch("needs")).include?("candidate") &&
+  unless group.fetch("if") == group_if && Array(group.fetch("needs")).sort == %w[candidate mode scope] &&
       env["KEYCLOAK_TEST_IMAGE"] == candidate.fetch("env").fetch("KEYCLOAK_TEST_IMAGE") &&
       env["IMAGE_ID"] == "${{ needs.candidate.outputs.image-id }}" &&
       env["IMAGE_SHA256"] == "${{ needs.candidate.outputs.image-sha256 }}"
@@ -495,6 +498,148 @@ def assert_ci_scope(ci)
     abort "#{ci} every group's receipt must name its group, the tree and the image it tested"
   end
 end
+
+# Affected tests: a fast run also runs every job of the whole suite whose own tests or config its
+# diff touches, and all of them for a tests/ or config/ path no workflow reaches. tests/affected-
+# jobs.sh lists the jobs with the tests/ scripts their steps run; the lists must equal the
+# workflows, every whole-suite job must run on its own name in scope's affected output, every
+# tracked tests/ and config/ file must be reached or local only, and sample changes must reach the
+# right jobs.
+def assert_affected_jobs(root, helper)
+  workflows = File.join(root, ".github/workflows")
+  ci = File.join(workflows, "ci.yml")
+  jobs = YAML.load_file(ci, aliases: true).fetch("jobs")
+  scripts_of = lambda do |job|
+    job.fetch("steps").flat_map { |step| step.fetch("run", "").scan(%r{bash (?:\.\./)?(tests/[A-Za-z0-9_.-]+\.sh)}).flatten }.uniq.sort
+  end
+  listing = lambda do |option|
+    output = `bash #{helper} #{option}`
+    abort "#{helper} #{option} failed" unless $?.success?
+    output
+  end
+  entries_of = ->(option) { listing.(option).lines.map(&:split).to_h { |words| [words.first, words.drop(1).sort] } }
+  static_scripts = listing.("--static").split.sort
+  unless static_scripts == scripts_of.(jobs.fetch("static"))
+    abort "#{helper} STATIC_SCRIPTS must be exactly the scripts ci.yml's static job runs (#{scripts_of.(jobs.fetch("static")).join(" ")})"
+  end
+  # mode is the one source of full; candidate builds the image for integration-group and runs no
+  # test of its own (checked with integration-group in assert_ci_scope).
+  whole_suite = jobs.select { |name, job| name != "candidate" && job.fetch("if", "").to_s.start_with?("needs.mode.outputs.full == 'true'") }
+  entries = entries_of.("--entries")
+  unless entries.keys.sort == whole_suite.keys.sort
+    abort "#{helper} must list exactly ci.yml's whole-suite jobs (#{whole_suite.keys.sort.join(" ")})"
+  end
+  whole_suite.each do |name, job|
+    expected_if = "needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' #{name} ')"
+    abort "#{ci} #{name} must also run when scope lists it as affected" unless job.fetch("if") == expected_if
+    abort "#{ci} #{name} must need mode and scope" unless (%w[mode scope] - Array(job.fetch("needs"))).empty?
+    unless (scripts_of.(job) - static_scripts) == entries.fetch(name)
+      abort "#{helper} must list #{name} with the scripts it runs (#{(scripts_of.(job) - static_scripts).join(" ")})"
+    end
+  end
+  fast = jobs.reject { |name, _| whole_suite.key?(name) || %w[static scope].include?(name) }
+    .to_h { |name, job| [name, scripts_of.(job) - static_scripts] }.reject { |_, scripts| scripts.empty? }
+  unless entries_of.("--fast") == fast
+    abort "#{helper} FAST_ENTRIES must be exactly ci.yml's other jobs and their scripts (#{fast.map { |n, s| "#{n}: #{s.join(" ")}" }.join("; ")})"
+  end
+  ci_scripts = jobs.values.flat_map { |job| scripts_of.(job) }
+  other = ["release.yml", "integration-all.yml"].flat_map do |name|
+    YAML.load_file(File.join(workflows, name), aliases: true).fetch("jobs").values.flat_map { |job| scripts_of.(job) }
+  end.uniq.sort - ci_scripts
+  unless listing.("--other").split.sort == other
+    abort "#{helper} OTHER_SCRIPTS must be exactly the scripts only release.yml and integration-all.yml run (#{other.join(" ")})"
+  end
+  # EXTRA_EDGES: every test that calls config/ scripts dynamically ("/tmp/config/$x",
+  # "$CONFIG_DIR/$x", "$IN_CONTAINER_CONFIG/$x") is an edge whose targets include every config/
+  # script its code names; a test that sets KEYCLOAK_RECONCILE_ONLY and names the operator step
+  # role-groups or leader-app-roles (the reconciler execs "$CONFIG_DIR/$RECONCILE_ONLY.sh") has
+  # both as targets. Static checks
+  # (STATIC_SCRIPTS) are tested in every run and need no edge.
+  edges = listing.("--edges").lines.map(&:split).to_h { |words| [words.first, words.drop(1)] }
+  code = ->(path) { File.readlines(File.join(root, path), encoding: "UTF-8").reject { |line| line =~ /\A\s*#/ }.join }
+  dynamic = %r{(?:/tmp/config|/opt/keycloak/(?:sky-)?config|\$\{?CONFIG_DIR\}?|\$\{?IN_CONTAINER_CONFIG\}?)/"?\$}
+  config_scripts = Dir.children(File.join(root, "config")).grep(/\.sh\z/)
+  Dir.glob(File.join(root, "tests/*.sh")).map { |path| path.delete_prefix("#{root}/") }.sort.each do |path|
+    next if static_scripts.include?(path) || path == "tests/affected-jobs.sh"
+    text = code.(path)
+    needed = []
+    if text.match?(dynamic)
+      needed += text.scan(/(?<![A-Za-z0-9_\/-])([a-z][a-z0-9-]*\.sh)\b/).flatten.uniq.select { |name| config_scripts.include?(name) }
+        .map { |name| "config/#{name}" } - ["config/reconcile-account-center.sh"]
+    end
+    if text.include?("KEYCLOAK_RECONCILE_ONLY=") && text.match?(/(?<![A-Za-z0-9_\/.-])(?:role-groups|leader-app-roles)(?![A-Za-z0-9_.-])/)
+      needed += %w[config/role-groups.sh config/leader-app-roles.sh]
+    end
+    next if needed.empty?
+    missing = needed.uniq - edges.fetch(path, [])
+    unless missing.empty?
+      abort "#{helper} EXTRA_EDGES must give #{path} the config scripts it runs dynamically (#{missing.join(" ")})"
+    end
+  end
+  reconcile = code.("config/reconcile-account-center.sh")
+  unless reconcile.include?('if [[ $RECONCILE_ONLY == role-groups || $RECONCILE_ONLY == leader-app-roles ]]; then') &&
+      reconcile.scan('"$CONFIG_DIR/$RECONCILE_ONLY.sh"').length == 1 && reconcile.scan(dynamic).length == 1
+    abort "#{helper}: the reconciler's only dynamic call must be the operator steps role-groups and leader-app-roles"
+  end
+  unreached = listing.("--unreached").split
+  unless unreached.empty?
+    abort "#{helper}: no workflow reaches #{unreached.join(" ")}; run it from a job or list it in LOCAL_ONLY"
+  end
+  scope_run = jobs.fetch("scope").fetch("steps").map { |step| step.fetch("run", "") }.join("\n")
+  unless scope_run.include?('affected=$(bash tests/affected-jobs.sh <<<"$changed")') &&
+      scope_run.include?("bash tests/affected-jobs.sh --entries")
+    abort "#{ci} scope must name the affected jobs of a fast run, and every one when its diff cannot be read"
+  end
+  # Only a pull request into main has affected jobs: a fast production run promotes a tree a full
+  # run already tested, and its diff (everything main gained since the last release) would start
+  # the whole suite again.
+  affected_run = "${{ (github.event_name == 'pull_request' && github.base_ref == 'main') && 'true' || 'false' }}"
+  unless jobs.fetch("scope").fetch("steps").any? { |step| step.fetch("env", {})["AFFECTED_RUN"] == affected_run } &&
+      scope_run.include?("all=' '\n  if [[ $FULL == true || $AFFECTED_RUN == true ]]; then\n    all=\" $(bash tests/affected-jobs.sh --entries") &&
+      scope_run.include?("affected=' '\nif [[ $AFFECTED_RUN == true ]]; then\n  affected=$(bash tests/affected-jobs.sh <<<\"$changed\")\nfi\n")
+    abort "#{ci} scope must list affected jobs only in a pull request into main (a fast production run has none)"
+  end
+  # The sample paths are split ("tests/" "x") so that this script's own text names none of them.
+  everything = whole_suite.keys
+  reaches = {
+    "tests/" "kcadm-core-roles-failure.sh" => %w[role-groups dk-read-only integration-group],
+    "tests/" "core-service-roles.sh" => %w[integration-group],
+    "tests/" "fixture-realm.json" => %w[integration-group],
+    "tests/" "dk-read-only.sh" => %w[dk-read-only],
+    "tests/" "run-integration.sh" => %w[integration-group],
+    "theme/tests/" "integration/real-keycloak.spec.ts" => %w[integration-group],
+    "config/" "reconcile-account-center.sh" => %w[integration-group role-groups dk-read-only login-clients],
+    "config/" "not-read-by-any-job.sh" => everything,
+    "tests/" "not-run-by-any-job.sh" => everything,
+  }
+  # Exactly these (a narrow config file, and paths no whole-suite job reads: a comment-only mention,
+  # the static checks, a fast job's config, docs, local only, theme sources).
+  exactly = {
+    "config/" "sandbox-admin-local-client.sh" => %w[sandbox-admin-local-client],
+    "config/" "role-groups.json" => %w[role-groups],
+    "config/" "leader-app-roles.sh" => %w[role-groups],
+    "config/" "sandbox-site-clients.sh" => %w[login-clients],
+    "config/" "skyapp-cms-editor.sh" => %w[skyapp-cms-editor login-clients],
+    "docs/x.md" => [], "tests/" "check-fresh-runner.sh" => [], "tests/" "microsoft-reauthentication.sh" => [],
+    "tests/" "welcome-page.sh" => [], "config/" "create-place-client.sh" => [], "tests/" "sudo-email-code.sh" => [],
+    "theme/src/login/x.tsx" => [],
+  }
+  paths = reaches.keys + exactly.keys
+  output = IO.popen(["bash", helper, "--each"], "r+") { |io| io.puts(paths); io.close_write; io.read }
+  abort "#{helper} --each failed" unless $?.success?
+  got = output.lines.to_h { |line| path, jobs = line.chomp.split(":", 2); [path, jobs.to_s.split] }
+  reaches.each do |path, expected|
+    missing = expected - got.fetch(path, [])
+    abort "#{helper} does not reach #{missing.join(" ")} from #{path}" unless missing.empty?
+  end
+  exactly.each do |path, expected|
+    unless got.fetch(path, nil).to_a.sort == expected.sort
+      abort "#{helper} must run exactly #{expected.join(" ")} for #{path} (runs #{got.fetch(path, []).join(" ")})"
+    end
+  end
+end
+
+assert_affected_jobs(root, File.join(root, "tests/affected-jobs.sh"))
 
 # The finder ci.yml and release.yml share: only push, schedule and workflow_dispatch runs (a
 # pull_request run tests GitHub's merge commit), every page, a passed "scope (full)" and no job

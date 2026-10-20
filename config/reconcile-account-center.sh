@@ -3167,6 +3167,20 @@ SKYMAIL_SERVICE_ROLE_DEFINITIONS=(
   "skymail:lists:write|core|shared|"
   "skymail:tracking:withdraw|core|services|core withdraws a person's mail tracking (PUT /internal/v1/tracking-withdrawals/{sub}, skymail-backend README). core's service account only; never a person, a group, a composite or the default role."
 )
+# realm-management roles of SkyMail's service account (client skymail-backend): SkyMail reads
+# people through the Admin REST API: group members and the holders of its approver roles, and the
+# one Keycloak account of a single mail's address for tracking (GET /users?email=…&exact=true,
+# skymail-backend #85, iletisim-servisi 14/15); that needs view-users (query-users alone does not
+# return the users) and view-clients (the client and its roles). Granted by hand in production on
+# 2026-09-23 (skymail-frontend-prod-release-wizard.sh checks it); codified here, so the operator
+# step only reports them held. Keycloak's own roles, never created here (existing); people and
+# groups hold them too (shared). The grant record (CORE_SERVICE_ROLE_GRANT_ATTRIBUTE) goes on the
+# realm-management role as on the others: without it the reconciler identity, which cannot read a
+# service account's roles, would warn on every run.
+REALM_MANAGEMENT_SERVICE_ROLE_DEFINITIONS=(
+  "view-users|skymail-backend|shared|"
+  "view-clients|skymail-backend|shared|"
+)
 CORE_SERVICE_ROLE_GRANT_ATTRIBUTE=skylab.granted-service-accounts
 # Listed clients that must be service account only: no browser login (standard or implicit flow) and
 # no password grant (direct access grants). core reads the product from client_id == azp, so a token
@@ -3468,6 +3482,9 @@ reconcile_service_roles() {
     [[ -z $parents ]] \
       || warn "$name is in the composite roles ${parents#,} (nothing was removed; every holder of them holds it, remove it in the Admin Console)"
   done
+  # No NOTE for realm-management: the held roles are the effective (composite) ones, and view-users
+  # and view-clients themselves hold query-users, query-groups and query-clients.
+  [[ $resource != realm-management ]] || return 0
   for client in "${all_clients[@]}"; do
     [[ -n ${client_lines[$client]:-} ]] || continue
     IFS='|' read -r client_uuid full_scope mapped sa_id sa_name held <<<"${client_lines[$client]}"
@@ -3483,12 +3500,14 @@ reconcile_service_roles() {
   done
 }
 
-# The service-roles step: core's service roles, then SkyMail's roles of core's service account, and
-# for the operator one total of the changes.
+# The service-roles step: core's service roles, then SkyMail's roles of core's service account, then
+# the realm-management roles of SkyMail's service account, and for the operator one total of the
+# changes.
 reconcile_core_service_roles() {
   SERVICE_ROLE_CHANGES=0
   reconcile_service_roles "$CORE_CLIENT_ID" CORE_SERVICE_ROLE_DEFINITIONS create
   reconcile_service_roles "$SKYMAIL_CLIENT_ID" SKYMAIL_SERVICE_ROLE_DEFINITIONS existing
+  reconcile_service_roles realm-management REALM_MANAGEMENT_SERVICE_ROLE_DEFINITIONS existing
   [[ -n $OPERATOR_KCADM_CONFIG ]] || return 0
   if [[ $RECONCILE_CHECK == true ]]; then
     log "check: $SERVICE_ROLE_CHANGES change(s) pending; nothing was written"

@@ -8,14 +8,15 @@ import YtuMark from "./YtuMark";
 import LegacyFrame from "./LegacyFrame";
 import PageMessage from "./PageMessage";
 import BrokerLinkEscape from "./BrokerLinkEscape";
+import { BackArrow } from "./BackToChoice";
+import { withViewTransition } from "./pageTransitions";
 import { getLegacyChromeProps, useLegacyChrome } from "./legacyChrome";
 import { chooseExecution, emailCodeExecutionId, takePasswordChoice } from "./emailCodeChoice";
 
 type LoginProps = PageProps<Extract<KcContext, { pageId: "login.ftl" }>, I18n>;
 
-/** YTÜ's self-service reset of the school (Microsoft) password, then BİDB's help desk. */
+/** YTÜ's self-service reset of the school (Microsoft) password. */
 const SCHOOL_PASSWORD_RESET_URL = "https://passwordreset.microsoftonline.com/";
-const SCHOOL_SUPPORT_URL = "https://teknikdestek.yildiz.edu.tr/";
 
 export default function Login(props: LoginProps) {
   const { kcContext, i18n } = props;
@@ -89,7 +90,7 @@ export default function Login(props: LoginProps) {
                     type="button"
                     onClick={() =>
                       emailCodeExecution === undefined
-                        ? setView("password")
+                        ? withViewTransition(() => setView("password"))
                         : chooseExecution(url.loginAction, emailCodeExecution)
                     }
                   >
@@ -111,46 +112,42 @@ export default function Login(props: LoginProps) {
                   </button>
                 </div>
 
-                <div className="sl-legacy-trust">
-                  <p>{msgStr("skylabTrust")}</p>
-                  <details>
-                    <summary>{msgStr("skylabTrustMore")}</summary>
-                    <p>{msgStr("skylabTrustTaken")}</p>
-                  </details>
-                </div>
-
-                {hasPasskey && (
-                  <div className="sl-legacy-passkey-wrap">
-                    <button
-                      id={webAuthnButtonId}
-                      className="sl-legacy-passkey"
-                      type="button"
-                    >
-                      <span className="sl-key-icon" aria-hidden="true" />
-                      {msgStr("passkeyChoice")}
-                    </button>
+                {/*
+                  The other ways in, on one quiet line under the two main choices. "Parolanı mı
+                  unuttun?" lives in the password form, under the password field.
+                */}
+                {(hasPasskey || signUpExecution !== undefined) && (
+                  <div className="sl-legacy-alternatives">
+                    {hasPasskey && (
+                      <button
+                        id={webAuthnButtonId}
+                        className="sl-legacy-passkey"
+                        type="button"
+                      >
+                        <span className="sl-key-icon" aria-hidden="true" />
+                        {msgStr("passkeyChoice")}
+                      </button>
+                    )}
+                    {signUpExecution !== undefined && (
+                      <p className="sl-legacy-alternatives__sign-up">
+                        {msgStr("noAccount")}{" "}
+                        <button className="sl-text-button" type="button"
+                          onClick={() => chooseExecution(url.loginAction, signUpExecution, "sign-up")}>
+                          {msgStr("emailCodeSignUpShort")}
+                        </button>
+                      </p>
+                    )}
                   </div>
                 )}
 
-                {resetPasswordUrl !== undefined && (
-                  <p className="sl-legacy-choice-help">
-                    <a href={resetPasswordUrl}>{msg("doForgotPassword")}</a>
+                {/* The one functional thing left of the YTÜ help: a plain link to reset the school password. */}
+                {microsoftProvider !== undefined && (
+                  <p className="sl-legacy-school-reset">
+                    <a href={SCHOOL_PASSWORD_RESET_URL} target="_blank" rel="noopener noreferrer">
+                      {msgStr("skylabSchoolPasswordResetLink")}
+                    </a>
                   </p>
                 )}
-
-                <details className="sl-legacy-school-help">
-                  <summary>{msgStr("skylabSchoolPasswordHelp")}</summary>
-                  <p>
-                    <a href={SCHOOL_PASSWORD_RESET_URL} target="_blank" rel="noopener noreferrer">
-                      {msgStr("skylabSchoolPasswordReset")}
-                    </a>{" "}
-                    {msgStr("skylabSchoolPasswordOr")}{" "}
-                    <a href={SCHOOL_SUPPORT_URL} target="_blank" rel="noopener noreferrer">
-                      {msgStr("skylabSchoolPasswordSupport")}
-                    </a>
-                    .
-                  </p>
-                </details>
               </>
             )}
 
@@ -159,17 +156,9 @@ export default function Login(props: LoginProps) {
                 {!isBrokerProof && <button
                   className="sl-legacy-back"
                   type="button"
-                  onClick={() => setView("choice")}
+                  onClick={() => withViewTransition(() => setView("choice"), "back")}
                 >
-                  <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
-                    <path
-                      d="m15 19-7-7 7-7"
-                      stroke="currentColor"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                    />
-                  </svg>
+                  <BackArrow />
                   {msgStr("goBack")}
                 </button>}
 
@@ -294,7 +283,7 @@ export default function Login(props: LoginProps) {
               </div>
             )}
 
-            {signUpExecution !== undefined && (
+            {view === "password" && signUpExecution !== undefined && (
               <div className="sl-legacy-no-account">
                 <p className="sl-legacy-no-account__title">{msgStr("noAccount")}</p>
                 <p>
@@ -306,7 +295,6 @@ export default function Login(props: LoginProps) {
               </div>
             )}
 
-            <p className="sl-legacy-domain">{msgStr("skylabDomainNotice")}</p>
             <BrokerLinkEscape kcContext={kcContext} i18n={i18n} />
 
             {hasPasskey && (

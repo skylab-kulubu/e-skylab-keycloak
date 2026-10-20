@@ -56,16 +56,8 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     kvkkLinkText: "KVKK Metni",
     kvkkNoticeLinkText: "KVKK Aydınlatma Metni",
     kvkkSuffix: "'nde okuyabilirsin.",
-    // Under the sign-in choices (eskylab-login-ux 05; kept short on purpose, the KVKK notice has the detail).
-    skylabTrust: "Okul şifreni yalnız Microsoft'a yazarsın; SKY LAB görmez.",
-    skylabTrustMore: "Neleri alıyoruz?",
-    skylabTrustTaken: "Adın, okul e-postan, bölümün ve Microsoft kimlik numaran. Postalarına ve dosyalarına erişmeyiz.",
-    skylabSchoolPasswordHelp: "Okul şifreni bilmiyor musun?",
-    // Keycloak's .properties bundles drop a value's leading spaces: spaces between a text and its link live in Login.tsx.
-    skylabSchoolPasswordReset: "Microsoft'ta sıfırla",
-    skylabSchoolPasswordOr: "ya da",
-    skylabSchoolPasswordSupport: "BİDB'ye başvur",
-    skylabDomainNotice: "Giriş adresi her zaman e.yildizskylab.com'dur.",
+    // Under the sign-in choices: a plain link, no explanation (the buttons speak for themselves).
+    skylabSchoolPasswordResetLink: "Okul şifreni sıfırla",
     // The password form's alternative while e-mail registration is unavailable; see Login.tsx.
     skylabNoAccountYtu: "YTÜ hesabın varsa",
     skylabNoAccountYtuLink: "YTÜ hesabınla devam et",
@@ -77,7 +69,7 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     skylabLoading: "Yükleniyor…",
     // The brand panel beside the card on wide screens
     skylabBrandTitle: "Tek hesap, tek giriş",
-    skylabBrandText: "Hesap Merkezi, SkyForms ve kulübün hesap isteyen öteki sitelerine aynı hesapla girersin.",
+    skylabBrandText: "SKY LAB'in tüm platformlarına tek hesapla gir.",
     skylabBrandSites: "Hesap isteyen kulüp sitelerinde tek hesap",
     skylabBrandYtu: "YTÜ öğrenci hesabınla hızlı giriş",
     skylabBrandPasskey: "Erişim anahtarıyla parolasız giriş",
@@ -149,17 +141,14 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     // "E-postayla devam et": sign-in with a code mailed to the account (SPI sky-email-code, eskylab-login-ux 08)
     emailCodeTitle: "E-postayla devam et",
     emailCodeSignUpLink: "E-postayla hesap aç",
+    // The login page's first screen, after "Hesabın yok mu?" on one quiet line with the passkey.
+    emailCodeSignUpShort: "Hesap aç",
     emailCodeSignUpTitle: "Hesap aç",
-    emailCodeSignUpDescription:
-      "E-posta adresini ya da kullanıcı adını yaz. Hesabın varsa giriş yaparsın; yoksa e-posta adresini doğruladıktan sonra hesabını açabilirsin.",
-    emailCodeDescription:
-      "E-posta adresini ya da kullanıcı adını yaz; hesabının e-posta adresine 6 haneli bir giriş kodu gönderelim.",
     emailCodeCodeDescription: "E-postana gelen 6 haneli kodu yaz.",
     emailCodeIdentifierLabel: "E-posta adresin ya da kullanıcı adın",
     emailCodeSend: "Kod gönder",
     emailCodePassword: "Parolanla gir",
-    emailCodeSent:
-      "Kodu gönderdik. Bu adresle bir hesabın varsa kod, hesabının birincil e-posta adresine gider. Gelen kutunu ve spam klasörünü kontrol et. Kod {0} dakika geçerli.",
+    emailCodeSent: "Kod {0} dakika geçerli.",
     emailCodeFor: "Yazdığın: {0}",
     emailCodeCodeLabel: "6 haneli kod",
     emailCodeVerify: "Giriş yap",
@@ -465,14 +454,7 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     kvkkLinkText: "KVKK Policy",
     kvkkNoticeLinkText: "KVKK Privacy Notice",
     kvkkSuffix: ".",
-    skylabTrust: "You type your school password only at Microsoft; SKY LAB never sees it.",
-    skylabTrustMore: "What do we take?",
-    skylabTrustTaken: "Your name, school email, department and Microsoft ID. We don't access your mail or files.",
-    skylabSchoolPasswordHelp: "Don't know your school password?",
-    skylabSchoolPasswordReset: "Reset it at Microsoft",
-    skylabSchoolPasswordOr: "or",
-    skylabSchoolPasswordSupport: "contact YTÜ IT",
-    skylabDomainNotice: "The sign-in address is always e.yildizskylab.com.",
+    skylabSchoolPasswordResetLink: "Reset your school password",
     skylabNoAccountYtu: "If you have a YTÜ account,",
     skylabNoAccountYtuLink: "continue with your YTÜ account",
     passkeyChoice: "Sign in with a passkey",
@@ -483,7 +465,7 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     skylabLoading: "Loading…",
     // The brand panel beside the card on wide screens
     skylabBrandTitle: "One account, one sign-in",
-    skylabBrandText: "The same account opens the Account Center, SkyForms and the club's other member sites.",
+    skylabBrandText: "Sign in to every SKY LAB platform with one account.",
     skylabBrandSites: "One account for the club's member sites",
     skylabBrandYtu: "Quick sign-in with your YTÜ student account",
     skylabBrandPasskey: "Passwordless sign-in with a passkey",
@@ -552,16 +534,13 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
 
     emailCodeTitle: "Continue with email",
     emailCodeSignUpLink: "Create an account with email",
+    emailCodeSignUpShort: "Create one",
     emailCodeSignUpTitle: "Create an account",
-    emailCodeSignUpDescription:
-      "Type your email or username. If you have an account, you will sign in; otherwise, verify your email to create one.",
-    emailCodeDescription: "Type your email or username; we will send a 6-digit sign-in code to your account's email.",
     emailCodeCodeDescription: "Type the 6-digit code from your email.",
     emailCodeIdentifierLabel: "Your email or username",
     emailCodeSend: "Send code",
     emailCodePassword: "Sign in with your password",
-    emailCodeSent:
-      "We sent the code. If you have an account with this address, the code goes to your account's primary email. Check your inbox and spam folder. The code is valid for {0} minutes.",
+    emailCodeSent: "The code is valid for {0} minutes.",
     emailCodeFor: "You typed: {0}",
     emailCodeCodeLabel: "6-digit code",
     emailCodeVerify: "Sign in",

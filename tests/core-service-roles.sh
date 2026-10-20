@@ -21,6 +21,12 @@
 # skymail:access and the two list roles, skymail:mails:send comes from the mailer stage, and
 # core-erasure-client.sh grants core skymail:access and skymail:mails:send by hand (production's
 # state), so the step grants the two list roles.
+# Mail tracking (iletisim-servisi ticket 17): communication-preferences:read (core #256, whom SkyMail
+# may track) to SkyMail's service account, and skymail:tracking:withdraw (skymail-backend #75, core
+# withdraws a person's tracking) to core's. The latter is the one SkyMail role the step creates (its
+# line has a description). Both are service accounts' only (review condition B2 of skymail-backend
+# #75): after the step each is held by its one service account and by no other user, no group, no
+# composite role and not the default role; a composite holding the withdraw role is reported.
 
 CSR_ROLES=(media:attach ticket:forms url:forms users:read)
 CSR_NEW_ROLE=ticket:forms
@@ -41,10 +47,14 @@ CSR_AUDIENCE_ROLE=audience:read
 CSR_AUDIENCE_CLIENT=skymail-backend
 CSR_AUDIENCE_ACCOUNT=service-account-skymail-backend
 CSR_CORE_ACCOUNT=service-account-core
+CSR_TRACKING_ROLE=communication-preferences:read
+CSR_WITHDRAW_ROLE=skymail:tracking:withdraw
+# A realm role the stage makes composite over the withdraw role, to see it reported.
+CSR_WITHDRAW_PARENT=csr-withdraw-parent
 # SkyMail's roles of core's service account; core-erasure-client.sh grants the first two by hand.
-CSR_SKYMAIL_ROLES=(skymail:access skymail:mails:send skymail:lists:read skymail:lists:write)
+CSR_SKYMAIL_ROLES=(skymail:access skymail:mails:send skymail:lists:read skymail:lists:write "$CSR_WITHDRAW_ROLE")
 CSR_SKYMAIL_HAND=(skymail:access skymail:mails:send)
-CSR_SKYMAIL_SORTED='["skymail:access","skymail:lists:read","skymail:lists:write","skymail:mails:send"]'
+CSR_SKYMAIL_SORTED='["skymail:access","skymail:lists:read","skymail:lists:write","skymail:mails:send","skymail:tracking:withdraw"]'
 CSR_FLAGS_OFF='.standardFlowEnabled == false and .implicitFlowEnabled == false and .directAccessGrantsEnabled == false'
 CSR_FLAGS_PRODUCTION='.standardFlowEnabled == true and .implicitFlowEnabled == false and .directAccessGrantsEnabled == false'
 
@@ -143,6 +153,47 @@ csr_token_has_core_audience() {
   jq -e '(.aud // []) | (if type == "array" then . else [.] end) | index("core") != null' <<<"$CSR_PAYLOAD" >/dev/null
 }
 
+# The composite roles that hold role $1 of client $2 directly, "<container>/<name>" per line
+# (container: realm or a clientId), the default role included; empty when none. Lists first, then
+# loops: kcadm runs through `compose exec`, which would read a loop's stdin.
+csr_composite_parents() {
+  local role_id line listed container parent_id parent_name client_uuid client_id
+  local clients=() parents=()
+  role_id=$(kcadm get "clients/$(lca_client_uuid "$2")/roles/$1" -r "$V2_REALM" -c | jq -r .id)
+  listed=$(kcadm get clients -r "$V2_REALM" -c | jq -r '.[] | "\(.id)\t\(.clientId)"')
+  mapfile -t clients <<<"$listed"
+  listed=$(kcadm get roles -r "$V2_REALM" -c | jq -r '.[] | select(.composite) | "realm\t\(.id)\t\(.name)"')
+  for line in "${clients[@]}"; do
+    IFS=$'\t' read -r client_uuid client_id <<<"$line"
+    listed+=$'\n'$(kcadm get "clients/$client_uuid/roles" -r "$V2_REALM" -c \
+      | jq -r --arg c "$client_id" '.[] | select(.composite) | "\($c)\t\(.id)\t\(.name)"')
+  done
+  mapfile -t parents < <(sed '/^$/d' <<<"$listed")
+  # Positive control: the realm's default role is a composite, so the scan saw at least one.
+  [[ ${#parents[@]} -gt 0 && ${#clients[@]} -gt 1 ]] || fail 'the composite scan read no composite role or no client'
+  for line in "${parents[@]}"; do
+    IFS=$'\t' read -r container parent_id parent_name <<<"$line"
+    if kcadm get "roles-by-id/$parent_id/composites" -r "$V2_REALM" -c | jq -e --arg id "$role_id" 'any(.[]; .id == $id)' >/dev/null; then
+      printf '%s/%s\n' "$container" "$parent_name"
+    fi
+  done
+}
+
+# B2: role $1 of client $2 is held by the user $3 (a service account) alone: no other user, no
+# group, no composite role, not the default role.
+csr_held_by_service_account_only() {
+  local role=$1 resource=$2 account=$3 resource_uuid parents
+  resource_uuid=$(lca_client_uuid "$resource")
+  json_assert "$(kcadm get "clients/$resource_uuid/roles/$role/users" -r "$V2_REALM" -c)" \
+    '[.[].username] == [$a]' "a user other than $account holds $role" --arg a "$account"
+  json_assert "$(kcadm get "clients/$resource_uuid/roles/$role/groups" -r "$V2_REALM" -c)" 'length == 0' \
+    "a group holds $role"
+  json_assert "$(kcadm get "clients/$resource_uuid/roles/$role" -r "$V2_REALM" -c)" '.composite == false' \
+    "$role is a composite"
+  parents=$(csr_composite_parents "$role" "$resource")
+  [[ -z $parents ]] || fail "$role is in the composite roles (the default role included): $(paste -sd, - <<<"$parents")"
+}
+
 # expect_lines OUTPUT WHO LINE...: every LINE is in OUTPUT.
 csr_expect_lines() {
   local output=$1 who=$2 expected
@@ -193,6 +244,26 @@ stage_core_service_roles_after_first_reconciliation() {
     "a user holds $CSR_AUDIENCE_ROLE after the first reconciliation"
   grep -Fq "[reconcile] WARNING: $CSR_AUDIENCE_ROLE is not yet granted to service account $CSR_AUDIENCE_ACCOUNT by the operator step" "$log" \
     || fail "the first reconciliation did not report $CSR_AUDIENCE_ROLE for $CSR_AUDIENCE_ACCOUNT"
+  # Mail tracking (ticket 17): communication-preferences:read on core, skymail:tracking:withdraw on
+  # skymail (the one SkyMail role the step makes), both created, held by nobody, reported.
+  grep -Fq "[reconcile] client role $CSR_TRACKING_ROLE of core: created" "$log" \
+    || fail "the first reconciliation did not create $CSR_TRACKING_ROLE"
+  json_assert "$(kcadm get "clients/$core_uuid/roles/$CSR_TRACKING_ROLE" -r "$V2_REALM" -c)" '.composite == false and (.description | startswith("SkyMail asks whom it may track"))' \
+    "$CSR_TRACKING_ROLE was created without its description or as a composite"
+  grep -Fq "[reconcile] client role $CSR_WITHDRAW_ROLE of skymail: created" "$log" \
+    || fail "the first reconciliation did not create $CSR_WITHDRAW_ROLE"
+  json_assert "$(kcadm get "clients/$(lca_client_uuid skymail)/roles/$CSR_WITHDRAW_ROLE" -r "$V2_REALM" -c)" '.composite == false and (.description | startswith("core withdraws a person'"'"'s mail tracking"))' \
+    "$CSR_WITHDRAW_ROLE was created without its description or as a composite"
+  for role in "$CSR_TRACKING_ROLE|core" "$CSR_WITHDRAW_ROLE|skymail"; do
+    json_assert "$(kcadm get "clients/$(lca_client_uuid "${role#*|}")/roles/${role%%|*}/users" -r "$V2_REALM" -c)" 'length == 0' \
+      "a user holds ${role%%|*} after the first reconciliation"
+    json_assert "$(kcadm get "clients/$(lca_client_uuid "${role#*|}")/roles/${role%%|*}/groups" -r "$V2_REALM" -c)" 'length == 0' \
+      "a group holds ${role%%|*} after the first reconciliation"
+  done
+  grep -Fq "[reconcile] WARNING: $CSR_TRACKING_ROLE is not yet granted to service account $CSR_AUDIENCE_ACCOUNT by the operator step" "$log" \
+    || fail "the first reconciliation did not report $CSR_TRACKING_ROLE for $CSR_AUDIENCE_ACCOUNT"
+  grep -Fq "[reconcile] WARNING: $CSR_WITHDRAW_ROLE is not yet granted to service account $CSR_CORE_ACCOUNT by the operator step" "$log" \
+    || fail "the first reconciliation did not report $CSR_WITHDRAW_ROLE for $CSR_CORE_ACCOUNT"
   # SkyMail's roles of core: a missing one is reported, never created.
   grep -Fq "[reconcile] WARNING: client role skymail:mails:send of skymail does not exist in realm $V2_REALM (it is made with the client skymail, not here); it is not granted to core" "$log" \
     || fail 'the first reconciliation did not report the missing skymail:mails:send'
@@ -239,6 +310,8 @@ stage_core_service_roles_granted_by_operator() {
   reconciler_lines+=("[reconcile] client role $CSR_AUDIENCE_ROLE of core: unchanged"
     "[reconcile] default client scope roles of $CSR_AUDIENCE_CLIENT: added (it puts resource_access and, through audience resolve, aud core in the token)"
     "[reconcile] WARNING: $CSR_AUDIENCE_ROLE is not yet granted to service account $CSR_AUDIENCE_ACCOUNT by the operator step"
+    "[reconcile] client role $CSR_TRACKING_ROLE of core: unchanged"
+    "[reconcile] WARNING: $CSR_TRACKING_ROLE is not yet granted to service account $CSR_AUDIENCE_ACCOUNT by the operator step"
     '[reconcile] default client scope roles of core: verified (it puts resource_access and, through audience resolve, aud skymail in the token)')
   for role in "${CSR_SKYMAIL_ROLES[@]}"; do
     reconciler_lines+=("[reconcile] client role $role of skymail: unchanged"
@@ -271,6 +344,8 @@ stage_core_service_roles_granted_by_operator() {
     "The users holding $CSR_NEW_ROLE could not be read in realm $V2_REALM; nothing was granted"
   csr_injected_failure_refuses composites/clients/ \
     "The default role default-roles-$V2_REALM could not be read in realm $V2_REALM; nothing was granted"
+  # The composite scan (B2) reads every composite role's children by id; only it uses roles-by-id.
+  csr_injected_failure_refuses roles-by-id/ 'The composites of '
 
   CURRENT_STAGE='core service roles: the dry run plans only what is missing and writes nothing'
   # Production's shape before the step: users:read granted to forms by hand. A person and a group
@@ -287,14 +362,24 @@ stage_core_service_roles_granted_by_operator() {
   kcadm create "users/$user_id/role-mappings/clients/$core_uuid" -r "$V2_REALM" -b "$new_body" >/dev/null
   kcadm create "users/$user_id/role-mappings/clients/$core_uuid" -r "$V2_REALM" -b "$hand_body" >/dev/null
   kcadm create "groups/$admin_id/role-mappings/clients/$core_uuid" -r "$V2_REALM" -b "$new_body" >/dev/null
+  # B2: a realm role made composite over the withdraw role gives it to everyone who holds that role;
+  # the step reports it and removes nothing.
+  kcadm create roles -r "$V2_REALM" -s "name=$CSR_WITHDRAW_PARENT" >/dev/null
+  kcadm add-roles -r "$V2_REALM" --rname "$CSR_WITHDRAW_PARENT" --cclientid skymail --rolename "$CSR_WITHDRAW_ROLE" >/dev/null
+  [[ $(csr_composite_parents "$CSR_WITHDRAW_ROLE" skymail) == "realm/$CSR_WITHDRAW_PARENT" ]] \
+    || fail "positive control: the composite scan does not see $CSR_WITHDRAW_ROLE in realm/$CSR_WITHDRAW_PARENT"
   before=$(csr_newest_event)
   output=$(csr_operator -e KEYCLOAK_RECONCILE_CHECK=true) || { printf '%s\n' "$output" >&2; fail 'the dry run failed'; }
   operator_lines=('Core service roles are checked; nothing was written.'
-    '[reconcile] check: 16 change(s) pending; nothing was written'
+    '[reconcile] check: 20 change(s) pending; nothing was written'
     "[reconcile] would grant $CSR_AUDIENCE_ROLE to service account $CSR_AUDIENCE_ACCOUNT"
     "[reconcile] would record the grant of $CSR_AUDIENCE_ROLE ($CSR_ATTRIBUTE=<now> $CSR_AUDIENCE_ACCOUNT)"
+    "[reconcile] would grant $CSR_TRACKING_ROLE to service account $CSR_AUDIENCE_ACCOUNT"
+    "[reconcile] would record the grant of $CSR_TRACKING_ROLE ($CSR_ATTRIBUTE=<now> $CSR_AUDIENCE_ACCOUNT)"
     "[reconcile] would grant skymail:lists:read to service account $CSR_CORE_ACCOUNT"
     "[reconcile] would grant skymail:lists:write to service account $CSR_CORE_ACCOUNT"
+    "[reconcile] would grant $CSR_WITHDRAW_ROLE to service account $CSR_CORE_ACCOUNT"
+    "[reconcile] WARNING: $CSR_WITHDRAW_ROLE is in the composite roles realm/$CSR_WITHDRAW_PARENT (nothing was removed"
     "[reconcile] would set standardFlowEnabled=false on client $CSR_CLIENT (service account only: no browser login, no password grant)"
     "[reconcile] service account $CSR_ACCOUNT: $CSR_HAND_ROLE unchanged (held)"
     "[reconcile] WARNING: $CSR_NEW_ROLE is also held by the users $LCA_USER (nothing was removed"
@@ -327,11 +412,16 @@ stage_core_service_roles_granted_by_operator() {
   CURRENT_STAGE='core service roles: granted by the operator step, other holders reported and kept'
   output=$(csr_operator) || { printf '%s\n' "$output" >&2; fail 'the service-roles operator step failed'; }
   operator_lines=('Core service roles are reconciled.'
-    '[reconcile] applied 16 change(s)'
+    '[reconcile] applied 20 change(s)'
     "[reconcile] service account $CSR_AUDIENCE_ACCOUNT: $CSR_AUDIENCE_ROLE granted"
     "[reconcile] client role $CSR_AUDIENCE_ROLE of core: grant recorded ($CSR_ATTRIBUTE="
+    "[reconcile] service account $CSR_AUDIENCE_ACCOUNT: $CSR_TRACKING_ROLE granted"
+    "[reconcile] client role $CSR_TRACKING_ROLE of core: grant recorded ($CSR_ATTRIBUTE="
     "[reconcile] service account $CSR_CORE_ACCOUNT: skymail:lists:read granted"
     "[reconcile] service account $CSR_CORE_ACCOUNT: skymail:lists:write granted"
+    "[reconcile] service account $CSR_CORE_ACCOUNT: $CSR_WITHDRAW_ROLE granted"
+    "[reconcile] client role $CSR_WITHDRAW_ROLE of skymail: grant recorded ($CSR_ATTRIBUTE="
+    "[reconcile] WARNING: $CSR_WITHDRAW_ROLE is in the composite roles realm/$CSR_WITHDRAW_PARENT (nothing was removed"
     "[reconcile] client role skymail:access of skymail: grant recorded ($CSR_ATTRIBUTE="
     "[reconcile] client $CSR_CLIENT: updated (standardFlowEnabled=false; service account only)"
     "[reconcile] service account $CSR_ACCOUNT: $CSR_HAND_ROLE unchanged (held)"
@@ -355,12 +445,14 @@ stage_core_service_roles_granted_by_operator() {
     grep -Eq "^$role=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z $CSR_ACCOUNT\$" <<<"$markers" \
       || fail "the grant record of $role is not '<UTC time> $CSR_ACCOUNT': $markers"
   done
-  [[ $(csr_account_roles_of "$CSR_AUDIENCE_CLIENT" core) == "[\"$CSR_AUDIENCE_ROLE\"]" ]] \
-    || fail "$CSR_AUDIENCE_ACCOUNT does not hold exactly $CSR_AUDIENCE_ROLE: $(csr_account_roles_of "$CSR_AUDIENCE_CLIENT" core)"
-  [[ $(csr_marker_of core "$CSR_AUDIENCE_ROLE") =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\ $CSR_AUDIENCE_ACCOUNT$ ]] \
-    || fail "the grant record of $CSR_AUDIENCE_ROLE is wrong: $(csr_marker_of core "$CSR_AUDIENCE_ROLE")"
+  [[ $(csr_account_roles_of "$CSR_AUDIENCE_CLIENT" core) == "[\"$CSR_AUDIENCE_ROLE\",\"$CSR_TRACKING_ROLE\"]" ]] \
+    || fail "$CSR_AUDIENCE_ACCOUNT does not hold exactly $CSR_AUDIENCE_ROLE and $CSR_TRACKING_ROLE: $(csr_account_roles_of "$CSR_AUDIENCE_CLIENT" core)"
+  for role in "$CSR_AUDIENCE_ROLE" "$CSR_TRACKING_ROLE"; do
+    [[ $(csr_marker_of core "$role") =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\ $CSR_AUDIENCE_ACCOUNT$ ]] \
+      || fail "the grant record of $role is wrong: $(csr_marker_of core "$role")"
+  done
   [[ $(csr_account_roles_of core skymail) == "$CSR_SKYMAIL_SORTED" ]] \
-    || fail "$CSR_CORE_ACCOUNT does not hold exactly SkyMail's four roles: $(csr_account_roles_of core skymail)"
+    || fail "$CSR_CORE_ACCOUNT does not hold exactly SkyMail's five roles: $(csr_account_roles_of core skymail)"
   for role in "${CSR_SKYMAIL_ROLES[@]}"; do
     [[ $(csr_marker_of skymail "$role") =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\ $CSR_CORE_ACCOUNT$ ]] \
       || fail "the grant record of $role is wrong: $(csr_marker_of skymail "$role")"
@@ -374,6 +466,9 @@ stage_core_service_roles_granted_by_operator() {
   kcadm delete "groups/$admin_id/role-mappings/clients/$core_uuid" -r "$V2_REALM" -b "$new_body" >/dev/null
   kcadm delete "users/$account_id/role-mappings/clients/$core_uuid" -r "$V2_REALM" -b "$extra_body" >/dev/null
   [[ $(csr_account_roles) == "$CSR_SORTED" ]] || fail "$CSR_ACCOUNT does not hold exactly the four core service roles"
+  json_assert "$(kcadm get "roles/$CSR_WITHDRAW_PARENT/composites/clients/$(lca_client_uuid skymail)" -r "$V2_REALM" -c)" \
+    '[.[].name] == [$r]' "the operator step removed $CSR_WITHDRAW_ROLE from the composite realm/$CSR_WITHDRAW_PARENT" --arg r "$CSR_WITHDRAW_ROLE"
+  kcadm delete "roles/$CSR_WITHDRAW_PARENT" -r "$V2_REALM" >/dev/null
 
   CURRENT_STAGE='core service roles: in the forms client-credentials token, and nowhere else'
   # The client-credentials grant still works with the standard flow off, with the same roles.
@@ -405,7 +500,27 @@ stage_core_service_roles_granted_by_operator() {
     '[.[].username] == [$a]' "a user other than $CSR_AUDIENCE_ACCOUNT holds $CSR_AUDIENCE_ROLE" --arg a "$CSR_AUDIENCE_ACCOUNT"
   csr_service_token core
   json_assert "$CSR_PAYLOAD" '((.resource_access.skymail.roles // []) | sort) == $want' \
-    "the core service token does not carry SkyMail's four roles" --argjson want "$CSR_SKYMAIL_SORTED"
+    "the core service token does not carry SkyMail's five roles" --argjson want "$CSR_SKYMAIL_SORTED"
+
+  CURRENT_STAGE='core service roles: mail tracking roles in their service tokens only (B2)'
+  # SkyMail's tracking:resolve call: azp skymail-backend, aud core, communication-preferences:read.
+  csr_service_token "$CSR_AUDIENCE_CLIENT"
+  json_assert "$CSR_PAYLOAD" '.azp == $c and ((.resource_access.core.roles // []) | index($r) != null)' \
+    "the $CSR_AUDIENCE_CLIENT service token lacks $CSR_TRACKING_ROLE" --arg c "$CSR_AUDIENCE_CLIENT" --arg r "$CSR_TRACKING_ROLE"
+  csr_token_has_core_audience || fail "the $CSR_AUDIENCE_CLIENT service token does not carry aud core"
+  # core's withdrawal: azp core, aud skymail, skymail:tracking:withdraw.
+  csr_service_token core
+  json_assert "$CSR_PAYLOAD" '.azp == "core" and ((.aud // []) | (if type == "array" then . else [.] end) | index("skymail") != null) and ((.resource_access.skymail.roles // []) | index($r) != null)' \
+    "the core service token lacks aud skymail or $CSR_WITHDRAW_ROLE" --arg r "$CSR_WITHDRAW_ROLE"
+  # The erasure client is another core client: its token must not withdraw (ticket 17).
+  csr_service_token core-erasure
+  json_assert "$CSR_PAYLOAD" '(.resource_access.skymail.roles // []) | index($r) == null' \
+    "the core-erasure service token carries $CSR_WITHDRAW_ROLE" --arg r "$CSR_WITHDRAW_ROLE"
+  json_assert "$CSR_PAYLOAD" '(.resource_access.core.roles // []) | index($r) == null' \
+    "the core-erasure service token carries $CSR_TRACKING_ROLE" --arg r "$CSR_TRACKING_ROLE"
+  # Each held by its one service account: no other user, no group, no composite, not the default role.
+  csr_held_by_service_account_only "$CSR_WITHDRAW_ROLE" skymail "$CSR_CORE_ACCOUNT"
+  csr_held_by_service_account_only "$CSR_TRACKING_ROLE" core "$CSR_AUDIENCE_ACCOUNT"
 
   CURRENT_STAGE='core service roles: a second operator step writes nothing'
   before=$(csr_newest_event)
@@ -415,7 +530,8 @@ stage_core_service_roles_granted_by_operator() {
   for role in "${CSR_ROLES[@]}"; do
     operator_lines+=("[reconcile] service account $CSR_ACCOUNT: $role unchanged (held)")
   done
-  operator_lines+=("[reconcile] service account $CSR_AUDIENCE_ACCOUNT: $CSR_AUDIENCE_ROLE unchanged (held)")
+  operator_lines+=("[reconcile] service account $CSR_AUDIENCE_ACCOUNT: $CSR_AUDIENCE_ROLE unchanged (held)"
+    "[reconcile] service account $CSR_AUDIENCE_ACCOUNT: $CSR_TRACKING_ROLE unchanged (held)")
   for role in "${CSR_SKYMAIL_ROLES[@]}"; do
     operator_lines+=("[reconcile] service account $CSR_CORE_ACCOUNT: $role unchanged (held)")
   done

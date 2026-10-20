@@ -62,8 +62,8 @@ grep -Fq '<html lang="tr" class="sl-html">' "$TEMPLATE" || fail 'index.ftl lost 
 grep -Fq '<link rel="stylesheet" href="${resourcesPath}/welcome.css">' "$TEMPLATE" || fail 'index.ftl does not load welcome.css'
 grep -Fq '<link rel="icon" type="image/png" href="${resourcesPath}/skylab-logo.png">' "$TEMPLATE" || fail 'index.ftl lost its icon'
 grep -Fq 'data-skylab-logo-animation="draw"' "$TEMPLATE" || fail 'index.ftl lost the animated SKY LAB logo'
-grep -Fq "Okul şifreni yalnız Microsoft&#x27;un sayfasına yazarsın; SKY LAB onu hiçbir zaman görmez." "$TEMPLATE" \
-  || fail 'index.ftl lost the trust sentence of ADR-0063'
+grep -Fq 'Hesabın yok mu? Hesap aç' "$TEMPLATE" || fail 'index.ftl lost how to open an account'
+! grep -Fq 'kendin hesap açamazsın' "$TEMPLATE" || fail 'index.ftl still says accounts cannot be opened'
 links=$(grep -o 'href="[^"]*"' "$TEMPLATE" | grep -v 'resourcesPath' | LC_ALL=C sort -u)
 while IFS= read -r link; do
   case $link in

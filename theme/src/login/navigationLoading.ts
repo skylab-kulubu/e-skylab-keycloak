@@ -1,9 +1,15 @@
 /**
- * The loading state between two Keycloak steps: when a step takes longer than a moment, the card's
- * content fades and the SKY LAB logo draws in its middle (LegacyFrame's `.sl-legacy-loading`), the
- * way an identifier-first sign-in shows progress inside the same page. It never changes how a step
- * is sent: forms still post and links still navigate natively; this only watches them.
- * - Shown after LOADING_DELAY_MS only, so a fast step does not flicker.
+ * The loading state between two Keycloak steps: the card's own SKY LAB logo draws itself over and
+ * over and the card's content dims (legacy-login.css, `html[data-sl-loading]`), the way an
+ * identifier-first sign-in shows progress inside the same page. It never changes how a step is
+ * sent: forms still post and links still navigate natively; this only watches them.
+ * - Shown at once on every step (a form posted, a link followed, `chooseExecution`'s hidden form):
+ *   Keycloak usually answers within a tenth of a second, and a delay before showing it meant it
+ *   never showed at all (the old page is frozen once the answer arrives).
+ * - Shown for MIN_VISIBLE_MS at least, so a fast step does not flicker: the next page of the same
+ *   tab keeps it for the rest of that time (session storage, read once), its logo at the same point
+ *   of the drawing (`--sl-loading-phase`). The logo and the frame stay in place across the page
+ *   change (pageTransitions.ts), so it reads as one animation.
  * - A second submit while a step is on its way is cancelled (double submission). Buttons are not
  *   disabled: a disabled submit button would drop its own name/value from the POST.
  * - Cleared when the page comes back from the back/forward cache, and after FAILSAFE_MS in case
@@ -14,53 +20,119 @@
  *   cancelled: the result must reach Keycloak even if an earlier step is still marked pending.
  */
 
-export const LOADING_DELAY_MS = 150;
+export const MIN_VISIBLE_MS = 600;
 export const FAILSAFE_MS = 20_000;
 export const LOADING_ATTRIBUTE = "data-sl-loading";
+export const PHASE_PROPERTY = "--sl-loading-phase";
+const SINCE_KEY = "sl-loading-since";
 const WEBAUTHN_FORM_IDS = ["webauth", "register"];
 
-let delayTimer: number | undefined;
 let failsafeTimer: number | undefined;
+let carryOverTimer: number | undefined;
 let pending = false;
 
-function clearTimers(): void {
-  window.clearTimeout(delayTimer);
-  window.clearTimeout(failsafeTimer);
-  delayTimer = undefined;
-  failsafeTimer = undefined;
+function storage(): Storage | undefined {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return undefined;
+  }
 }
 
-function show(): void {
+function rememberSince(since: number): void {
+  try {
+    storage()?.setItem(SINCE_KEY, String(since));
+  } catch {
+    // The next page then shows no remainder; nothing else changes.
+  }
+}
+
+function takeSince(): number | undefined {
+  try {
+    const store = storage();
+    const stored = store?.getItem(SINCE_KEY);
+    store?.removeItem(SINCE_KEY);
+    const since = Number(stored);
+    return stored === null || stored === undefined || !Number.isFinite(since) ? undefined : since;
+  } catch {
+    return undefined;
+  }
+}
+
+function forgetSince(): void {
+  try {
+    storage()?.removeItem(SINCE_KEY);
+  } catch {
+    // Nothing to forget.
+  }
+}
+
+function clearTimers(): void {
+  window.clearTimeout(failsafeTimer);
+  window.clearTimeout(carryOverTimer);
+  failsafeTimer = undefined;
+  carryOverTimer = undefined;
+}
+
+/** The busy look; `announce` fills the live region (only on the page the step started from). */
+function show(elapsedMs: number, announce: boolean): void {
   const root = document.documentElement;
+  root.style.setProperty(PHASE_PROPERTY, `${-Math.max(0, Math.round(elapsedMs))}ms`);
   root.setAttribute(LOADING_ATTRIBUTE, "");
   document.querySelectorAll<HTMLElement>(".sl-legacy-card").forEach(card => card.setAttribute("aria-busy", "true"));
+  if (!announce) return;
   // The live region sits outside the busy card and is empty until now, so this text is announced.
   document.querySelectorAll<HTMLElement>(".sl-legacy-loading__status").forEach(status => {
     status.textContent = status.dataset.label ?? "";
   });
 }
 
-/** Back to the idle page: no overlay, no busy card, nothing pending. */
-export function resetNavigationLoading(): void {
-  clearTimers();
-  pending = false;
-  document.documentElement.removeAttribute(LOADING_ATTRIBUTE);
+function hide(): void {
+  const root = document.documentElement;
+  root.removeAttribute(LOADING_ATTRIBUTE);
+  root.style.removeProperty(PHASE_PROPERTY);
   document.querySelectorAll<HTMLElement>(".sl-legacy-card[aria-busy]").forEach(card => card.removeAttribute("aria-busy"));
   document.querySelectorAll<HTMLElement>(".sl-legacy-loading__status").forEach(status => {
     status.textContent = "";
   });
 }
 
+/** Back to the idle page: no busy look, nothing pending, nothing handed to the next page. */
+export function resetNavigationLoading(): void {
+  clearTimers();
+  pending = false;
+  forgetSince();
+  hide();
+}
+
 /** A step is on its way (a form posted, a link followed, or `chooseExecution`'s hidden form). */
-export function startNavigationLoading(): void {
+export function startNavigationLoading(now: number = Date.now()): void {
   clearTimers();
   pending = true;
-  delayTimer = window.setTimeout(show, LOADING_DELAY_MS);
+  rememberSince(now);
+  show(0, true);
   failsafeTimer = window.setTimeout(resetNavigationLoading, FAILSAFE_MS);
 }
 
 export function isNavigationPending(): boolean {
   return pending;
+}
+
+/**
+ * Runs once in main.tsx right after the first render, before the first frame: when the step that
+ * led here started less than MIN_VISIBLE_MS ago, this page keeps the loading state for the rest.
+ * The page's fields work meanwhile (autofocus, typing); nothing is pending, so a submit goes through.
+ */
+export function continueNavigationLoading(now: number = Date.now()): void {
+  const since = takeSince();
+  if (since === undefined) return;
+  const elapsed = now - since;
+  if (elapsed < 0 || elapsed >= MIN_VISIBLE_MS) return;
+  show(elapsed, false);
+  carryOverTimer = window.setTimeout(() => {
+    carryOverTimer = undefined;
+    if (!pending) hide();
+  }, MIN_VISIBLE_MS - elapsed);
 }
 
 function sameOrigin(url: string): boolean {

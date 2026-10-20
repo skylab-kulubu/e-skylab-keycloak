@@ -107,9 +107,10 @@ const { getKcContextMock } = createGetKcContextMock({
     },
     locale: {
       currentLanguageTag: "tr",
+      // Keycloak lists them by label, English first; the language menu puts Türkçe first.
       supported: [
-        { languageTag: "tr", label: "Türkçe", url: "?lang=tr" },
-        { languageTag: "en", label: "English", url: "?lang=en" }
+        { languageTag: "en", label: "English", url: "?lang=en" },
+        { languageTag: "tr", label: "Türkçe", url: "?lang=tr" }
       ]
     },
     client: {
@@ -416,9 +417,10 @@ export function getDevKcContextForPage(
     overrides: {
       locale: {
         currentLanguageTag: languageTag,
+        // Keycloak's order (by label), English first; the language menu puts Türkçe first.
         supported: [
-          { languageTag: "tr", label: "Türkçe", url: `?page=${pageId}&lang=tr` },
-          { languageTag: "en", label: "English", url: `?page=${pageId}&lang=en` }
+          { languageTag: "en", label: "English", url: `?page=${pageId}&lang=en` },
+          { languageTag: "tr", label: "Türkçe", url: `?page=${pageId}&lang=tr` }
         ]
       }
     }

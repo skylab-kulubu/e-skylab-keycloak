@@ -80,7 +80,7 @@ describe("LegacyFrame SKY LAB identity", () => {
     ]);
   });
 
-  it("carries a quiet loading state in the card: the logo drawn again, a live region outside the card filled in only when shown", () => {
+  it("carries a quiet loading state in the card: its own logo draws, a live region outside the card filled in only when shown", () => {
     const { container } = render(
       <LegacyFrame {...chrome} title="Giriş yap" loadingLabel="Yükleniyor…">
         <p>İçerik</p>
@@ -89,10 +89,8 @@ describe("LegacyFrame SKY LAB identity", () => {
 
     const loading = container.querySelector(".sl-legacy-card > .sl-legacy-loading") as HTMLElement;
     expect(loading).not.toBeNull();
-    const logo = loading.querySelector('[data-skylab-logo-animation="loading"]');
-    expect(logo).toHaveAttribute("aria-hidden", "true");
-    expect(logo?.querySelectorAll("path")).toHaveLength(19);
-    // The page still has exactly one logo for assistive technology and the draw contract.
+    // No second logo: the card's one logo is what draws while a step loads (legacy-login.css).
+    expect(container.querySelectorAll(".sl-legacy-logo__animation")).toHaveLength(1);
     expect(container.querySelectorAll('[data-skylab-logo-animation="draw"]')).toHaveLength(1);
     // The visible label (reduced motion) is not what is announced.
     expect(loading.querySelector(".sl-legacy-loading__label")).toHaveAttribute("aria-hidden", "true");

@@ -308,16 +308,21 @@ describe("SKY LAB theme: one design system", () => {
     }
   });
 
-  it("draws the logo while a step loads, and holds it still with reduced motion", () => {
-    expect(declaration(".sl-legacy-loading", "display")).toBe("none");
-    expect(declaration("html[data-sl-loading] .sl-legacy-loading", "display")).toBe("flex");
+  it("draws the card's logo while a step loads, and holds it still with reduced motion", () => {
+    const logo = rules.find(rule => rule.selectors.includes("html[data-sl-loading] .sl-legacy-logo .sl-legacy-logo__svg path"))!.body;
+    expect(logo).toMatch(/animation:\s*sl-legacy-loading-draw [^;]*infinite/);
+    // The next page picks the drawing up where the last one was (navigationLoading.ts).
+    expect(logo).toMatch(/animation-delay:\s*calc\(var\(--sl-loading-phase, 0ms\)/);
+    // After the entrance rule, which stops the logo's animation on every page but a tab's first.
+    const order = rules.map(rule => rule.selectors);
+    expect(order.findIndex(selectors => selectors.includes("html[data-sl-loading] .sl-legacy-logo .sl-legacy-logo__svg path")))
+      .toBeGreaterThan(order.findIndex(selectors => selectors.includes("html[data-sl-entered] .sl-legacy-logo .sl-legacy-logo__svg path")));
     expect(declaration("html[data-sl-loading] .sl-legacy-card__body", "pointer-events")).toBe("none");
-    expect(rules.find(rule => rule.selectors.includes(".sl-legacy-loading .sl-legacy-logo__svg path"))!.body)
-      .toMatch(/animation:\s*sl-legacy-loading-draw/);
+    expect(declaration(".sl-legacy-loading", "display")).toBe("none");
     const reduced = mediaBlock("(prefers-reduced-motion: reduce)");
-    expect(reduced).toMatch(/\.sl-legacy-loading \.sl-legacy-logo__svg path\s*\{\s*animation:\s*none;/);
+    expect(reduced).toMatch(/html\[data-sl-loading\] \.sl-legacy-logo \.sl-legacy-logo__svg path\s*\{\s*animation:\s*none;/);
     // A plain text indicator instead of the drawing.
-    expect(reduced).toMatch(/\.sl-legacy-loading__label\s*\{\s*position:\s*static;/);
+    expect(reduced).toMatch(/html\[data-sl-loading\] \.sl-legacy-loading\s*\{\s*display:\s*flex;/);
   });
 
   it("runs the team strips as long as TeamMarquee.tsx assumes for its clock-based phase", () => {

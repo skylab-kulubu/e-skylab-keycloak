@@ -661,18 +661,23 @@ operatör yapar (`KEYCLOAK_RECONCILE_KCADM_CONFIG` + `KEYCLOAK_RECONCILE_ONLY=se
 `media-attach` de çalışır). `KEYCLOAK_RECONCILE_CHECK=true` aynı adımı kuru koşar: yalnız eksikleri
 `would …` diye yazar, hiçbir şey yazmaz. Adım önce her şeyi okur, okuma hatasında hiçbir şey vermez
 (eksik varsayılan `roles` kapsamı hariç: onu okuma sırasında ve tam uzlaştırmada da ekler, runbook §20.1),
-verdikten sonra rolün `skylab.granted-service-accounts` özniteliğine kaydeder; `users:read` dışındaki
-rolleri taşıyan başka kullanıcı, grup ya da varsayılan rolü, servis hesabının listede olmayan core
-rollerini bildirir ve hiçbir şey silmez. `forms` yalnız servis hesabıdır (Forms kişileri `skyforms`
+verdikten sonra rolün `skylab.granted-service-accounts` özniteliğine kaydeder; yalnız servis
+hesaplarına ait rolleri (`services` sınıfı; kişilerin de taşıyabildiği `users:read` ve SkyMail'in
+paylaşılan rolleri değil) taşıyan başka kullanıcı, grup, varsayılan rolü ya da onları içeren bileşik
+rolü, servis hesabının listede olmayan rollerini bildirir ve hiçbir şey silmez. `forms` yalnız servis hesabıdır (Forms kişileri `skyforms`
 ile giriş yaptırır; core ürünü `client_id == azp`'den okur): uzlaştırıcı `standardFlowEnabled`,
 `implicitFlowEnabled`, `directAccessGrantsEnabled`'in kapalı olduğunu doğrular, değilse uyarır;
 operatör adımı açık olanları kapatır (kuru koşuda `would set …`). `media:attach`'ın istemci listesi
 core'un `MEDIA_SERVICE_CLIENTS`'ıyla aynı tutulur (runbook §20).
 Aynı adım SkyMail'in servis hesabına (`skymail-backend`) core'un `audience:read` rolünü (core #242,
-haber ve duyuru kitlesi) ve core'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`,
-`skymail:lists:read`, `skymail:lists:write` rollerini verir; SkyMail'in rollerini oluşturmaz, eksikse
-uyarır; listelenen servis istemcisinde varsayılan `roles` kapsamı yoksa ekler (runbook §20.1). `skymail:announcements:send` (haber ve duyuruyu Mail onayı olmadan gönderme)
-`skymail:system-mails:read` gibi bir kez tohumlanır ama yalnız ADMIN ve YK'ya (runbook §25). Forms'un
+haber ve duyuru kitlesi) ve `communication-preferences:read` rolünü (core #256, kimin takip
+edilebileceği), core'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`,
+`skymail:lists:read`, `skymail:lists:write` ve `skymail:tracking:withdraw` (skymail-backend #75, takibi
+geri alma; yalnız `service-account-core`) rollerini verir; SkyMail'in rollerinden yalnız
+`skymail:tracking:withdraw`'u oluşturur, öbürleri eksikse uyarır (runbook §20.1); listelenen servis istemcisinde varsayılan `roles` kapsamı yoksa ekler (runbook §20.1). `skymail:announcements:send` (haber ve duyuruyu Mail onayı olmadan gönderme)
+`skymail:system-mails:read` gibi bir kez tohumlanır ama yalnız ADMIN ve YK'ya (runbook §25).
+`skymail:mails:tracking:read` (gönderimlerin kişi bazındaki açılma ve tıklama raporu) aynı biçimde
+ADMIN, YK ve DK'ya bir kez tohumlanır; okuma rolüdür, DK'da kalır (runbook §25). Forms'un
 salt okur rolü `skyforms:read-all` (DK her formu ve cevabı okur, yazamaz; forms-backend henüz okumuyor)
 aynı biçimde `forms` istemcisinde var edilir ve yalnız DK'ya bir kez verilir (runbook §28).
 
@@ -1003,8 +1008,9 @@ KEYCLOAK_TEST_IMAGE=account-keycloak:test bash tests/run-integration.sh
 ```
 
 Harness tek koşuda bütün aşamaları sırayla koşar (varsayılan `INTEGRATION_GROUP=all`).
-CI aynı betiği dört paralel işte koşar
-(`integration (erasure|roles|login|spi)`, sonra hepsini bekleyen `integration`):
+CI aynı betiği altı paralel işte koşar
+(`integration (erasure|roles|roles-noop|login|login-rollback|spi)`, sonra hepsini bekleyen
+`integration`; gruplar `theme` işini beklemez):
 her grup kendi Keycloak'ını açar, ortak realm önekini (bootstrap, ilk uzlaştırma,
 drift, ikinci uzlaştırma) koşar, sonra kendi aşamalarını. Önceki bir grubun
 aşamalarına dayanan grup önce o aşamaların yazdığı durumu kurar (sözleşmelerini
@@ -1029,8 +1035,10 @@ takımı. Kanıtı `tests/find-green-full-ci-run.sh` bulur: yalnız push, gece y
 sayılır (PR koşusu GitHub'ın merge commit'ini test eder), `scope (full)` ve her iş başarılı
 olmalı. Tek zorunlu kontrol `gate`: bir iş düşer ya da iptal olursa kırmızı; tam koşuda atlanan
 iş de kırmızı; `mode`'un seçimini olayla karşılaştırır, terfi eden bir production koşusunda
-bulucuyu yeniden koşar. Aynı PR'a yeni push eskisini iptal eder; push/gece/elle koşular iptal
-edilmez.
+bulucuyu yeniden koşar. Aynı PR'a yeni push eskisini iptal eder; `main`'e yeni push da `main`'in eski push koşusunu
+iptal eder (yalnız en yeni ağaç yayınlanır, eskisi ara ağaçtır). Grup anahtarında olay adı var:
+push koşusu gece/elle/PR koşusunu iptal etmez; `production` push'u, gece ve elle koşular hiç
+iptal edilmez.
 
 **Test edilen baytlar terfi eder.** Tam koşuda `candidate` imajı bir kez derler, `docker save`
 ile kaydeder ve `keycloak-ci-candidate` artifact'i olarak 14 gün saklar (SHA-256'sı ve imaj

@@ -47,6 +47,12 @@ class AuthenticationProofsTest {
     private static final String SESSION_ID = "session-a";
     private static final String ISSUER = "http://localhost:18080/realms/e-skylab-test";
     private static final String KID = "realm-rsa";
+    /**
+     * How far past a limit the tokens of a refusal are. The verifier reads the clock again
+     * (whole seconds), so a second may pass between a test's {@code now} and the check; a token
+     * just one second past the limit then lands on it and is accepted.
+     */
+    private static final int PAST_THE_LIMIT_SECONDS = 5;
 
     private final Fixture fixture = new Fixture();
 
@@ -196,7 +202,7 @@ class AuthenticationProofsTest {
         assertEquals("sudo_required", failure(fixture.caller, fixture.sign(noExpiry)));
 
         IDToken issuedInTheFuture = fixture.freshIdToken(now - 5);
-        issuedInTheFuture.iat(now + AuthenticationProofs.CLOCK_SKEW_SECONDS + 1);
+        issuedInTheFuture.iat(now + AuthenticationProofs.CLOCK_SKEW_SECONDS + PAST_THE_LIMIT_SECONDS);
         assertEquals("sudo_required", failure(fixture.caller, fixture.sign(issuedInTheFuture)));
 
         IDToken slightlyAhead = fixture.freshIdToken(now - 5);
@@ -208,7 +214,8 @@ class AuthenticationProofsTest {
         noIssuedAt.iat(null);
         assertEquals("sudo_required", failure(fixture.caller, fixture.sign(noIssuedAt)));
 
-        IDToken authenticatedInTheFuture = fixture.freshIdToken(now + AuthenticationProofs.CLOCK_SKEW_SECONDS + 1);
+        IDToken authenticatedInTheFuture =
+                fixture.freshIdToken(now + AuthenticationProofs.CLOCK_SKEW_SECONDS + PAST_THE_LIMIT_SECONDS);
         assertEquals("sudo_required", failure(fixture.caller, fixture.sign(authenticatedInTheFuture)));
 
         IDToken noAuthTime = fixture.freshIdToken(now - 5);
@@ -261,15 +268,15 @@ class AuthenticationProofsTest {
         long now = Time.currentTime();
         String valid = fixture.sign(fixture.freshIdToken(now - 5));
 
-        when(fixture.realm.getNotBefore()).thenReturn((int) now + 1);
+        when(fixture.realm.getNotBefore()).thenReturn((int) now + PAST_THE_LIMIT_SECONDS);
         assertEquals("sudo_required", failure(fixture.caller, valid), "realm not-before revokes the ID token");
         when(fixture.realm.getNotBefore()).thenReturn(0);
 
-        when(fixture.client.getNotBefore()).thenReturn((int) now + 1);
+        when(fixture.client.getNotBefore()).thenReturn((int) now + PAST_THE_LIMIT_SECONDS);
         assertEquals("sudo_required", failure(fixture.caller, valid), "client not-before revokes the ID token");
         when(fixture.client.getNotBefore()).thenReturn(0);
 
-        when(fixture.users.getNotBeforeOfUser(eq(fixture.realm), any())).thenReturn((int) now + 1);
+        when(fixture.users.getNotBeforeOfUser(eq(fixture.realm), any())).thenReturn((int) now + PAST_THE_LIMIT_SECONDS);
         assertEquals("sudo_required", failure(fixture.caller, valid), "user not-before revokes the ID token");
         when(fixture.users.getNotBeforeOfUser(eq(fixture.realm), any())).thenReturn(0);
 

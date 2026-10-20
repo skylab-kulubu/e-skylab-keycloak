@@ -25,11 +25,13 @@ on:
 permissions:
   contents: read
 
-# A new push to a PR cancels that PR's older run; pushes, the schedule and manual runs are never
-# cancelled (every main and production commit keeps its own full run).
+# A new push to a PR cancels that PR's older run, and a new push to main cancels main's older
+# push run: only main's newest tree is released, so the older one is an intermediate tree. The
+# event is part of the group, so a push run never cancels a schedule, manual or PR run (nor the
+# other way round); production pushes, the schedule and manual runs are never cancelled.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.event_name }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'main' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
 
 jobs:
   # full or fast. Every run but a pull request into main without full-ci may be full (ELIGIBLE);
@@ -679,25 +681,34 @@ jobs:
   # prefix (17-22 minutes, by runner), so a group takes that prefix plus its share. First split
   # run (#81, run 37656800805): erasure 53, roles 55, login 44 (on a runner whose prefix took 17
   # minutes; about 57 on one that takes 22), spi 53 minutes. Timeouts are about 1.5 times that;
-  # the "[harness <group> +MmSSs]" lines of the log show where a group grows. Full runs only; every
-  # group tests candidate's bytes and records them in a receipt that release.yml requires.
+  # the "[harness <group> +MmSSs]" lines of the log show where a group grows.
+  # After the host-side Admin REST reads (#130) and the split into six groups (2026-10-20) a group
+  # takes about 20-28 minutes; timeouts are about 1.5 times that. The groups do not wait for the
+  # theme job: they are the longest jobs of a full run, and behind the theme job they queued after
+  # the short jobs (run 39262199516: 31 minutes before the first group started).
+  # Full runs only; every group tests candidate's bytes and records them in a receipt that
+  # release.yml requires.
   integration-group:
     name: integration (${{ matrix.group }})
     runs-on: ubuntu-latest
-    needs: [mode, theme, candidate]
+    needs: [mode, candidate]
     if: needs.mode.outputs.full == 'true'
     strategy:
       fail-fast: false
       matrix:
         include:
           - group: erasure
-            timeout: 80
+            timeout: 45
           - group: roles
-            timeout: 85
+            timeout: 45
+          - group: roles-noop
+            timeout: 45
           - group: login
-            timeout: 85
+            timeout: 45
+          - group: login-rollback
+            timeout: 45
           - group: spi
-            timeout: 80
+            timeout: 45
     timeout-minutes: ${{ matrix.timeout }}
     env:
       KEYCLOAK_TEST_IMAGE: e-skylab-keycloak-candidate:ci

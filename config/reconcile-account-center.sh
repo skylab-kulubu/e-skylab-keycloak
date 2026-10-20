@@ -447,23 +447,43 @@ kcadm_json() {
   return "$status"
 }
 
-client_id_by_client_id() {
-  local wanted=$1
-  local clients_csv id client_id
-  if ! clients_csv=$(kcadm get clients -r "$TARGET_REALM" \
-    --fields id,clientId \
-    --format csv \
-    --noquotes); then
-    printf 'Failed to read clients while looking up %s\n' "$wanted" >&2
-    return 2
-  fi
-  while IFS=, read -r id client_id; do
-    if [[ $client_id == "$wanted" ]]; then
+# id_from_csv WANTED CSV: the id of the "id,name" line whose name is WANTED (status 1: none).
+id_from_csv() {
+  local wanted=$1 csv=$2 id name
+  while IFS=, read -r id name; do
+    if [[ $name == "$wanted" ]]; then
       printf '%s\n' "$id"
       return 0
     fi
-  done <<<"$clients_csv"
+  done <<<"$csv"
   return 1
+}
+
+# cached_id_by_name PATH FIELD WANTED WHAT: the id of the PATH entry (clients, client-scopes) whose
+# FIELD is WANTED; status 1 when there is none, 2 when the list cannot be read. Each kcadm call starts
+# a JVM, and a run looks the same few clients up some twenty times, so the "id,FIELD" list is kept in
+# WORK_DIR (a file, since most callers run in a command substitution) and an id found there is used
+# again: a run deletes no client and no client scope, and Keycloak never changes an id. A name not in
+# the kept list is read again, because a step of the run may have created it since.
+cached_id_by_name() {
+  local path=$1 field=$2 wanted=$3 what=$4
+  local cache="$WORK_DIR/ids-$path.csv" csv
+  if [[ -f $cache ]] && id_from_csv "$wanted" "$(<"$cache")"; then
+    return 0
+  fi
+  if ! csv=$(kcadm get "$path" -r "$TARGET_REALM" \
+    --fields "id,$field" \
+    --format csv \
+    --noquotes); then
+    printf 'Failed to read %s while looking up %s\n' "$what" "$wanted" >&2
+    return 2
+  fi
+  printf '%s\n' "$csv" >"$cache"
+  id_from_csv "$wanted" "$csv"
+}
+
+client_id_by_client_id() {
+  cached_id_by_name clients clientId "$1" clients
 }
 
 flow_id_by_alias() {
@@ -486,22 +506,7 @@ flow_id_by_alias() {
 }
 
 client_scope_id_by_name() {
-  local wanted=$1
-  local scopes_csv id name
-  if ! scopes_csv=$(kcadm get client-scopes -r "$TARGET_REALM" \
-    --fields id,name \
-    --format csv \
-    --noquotes); then
-    printf 'Failed to read client scopes while looking up %s\n' "$wanted" >&2
-    return 2
-  fi
-  while IFS=, read -r id name; do
-    if [[ $name == "$wanted" ]]; then
-      printf '%s\n' "$id"
-      return 0
-    fi
-  done <<<"$scopes_csv"
-  return 1
+  cached_id_by_name client-scopes name "$1" 'client scopes'
 }
 
 client_role_id_by_name() {
@@ -3101,6 +3106,11 @@ core_rename_list() {
 #   audience:read       POST /v1/audiences/resolve: who a News send goes to (core #242,
 #                       docs/news-audience.md); SkyMail's service account (client skymail-backend,
 #                       skymail-backend's KEYCLOAK_SERVICE_CLIENT_ID) only (duyuru-haber ticket 04).
+#   communication-preferences:read
+#                       POST /internal/v1/communication-preferences/tracking:resolve: whom SkyMail may
+#                       track (core #256, docs/communication-preferences.md); SkyMail's service
+#                       account (skymail-backend) only, core refuses a person's token whatever it
+#                       carries (iletisim-servisi ticket 17).
 # url:forms and users:read were granted to the forms service account by hand before (forms-url-role
 # wizard, Java era); they are codified here with the other two.
 # The same step grants SkyMail's client roles to core's own service account (client core), which
@@ -3135,6 +3145,7 @@ CORE_SERVICE_ROLE_DEFINITIONS=(
   "url:forms|forms|services|Forms service account: form-bound short links (/v1/urls/forms/{formId}) and GET /v1/urls/availability only. Grants nothing on the generic /v1/urls endpoints."
   "users:read|forms|shared|Reads a person's profile (GET /v1/users/{id}); held by the Forms service account."
   "audience:read|skymail-backend|services|SkyMail asks who a News send goes to (POST /v1/audiences/resolve, core docs/news-audience.md). SkyMail's service account only; never a person or a group."
+  "communication-preferences:read|skymail-backend|services|SkyMail asks whom it may track (POST /internal/v1/communication-preferences/tracking:resolve, core docs/communication-preferences.md). SkyMail's service account only; never a person or a group."
 )
 # SkyMail's client roles that core's service account (client core) holds: core sends single mails
 # (POST /v1/mail_tasks/single: skymail:access and skymail:mails:send, core internal/mail/mail.go) and
@@ -3143,11 +3154,18 @@ CORE_SERVICE_ROLE_DEFINITIONS=(
 # roles too (shared). The roles are SkyMail's own: a missing one is reported, never created here.
 # skymail:mails:write also allows the single send; a core service account that holds it is reported
 # in a NOTE and keeps it.
+# skymail:tracking:withdraw (iletisim-servisi ticket 17): core withdraws a person's mail tracking
+# when they turn it off (PUT /internal/v1/tracking-withdrawals/{sub}, skymail-backend #75, core
+# #256). SkyMail checks azp core, aud skymail and this role, not that the token is a service
+# account's, so the role is core's service account's only (services): a person, a group, a
+# composite role or the default role holding it is reported (review condition B2). It is the one
+# line with a description: nothing else makes it, so the step creates it like core's roles.
 SKYMAIL_SERVICE_ROLE_DEFINITIONS=(
   "skymail:access|core|shared|"
   "skymail:mails:send|core|shared|"
   "skymail:lists:read|core|shared|"
   "skymail:lists:write|core|shared|"
+  "skymail:tracking:withdraw|core|services|core withdraws a person's mail tracking (PUT /internal/v1/tracking-withdrawals/{sub}, skymail-backend README). core's service account only; never a person, a group, a composite or the default role."
 )
 CORE_SERVICE_ROLE_GRANT_ATTRIBUTE=skylab.granted-service-accounts
 # Listed clients that must be service account only: no browser login (standard or implicit flow) and
@@ -3183,17 +3201,53 @@ service_role_change() {
   return 0
 }
 
+# The composite roles of the realm, read once per operator step for both resources: the role id of
+# each child -> ",<container>/<name>" of every composite role that holds it directly (container is
+# realm or a clientId). The default role default-roles-<realm> is left out: its own check names it.
+# A role of the services class must sit in none (review condition B2 of skymail-backend #75): every
+# holder of such a composite holds the role. A failed read stops the step before it writes anything.
+declare -A SERVICE_ROLE_PARENTS=()
+SERVICE_ROLE_PARENTS_READ=false
+service_role_composite_parents() {
+  local clients roles children line entry container role_id role_name child client_uuid client_id
+  local default_role="default-roles-${TARGET_REALM,,}"
+  local containers=('realm|roles')
+  [[ $SERVICE_ROLE_PARENTS_READ == false ]] || return 0
+  clients=$(service_role_read 'The clients' clients --fields id,clientId) || return 1
+  while IFS=, read -r client_uuid client_id; do
+    [[ -z $client_uuid ]] || containers+=("$client_id|clients/$client_uuid/roles")
+  done <<<"$clients"
+  for entry in "${containers[@]}"; do
+    container=${entry%%|*}
+    # id first and composite last, whatever the name holds.
+    roles=$(service_role_read "The roles of $container" "${entry#*|}" --fields id,name,composite) || return 1
+    while IFS= read -r line; do
+      [[ $line == *,true ]] || continue
+      role_id=${line%%,*}
+      role_name=${line#*,}
+      role_name=${role_name%,true}
+      [[ $container != realm || $role_name != "$default_role" ]] || continue
+      children=$(service_role_read "The composites of $container/$role_name" "roles-by-id/$role_id/composites" --fields id) || return 1
+      while IFS= read -r child; do
+        [[ -z $child ]] || SERVICE_ROLE_PARENTS[$child]+=",$container/$role_name"
+      done <<<"$children"
+    done <<<"$roles"
+  done
+  SERVICE_ROLE_PARENTS_READ=true
+}
+
 # reconcile_service_roles RESOURCE DEFINITIONS CREATE: the service roles of one resource client
 # (core's, SkyMail's): DEFINITIONS names the array of name|clients|holders|description lines; CREATE
-# is create (a missing role is created) or existing (a missing role is reported and skipped: SkyMail's
-# roles are SkyMail's catalogue, made with the client skymail). Changes add up in SERVICE_ROLE_CHANGES;
-# the caller resets it and logs the total.
+# is create (a missing role is created) or existing (a missing role without a description is reported
+# and skipped: SkyMail's roles are SkyMail's catalogue, made with the client skymail; a line with a
+# description is a role nothing else makes, created as with create). Changes add up in
+# SERVICE_ROLE_CHANGES; the caller resets it and logs the total.
 reconcile_service_roles() {
   local resource=$1 create=$3
   local -n definitions=$2
   local resource_uuid roles_file marks role_name value definition name clients holders description
   local role_id client client_uuid flags full_scope scopes mapped sa_line sa_id sa_name held
-  local stderr_file line accounts stamp label others account users groups defaults extra
+  local stderr_file line accounts stamp label others account users groups defaults extra parents
   local flag flag_value open roles_scope_id
   local operator=false
   local names=() all_clients=() plan=() sets=()
@@ -3208,14 +3262,14 @@ reconcile_service_roles() {
   fi
 
   # The roles: created when missing (harmless, they grant nothing), before every read; with CREATE
-  # existing a missing role is reported and left out of the step.
+  # existing a missing role without a description is reported and left out of the step.
   for definition in "${definitions[@]}"; do
     IFS='|' read -r name clients holders description <<<"$definition"
     label="client role $name of $resource"
     if ! role_id=$(optional_lookup client_role_id_by_name "$resource_uuid" "$name"); then
       return 2
     fi
-    if [[ -z $role_id && $create != create ]]; then
+    if [[ -z $role_id && $create != create && -z $description ]]; then
       warn "$label does not exist in realm $TARGET_REALM (it is made with the client $resource, not here); it is not granted to ${clients// /, }"
       continue
     fi
@@ -3320,6 +3374,10 @@ reconcile_service_roles() {
       groups=$(service_role_read "The groups holding $name" "clients/$resource_uuid/roles/$name/groups" --fields path)
       plan+=("$name"$'\037'"$(paste -sd, - <<<"$users")"$'\037'"$(paste -sd, - <<<"$groups")")
     done
+    # After the reads above, so that each of them still fails first when it fails.
+    if [[ ${#plan[@]} -gt 0 ]]; then
+      service_role_composite_parents || return 1
+    fi
   fi
 
   # Writes: the service-only clients' flags first, then role by role.
@@ -3396,6 +3454,7 @@ reconcile_service_roles() {
   # Reports: nothing is removed.
   for line in ${plan[@]+"${plan[@]}"}; do
     IFS=$'\037' read -r name users groups <<<"$line"
+    parents=${SERVICE_ROLE_PARENTS[${role_ids[$name]}]:-}
     others=''
     for account in ${users//,/ }; do
       [[ ,${granted[$name]}, == *",$account,"* ]] || others+=", $account"
@@ -3406,6 +3465,8 @@ reconcile_service_roles() {
       || warn "$name is held by the groups $groups (nothing was removed; every member holds it, remove it in the Admin Console)"
     ! grep -Fxq -- "$name" <<<"$defaults" \
       || warn "$name is in the default role default-roles-${TARGET_REALM,,} (nothing was removed; every user holds it, remove it in the Admin Console)"
+    [[ -z $parents ]] \
+      || warn "$name is in the composite roles ${parents#,} (nothing was removed; every holder of them holds it, remove it in the Admin Console)"
   done
   for client in "${all_clients[@]}"; do
     [[ -n ${client_lines[$client]:-} ]] || continue
@@ -3452,9 +3513,16 @@ reconcile_core_service_roles() {
 #                                  and does not write, grup-yonetimi GY1): they send a News or an
 #                                  announcement without Mail approval; everyone else sends it through
 #                                  Mail approval. Sub-groups inherit the mapping.
+#   skymail:mails:tracking:read    ADMIN, YK, DK: the per-person opening and click report of any send
+#                                  (iletisim-servisi tickets 14b/17, decision T2; the privacy notice:
+#                                  YK, DK, the system administrators and the sending officer see it).
+#                                  A reading role, so DK holds it too; the sender sees their own send
+#                                  without it (SkyMail checks sent_by, skymail-backend
+#                                  internal/handlers/tracking_read.go).
 SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS=(
   'skymail:system-mails:read|ADMIN YK DK|Tekil sistem postalarının (doğrulama, bildirim) içeriğini görür (skymail-backend #61)'
   'skymail:announcements:send|ADMIN YK|Duyuru ve haberi Mail onayı olmadan gönderir (duyuru-haber D4; yalnız ADMIN ve YK, DK yazmaz)'
+  'skymail:mails:tracking:read|ADMIN YK DK|Her gönderimin kişi bazındaki açılma ve tıklama raporunu görür (iletisim-servisi 14b/17, T2; gönderen kendi gönderimini rolsüz görür)'
 )
 
 # Forms' Privileged roles (runbook §28), the same way as SkyMail's (same list format):

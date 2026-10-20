@@ -14,8 +14,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # No build and no tests here: ci.yml tested this tree in full (every job, the four integration
-  # groups on one candidate image) on the push to main, and that run's candidate artifact is
+  # No build and no tests here: ci.yml tested this tree in full (every job, every integration
+  # group on one candidate image) on the push to main, and that run's candidate artifact is
   # promoted. keycloak-build finds the run (tests/find-green-full-ci-run.sh), downloads the
   # candidate and every group's receipt, and requires each receipt to name exactly these bytes
   # (SHA-256 and image ID) and this tree. keycloak-package then requires the physical WebAuthn

@@ -8,8 +8,8 @@
 #
 # Fixtures: realm e-skylab in production's shape before this change: core's 14 roles of the contract
 # table (13 write roles and url:access) seeded once (marked) to /ADMIN, /UYELER/YK and /UYELER/DK;
-# SkyMail's two Privileged roles seeded (system-mails:read to the three, announcements:send to ADMIN
-# and YK) and skymail:mails:approve on DK by hand; the event site client frontend-artlab with
+# SkyMail's three Privileged roles seeded (system-mails:read and mails:tracking:read to the three,
+# announcements:send to ADMIN and YK) and skymail:mails:approve on DK by hand; the event site client frontend-artlab with
 # cms:access (a composite of content:read and content:write) on the three and client:admin on ADMIN and
 # YK; forms with skyforms:* on /ADMIN and /UYELER/DK and the Forms seat skyforms:access on DK; the Java
 # era's realm role DK on /UYELER/DK; a subgroup /UYELER/DK/ALT; a YK person, a DK person, a person in
@@ -33,7 +33,7 @@
 #   - --apply names its backup in its first line, writes it (mode 0600) before any change, takes
 #     exactly that away and grants content:read; ADMIN's and YK's mappings do not change; the DK
 #     person's token then carries core [audit:read, global:read, url:access], frontend-artlab
-#     [content:read], skymail [system-mails:read], forms [skyforms:*, skyforms:access,
+#     [content:read], skymail [mails:tracking:read, system-mails:read], forms [skyforms:*, skyforms:access,
 #     skyforms:read-all]; the member of DK's subgroup carries the same core roles; the YK person's
 #     token only gains audit:read; the person in DK and YK keeps YK's write roles; --check then says
 #     "write roles held: none" with 0 changes, and a second --apply writes nothing (no admin event,
@@ -54,6 +54,10 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=kcadm-jvm.sh
+source "$SCRIPT_DIR/kcadm-jvm.sh"
+# shellcheck source=kcadm-rest.sh
+source "$SCRIPT_DIR/kcadm-rest.sh"
 REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 IMAGE=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' "$REPOSITORY_ROOT/Dockerfile")
 PORT=${DK_READ_ONLY_TEST_PORT:-18097}
@@ -76,7 +80,7 @@ CORE_REMOVED_ROLES=(event:manage season:manage ticket:manage ticket:validate com
   competition:manage media:manage media:private:read certificate:manage users:manage groups:manage
   github:activity:read url:moderator)
 # DK's direct mappings once the step has run (the realm role DK stays: rol-temizligi F3).
-DK_AFTER='["core/audit:read","core/global:read","core/url:access","forms/skyforms:*","forms/skyforms:access","forms/skyforms:read-all","frontend-artlab/content:read","realm/DK","skymail/skymail:system-mails:read"]'
+DK_AFTER='["core/audit:read","core/global:read","core/url:access","forms/skyforms:*","forms/skyforms:access","forms/skyforms:read-all","frontend-artlab/content:read","realm/DK","skymail/skymail:mails:tracking:read","skymail/skymail:system-mails:read"]'
 OLD_MARK='2026-10-04T09:00:00Z /ADMIN,/UYELER/YK,/UYELER/DK'
 CURRENT_STAGE=startup
 
@@ -85,6 +89,7 @@ fail() {
   exit 1
 }
 cleanup() {
+  kcadm_rest_cleanup
   docker rm -fv "$CONTAINER" >/dev/null 2>&1 || true
 }
 trap 'status=$?; trap - EXIT; cleanup; exit "$status"' EXIT
@@ -95,9 +100,16 @@ on_error() {
 }
 trap 'on_error "$LINENO"' ERR
 
+# kcadm "get" reads go to Admin REST from the host (tests/kcadm-rest.sh); writes stay on kcadm.
+kcadm_rest_setup "$BASE_URL" "$ADMIN_PASSWORD"
+
 kcadm() {
   local command=$1
   shift
+  if kcadm_rest_handles "$command" "$@"; then
+    kcadm_rest_get "$@"
+    return
+  fi
   docker exec -i "$CONTAINER" /opt/keycloak/bin/kcadm.sh "$command" --config "$KCADM_CONFIG" "$@" \
     2> >(grep -v -e '^Created new ' -e '^$' >&2 || true)
 }
@@ -222,6 +234,7 @@ CURRENT_STAGE='Keycloak start'
 [[ -n $IMAGE ]] || fail 'Dockerfile has no ARG KEYCLOAK_IMAGE'
 for tool in jq curl; do command -v "$tool" >/dev/null || fail "$tool is required"; done
 docker run --rm -d --name "$CONTAINER" -p "127.0.0.1:$PORT:8080" \
+  -e KC_OPTS="$KCADM_JVM_OPTS" \
   -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
   "$IMAGE" start-dev >/dev/null
 for _ in $(seq 1 90); do
@@ -270,7 +283,7 @@ kcadm create clients -r "$REALM" -s clientId=skymail -s publicClient=true >/dev/
 for role in "${CORE_SEEDED_ROLES[@]}" url:create; do
   kcadm create "clients/$(client_uuid "$REALM" core)/roles" -r "$REALM" -s "name=$role" >/dev/null
 done
-for role in skymail:access skymail:system-mails:read skymail:announcements:send skymail:mails:approve; do
+for role in skymail:access skymail:system-mails:read skymail:mails:tracking:read skymail:announcements:send skymail:mails:approve; do
   kcadm create "clients/$(client_uuid "$REALM" skymail)/roles" -r "$REALM" -s "name=$role" >/dev/null
 done
 for role in 'skyforms:*' skyforms:access; do
@@ -291,7 +304,7 @@ create_group "$REALM" "$DK" ALT
 create_group "$SANDBOX" '' ADMIN
 for path in /ADMIN /UYELER/YK "$DK"; do
   grant "$path" core "${CORE_SEEDED_ROLES[@]}"
-  grant "$path" skymail skymail:system-mails:read
+  grant "$path" skymail skymail:system-mails:read skymail:mails:tracking:read
   grant "$path" frontend-artlab cms:access
 done
 for path in /ADMIN /UYELER/YK; do
@@ -305,6 +318,7 @@ kcadm create "groups/$(group_id "$REALM" "$DK")/role-mappings/realm" -r "$REALM"
   -b "$(kcadm get roles/DK -r "$REALM" | jq -c '[{id, name}]')" >/dev/null
 for role in "${CORE_SEEDED_ROLES[@]}"; do mark core "$role" "$OLD_MARK"; done
 mark skymail skymail:system-mails:read "$OLD_MARK"
+mark skymail skymail:mails:tracking:read "$OLD_MARK"
 mark skymail skymail:announcements:send '2026-10-13T09:00:00Z /ADMIN,/UYELER/YK'
 make_person yk-person /UYELER/YK
 make_person dk-person "$DK"
@@ -365,7 +379,7 @@ expect_line "$checked" "would take frontend-artlab/cms:access away from $DK" 'th
 expect_line "$checked" "would take skymail/skymail:mails:approve away from $DK" 'the SkyMail approval role was not planned away'
 expect_line "$checked" "$DK: app roles kept (the holder's own, core's app roles): core/url:access, forms/skyforms:access" 'the app roles were not kept'
 expect_line "$checked" "would grant frontend-artlab/content:read to $DK (in place of cms:access)" 'content:read was not planned in its place'
-expect_line "$checked" "$DK: read roles kept: core/audit:read, core/global:read, forms/skyforms:read-all, skymail/skymail:system-mails:read" 'the read roles were not listed'
+expect_line "$checked" "$DK: read roles kept: core/audit:read, core/global:read, forms/skyforms:read-all, skymail/skymail:mails:tracking:read, skymail/skymail:system-mails:read" 'the read roles were not listed'
 expect_line "$checked" "NOTE: $DK: Forms roles kept until forms-backend reads forms/skyforms:read-all: forms/skyforms:*" 'the Forms roles were not kept'
 expect_line "$checked" "WARNING: $DK holds realm/DK, which this step does not sort; kept" 'the realm role was not a WARNING'
 expect_line "$checked" "$DK: write roles held: 15 (" 'the write roles were not counted'
@@ -398,7 +412,7 @@ done
 grep -Fxq "$DK"$'\t'frontend-artlab$'\t'cms:access <<<"$backup" || fail 'the backup lacks frontend-artlab/cms:access'
 grep -Fxq "$DK"$'\t'skymail$'\t'skymail:mails:approve <<<"$backup" || fail 'the backup lacks skymail:mails:approve'
 dk_token=$(token_roles dk-person)
-[[ $dk_token == '{"core":["audit:read","global:read","url:access"],"forms":["skyforms:*","skyforms:access","skyforms:read-all"],"frontend-artlab":["content:read"],"skymail":["skymail:system-mails:read"]}' ]] \
+[[ $dk_token == '{"core":["audit:read","global:read","url:access"],"forms":["skyforms:*","skyforms:access","skyforms:read-all"],"frontend-artlab":["content:read"],"skymail":["skymail:mails:tracking:read","skymail:system-mails:read"]}' ]] \
   || fail "the DK person's token is not read-only: $dk_token"
 [[ $(token_roles dk-sub-person) == "$dk_token" ]] || fail "the member of DK's subgroup does not inherit exactly DK's roles: $(token_roles dk-sub-person)"
 yk_token=$(token_roles yk-person)
@@ -444,7 +458,7 @@ grant "$DK" forms skyforms:read-all
 applied=$(run_expecting 0 "$REALM" --apply --forms --backup-file /tmp/dk-backup-forms.tsv)
 expect_line "$applied" "take forms/skyforms:* away from $DK" 'skyforms:* was not taken away'
 expect_line "$applied" 'applied 16 change(s), 1 warning(s), 0 problem(s)' 'the apply with --forms did not take the 15 and skyforms:* away'
-[[ $(group_roles "$DK") == '["core/audit:read","core/global:read","core/url:access","forms/skyforms:access","forms/skyforms:read-all","frontend-artlab/content:read","realm/DK","skymail/skymail:system-mails:read"]' ]] \
+[[ $(group_roles "$DK") == '["core/audit:read","core/global:read","core/url:access","forms/skyforms:access","forms/skyforms:read-all","frontend-artlab/content:read","realm/DK","skymail/skymail:mails:tracking:read","skymail/skymail:system-mails:read"]' ]] \
   || fail "DK does not hold its read and app roles alone after --forms: $(group_roles "$DK")"
 docker exec "$CONTAINER" grep -Fxq "$DK"$'\t'forms$'\t''skyforms:*' /tmp/dk-backup-forms.tsv || fail 'the backup lacks skyforms:*'
 [[ $(token_roles dk-person | jq -c .forms) == '["skyforms:access","skyforms:read-all"]' ]] || fail 'the DK token still carries a Forms admin role, or lost the seat'

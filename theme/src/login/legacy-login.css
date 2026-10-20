@@ -221,12 +221,14 @@ a:hover {
   justify-content: space-between;
 }
 
+/* A centred band narrower than the window, fading out well before its ends, so a logo is never
+   cut by the window's edge: it fades in and out instead. */
 .sl-legacy-teams {
-  width: 100%;
-  padding: 1rem 0;
+  width: min(100% - 2rem, 60rem);
+  padding: 1.5rem 0;
   overflow: hidden;
-  -webkit-mask-image: linear-gradient(to right, transparent, black 15%, black 85%, transparent);
-  mask-image: linear-gradient(to right, transparent, black 15%, black 85%, transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 25%, black 75%, transparent);
+  mask-image: linear-gradient(to right, transparent, black 25%, black 75%, transparent);
   pointer-events: none;
 }
 
@@ -252,7 +254,7 @@ a:hover {
   font-weight: 600;
   letter-spacing: 0.08em;
   white-space: nowrap;
-  opacity: 0.3;
+  opacity: 0.16;
 }
 
 /* Every logo in one tone, whatever colours its file carries */
@@ -292,22 +294,24 @@ a:hover {
   height: 100%;
 }
 
+/* The logo is whole from the first frame, so its place on the card is never empty. The animation
+   is decoration on top: a light line traces each path once, then fades. Without the animation
+   (reduced motion, a stylesheet without it) nothing of the trace shows. */
 .sl-legacy-logo__svg path {
   fill: currentColor;
-  fill-opacity: 0;
-  stroke: currentColor;
+  fill-opacity: 1;
+  stroke: var(--sl-legacy-ink);
   stroke-width: 1;
-  stroke-opacity: 1;
+  stroke-opacity: 0.85;
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
   vector-effect: non-scaling-stroke;
-  animation-name: sl-legacy-logo-draw, sl-legacy-logo-fill, sl-legacy-logo-stroke-fade;
-  animation-duration: 2s, 0.8s, 0.5s;
+  animation-name: sl-legacy-logo-draw, sl-legacy-logo-stroke-fade;
+  animation-duration: 1.6s, 0.6s;
   animation-delay:
-    calc(0.6s + var(--sl-logo-path-index) * 0.08s),
-    calc(2.1s + var(--sl-logo-path-index) * 0.08s),
-    calc(2.9s + var(--sl-logo-path-index) * 0.08s);
-  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1), ease-out, ease-out;
+    calc(0.2s + var(--sl-logo-path-index) * 0.06s),
+    calc(1.6s + var(--sl-logo-path-index) * 0.06s);
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1), ease-out;
   animation-fill-mode: both;
 }
 
@@ -322,6 +326,7 @@ a:hover {
 }
 
 .sl-legacy-card {
+  position: relative;
   display: grid;
   overflow: hidden;
   border-radius: calc(var(--sl-legacy-radius) * 2);
@@ -494,10 +499,11 @@ a:hover {
   text-align: center;
 }
 
+/* The KVKK line: at least 14px like every help text and field label. */
 .sl-legacy-footer p {
   margin: 0;
   color: var(--sl-legacy-muted);
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   line-height: 1.625;
 }
 
@@ -802,7 +808,7 @@ a:hover {
   display: block;
   margin-bottom: 0.375rem;
   color: var(--sl-legacy-label);
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   font-weight: 500;
 }
 
@@ -896,7 +902,7 @@ textarea.sl-legacy-input {
   display: block;
   margin: 0.375rem 0 0;
   color: var(--sl-legacy-danger);
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   line-height: 1.45;
 }
 
@@ -936,14 +942,43 @@ textarea.sl-legacy-input {
   font-weight: 500;
 }
 
-/* The reset link on the first screen, under the sign-in choices. */
-.sl-legacy-choice-help {
-  margin: 1rem 0 0;
+/* "Microsoft ile" under "YTÜ hesabınla devam et". */
+.sl-legacy-choice__hint {
+  display: block;
+  color: var(--sl-legacy-muted);
+  font-size: 0.875rem;
+  font-weight: 400;
+}
+
+/* The other ways in, one quiet line under the two choices: the passkey and "Hesabın yok mu? Hesap aç". */
+.sl-legacy-alternatives {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem 1.25rem;
+  margin-top: 0.875rem;
+  color: var(--sl-legacy-muted);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.sl-legacy-alternatives .sl-legacy-passkey {
+  width: auto;
+}
+
+.sl-legacy-alternatives__sign-up {
+  margin: 0;
+}
+
+/* "Okul şifreni sıfırla" under the choices: a plain link, nothing to read around it. */
+.sl-legacy-school-reset {
+  margin: 0.5rem 0 0;
   text-align: center;
   font-size: 0.875rem;
 }
 
-.sl-legacy-choice-help a {
+.sl-legacy-school-reset a {
   display: inline-flex;
   align-items: center;
   min-height: 1.5rem;
@@ -951,90 +986,33 @@ textarea.sl-legacy-input {
   font-weight: 500;
 }
 
-/* "Microsoft ile" under "YTÜ hesabınla devam et". */
-.sl-legacy-choice__hint {
-  display: block;
-  color: var(--sl-legacy-muted);
-  font-size: 0.75rem;
-  font-weight: 400;
-}
-
-/* The trust copy under the sign-in choices, the school password help and the
-   no-account note of the password form (eskylab-login-ux 05). */
-.sl-legacy-trust,
-.sl-legacy-school-help,
+/* The password form's no-account note (and the sign-up entry there). Never smaller than 14px. */
 .sl-legacy-no-account {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--sl-legacy-surface-raised);
   color: var(--sl-legacy-muted);
-  font-size: 0.8125rem;
-  line-height: 1.5;
+  font-size: 0.875rem;
+  line-height: 1.55;
   text-wrap: pretty;
 }
 
-.sl-legacy-trust {
-  margin-top: 1rem;
-}
-
-.sl-legacy-trust p,
-.sl-legacy-school-help p,
 .sl-legacy-no-account p {
   margin: 0;
 }
 
-.sl-legacy-trust details p,
 .sl-legacy-no-account p + p {
-  margin-top: 0.25rem;
-}
-
-.sl-legacy-trust details {
   margin-top: 0.375rem;
 }
 
-.sl-legacy-trust summary,
-.sl-legacy-school-help summary {
-  width: fit-content;
-  min-height: 1.5rem;
-  color: var(--sl-legacy-link);
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.sl-legacy-school-help {
-  margin-top: 0.5rem;
-  text-align: center;
-}
-
-.sl-legacy-school-help summary {
-  margin: 0 auto;
-  font-size: 0.875rem;
-}
-
-.sl-legacy-school-help[open] summary {
-  margin-bottom: 0.375rem;
-}
-
-.sl-legacy-trust a,
-.sl-legacy-school-help a,
 .sl-legacy-no-account a {
   color: var(--sl-legacy-link);
   font-weight: 500;
 }
 
-.sl-legacy-no-account {
-  margin-top: 1.25rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--sl-legacy-surface-raised);
-}
-
 .sl-legacy-no-account .sl-legacy-no-account__title {
   color: var(--sl-legacy-text);
   font-weight: 600;
-}
-
-.sl-legacy-domain {
-  margin: 1.25rem 0 0;
-  color: var(--sl-legacy-muted);
-  font-size: 0.8125rem;
-  text-align: center;
 }
 
 .sl-legacy-remember input {
@@ -1089,7 +1067,7 @@ textarea.sl-legacy-input {
   border-radius: var(--sl-legacy-radius);
   color: var(--sl-legacy-label);
   background: rgba(224, 200, 229, 0.1);
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   line-height: 1.55;
 }
 
@@ -1120,7 +1098,7 @@ textarea.sl-legacy-input {
 .sl-personal-email-offer__note {
   margin: 0.25rem 0 0;
   color: var(--sl-legacy-label);
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   line-height: 1.55;
 }
 
@@ -1174,7 +1152,7 @@ textarea.sl-legacy-input {
   border-radius: var(--sl-legacy-radius);
   color: var(--sl-legacy-label);
   background: rgba(224, 200, 229, 0.1);
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   line-height: 1.55;
 }
 
@@ -1191,7 +1169,7 @@ textarea.sl-legacy-input {
 .sl-email-code-sign-up__note {
   margin: 0.25rem 0 0;
   color: var(--sl-legacy-label);
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   line-height: 1.55;
 }
 
@@ -1255,7 +1233,7 @@ textarea.sl-legacy-input {
 .sl-legacy-required-note {
   margin: 0 0 1rem;
   color: var(--sl-legacy-subtle);
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   text-align: center;
 }
 
@@ -1280,7 +1258,7 @@ textarea.sl-legacy-input {
 .sl-helper-text {
   margin: 0.375rem 0;
   color: var(--sl-legacy-muted);
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   line-height: 1.5;
 }
 
@@ -1344,7 +1322,7 @@ textarea.sl-legacy-input {
 }
 
 .sl-legacy-content #kc-form-options a {
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   font-weight: 600;
 }
 
@@ -1519,7 +1497,7 @@ div.sl-auth-item__arrow-mark {
 .sl-auth-item__description {
   margin-top: 0.125rem;
   color: var(--sl-legacy-muted);
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   line-height: 1.5;
 }
 
@@ -1561,6 +1539,10 @@ i.sl-auth-item__arrow-mark {
 
 .sl-authenticator-icon--otp {
   --sl-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3 4 6v6c0 5 3.4 8.4 8 9 4.6-.6 8-4 8-9V6l-8-3Z'/%3E%3Cpath d='m9 12 2 2 4-4'/%3E%3C/svg%3E");
+}
+
+.sl-authenticator-icon--email {
+  --sl-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='5' width='18' height='14' rx='2'/%3E%3Cpath d='m3 7 9 6 9-6'/%3E%3C/svg%3E");
 }
 
 i.sl-auth-item__arrow-mark {
@@ -1824,12 +1806,6 @@ i.sl-auth-item__arrow-mark {
   }
 }
 
-@keyframes sl-legacy-logo-fill {
-  to {
-    fill-opacity: 1;
-  }
-}
-
 @keyframes sl-legacy-logo-stroke-fade {
   to {
     stroke-opacity: 0;
@@ -1837,11 +1813,12 @@ i.sl-auth-item__arrow-mark {
 }
 
 @media (max-width: 39.999rem) {
+  /* On a phone the form comes first: the one strip left sits below the card and footer. */
   .sl-legacy-teams {
     padding: 1rem 0;
   }
 
-  .sl-legacy-teams--right {
+  .sl-legacy-teams--left {
     display: none;
   }
 
@@ -1889,6 +1866,202 @@ i.sl-auth-item__arrow-mark {
   }
 }
 
+/* 4b. One page across steps -------------------------------------------------
+   Keycloak's steps are separate page loads (pageTransitions.ts, navigationLoading.ts).
+   - The entrance animations play on a tab's first page only (`data-sl-entered`).
+   - While a step loads (after 150 ms), the card's content fades and the logo draws in its middle.
+   - With View Transitions (no reduced motion), the frame stays put across steps and only the
+     card's content slides; "Geri dön" and the browser's back button slide it the other way. */
+
+html[data-sl-entered] .sl-legacy-background__layers,
+html[data-sl-entered] .sl-legacy-background__stars {
+  animation: none;
+  opacity: 1;
+}
+
+html[data-sl-entered] .sl-legacy-background__iris {
+  animation: none;
+  opacity: 0.3;
+  transform: translateX(-50%) scale(1);
+}
+
+html[data-sl-entered] .sl-legacy-background__grain {
+  animation: none;
+  opacity: 0.55;
+}
+
+html[data-sl-entered] .sl-legacy-brand__mark {
+  animation: none;
+  opacity: 0.07;
+}
+
+html[data-sl-entered] .sl-legacy-logo .sl-legacy-logo__svg path {
+  animation: none;
+  stroke-opacity: 0;
+}
+
+.sl-legacy-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  pointer-events: none;
+}
+
+html[data-sl-loading] .sl-legacy-loading {
+  display: flex;
+}
+
+html[data-sl-loading] .sl-legacy-card__body {
+  opacity: 0.25;
+  pointer-events: none;
+  transition: opacity 150ms ease;
+}
+
+.sl-legacy-loading .sl-legacy-logo__animation {
+  width: 4.5rem;
+  height: 4.25rem;
+}
+
+.sl-legacy-loading .sl-legacy-logo__svg path {
+  fill-opacity: 0;
+  stroke: currentColor;
+  stroke-opacity: 1;
+  stroke-dashoffset: 1;
+  animation: sl-legacy-loading-draw 1.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  animation-delay: calc(var(--sl-logo-path-index) * 0.05s);
+}
+
+/* Visually hidden until reduced motion asks for a plain text indicator instead of the drawing. */
+.sl-legacy-loading__label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@keyframes sl-legacy-loading-draw {
+  0% {
+    stroke-dashoffset: 1;
+    fill-opacity: 0;
+  }
+  55% {
+    stroke-dashoffset: 0;
+    fill-opacity: 0;
+  }
+  80%,
+  100% {
+    stroke-dashoffset: 0;
+    fill-opacity: 0.85;
+  }
+}
+
+.sl-legacy-background {
+  view-transition-name: sl-backdrop;
+}
+
+.sl-legacy-teams--left {
+  view-transition-name: sl-teams-top;
+}
+
+.sl-legacy-teams--right {
+  view-transition-name: sl-teams-bottom;
+}
+
+.sl-legacy-card {
+  view-transition-name: sl-card;
+}
+
+.sl-legacy-card__body {
+  view-transition-name: sl-card-body;
+}
+
+.sl-legacy-logo {
+  view-transition-name: sl-logo;
+}
+
+.sl-legacy-footer {
+  view-transition-name: sl-footer;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @view-transition {
+    navigation: auto;
+  }
+
+  ::view-transition-group(*) {
+    animation-duration: 220ms;
+    animation-timing-function: cubic-bezier(0.2, 0.7, 0.3, 1);
+  }
+
+  /* The frame is the same on both pages: swap it at once instead of cross-fading. */
+  ::view-transition-old(root),
+  ::view-transition-old(sl-backdrop),
+  ::view-transition-old(sl-teams-top),
+  ::view-transition-old(sl-teams-bottom),
+  ::view-transition-old(sl-footer) {
+    display: none;
+  }
+
+  ::view-transition-new(root),
+  ::view-transition-new(sl-backdrop),
+  ::view-transition-new(sl-teams-top),
+  ::view-transition-new(sl-teams-bottom),
+  ::view-transition-new(sl-footer) {
+    animation: none;
+  }
+
+  ::view-transition-old(sl-card-body) {
+    animation: sl-legacy-step-out 150ms ease-in both;
+  }
+
+  ::view-transition-new(sl-card-body) {
+    animation: sl-legacy-step-in 220ms cubic-bezier(0.2, 0.7, 0.3, 1) 60ms both;
+  }
+
+  html[data-sl-vt-direction="back"]::view-transition-old(sl-card-body) {
+    animation-name: sl-legacy-step-out-back;
+  }
+
+  html[data-sl-vt-direction="back"]::view-transition-new(sl-card-body) {
+    animation-name: sl-legacy-step-in-back;
+  }
+}
+
+@keyframes sl-legacy-step-out {
+  to {
+    opacity: 0;
+    transform: translateX(-1.5rem);
+  }
+}
+
+@keyframes sl-legacy-step-in {
+  from {
+    opacity: 0;
+    transform: translateX(1.5rem);
+  }
+}
+
+@keyframes sl-legacy-step-out-back {
+  to {
+    opacity: 0;
+    transform: translateX(1.5rem);
+  }
+}
+
+@keyframes sl-legacy-step-in-back {
+  from {
+    opacity: 0;
+    transform: translateX(-1.5rem);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .sl-legacy-background__layers,
   .sl-legacy-background__iris,
@@ -1922,6 +2095,28 @@ i.sl-auth-item__arrow-mark {
     fill-opacity: 1;
     stroke-opacity: 0;
     stroke-dashoffset: 0;
+  }
+
+  /* The loading state: a still logo and a plain "Yükleniyor…" under it, no drawing. */
+  .sl-legacy-loading .sl-legacy-logo__svg path {
+    animation: none;
+    fill-opacity: 0.85;
+    stroke-opacity: 0;
+    stroke-dashoffset: 0;
+  }
+
+  .sl-legacy-loading__label {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+    color: var(--sl-legacy-muted);
+    font-size: 0.875rem;
+  }
+
+  html[data-sl-loading] .sl-legacy-card__body {
+    transition: none;
   }
 
   .sl-legacy-shell *,

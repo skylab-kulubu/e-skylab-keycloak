@@ -131,6 +131,17 @@ def assert_release_boundary(workflow)
   unless publish_job.fetch("permissions", {}).fetch("packages", nil) == "write"
     abort "#{workflow} keycloak-publish must own the package-write permission"
   end
+  # Publishing and the Dokploy deployment run in the keycloak-production environment, whose
+  # branch policy admits only production and v* tags; the hook is read nowhere else.
+  unless publish_job.fetch("environment", nil) == "keycloak-production"
+    abort "#{workflow} keycloak-publish must run in the keycloak-production environment"
+  end
+  jobs.each do |name, job|
+    next if name == "keycloak-publish"
+    if job.to_s.include?("DOKPLOY_DEPLOY_HOOK")
+      abort "#{workflow} #{name} must not read the Dokploy deploy hook"
+    end
+  end
   unless Array(publish_job.fetch("needs", nil)).sort == ["keycloak-build", "keycloak-package"]
     abort "#{workflow} keycloak-publish must depend on the build and the tested and physically approved package job"
   end
@@ -224,7 +235,7 @@ def assert_release_boundary(workflow)
   webhook = publish_steps.fetch(webhook_index)
   unless webhook["if"] == "github.ref == 'refs/heads/production'" &&
       webhook.fetch("env", {}).fetch("DOKPLOY_DEPLOY_HOOK", nil) == "${{ secrets.DOKPLOY_DEPLOY_HOOK }}"
-    abort "#{workflow} Dokploy deployment must be production-only and use the repository secret"
+    abort "#{workflow} Dokploy deployment must be production-only and read the DOKPLOY_DEPLOY_HOOK secret (keycloak-production's)"
   end
   webhook_command = webhook.fetch("run", "")
   unless webhook_command.include?('curl') && webhook_command.include?('DOKPLOY_DEPLOY_HOOK') &&
@@ -663,6 +674,62 @@ def assert_finder(finder)
   ['--jq \'.artifacts[] | select(.expired == false) | .name\'', "required_artifacts=(keycloak-ci-candidate)",
    'required_artifacts+=("keycloak-ci-tested-$group")', "INTEGRATION_GROUPS="].each do |required|
     abort "#{finder} must require the run's live candidate and receipts (#{required})" unless text.include?(required)
+  end
+end
+
+# Workflow hygiene (regressions, not a security boundary: a branch's own workflow escapes any
+# check here; the boundary is the environment's branch policy, rulesets and the package's access).
+# Every workflow (.yml or .yaml): no pull_request_target or workflow_run trigger; every job names
+# its permissions (or the workflow does), never write-all; only release.yml's keycloak-publish
+# writes packages; only release.yml's keycloak-package and keycloak-publish run in an environment;
+# release.yml has no workflow-level env or permissions, and among its jobs only keycloak-publish
+# reads a secret; no other workflow reads one.
+# Expression names are case-insensitive: any ${{ … }} naming the secrets context, and secrets: inherit.
+secret_use = /\$\{\{[^}]*\bsecrets\b|\bsecrets\s*:\s*inherit/i
+Dir.glob(File.join(root, ".github/workflows/*.{yml,yaml}")).sort.each do |workflow|
+  name = File.basename(workflow)
+  document = YAML.load_file(workflow, aliases: true)
+  triggers = document[true] || document["on"]
+  trigger_names = triggers.is_a?(Hash) ? triggers.keys : Array(triggers)
+  if (trigger_names.map(&:to_s) & %w[pull_request_target workflow_run]).any?
+    abort "#{workflow} must not run on pull_request_target or workflow_run"
+  end
+  if document["permissions"].to_s.include?("write-all")
+    abort "#{workflow} must not grant write-all"
+  end
+  if name == "release.yml" && (document.key?("env") || document.key?("permissions"))
+    abort "#{workflow} must not set workflow-level env or permissions"
+  end
+  document.fetch("jobs").each do |job_name, job|
+    permissions = job.key?("permissions") ? job["permissions"] : document["permissions"]
+    if permissions.nil?
+      abort "#{workflow} #{job_name} must name its permissions (the repository default may be write)"
+    end
+    if permissions.to_s.include?("write-all") || permissions.to_s.include?("read-all")
+      abort "#{workflow} #{job_name} must name each permission, not write-all or read-all"
+    end
+    writes_packages = permissions.is_a?(Hash) && permissions["packages"].to_s.strip == "write"
+    if writes_packages && !(name == "release.yml" && job_name == "keycloak-publish")
+      abort "#{workflow} #{job_name} must not write packages"
+    end
+    if job.key?("environment") && !(name == "release.yml" && %w[keycloak-package keycloak-publish].include?(job_name))
+      abort "#{workflow} #{job_name} must not run in an environment"
+    end
+    job_text = job.to_s
+    unless name == "release.yml" && job_name == "keycloak-publish"
+      if job_text.match?(secret_use) || job_text.match?(/dokploy/i)
+        abort "#{workflow} #{job_name} must not read secrets or deploy"
+      end
+      # A reusable workflow call (uses:) or passed secrets (secrets:) would carry this job's
+      # secrets elsewhere.
+      if job.key?("uses") || job.key?("secrets")
+        abort "#{workflow} #{job_name} must not call a reusable workflow or pass secrets"
+      end
+    end
+  end
+  text = File.read(workflow, encoding: "UTF-8")
+  if name != "release.yml" && (text.match?(secret_use) || text.match?(/dokploy/i))
+    abort "#{workflow} must not read secrets or deploy"
   end
 end
 

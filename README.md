@@ -1070,6 +1070,14 @@ koşturulan eski bir yayın `:production`'ı ezemez. Yayınlar tek tek koşar
 (`concurrency: keycloak-release`, koşan iptal edilmez). Hotfix'te (ağaç `main`'de test
 edilmedi) `production` push'unun kendi `ci.yml` koşusu tam koşar; yeşil olunca yayın yeniden
 koşturulur (`gh run rerun <run> --failed`).
+`keycloak-package` ve `keycloak-publish` (GHCR'a itme ve Dokploy kancası) `keycloak-production`
+ortamında koşar; ortamın dağıtım politikası yalnız `production` dalını ve `v*` etiketlerini kabul
+eder. Dokploy kancası (`DOKPLOY_DEPLOY_HOOK`) bu ortamın sırrı olacak şekilde taşınır
+(`ops` sihirbazı; taşınana kadar ortam işi depo sırrını okur). `tests/check-fresh-runner.sh`
+bunu ve iş akışı düzenini (izinler açık yazılı, yalnız `keycloak-publish` paket yazar ve sır okur,
+`pull_request_target` yok) dürüst gerilemelere karşı denetler; güvenlik sınırı değildir: bir
+dalın kendi iş akışı bu denetimden kaçar. Sınır ortam politikası, ruleset'ler ve paketin erişim
+ayarıdır; GHCR'a itme bugün `GITHUB_TOKEN` ile yapıldığından ortama bağlı değil.
 
 CI adayının ömrü 14 gün: Touch ID kanıtı beklenirken yayın (`gh run rerun <run> --failed`, Touch
 ID adımı yeniden koşar) adayın kalan ömrü boyunca yeniden denenebilir. Paket artifact'i Touch ID

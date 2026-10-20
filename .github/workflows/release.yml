@@ -226,9 +226,12 @@ jobs:
 
   # Re-runs of a failed publish (gh run rerun --failed) run only this job, so it checks again that
   # the release still points at current production and binds the bytes to keycloak-build's outputs.
+  # In the keycloak-production environment (deployments only from the production branch and v*
+  # tags): its secrets, the Dokploy deploy hook among them, reach no job of another branch.
   keycloak-publish:
     needs: [keycloak-build, keycloak-package]
     runs-on: ubuntu-latest
+    environment: keycloak-production
     permissions: { contents: read, packages: write }
     env:
       KEYCLOAK_TEST_IMAGE: e-skylab-keycloak-candidate:ci

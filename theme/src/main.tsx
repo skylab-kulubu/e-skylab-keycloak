@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import KcLoginPage from "./login/KcPage";
 import { continueNavigationLoading, installNavigationLoading } from "./login/navigationLoading";
 import { installPageTransitions } from "./login/pageTransitions";
+import { installPasskeyButtonReady } from "./login/passkeyButtonReady";
 
 const root = document.getElementById("root");
 
@@ -18,6 +19,7 @@ if (window.kcContext === undefined && import.meta.env.DEV) {
 
 installPageTransitions();
 installNavigationLoading();
+installPasskeyButtonReady();
 
 // The login pages are imported here, not lazily through kc.gen.tsx, and the first render is
 // synchronous: with the render-blocking entry script (vite.config.ts) the page's first frame

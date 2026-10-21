@@ -61,6 +61,17 @@
       "serviceAccountsEnabled": true
     },
     {
+      "clientId": "skymail-seed",
+      "name": "SkyMail Template seed (fixture; production's is made by sky_lab_genel ops/wizards/skymail-seed-github-wizard.sh)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "bearerOnly": false,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true
+    },
+    {
       "clientId": "skymail",
       "name": "SkyMail (fixture)",
       "enabled": true,
@@ -229,6 +240,11 @@
       "username": "service-account-skymail-backend",
       "enabled": true,
       "serviceAccountClientId": "skymail-backend"
+    },
+    {
+      "username": "service-account-skymail-seed",
+      "enabled": true,
+      "serviceAccountClientId": "skymail-seed"
     },
     {
       "id": "11111111-1111-4111-8111-111111111111",

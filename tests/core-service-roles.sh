@@ -32,6 +32,11 @@
 # REST API (GET /users?email=…&exact=true, group members, its roles' holders). The fixture grants
 # view-users by hand (production's shape), the step reports it held and grants view-clients; the
 # real skymail-backend token then reads users and clients from the Admin REST API.
+# The Template seed's skymail:templates:system (skymail-backend: only it marks a template as a
+# system template, which goes past the suppression list): the step creates it (its line has a
+# description) and grants it to the skymail-seed service account (a fixture client) alone; after
+# the step the real skymail-seed token carries it, core's does not, and it is held by no other user,
+# no group, no composite role and not the default role.
 
 CSR_ROLES=(media:attach ticket:forms url:forms users:read)
 CSR_NEW_ROLE=ticket:forms
@@ -61,6 +66,10 @@ CSR_WITHDRAW_PARENT=csr-withdraw-parent
 CSR_SKYMAIL_ROLES=(skymail:access skymail:mails:send skymail:lists:read skymail:lists:write "$CSR_WITHDRAW_ROLE")
 CSR_SKYMAIL_HAND=(skymail:access skymail:mails:send)
 CSR_SKYMAIL_SORTED='["skymail:access","skymail:lists:read","skymail:lists:write","skymail:mails:send","skymail:tracking:withdraw"]'
+# The Template seed's role and client (skymail-backend: only it changes a template's system mark).
+CSR_SEED_ROLE=skymail:templates:system
+CSR_SEED_CLIENT=skymail-seed
+CSR_SEED_ACCOUNT=service-account-skymail-seed
 # realm-management roles of SkyMail's service account; the first is granted by hand before the step.
 CSR_ADMIN_ROLES=(view-users view-clients)
 CSR_ADMIN_HAND=view-users
@@ -277,6 +286,17 @@ stage_core_service_roles_after_first_reconciliation() {
     || fail "the first reconciliation did not report $CSR_TRACKING_ROLE for $CSR_AUDIENCE_ACCOUNT"
   grep -Fq "[reconcile] WARNING: $CSR_WITHDRAW_ROLE is not yet granted to service account $CSR_CORE_ACCOUNT by the operator step" "$log" \
     || fail "the first reconciliation did not report $CSR_WITHDRAW_ROLE for $CSR_CORE_ACCOUNT"
+  # The Template seed's role: created on skymail, held by nobody, reported for skymail-seed.
+  grep -Fq "[reconcile] client role $CSR_SEED_ROLE of skymail: created" "$log" \
+    || fail "the first reconciliation did not create $CSR_SEED_ROLE"
+  json_assert "$(kcadm get "clients/$(lca_client_uuid skymail)/roles/$CSR_SEED_ROLE" -r "$V2_REALM" -c)" '.composite == false and (.description | startswith("The Template seed marks a template as a system template"))' \
+    "$CSR_SEED_ROLE was created without its description or as a composite"
+  json_assert "$(kcadm get "clients/$(lca_client_uuid skymail)/roles/$CSR_SEED_ROLE/users" -r "$V2_REALM" -c)" 'length == 0' \
+    "a user holds $CSR_SEED_ROLE after the first reconciliation"
+  json_assert "$(kcadm get "clients/$(lca_client_uuid skymail)/roles/$CSR_SEED_ROLE/groups" -r "$V2_REALM" -c)" 'length == 0' \
+    "a group holds $CSR_SEED_ROLE after the first reconciliation"
+  grep -Fq "[reconcile] WARNING: $CSR_SEED_ROLE is not yet granted to service account $CSR_SEED_ACCOUNT by the operator step" "$log" \
+    || fail "the first reconciliation did not report $CSR_SEED_ROLE for $CSR_SEED_ACCOUNT"
   # SkyMail's roles of core: a missing one is reported, never created.
   grep -Fq "[reconcile] WARNING: client role skymail:mails:send of skymail does not exist in realm $V2_REALM (it is made with the client skymail, not here); it is not granted to core" "$log" \
     || fail 'the first reconciliation did not report the missing skymail:mails:send'
@@ -331,6 +351,8 @@ stage_core_service_roles_granted_by_operator() {
     reconciler_lines+=("[reconcile] client role $role of skymail: unchanged"
       "[reconcile] WARNING: $role is not yet granted to service account $CSR_CORE_ACCOUNT by the operator step")
   done
+  reconciler_lines+=("[reconcile] client role $CSR_SEED_ROLE of skymail: unchanged"
+    "[reconcile] WARNING: $CSR_SEED_ROLE is not yet granted to service account $CSR_SEED_ACCOUNT by the operator step")
   for role in "${CSR_ADMIN_ROLES[@]}"; do
     reconciler_lines+=("[reconcile] client role $role of realm-management: unchanged"
       "[reconcile] WARNING: $role is not yet granted to service account $CSR_AUDIENCE_ACCOUNT by the operator step")
@@ -340,6 +362,7 @@ stage_core_service_roles_granted_by_operator() {
   json_assert "$(kcadm get "clients/$audience_uuid/default-client-scopes" -r "$V2_REALM" -c)" '[.[].name] | index("roles") != null' \
     "the step did not attach the default client scope roles to $CSR_AUDIENCE_CLIENT"
   [[ $(csr_account_roles) == '[]' ]] || fail 'the reconciler identity granted a core service role'
+  [[ $(csr_account_roles_of "$CSR_SEED_CLIENT" skymail) == '[]' ]] || fail "the reconciler identity granted $CSR_SEED_ROLE"
   json_assert "$(csr_forms_client)" "$CSR_FLAGS_PRODUCTION" 'the reconciler identity changed the login flags of forms'
   ! csr_markers | grep -q '=.' || fail 'the reconciler identity recorded a grant'
   # The dry run is the operator's only.
@@ -402,7 +425,7 @@ stage_core_service_roles_granted_by_operator() {
   before=$(csr_newest_event)
   output=$(csr_operator -e KEYCLOAK_RECONCILE_CHECK=true) || { printf '%s\n' "$output" >&2; fail 'the dry run failed'; }
   operator_lines=('Core service roles are checked; nothing was written.'
-    '[reconcile] check: 22 change(s) pending; nothing was written'
+    '[reconcile] check: 24 change(s) pending; nothing was written'
     "[reconcile] would grant $CSR_AUDIENCE_ROLE to service account $CSR_AUDIENCE_ACCOUNT"
     "[reconcile] would record the grant of $CSR_AUDIENCE_ROLE ($CSR_ATTRIBUTE=<now> $CSR_AUDIENCE_ACCOUNT)"
     "[reconcile] would grant $CSR_TRACKING_ROLE to service account $CSR_AUDIENCE_ACCOUNT"
@@ -411,6 +434,8 @@ stage_core_service_roles_granted_by_operator() {
     "[reconcile] would grant skymail:lists:write to service account $CSR_CORE_ACCOUNT"
     "[reconcile] would grant $CSR_WITHDRAW_ROLE to service account $CSR_CORE_ACCOUNT"
     "[reconcile] WARNING: $CSR_WITHDRAW_ROLE is in the composite roles realm/$CSR_WITHDRAW_PARENT (nothing was removed"
+    "[reconcile] would grant $CSR_SEED_ROLE to service account $CSR_SEED_ACCOUNT"
+    "[reconcile] would record the grant of $CSR_SEED_ROLE ($CSR_ATTRIBUTE=<now> $CSR_SEED_ACCOUNT)"
     "[reconcile] would set standardFlowEnabled=false on client $CSR_CLIENT (service account only: no browser login, no password grant)"
     "[reconcile] service account $CSR_ACCOUNT: $CSR_HAND_ROLE unchanged (held)"
     "[reconcile] WARNING: $CSR_NEW_ROLE is also held by the users $LCA_USER (nothing was removed"
@@ -433,6 +458,7 @@ stage_core_service_roles_granted_by_operator() {
   [[ $(csr_account_roles_of "$CSR_AUDIENCE_CLIENT" core) == '[]' ]] || fail "the dry run granted $CSR_AUDIENCE_ROLE"
   [[ $(csr_account_roles_of core skymail) == '["skymail:access","skymail:mails:send"]' ]] \
     || fail "the dry run changed the SkyMail roles of $CSR_CORE_ACCOUNT: $(csr_account_roles_of core skymail)"
+  [[ $(csr_account_roles_of "$CSR_SEED_CLIENT" skymail) == '[]' ]] || fail "the dry run granted $CSR_SEED_ROLE"
   ! grep -Fq "would grant $CSR_HAND_ROLE" <<<"$output" || { printf '%s\n' "$output" >&2; fail 'the dry run planned a grant forms already holds'; }
   ! grep -Fq "would grant $CSR_ADMIN_HAND" <<<"$output" || { printf '%s\n' "$output" >&2; fail "the dry run planned a grant $CSR_AUDIENCE_ACCOUNT already holds"; }
   ! grep -Fq 'also holds the realm-management roles' <<<"$output" || { printf '%s\n' "$output" >&2; fail 'the dry run noted the composite children of the realm-management roles'; }
@@ -450,7 +476,7 @@ stage_core_service_roles_granted_by_operator() {
   CURRENT_STAGE='core service roles: granted by the operator step, other holders reported and kept'
   output=$(csr_operator) || { printf '%s\n' "$output" >&2; fail 'the service-roles operator step failed'; }
   operator_lines=('Core service roles are reconciled.'
-    '[reconcile] applied 22 change(s)'
+    '[reconcile] applied 24 change(s)'
     "[reconcile] service account $CSR_AUDIENCE_ACCOUNT: $CSR_ADMIN_HAND unchanged (held)"
     "[reconcile] service account $CSR_AUDIENCE_ACCOUNT: view-clients granted"
     "[reconcile] service account $CSR_AUDIENCE_ACCOUNT: $CSR_AUDIENCE_ROLE granted"
@@ -463,6 +489,8 @@ stage_core_service_roles_granted_by_operator() {
     "[reconcile] client role $CSR_WITHDRAW_ROLE of skymail: grant recorded ($CSR_ATTRIBUTE="
     "[reconcile] WARNING: $CSR_WITHDRAW_ROLE is in the composite roles realm/$CSR_WITHDRAW_PARENT (nothing was removed"
     "[reconcile] client role skymail:access of skymail: grant recorded ($CSR_ATTRIBUTE="
+    "[reconcile] service account $CSR_SEED_ACCOUNT: $CSR_SEED_ROLE granted"
+    "[reconcile] client role $CSR_SEED_ROLE of skymail: grant recorded ($CSR_ATTRIBUTE="
     "[reconcile] client $CSR_CLIENT: updated (standardFlowEnabled=false; service account only)"
     "[reconcile] service account $CSR_ACCOUNT: $CSR_HAND_ROLE unchanged (held)"
     "[reconcile] WARNING: $CSR_NEW_ROLE is also held by the users $LCA_USER (nothing was removed"
@@ -493,6 +521,10 @@ stage_core_service_roles_granted_by_operator() {
   done
   [[ $(csr_account_roles_of core skymail) == "$CSR_SKYMAIL_SORTED" ]] \
     || fail "$CSR_CORE_ACCOUNT does not hold exactly SkyMail's five roles: $(csr_account_roles_of core skymail)"
+  [[ $(csr_account_roles_of "$CSR_SEED_CLIENT" skymail) == "[\"$CSR_SEED_ROLE\"]" ]] \
+    || fail "$CSR_SEED_ACCOUNT does not hold exactly $CSR_SEED_ROLE: $(csr_account_roles_of "$CSR_SEED_CLIENT" skymail)"
+  [[ $(csr_marker_of skymail "$CSR_SEED_ROLE") =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\ $CSR_SEED_ACCOUNT$ ]] \
+    || fail "the grant record of $CSR_SEED_ROLE is wrong: $(csr_marker_of skymail "$CSR_SEED_ROLE")"
   [[ $(csr_account_roles_of "$CSR_AUDIENCE_CLIENT" realm-management) == "$CSR_ADMIN_SORTED" ]] \
     || fail "$CSR_AUDIENCE_ACCOUNT does not hold exactly view-users and view-clients: $(csr_account_roles_of "$CSR_AUDIENCE_CLIENT" realm-management)"
   csr_expect_lines "$output" 'the operator step' "[reconcile] client $CSR_AUDIENCE_CLIENT: realm-management grants recorded ($CSR_ADMIN_ATTRIBUTE="
@@ -571,6 +603,18 @@ stage_core_service_roles_granted_by_operator() {
   csr_held_by_service_account_only "$CSR_WITHDRAW_ROLE" skymail "$CSR_CORE_ACCOUNT"
   csr_held_by_service_account_only "$CSR_TRACKING_ROLE" core "$CSR_AUDIENCE_ACCOUNT"
 
+  CURRENT_STAGE='core service roles: the Template seed role in the skymail-seed token only (B2)'
+  # The seed's by-key upsert: azp skymail-seed, skymail:templates:system in resource_access.skymail.
+  kcadm create "clients/$(lca_client_uuid "$CSR_SEED_CLIENT")/client-secret" -r "$V2_REALM" >/dev/null 2>&1
+  csr_service_token "$CSR_SEED_CLIENT"
+  json_assert "$CSR_PAYLOAD" '.azp == $c and ((.resource_access.skymail.roles // []) | index($r) != null)' \
+    "the $CSR_SEED_CLIENT service token lacks $CSR_SEED_ROLE" --arg c "$CSR_SEED_CLIENT" --arg r "$CSR_SEED_ROLE"
+  # core's token holds SkyMail's five roles exactly (above), so not this one; nor does core-erasure's.
+  csr_service_token core-erasure
+  json_assert "$CSR_PAYLOAD" '(.resource_access.skymail.roles // []) | index($r) == null' \
+    "the core-erasure service token carries $CSR_SEED_ROLE" --arg r "$CSR_SEED_ROLE"
+  csr_held_by_service_account_only "$CSR_SEED_ROLE" skymail "$CSR_SEED_ACCOUNT"
+
   CURRENT_STAGE='core service roles: the SkyMail service token reads users and clients (realm-management)'
   csr_service_token "$CSR_AUDIENCE_CLIENT"
   [[ $(v2_admin_rest_status "$CSR_TOKEN" 'users?email=audience-fixture%40example.invalid&exact=true&max=2&briefRepresentation=true') == 200 ]] \
@@ -594,6 +638,7 @@ stage_core_service_roles_granted_by_operator() {
   for role in "${CSR_SKYMAIL_ROLES[@]}"; do
     operator_lines+=("[reconcile] service account $CSR_CORE_ACCOUNT: $role unchanged (held)")
   done
+  operator_lines+=("[reconcile] service account $CSR_SEED_ACCOUNT: $CSR_SEED_ROLE unchanged (held)")
   csr_expect_lines "$output" 'the second operator step' "${operator_lines[@]}"
   ! grep -Eq 'granted$|grant recorded|WARNING|NOTE' <<<"$output" || { printf '%s\n' "$output" >&2; fail 'the second operator step changed or reported something'; }
   [[ $(csr_events_since "$before") == 0 ]] || fail 'the second operator step wrote something'

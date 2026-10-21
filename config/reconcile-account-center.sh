@@ -3158,14 +3158,23 @@ CORE_SERVICE_ROLE_DEFINITIONS=(
 # when they turn it off (PUT /internal/v1/tracking-withdrawals/{sub}, skymail-backend #75, core
 # #256). SkyMail checks azp core, aud skymail and this role, not that the token is a service
 # account's, so the role is core's service account's only (services): a person, a group, a
-# composite role or the default role holding it is reported (review condition B2). It is the one
-# line with a description: nothing else makes it, so the step creates it like core's roles.
+# composite role or the default role holding it is reported (review condition B2). It and
+# skymail:templates:system are the lines with a description: nothing else makes them, so the step
+# creates them like core's roles.
+# skymail:templates:system: the Template seed (skymail-frontend seed-templates.yml, client
+# skymail-seed) marks a template as a system template or takes the mark away (PUT
+# /v1/templates/by-key/{key}, skymail-backend README "Keycloak"). An account.* or keycloak.* system
+# template goes past SkyMail's suppression list, so skymail:templates:write no longer changes the
+# mark (Yusuf, 2026-10-21): the role is skymail-seed's service account's only (services).
+# skymail-seed itself, and its other three skymail roles, are made by sky_lab_genel
+# ops/wizards/skymail-seed-github-wizard.sh.
 SKYMAIL_SERVICE_ROLE_DEFINITIONS=(
   "skymail:access|core|shared|"
   "skymail:mails:send|core|shared|"
   "skymail:lists:read|core|shared|"
   "skymail:lists:write|core|shared|"
   "skymail:tracking:withdraw|core|services|core withdraws a person's mail tracking (PUT /internal/v1/tracking-withdrawals/{sub}, skymail-backend README). core's service account only; never a person, a group, a composite or the default role."
+  "skymail:templates:system|skymail-seed|services|The Template seed marks a template as a system template or takes the mark away (PUT /v1/templates/by-key/{key}, skymail-backend README). skymail-seed's service account only; never a person, a group, a composite or the default role."
 )
 # realm-management roles of SkyMail's service account (client skymail-backend): SkyMail reads
 # people through the Admin REST API: group members and the holders of its approver roles, and the

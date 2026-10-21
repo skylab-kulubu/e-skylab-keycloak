@@ -429,7 +429,8 @@ test("real Keycloak 26.7 login and AIA contracts", async ({ browser }, testInfo)
       });
       const earlyAuthorization = await createAuthorizationUrl();
       const earlyCallbackReached = waitForCallbackRequest(page);
-      await page.goto(earlyAuthorization.url);
+      // The held script would hold the page's load event too: do not wait for it.
+      await page.goto(earlyAuthorization.url, { waitUntil: "commit" });
       const passkeyButton = page.locator("#authenticateWebAuthnButton");
       await passkeyButton.click();
       phase = "early-press-waiting";

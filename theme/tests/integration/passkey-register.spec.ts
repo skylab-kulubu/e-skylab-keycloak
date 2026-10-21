@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, test, type Page, type Request } from "@playwright/test";
+import { clickPasskeyButton, markPasskeyButtonsReady } from "./passkeyButton";
 
 // Registers exactly one passwordless passkey for a person through Keycloak's own login page and
 // the webauthn-register-passwordless application-initiated action, with a Chromium virtual
@@ -74,6 +75,7 @@ async function authorizationUrl(): Promise<{ state: string; url: string }> {
 test("registers one passkey after the relying party id switch", async ({ browser }) => {
   test.setTimeout(120_000);
   const context = await browser.newContext();
+  await markPasskeyButtonsReady(context);
   const page = await context.newPage();
   const callbackReached = waitForCallbackRequest(page);
   const cdp = await context.newCDPSession(page);
@@ -102,7 +104,7 @@ test("registers one passkey after the relying party id switch", async ({ browser
   await username.fill(config.username);
   await page.locator("#password").fill(config.password);
   await page.locator("#kc-login").click();
-  await page.locator("#authenticateWebAuthnButton").click();
+  await clickPasskeyButton(page);
 
   const callbackUrl = await callbackReached;
   const result = new URL(callbackUrl);

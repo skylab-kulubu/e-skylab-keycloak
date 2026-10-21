@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { expect, test, type Browser, type BrowserContext, type CDPSession, type Page, type Request, type TestInfo } from "@playwright/test";
+import { clickPasskeyButton, markPasskeyButtonsReady } from "./passkeyButton";
 
 type IntegrationConfig = {
   baseUrl: string;
@@ -95,6 +96,7 @@ async function createAuthorizationUrl(kcAction?: string): Promise<{ state: strin
 
 async function createPage(browser: Browser): Promise<BrowserPage> {
   const context = await browser.newContext();
+  await markPasskeyButtonsReady(context);
   const page = await context.newPage();
   const callbackReached = waitForCallbackRequest(page);
   return { callbackReached, context, page };
@@ -255,11 +257,11 @@ test("real Keycloak 26.7 login and AIA contracts", async ({ browser }, testInfo)
 
     await openAction(page, "webauthn-register-passwordless");
     await signIn(page);
-    await page.locator("#authenticateWebAuthnButton").click();
+    await clickPasskeyButton(page);
     await expect(page.locator("#kc-try-again")).toBeVisible();
     await page.locator("#kc-try-again").click();
     await expect(page.locator("#authenticateWebAuthnButton")).toBeVisible();
-    await page.locator("#authenticateWebAuthnButton").click();
+    await clickPasskeyButton(page);
     await expect(page.locator("#kc-try-again")).toBeVisible();
     await context.close();
   });
@@ -350,7 +352,7 @@ test("real Keycloak 26.7 login and AIA contracts", async ({ browser }, testInfo)
         typeof PublicKeyCredential.isConditionalMediationAvailable === "function" &&
         (await PublicKeyCredential.isConditionalMediationAvailable())
       );
-      await page.locator("#authenticateWebAuthnButton").click();
+      await clickPasskeyButton(page);
       phase = "registration-callback";
       await test.step("WebAuthn registration AIA callback", () => expectCallback(callbackReached, state, "success"));
 

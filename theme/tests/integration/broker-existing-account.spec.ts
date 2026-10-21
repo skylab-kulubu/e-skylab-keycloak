@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
+import { clickPasskeyButton, markPasskeyButtonsReady } from "./passkeyButton";
 
 // Separate disposable fixture config; no production account or credential is used.
 const configPath = process.env.B12_PASSKEY_CONFIG;
@@ -27,6 +28,7 @@ test("native passkey proof links only the explicitly selected existing account",
       Object.defineProperty(window.PublicKeyCredential, "isConditionalMediationAvailable", { value: async () => false });
     }
   });
+  await markPasskeyButtonsReady(context);
   const page = await context.newPage();
   const cdp = await context.newCDPSession(page);
   await cdp.send("WebAuthn.enable");
@@ -40,7 +42,7 @@ test("native passkey proof links only the explicitly selected existing account",
   await page.locator("#username").fill(config.username);
   await page.locator("#password").fill(config.password);
   await page.locator("#kc-login").click();
-  await page.locator("#registerWebAuthn, #authenticateWebAuthnButton").first().click();
+  await clickPasskeyButton(page);
   await page.waitForURL(url => url.origin + url.pathname === config.callbackUrl);
   expect(new URL(page.url()).searchParams.get("kc_action_status")).toBe("success");
   if (config.counterSeedUrl) {
@@ -58,7 +60,7 @@ test("native passkey proof links only the explicitly selected existing account",
     await page.locator('[name="username"]').fill(target);
     await page.locator('[name="sky-existing-account-action"][value="password"]').click();
     await expect(page.locator("#username")).toHaveValue(target);
-    await page.locator("#authenticateWebAuthnButton, #kc-form-passkey-button").first().click();
+    await clickPasskeyButton(page);
   }
 
   // The resident passkey belongs to username, not otherUsername. Native validation can

@@ -234,7 +234,8 @@ export default function EmailCode(props: EmailCodeProps) {
       {passkeys && (
         <>
           <div className="sl-legacy-passkey-wrap">
-            <button id={webAuthnButtonId} className="sl-legacy-passkey" type="button">
+            <button id={webAuthnButtonId} className="sl-legacy-passkey" type="button"
+              data-sl-again-label={msgStr("passkeyPressAgain")}>
               <span className="sl-key-icon" aria-hidden="true" />
               {msgStr("passkeyChoice")}
             </button>

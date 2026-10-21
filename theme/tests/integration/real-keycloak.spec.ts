@@ -281,11 +281,14 @@ test("real Keycloak 26.7 login and AIA contracts", async ({ browser }, testInfo)
     type CredentialGetProbe = { mediation: string | null };
     let resolveNextCredentialGet: ((probe: CredentialGetProbe) => void) | undefined;
     let explicitPasskeyClickCount = 0;
+    // Every credentials.get() of the page, in order: "conditional", or null for a modal request.
+    const getMediations: Array<string | null> = [];
     let phase = "registration-setup";
     const counts: WebAuthnCounts = { createStarted: 0, getStarted: 0, added: 0, asserted: 0, clicks: 0 };
     await context.exposeBinding("__skyLabCredentialCreateStarted", () => { counts.createStarted += 1; });
     await context.exposeBinding("__skyLabCredentialGetStarted", (_source, mediation: unknown) => {
       counts.getStarted += 1;
+      getMediations.push(typeof mediation === "string" ? mediation : null);
       resolveNextCredentialGet?.({ mediation: typeof mediation === "string" ? mediation : null });
       resolveNextCredentialGet = undefined;
     });
@@ -388,9 +391,7 @@ test("real Keycloak 26.7 login and AIA contracts", async ({ browser }, testInfo)
         );
         expect(credentialGetProbe.mediation).toBe("conditional");
       } else {
-        const passkeyButton = page.locator("#authenticateWebAuthnButton");
-        await expect(passkeyButton).toBeVisible();
-        await passkeyButton.click();
+        await clickPasskeyButton(page);
       }
       phase = "resident-sign-in-callback";
       const [assertedCredential] = await Promise.all([
@@ -402,6 +403,54 @@ test("real Keycloak 26.7 login and AIA contracts", async ({ browser }, testInfo)
       ]);
       expect(assertedCredential.authenticatorId).toBe(authenticatorId);
       expect(explicitPasskeyClickCount).toBe(conditionalMediationAvailable ? 0 : 1);
+
+      // The passkey button pressed before Keycloak's WebAuthn script is set up (the script held
+      // back): the theme stops that press and asks for it again. It must not be replayed, since a
+      // modal request started before the conditional one is aborted by it and the script then
+      // posts that AbortError to Keycloak.
+      phase = "early-press-setup";
+      await page.goto("about:blank", { waitUntil: "commit" });
+      await context.clearCookies();
+      explicitPasskeyClickCount = 0;
+      getMediations.length = 0;
+      const earlyAsserted = new Promise<{ authenticatorId: string }>(resolve => {
+        cdp.once("WebAuthn.credentialAsserted", payload => resolve(payload));
+      });
+      const passkeyResults: string[] = [];
+      page.on("request", request => {
+        const body = request.method() === "POST" ? request.postData() : null;
+        if (body?.includes("clientDataJSON=")) passkeyResults.push(new URLSearchParams(body).get("error") ?? "");
+      });
+      let releaseScript = () => {};
+      const scriptReleased = new Promise<void>(resolve => { releaseScript = resolve; });
+      await page.route("**/js/webauthnAuthenticate.js", async route => {
+        await scriptReleased;
+        await route.continue();
+      });
+      const earlyAuthorization = await createAuthorizationUrl();
+      const earlyCallbackReached = waitForCallbackRequest(page);
+      // The held script would hold the page's load event too: do not wait for it.
+      await page.goto(earlyAuthorization.url, { waitUntil: "commit" });
+      const passkeyButton = page.locator("#authenticateWebAuthnButton");
+      await passkeyButton.click();
+      phase = "early-press-waiting";
+      await expect(passkeyButton).toHaveAttribute("data-sl-passkey", "waiting");
+      expect(getMediations).toEqual([]);
+      releaseScript();
+      if (conditionalMediationAvailable) {
+        // The conditional request runs untouched and signs in with the resident passkey.
+        phase = "early-press-conditional";
+      } else {
+        phase = "early-press-again";
+        await expect(passkeyButton).toHaveAttribute("data-sl-passkey", "again");
+        await clickPasskeyButton(page);
+      }
+      await withTimeout(earlyAsserted, "the early-press sign-in did not assert the passkey within 45 seconds");
+      await test.step("WebAuthn sign-in after an early passkey press", () => expectCallback(earlyCallbackReached, earlyAuthorization.state));
+      expect(getMediations).toEqual(conditionalMediationAvailable ? ["conditional"] : [null]);
+      expect(passkeyResults).toEqual([""]);
+      expect(explicitPasskeyClickCount).toBe(conditionalMediationAvailable ? 1 : 2);
+      await page.unroute("**/js/webauthnAuthenticate.js");
 
       await cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId });
       await cdp.send("WebAuthn.disable");

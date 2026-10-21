@@ -671,7 +671,7 @@ operatör adımı açık olanları kapatır (kuru koşuda `would set …`). `med
 core'un `MEDIA_SERVICE_CLIENTS`'ıyla aynı tutulur (runbook §20).
 Aynı adım SkyMail'in servis hesabına (`skymail-backend`) core'un `audience:read` rolünü (core #242,
 haber ve duyuru kitlesi) ve `communication-preferences:read` rolünü (core #256, kimin takip
-edilebileceği), core'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`,
+edilebileceği) ile `realm-management`'ın `view-users` ve `view-clients` rollerini (Admin REST'ten kişi okuma; production'da 2026-09-23'ten beri elle verilmişti), core'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`,
 `skymail:lists:read`, `skymail:lists:write` ve `skymail:tracking:withdraw` (skymail-backend #75, takibi
 geri alma; yalnız `service-account-core`) rollerini verir; SkyMail'in rollerinden yalnız
 `skymail:tracking:withdraw`'u oluşturur, öbürleri eksikse uyarır (runbook §20.1); listelenen servis istemcisinde varsayılan `roles` kapsamı yoksa ekler (runbook §20.1). `skymail:announcements:send` (haber ve duyuruyu Mail onayı olmadan gönderme)

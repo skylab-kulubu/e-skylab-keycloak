@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
+import { clickPasskeyButton, markPasskeyButtonsReady } from "./passkeyButton";
 
 const path = process.env.B10_BROWSER_CONFIG;
 if (!path) throw new Error("B10_BROWSER_CONFIG must name the disposable fixture config");
@@ -24,6 +25,7 @@ type Auth = ReturnType<typeof authorization>;
 
 async function fixture(browser: Browser, native: boolean) {
   const context = await browser.newContext();
+  await markPasskeyButtonsReady(context);
   await context.route(`${config.callbackUrl}*`, route => route.fulfill({ status: 200, body: "original fixture RP callback" }));
   await context.addInitScript(() => {
     if (window.PublicKeyCredential) Object.defineProperty(window.PublicKeyCredential, "isConditionalMediationAvailable", { value: async () => false });
@@ -356,12 +358,12 @@ test("optional native passkey registration and later resident sign-in work witho
     const { email, auth } = await signup(page, context, "passkey");
     await credentials(page);
     await page.locator('[name="sky-sign-up-credential-choice"][value="passkey"]').click();
-    await page.locator("#authenticateWebAuthnButton, #registerWebAuthn").first().click();
+    await clickPasskeyButton(page);
     await callback(page, context, auth);
     expect((await person(context, email)).credentials).toEqual(["webauthn-passwordless"]);
     await context.clearCookies();
     const login = authorization(); await page.goto(login.url);
-    await page.locator("#authenticateWebAuthnButton").click();
+    await clickPasskeyButton(page);
     await callback(page, context, login);
   }, [() => cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId }), () => context.close()]);
 });

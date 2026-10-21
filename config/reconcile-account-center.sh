@@ -3167,7 +3167,23 @@ SKYMAIL_SERVICE_ROLE_DEFINITIONS=(
   "skymail:lists:write|core|shared|"
   "skymail:tracking:withdraw|core|services|core withdraws a person's mail tracking (PUT /internal/v1/tracking-withdrawals/{sub}, skymail-backend README). core's service account only; never a person, a group, a composite or the default role."
 )
+# realm-management roles of SkyMail's service account (client skymail-backend): SkyMail reads
+# people through the Admin REST API: group members and the holders of its approver roles, and the
+# one Keycloak account of a single mail's address for tracking (GET /users?email=…&exact=true,
+# skymail-backend #85, iletisim-servisi 14/15); that needs view-users (query-users alone does not
+# return the users) and view-clients (the client and its roles). Granted by hand in production on
+# 2026-09-23 (skymail-frontend-prod-release-wizard.sh checks it); codified here, so the operator
+# step only reports them held. Keycloak's own roles, never created here (existing); people and
+# groups hold them too (shared). Keycloak refuses to update a realm-management role (403), so the
+# grant record is not on the role as for the others but on each listed client
+# (REALM_MANAGEMENT_GRANT_ATTRIBUTE = "<timestamp> <role>,<role>"); without it the reconciler
+# identity, which cannot read a service account's roles, would warn on every run.
+REALM_MANAGEMENT_SERVICE_ROLE_DEFINITIONS=(
+  "view-users|skymail-backend|shared|"
+  "view-clients|skymail-backend|shared|"
+)
 CORE_SERVICE_ROLE_GRANT_ATTRIBUTE=skylab.granted-service-accounts
+REALM_MANAGEMENT_GRANT_ATTRIBUTE=skylab.granted-realm-management-roles
 # Listed clients that must be service account only: no browser login (standard or implicit flow) and
 # no password grant (direct access grants). core reads the product from client_id == azp, so a token
 # of forms must always be its service account's; Forms signs people in through skyforms. The
@@ -3248,11 +3264,14 @@ reconcile_service_roles() {
   local resource_uuid roles_file marks role_name value definition name clients holders description
   local role_id client client_uuid flags full_scope scopes mapped sa_line sa_id sa_name held
   local stderr_file line accounts stamp label others account users groups defaults extra parents
-  local flag flag_value open roles_scope_id
-  local operator=false
+  local flag flag_value open roles_scope_id attributes list
+  local operator=false on_client=false
   local names=() all_clients=() plan=() sets=()
   local -A role_ids=() role_clients=() role_holders=() markers=() granted=() client_lines=() person_logins=()
+  local -A client_markers=() client_roles=()
   [[ -z $OPERATOR_KCADM_CONFIG ]] || operator=true
+  # realm-management's roles cannot be updated: their grant record is on the listed client.
+  [[ $resource != realm-management ]] || on_client=true
   if ! resource_uuid=$(optional_lookup client_id_by_client_id "$resource"); then
     return 2
   fi
@@ -3364,6 +3383,15 @@ reconcile_service_roles() {
       held=-
     fi
     client_lines[$client]="$client_uuid|$full_scope|$mapped|$sa_id|$sa_name|$held"
+    if [[ $on_client == true ]]; then
+      # Into a variable first: a failed read must not pass as "no record".
+      # The whole client: kcadm's --fields attributes returns the map empty.
+      attributes=$(kcadm_json "clients/$client_uuid" -r "$TARGET_REALM" | json_tool field attributes)
+      client_markers[$client]=''
+      if [[ -n $attributes ]]; then
+        client_markers[$client]=$(json_tool field "$REALM_MANAGEMENT_GRANT_ATTRIBUTE" <<<"$attributes")
+      fi
+    fi
   done
 
   if [[ $operator == true ]]; then
@@ -3417,7 +3445,11 @@ reconcile_service_roles() {
         log "role scope of $client: updated (+$resource/$name; fullScopeAllowed is false)"
       fi
       if [[ $held == - ]]; then
-        if [[ -n $value && ,${value#* }, == *",$sa_name,"* ]]; then
+        if [[ $on_client == true ]]; then
+          value=${client_markers[$client]:-}
+          [[ -n $value && ,${value#* }, == *",$name,"* ]] || value=''
+        fi
+        if [[ -n $value && ( $on_client == true || ,${value#* }, == *",$sa_name,"* ) ]]; then
           log "service account $sa_name: $name unchanged (granted by the operator step at ${value%% *}; the reconciler identity cannot read service-account roles, the operator step re-checks them)"
         else
           warn "$name is not yet granted to service account $sa_name by the operator step (the reconciler identity cannot read or grant service-account roles); $CORE_SERVICE_ROLE_OPERATOR_STEP"
@@ -3435,8 +3467,9 @@ reconcile_service_roles() {
         log "service account $sa_name: $name granted"
       fi
       accounts+=",$sa_name"
+      client_roles[$client]+=",$name"
     done
-    [[ $operator == true ]] || continue
+    [[ $operator == true && $on_client == false ]] || continue
 
     accounts=$(tr ',' '\n' <<<"${accounts#,}" | sed '/^$/d' | sort | paste -sd, -)
     granted[$name]=$accounts
@@ -3450,6 +3483,20 @@ reconcile_service_roles() {
     fi
   done
   [[ $operator == true ]] || return 0
+  if [[ $on_client == true ]]; then
+    for client in "${all_clients[@]}"; do
+      [[ -n ${client_roles[$client]:-} ]] || continue
+      list=$(tr ',' '\n' <<<"${client_roles[$client]#,}" | sed '/^$/d' | sort | paste -sd, -)
+      value=${client_markers[$client]:-}
+      [[ $list != "${value#* }" ]] || continue
+      stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      if service_role_change "record the grant of $resource roles $list on client $client ($REALM_MANAGEMENT_GRANT_ATTRIBUTE=<now> $list)"; then
+        kcadm_quiet update "clients/${client_lines[$client]%%|*}" -r "$TARGET_REALM" \
+          -s "attributes.\"$REALM_MANAGEMENT_GRANT_ATTRIBUTE\"=$stamp $list"
+        log "client $client: $resource grants recorded ($REALM_MANAGEMENT_GRANT_ATTRIBUTE=$stamp $list)"
+      fi
+    done
+  fi
 
   # Reports: nothing is removed.
   for line in ${plan[@]+"${plan[@]}"}; do
@@ -3468,6 +3515,9 @@ reconcile_service_roles() {
     [[ -z $parents ]] \
       || warn "$name is in the composite roles ${parents#,} (nothing was removed; every holder of them holds it, remove it in the Admin Console)"
   done
+  # No NOTE for realm-management: the held roles are the effective (composite) ones, and view-users
+  # and view-clients themselves hold query-users, query-groups and query-clients.
+  [[ $resource != realm-management ]] || return 0
   for client in "${all_clients[@]}"; do
     [[ -n ${client_lines[$client]:-} ]] || continue
     IFS='|' read -r client_uuid full_scope mapped sa_id sa_name held <<<"${client_lines[$client]}"
@@ -3483,12 +3533,14 @@ reconcile_service_roles() {
   done
 }
 
-# The service-roles step: core's service roles, then SkyMail's roles of core's service account, and
-# for the operator one total of the changes.
+# The service-roles step: core's service roles, then SkyMail's roles of core's service account, then
+# the realm-management roles of SkyMail's service account, and for the operator one total of the
+# changes.
 reconcile_core_service_roles() {
   SERVICE_ROLE_CHANGES=0
   reconcile_service_roles "$CORE_CLIENT_ID" CORE_SERVICE_ROLE_DEFINITIONS create
   reconcile_service_roles "$SKYMAIL_CLIENT_ID" SKYMAIL_SERVICE_ROLE_DEFINITIONS existing
+  reconcile_service_roles realm-management REALM_MANAGEMENT_SERVICE_ROLE_DEFINITIONS existing
   [[ -n $OPERATOR_KCADM_CONFIG ]] || return 0
   if [[ $RECONCILE_CHECK == true ]]; then
     log "check: $SERVICE_ROLE_CHANGES change(s) pending; nothing was written"

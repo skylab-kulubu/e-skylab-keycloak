@@ -39,7 +39,7 @@ entegrasyon testi bunu doğrular.
 | Kimlik korumaları: core sertifika rolleri, OBS `department mapper`, core'un `manage-clients` rolü | Uzlaştırıcı **dokunmaz**: kimliğinin kullanıcı ve kimlik sağlayıcısı yetkisi yoktur. Operatör `config/identity-guardrails.sh` ile uygular (§8). |
 | Forms'un Privileged rolü (§28) | `forms` istemcisinde `skyforms:read-all` (DK'nın Forms okuması; forms-backend henüz okumuyor) her koşuda var edilir; SkyMail'inkiler gibi yalnız `DK`'ya **bir kez** verilir (operatörün `core-roles` koşusu). |
 | SkyMail'in Privileged rolleri (§25) | `skymail` istemcisinde `skymail:system-mails:read` (ADMIN, YK, DK) `skymail:announcements:send` (yalnız ADMIN ve YK; duyuru-haber D4) ve `skymail:mails:tracking:read` (ADMIN, YK, DK; kişi bazındaki takip raporu, iletisim-servisi 17) her koşuda var edilir (yoksa açıklamasıyla oluşturulur). core'un kaynak rolleri gibi kendi Privileged gruplarına **bir kez** verilir ve `skylab.seeded-group-mappings` ile işaretlenir; tohumlamayı operatörün `KEYCLOAK_RECONCILE_ONLY=core-roles` koşusu yapar. Kişilerin diğer `skymail:*` rolleri `/ROLLER` rol gruplarına taşınır (§26). |
-| Servis hesaplarının rolleri (§20, §20.1) | `forms`'a core'un dört servis rolü, `skymail-backend`'e core'un `audience:read`'i ve `communication-preferences:read`'i, `core`'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`, `skymail:lists:read`, `skymail:lists:write`, `skymail:tracking:withdraw` rolleri. Uzlaştırıcı kimliği core rollerini ve `skymail:tracking:withdraw`'u oluşturur ve raporlar; vermeyi operatör `KEYCLOAK_RECONCILE_ONLY=service-roles` ile yapar. SkyMail'in öbür rolleri oluşturulmaz. Yalnız servis hesaplarının rolünü taşıyan kişi, grup, varsayılan rol ve bileşik rol bildirilir. |
+| Servis hesaplarının rolleri (§20, §20.1) | `forms`'a core'un dört servis rolü, `skymail-backend`'e core'un `audience:read`'i ve `communication-preferences:read`'i ile `realm-management`'ın `view-users` ve `view-clients`'ı, `core`'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`, `skymail:lists:read`, `skymail:lists:write`, `skymail:tracking:withdraw` rolleri. Uzlaştırıcı kimliği core rollerini ve `skymail:tracking:withdraw`'u oluşturur ve raporlar; vermeyi operatör `KEYCLOAK_RECONCILE_ONLY=service-roles` ile yapar. SkyMail'in öbür rolleri oluşturulmaz. Yalnız servis hesaplarının rolünü taşıyan kişi, grup, varsayılan rol ve bileşik rol bildirilir. |
 | Rol grupları `/ROLLER/<UYGULAMA>-<ROL>` (§26) ve Leader gruplarının uygulama rolleri (§27) | Uzlaştırıcı **dokunmaz** (gruba rol eşlemek kullanıcı yetkisi ister). Operatör `config/role-groups.sh` ve `config/leader-app-roles.sh` (ya da `KEYCLOAK_RECONCILE_ONLY=role-groups` / `leader-app-roles`) ile kurar; kuru koşu varsayılandır, `--apply` yazar; üye hiç eklenmez. |
 
 Ortam değişkenleri: `KEYCLOAK_PASSKEY_RP_ID` (varsayılan `yildizskylab.com`) ve
@@ -2862,10 +2862,11 @@ Aynı adım iki servis hesabını daha yönetir:
 | `skymail:access`, `skymail:mails:send` | `skymail` (oluşturulmaz) | `core`'un servis hesabı (kişiler de taşır) | core'un tekil postaları, `POST /v1/mail_tasks/single` (core `internal/mail/mail.go`) |
 | `skymail:lists:read`, `skymail:lists:write` | `skymail` (oluşturulmaz) | `core`'un servis hesabı (kişiler de taşır) | core'un etkinlik posta listeleri: `GET /v1/mailing_lists/…` okuma, `POST`/`DELETE` yazma (core `internal/mail/lists.go`, SkyMail `main.go` rota tablosu) |
 | `communication-preferences:read` | `core` (adım oluşturur) | yalnız `skymail-backend`'in servis hesabı | `POST /internal/v1/communication-preferences/tracking:resolve`: SkyMail takipli bir gönderimi kuyruğa koymadan önce kimi takip edebileceğini sorar (core #256, core `docs/communication-preferences.md`). core kişi token'ını rol taşısa da 403 ile reddeder |
+| `view-users`, `view-clients` | `realm-management` (Keycloak'ın; oluşturulmaz) | `skymail-backend`'in servis hesabı (kişiler ve gruplar da taşır) | SkyMail kişileri Admin REST'ten okur: grup üyeleri, onay rollerinin sahipleri ve tekil postada takip için adresin tek Keycloak hesabı (`GET /users?email=…&exact=true`, skymail-backend #85). `view-users` gerekir (yalnız `query-users` kullanıcıları döndürmez), `view-clients` istemciyi ve rollerini okur. Production'da 2026-09-23'te elle verildi; burada kodlandı |
 | `skymail:tracking:withdraw` | `skymail` (**adım oluşturur**; listedeki tek açıklamalı SkyMail satırı) | yalnız `core`'un servis hesabı (`service-account-core`) | `PUT /internal/v1/tracking-withdrawals/{sub}`: kişi takibi kapatınca core SkyMail'deki olaylarını sildirir (skymail-backend #75, core #256). SkyMail `azp=core`, `aud ∋ skymail` ve bu rolü ister, token'ın servis hesabınınki olduğuna bakmaz: rol hiçbir kişiye, gruba, bileşik role ya da varsayılan role girmez (B2) |
 
-Liste `CORE_SERVICE_ROLE_DEFINITIONS` (core) ve `SKYMAIL_SERVICE_ROLE_DEFINITIONS` (SkyMail)
-dizilerindedir; ikisi aynı gövdeyle (`reconcile_service_roles`) yürür ve operatör adımının sonunda tek
+Liste `CORE_SERVICE_ROLE_DEFINITIONS` (core), `SKYMAIL_SERVICE_ROLE_DEFINITIONS` (SkyMail) ve
+`REALM_MANAGEMENT_SERVICE_ROLE_DEFINITIONS` (realm-management) dizilerindedir; üçü aynı gövdeyle (`reconcile_service_roles`) yürür ve operatör adımının sonunda tek
 toplam yazılır (`check: N change(s) pending…` / `applied N change(s)`). SkyMail'in rolleri SkyMail'in
 kataloğudur: yoksa `WARNING: client role <rol> of skymail does not exist in realm …; it is not granted
 to core` yazılır ve o rol atlanır. Bunlar bugüne kadar elle verilmişti; kuru koşu production'daki
@@ -2917,6 +2918,20 @@ gönderimde kimseyi takip etmez). Keycloak yayını ve operatör adımı product
 SkyMail'in `SKYMAIL_TRACKING=on`'undan önce yapılır. Geri dönüş: Admin Console'dan rol servis
 hesabından kaldırılır ve `skylab.granted-service-accounts` özniteliği silinir; kalıcı geri dönüş
 satırı listeden çıkaran sürümdür.
+
+**`realm-management` rolleri.** Production'da `service-account-skymail-backend` iki rolü 2026-09-23'ten
+beri taşıdığı için operatör kuru koşusu bunlar için yalnız `service account
+service-account-skymail-backend: view-users unchanged (held)` (ve `view-clients`) ile ilk kez bir
+`would record the grant of realm-management roles view-clients,view-users on client skymail-backend
+(skylab.granted-realm-management-roles=<now> view-clients,view-users)` satırı gösterir. Keycloak
+realm-management rollerinin güncellenmesini reddettiği (403) için kayıt, öbür rollerdeki gibi rolün
+değil `skymail-backend` istemcisinin özniteliğidir; izin değiştirmez. `skymail-backend`'de
+`fullScopeAllowed=false` ise ve rol kapsamında eşli değilse `would map realm-management/view-users in
+the role scope of skymail-backend …` da gelir (Admin REST rolü token'ın kapsamından da ister). `would
+grant view-users …` görünürse production'da rol yok demektir: uygulamadan önce durulur. Bu iki rol
+için `NOTE: … also holds …` yazılmaz (etkin rollerde `query-users`, `query-groups`, `query-clients`
+bileşen olarak gelir). Uzlaştırıcı kimliği servis hesabının rollerini okuyamadığı için kayıt
+yazılana kadar `WARNING: view-users is not yet granted …` uyarır.
 
 Harness (`tests/core-service-roles.sh`): ilk tam koşu iki rolü açıklamasıyla oluşturur, kimseye
 vermez ve uyarır; `skymail:tracking:withdraw` bir realm rolünün bileşeniyken operatörün kuru ve

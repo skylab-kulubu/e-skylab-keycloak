@@ -24,6 +24,8 @@
 
 export const PASSKEY_BUTTON_IDS = ["authenticateWebAuthnButton", "registerWebAuthn"];
 export const READY_ATTRIBUTE = "data-sl-passkey-ready";
+/** On <html> while this runs, so a test tells the theme's pages from Keycloak's own (no ready mark). */
+export const WATCH_ATTRIBUTE = "data-sl-passkey-watch";
 export const STATE_ATTRIBUTE = "data-sl-passkey";
 export const SETUP_LIMIT_MS = 3_000;
 export const WAIT_LIMIT_MS = 10_000;
@@ -158,7 +160,9 @@ export function installPasskeyButtonReady(): () => void {
   observer.observe(document.documentElement, { childList: true, subtree: true });
   watchAll();
   document.addEventListener("click", onClick, true);
+  document.documentElement.setAttribute(WATCH_ATTRIBUTE, "");
   return () => {
+    document.documentElement.removeAttribute(WATCH_ATTRIBUTE);
     observer.disconnect();
     document.removeEventListener("click", onClick, true);
     restore.splice(0).reverse().forEach(undo => undo());

@@ -4,7 +4,8 @@ import {
   READY_ATTRIBUTE,
   SETUP_LIMIT_MS,
   STATE_ATTRIBUTE,
-  WAIT_LIMIT_MS
+  WAIT_LIMIT_MS,
+  WATCH_ATTRIBUTE
 } from "./passkeyButtonReady";
 
 type Request = { mediation: string; aborted: () => boolean };
@@ -200,6 +201,13 @@ describe("a passkey button pressed before Keycloak's script is set up", () => {
     await vi.advanceTimersByTimeAsync(WAIT_LIMIT_MS);
     expect(button).not.toHaveAttribute(STATE_ATTRIBUTE);
     expect(button).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("marks the page while it watches", () => {
+    expect(document.documentElement).toHaveAttribute(WATCH_ATTRIBUTE, "");
+    uninstall();
+    expect(document.documentElement).not.toHaveAttribute(WATCH_ATTRIBUTE);
+    uninstall = installPasskeyButtonReady();
   });
 
   it("leaves other buttons alone", async () => {

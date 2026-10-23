@@ -76,7 +76,7 @@ source "$SCRIPT_DIR/kcadm-rest.sh"
 REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 IMAGE=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' "$REPOSITORY_ROOT/Dockerfile")
 MAVEN_IMAGE=$(sed -n 's/^FROM \(maven:[^ ]*\) AS providers$/\1/p' "$REPOSITORY_ROOT/Dockerfile")
-MAILPIT_IMAGE=$(sed -n 's/^ *image: \(axllent\/mailpit:[^ ]*\)$/\1/p' "$SCRIPT_DIR/docker-compose.integration.yml")
+MAILPIT_IMAGE=$(sed -n 's/^ *image: \(ghcr\.io\/axllent\/mailpit:[^ ]*\)$/\1/p' "$SCRIPT_DIR/docker-compose.integration.yml")
 RABBITMQ_IMAGE=$(sed -n 's/^ *image: \(rabbitmq:[^ ]*\)$/\1/p' "$SCRIPT_DIR/docker-compose.integration.yml")
 NODE_IMAGE=$(sed -n 's/^ARG NODE_IMAGE=//p' "$REPOSITORY_ROOT/Dockerfile")
 PORT=${SIGN_UP_BY_EMAIL_CODE_TEST_PORT:-18101}

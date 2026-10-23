@@ -102,6 +102,15 @@ import java.util.TreeMap;
  *                               (^[A-Z][A-Z0-9-]{1,23}$), a name twice, a group without exactly one
  *                               client or without a role, a role twice, or a text with a tab, a
  *                               line break, a double quote or a backslash is refused (exit 1).
+ *   app-assignments FILE       FILE is config/app-assignments.json (app-assignments.sh); validates it
+ *                               and prints "app<TAB>client<TAB>true|false<TAB>role role...<TAB>name" per
+ *                               app (assignmentRequired third), then "seed<TAB>client<TAB>target<TAB>role
+ *                               role..." per initial assignment. A client twice, an app without a name
+ *                               or a role, a role twice or with a space, a tab, a quote or a backslash, a
+ *                               suggested role the app does not assign, an initial assignment of a role
+ *                               its app does not assign, or a target other than top-teams,
+ *                               top-team-leaders or one top team (/UYELER/<area>/<team>) is refused
+ *                               (exit 1).
  *   same-shape OTHER.json [STEP]
  *                               stdin and OTHER are the flat execution lists of two authentication
  *                               flows; exits 0 when both have the same shape (the same executions in
@@ -159,6 +168,7 @@ public final class ReconcileJson {
             case "email-code-flow" -> System.exit(emailCodeFlow(args, readStdin(), out));
             case "config-value" -> System.exit(configValue(args, readStdin(), out));
             case "role-groups" -> roleGroups(requireFile(args), out);
+            case "app-assignments" -> appAssignments(requireFile(args), out);
             case "same-shape" -> System.exit(sameShape(args, readStdin()));
             case "otp-guard" -> System.exit(otpGuard(args, readStdin(), out));
             default -> usage();
@@ -173,7 +183,8 @@ public final class ReconcileJson {
                 + "  |  ReconcileJson password-form FROM TO  |  ReconcileJson first-broker-login STEP"
                 + "  |  ReconcileJson email-code-flow STEP SUBFLOW OTP_SUBFLOW OFFER FORM..."
                 + "  |  ReconcileJson config-value NAME VALUE  |  ReconcileJson same-shape OTHER [STEP]"
-                + "  |  ReconcileJson otp-guard STEP  |  ReconcileJson role-groups FILE");
+                + "  |  ReconcileJson otp-guard STEP  |  ReconcileJson role-groups FILE"
+                + "  |  ReconcileJson app-assignments FILE");
         System.exit(1);
     }
 
@@ -508,6 +519,102 @@ public final class ReconcileJson {
                     + " without tabs, double quotes or backslashes");
         }
         return text;
+    }
+
+    // ------------------------------------------------------------------ app-assignments
+
+    private static final java.util.regex.Pattern APP_ROLE_NAME =
+            java.util.regex.Pattern.compile("^[^\\s\"\\\\]+$");
+    private static final java.util.regex.Pattern TOP_TEAM_PATH =
+            java.util.regex.Pattern.compile("^/UYELER/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$");
+
+    private static void appAssignments(JsonNode config, PrintStream out) {
+        if (!config.isObject()) {
+            throw new IllegalArgumentException("app-assignments expects a JSON object");
+        }
+        JsonNode apps = config.path("apps");
+        if (!apps.isArray() || apps.isEmpty()) {
+            throw new IllegalArgumentException("app-assignments: apps must be a non-empty array");
+        }
+        Map<String, java.util.Set<String>> rolesOf = new TreeMap<>();
+        List<String> lines = new ArrayList<>();
+        for (JsonNode app : apps) {
+            String client = app.path("client").asText("");
+            if (!app.path("client").isTextual() || !APP_ROLE_NAME.matcher(client).matches()) {
+                throw new IllegalArgumentException("app-assignments: every app needs a client (a plain string)");
+            }
+            if (rolesOf.containsKey(client)) {
+                throw new IllegalArgumentException("app-assignments: the client " + client + " is named twice");
+            }
+            JsonNode name = app.path("name");
+            String text = name.asText("");
+            if (!name.isTextual() || text.isBlank() || text.contains("\t") || text.contains("\n") || text.contains("\r")) {
+                throw new IllegalArgumentException("app-assignments: " + client + " needs a one-line name");
+            }
+            if (!app.path("assignmentRequired").isBoolean()) {
+                throw new IllegalArgumentException("app-assignments: " + client + " needs assignmentRequired true or false");
+            }
+            java.util.Set<String> roles = appRoleSet(app.path("roles"), client, "roles");
+            if (roles.isEmpty()) {
+                throw new IllegalArgumentException("app-assignments: " + client + " needs at least one role");
+            }
+            JsonNode suggested = app.path("suggestedRoles");
+            if (!suggested.isMissingNode() && !suggested.isNull()) {
+                for (String role : appRoleSet(suggested, client, "suggestedRoles")) {
+                    if (!roles.contains(role)) {
+                        throw new IllegalArgumentException("app-assignments: " + client + " suggests " + role
+                                + ", which it does not assign");
+                    }
+                }
+            }
+            rolesOf.put(client, roles);
+            lines.add(String.join("\t", "app", client, String.valueOf(app.path("assignmentRequired").asBoolean()),
+                    String.join(" ", roles), text));
+        }
+        JsonNode seeds = config.path("initialAssignments");
+        if (!seeds.isMissingNode() && !seeds.isArray()) {
+            throw new IllegalArgumentException("app-assignments: initialAssignments must be an array");
+        }
+        for (JsonNode seed : seeds) {
+            String client = seed.path("client").asText("");
+            java.util.Set<String> assignable = rolesOf.get(client);
+            if (assignable == null) {
+                throw new IllegalArgumentException("app-assignments: an initial assignment names the client " + client
+                        + ", which is no app of the catalogue");
+            }
+            java.util.Set<String> roles = appRoleSet(seed.path("roles"), client, "initialAssignments roles");
+            if (roles.isEmpty()) {
+                throw new IllegalArgumentException("app-assignments: an initial assignment of " + client + " names no role");
+            }
+            for (String role : roles) {
+                if (!assignable.contains(role)) {
+                    throw new IllegalArgumentException("app-assignments: an initial assignment gives " + client + "/" + role
+                            + ", which the app does not assign (no app role)");
+                }
+            }
+            String target = seed.path("target").asText("");
+            if (!seed.path("target").isTextual() || !(target.equals("top-teams") || target.equals("top-team-leaders")
+                    || TOP_TEAM_PATH.matcher(target).matches())) {
+                throw new IllegalArgumentException("app-assignments: the target '" + target
+                        + "' is not top-teams, top-team-leaders or one top team (/UYELER/<area>/<team>)");
+            }
+            lines.add(String.join("\t", "seed", client, target, String.join(" ", roles)));
+        }
+        lines.forEach(out::println);
+    }
+
+    private static java.util.Set<String> appRoleSet(JsonNode array, String client, String field) {
+        if (!array.isArray()) {
+            throw new IllegalArgumentException("app-assignments: " + client + " " + field + " must be an array");
+        }
+        java.util.Set<String> roles = new java.util.LinkedHashSet<>();
+        for (JsonNode role : array) {
+            if (!role.isTextual() || !APP_ROLE_NAME.matcher(role.asText()).matches() || !roles.add(role.asText())) {
+                throw new IllegalArgumentException("app-assignments: " + client + " " + field
+                        + " has an empty, odd or repeated role");
+            }
+        }
+        return roles;
     }
 
     // ------------------------------------------------------------------ realm-attribute

@@ -581,6 +581,9 @@ def assert_affected_jobs(root, helper)
     if text.include?("KEYCLOAK_RECONCILE_ONLY=") && text.match?(/(?<![A-Za-z0-9_\/.-])(?:role-groups|leader-app-roles)(?![A-Za-z0-9_.-])/)
       needed += %w[config/role-groups.sh config/leader-app-roles.sh]
     end
+    if text.include?("KEYCLOAK_RECONCILE_ONLY=") && text.match?(/(?<![A-Za-z0-9_\/.-])(?:app-assignments|tohum-atamalar)(?![A-Za-z0-9_.-])/)
+      needed += %w[config/app-assignments.sh]
+    end
     next if needed.empty?
     missing = needed.uniq - edges.fetch(path, [])
     unless missing.empty?
@@ -588,9 +591,14 @@ def assert_affected_jobs(root, helper)
     end
   end
   reconcile = code.("config/reconcile-account-center.sh")
+  # Two dynamic calls: the operator steps role-groups and leader-app-roles (the script of the step's
+  # name) and app-assignments and tohum-atamalar (config/app-assignments.sh, ekip-yetkileri ticket 03).
   unless reconcile.include?('if [[ $RECONCILE_ONLY == role-groups || $RECONCILE_ONLY == leader-app-roles ]]; then') &&
-      reconcile.scan('"$CONFIG_DIR/$RECONCILE_ONLY.sh"').length == 1 && reconcile.scan(dynamic).length == 1
-    abort "#{helper}: the reconciler's only dynamic call must be the operator steps role-groups and leader-app-roles"
+      reconcile.scan('"$CONFIG_DIR/$RECONCILE_ONLY.sh"').length == 1 &&
+      reconcile.include?('if [[ $RECONCILE_ONLY == app-assignments || $RECONCILE_ONLY == tohum-atamalar ]]; then') &&
+      reconcile.include?("\n  app_script=app-assignments\n") && reconcile.scan('"$CONFIG_DIR/$app_script.sh"').length == 1 &&
+      reconcile.scan(dynamic).length == 2
+    abort "#{helper}: the reconciler's only dynamic calls must be the operator steps role-groups and leader-app-roles, and app-assignments and tohum-atamalar"
   end
   unreached = listing.("--unreached").split
   unless unreached.empty?

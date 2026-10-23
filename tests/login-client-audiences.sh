@@ -7,6 +7,9 @@
 # carries. The scopes are made by hand in production first and adopted by the reconciler:
 #   skyforms      -> skyforms-forms-audience     (forms-audience, aud += forms; forms-backend
 #                    RequireAudience, members got 401 without it)
+#   skyforms      -> skyforms-core-audience      (core-audience, aud += core; forms-frontend calls
+#                    core with the person's own token: the person picker, /v1/groups;
+#                    ekip-yetkileri ticket 03 §7; made by the reconciler, not by hand)
 #   frontend-main -> frontend-main-core-audience (core-audience, aud += core; core ADR 0019,
 #                    every CMS image upload through the site got 401 without it)
 #   frontend-arge -> frontend-arge-core-audience (core-audience, aud += core; arge's CMS
@@ -31,6 +34,7 @@ LCA_USER='audience-fixture'
 LCA_PASSWORD='audience-fixture-password-change-me'
 LCA_SKYFORMS_SCOPE=skyforms-forms-audience
 LCA_SKYFORMS_GROUPS_SCOPE=skyforms-groups
+LCA_SKYFORMS_CORE_SCOPE=skyforms-core-audience
 LCA_FRONTEND_MAIN_SCOPE=frontend-main-core-audience
 LCA_FRONTEND_ARGE_SCOPE=frontend-arge-core-audience
 LCA_SKYFORMS_REDIRECT=https://forms.yildizskylab.com/api/auth/callback/keycloak
@@ -89,6 +93,8 @@ stage_login_audiences_after_first_reconciliation() {
     || fail 'the first reconciliation did not narrow the skymail client'
   grep -Fq '[reconcile] client scope skymail-api-audience: created' "$log" \
     || fail 'the first reconciliation did not make the SkyMail audience scope'
+  grep -Fq "[reconcile] client scope $LCA_SKYFORMS_CORE_SCOPE: created" "$log" \
+    || fail 'the first reconciliation did not make the skyforms core audience scope'
   [[ -z $(lca_scope_uuids "$LCA_FRONTEND_MAIN_SCOPE") ]] \
     || fail 'the reconciler created a scope for a client that does not exist'
   grep -Fq "[reconcile] WARNING: client frontend-arge does not exist in realm $V2_REALM; skipped client scope $LCA_FRONTEND_ARGE_SCOPE, skycms-audience and its token narrowing" "$log" \
@@ -278,6 +284,7 @@ stage_login_audiences_after_second_reconciliation() {
   [[ $(lca_scope_uuids "$LCA_SKYFORMS_SCOPE") == "$LCA_HAND_MADE_SCOPE_UUID" ]] \
     || fail 'repairing the skyforms scope replaced it instead of repairing it in place'
   lca_assert_client skyforms "$LCA_SKYFORMS_SCOPE" forms-audience forms "$LCA_SKYFORMS_REDIRECT"
+  lca_assert_client skyforms "$LCA_SKYFORMS_CORE_SCOPE" core-audience core "$LCA_SKYFORMS_REDIRECT"
   lca_assert_skyforms_groups
   lca_assert_client frontend-main "$LCA_FRONTEND_MAIN_SCOPE" core-audience core "$LCA_FRONTEND_MAIN_REDIRECT"
   lca_assert_client frontend-arge "$LCA_FRONTEND_ARGE_SCOPE" core-audience core "$LCA_FRONTEND_ARGE_REDIRECT"
@@ -318,7 +325,7 @@ lca_state_snapshot() {
     kcadm get "clients/$client_uuid/scope-mappings" -r "$V2_REALM" -c | jq -c '{realmMappings: ((.realmMappings // []) | sort_by(.id)), clientMappings: ((.clientMappings // {}) | map_values(.mappings | sort_by(.id)))}'
     kcadm get "clients/$client_uuid/protocol-mappers/models" -r "$V2_REALM" -c | jq -c 'sort_by(.id)'
   done
-  for scope_name in "$LCA_SKYFORMS_SCOPE" "$LCA_SKYFORMS_GROUPS_SCOPE" "$LCA_FRONTEND_MAIN_SCOPE" "$LCA_FRONTEND_ARGE_SCOPE" skycms-audience skymail-api-audience; do
+  for scope_name in "$LCA_SKYFORMS_SCOPE" "$LCA_SKYFORMS_GROUPS_SCOPE" "$LCA_SKYFORMS_CORE_SCOPE" "$LCA_FRONTEND_MAIN_SCOPE" "$LCA_FRONTEND_ARGE_SCOPE" skycms-audience skymail-api-audience; do
     scope_uuid=$(lca_scope_uuids "$scope_name")
     kcadm get "client-scopes/$scope_uuid" -r "$V2_REALM" -c
     kcadm get "client-scopes/$scope_uuid/protocol-mappers/models" -r "$V2_REALM" -c

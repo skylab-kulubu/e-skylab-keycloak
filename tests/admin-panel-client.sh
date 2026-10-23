@@ -402,7 +402,7 @@ stage_admin_panel_tokens() {
 # production (the SKY LAB admin panel's grants):
 #   - a Privileged person in /UYELER/YK: core's resource roles as the operator seeded them (the
 #     core-roles stage ran before), the panel's content:read and content:write (inscribed) and the
-#     forms role skyforms:* that forms-backend checks;
+#     forms role skyforms:* that forms-backend checks (seeded to YK by the core-roles step, S4);
 #   - a team Leader in the team group and its LIDERLER subgroup: content:read and content:write for
 #     the team page; core and inscribed decide from the group paths;
 #   - a plain member of the team: no role of any API, only the group path.
@@ -424,6 +424,12 @@ stage_admin_panel_exchange_claims() {
   output=$(ap_operator_reconcile "$AP_CLIENT" -e KEYCLOAK_RECONCILE_ONLY=admin-panel-client) \
     || { printf '%s\n' "$output" >&2; fail 'the step alone failed'; }
   ap_assert_contract core forms
+  # skyforms:* is one of Forms' Privileged roles (YK's, ekip-yetkileri ticket 03, S4): once it exists
+  # the core-roles step seeds it to /UYELER/YK, as in production; the no-op reconciliation after
+  # this stage then finds it seeded.
+  output=$(cr_operator_reconcile) || { printf '%s\n' "$output" >&2; fail 'the core-roles step failed'; }
+  grep -Fq "[reconcile] forms role $AP_FORMS_CHECKED_ROLE: seeded once to /UYELER/YK (granted to: /UYELER/YK)" <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail "the core-roles step did not seed $AP_FORMS_CHECKED_ROLE to YK alone"; }
   parent=/UYELER
   for name in ARGE WEBLAB LIDERLER; do
     kcadm create "groups/$(ap_group_id "$parent")/children" -r "$V2_REALM" -s "name=$name" >/dev/null
@@ -431,7 +437,7 @@ stage_admin_panel_exchange_claims() {
   done
   [[ $parent == "$AP_LEADERS_PATH" ]] || fail "the team groups are not $AP_LEADERS_PATH"
   ap_grant_group /UYELER/YK "$AP_CLIENT" content:read content:write
-  ap_grant_group /UYELER/YK forms "$AP_FORMS_CHECKED_ROLE"
+  # /UYELER/YK holds skyforms:* since the core-roles step above (no hand grant).
   ap_grant_group "$AP_LEADERS_PATH" "$AP_CLIENT" content:read content:write
   privileged=$(ap_person "$AP_PRIVILEGED_USER" /UYELER/YK)
   leader=$(ap_person "$AP_LEADER_USER" "$AP_TEAM_PATH" "$AP_LEADERS_PATH")

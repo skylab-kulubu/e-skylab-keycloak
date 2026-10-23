@@ -50,8 +50,9 @@
 #     a custom audience is removed too, one naming another audience is a PROBLEM and stays;
 #   - in the sandbox realm the origin is sandbox-<site>, a missing core client is a NOTE, the
 #     Privileged group /UYELER/ADMIN is found and missing teams are WARNINGs;
-#   - --site main is refused in e-skylab (production's frontend-main is hand-made) by both scripts
-#     before a login; in the sandbox realm it makes frontend-main in the event sites' shape with the
+#   - --site main is refused in e-skylab (production's frontend-main is hand-made) by site-clients.sh
+#     before a login, while site-editor-grants.sh checks the main site's grants there (ekip-yetkileri
+#     ticket 03, Ek-2) and --print-expected lists what the code area expects; in the sandbox realm it makes frontend-main in the event sites' shape with the
 #     origin https://sandbox.yildizskylab.com, its editors are the Privileged groups only, an ADMIN
 #     member's token through it carries cms:access + client:admin, its service account stays
 #     content:read + schema:sync, and a second run writes nothing;
@@ -237,12 +238,23 @@ for realm in '' master other-realm; do
   done
 done
 printf '    unset, master and other-realm refused (exit 2) before a login\n'
-for script in site-clients.sh site-editor-grants.sh; do
-  refused=$(run_expecting 2 "$script" "$REALM" --apply --site main)
-  expect_line "$refused" 'refusing --site main in realm e-skylab' '--site main not refused in production'
-  reject_line "$refused" 'realm=' 'the refused --site main run went on'
-done
-printf '    --site main refused in e-skylab (exit 2) before a login\n'
+refused=$(run_expecting 2 site-clients.sh "$REALM" --apply --site main)
+expect_line "$refused" 'refusing --site main in realm e-skylab' '--site main not refused in production'
+reject_line "$refused" 'realm=' 'the refused --site main run went on'
+# The main site's grants are the code area's since ekip-yetkileri ticket 03 (Ek-2): site-editor-grants.sh
+# checks them in production too (the client itself stays hand-made: site-clients.sh refuses it).
+trap - ERR
+main_check=$(run site-editor-grants.sh "$REALM" --check --site main) && status=0 || status=$?
+trap 'on_error "$LINENO"' ERR
+[[ $status == 0 || $status == 1 ]] || { printf '%s\n' "$main_check" >&2; fail "site-editor-grants.sh --check --site main in production exited $status"; }
+reject_line "$main_check" 'refusing --site main' 'site-editor-grants.sh still refuses the main site in production'
+expect_line "$main_check" '[site-grants] realm=e-skylab mode=check sites=main' 'site-editor-grants.sh --site main did not run in production'
+expected=$(run_expecting 0 site-editor-grants.sh "$REALM" --print-expected)
+expect_line "$expected" $'privileged\tADMIN YK\tfrontend-artlab\tcms:access' 'the expectations lack the editor role of ADMIN and YK'
+expect_line "$expected" $'privileged\tDK\tfrontend-main\tcontent:read' 'the expectations lack DK'"'"'s read role on the main site'
+expect_line "$expected" $'team-leaders\t/UYELER/ARGE/AIRLAB\tfrontend-artlab\tcms:access' 'the expectations lack a site team'
+expect_line "$expected" $'pending\t*\tfrontend-arge\t*' 'frontend-arge is not pending'
+printf '    --site main: site-clients.sh refuses it in e-skylab (exit 2) before a login; site-editor-grants.sh checks the main site there; --print-expected lists the code area\n'
 for team in artlab=/UYELER/ARGE/AIRLAB/AGC main=/UYELER/ARGE/AIRLAB/AGC artlab=/UYELER/ARGE; do
   refused=$(run_expecting 2 site-editor-grants.sh "$REALM" --apply --site artlab --team "$team")
   expect_line "$refused" "refusing --team $team: only a top team" 'a --team that is no top team was not refused'

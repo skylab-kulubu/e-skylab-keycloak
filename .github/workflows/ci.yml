@@ -182,6 +182,7 @@ jobs:
           bash tests/check-account-center-origin.sh
           bash tests/check-operator-login-prompts.sh
           bash tests/check-site-editor-grants-team.sh
+          bash tests/check-app-assignments.sh
 
   theme:
     needs: scope
@@ -288,7 +289,8 @@ jobs:
     needs: [mode, scope]
     if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' role-groups ')
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # app-assignments.sh --check reads every role's holders (two kcadm reads a role): minutes.
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v7
 
@@ -417,7 +419,7 @@ jobs:
         run: |
           keycloak_image=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' Dockerfile)
           node_image=$(sed -n 's/^ARG NODE_IMAGE=//p' Dockerfile)
-          mailpit_image=$(sed -n 's/^ *image: \(axllent\/mailpit:[^ ]*\)$/\1/p' tests/docker-compose.integration.yml)
+          mailpit_image=$(sed -n 's/^ *image: \(ghcr\.io\/axllent\/mailpit:[^ ]*\)$/\1/p' tests/docker-compose.integration.yml)
           postgres_image=$(sed -n 's/^export LOGIN_BY_EMAIL_CODE_POSTGRES_IMAGE=//p' tests/login-code-persistent.sh)
           docker pull "$keycloak_image"
           docker pull "$node_image"
@@ -482,7 +484,7 @@ jobs:
       - name: Cache pinned disposable runtime images
         run: |
           docker pull "$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' Dockerfile)"
-          docker pull "$(sed -n 's/^ *image: \(axllent\/mailpit:[^ ]*\)$/\1/p' tests/docker-compose.integration.yml)"
+          docker pull "$(sed -n 's/^ *image: \(ghcr\.io\/axllent\/mailpit:[^ ]*\)$/\1/p' tests/docker-compose.integration.yml)"
           docker pull "$(sed -n 's/^export B12_PG_IMAGE=//p' tests/after-sign-up.sh)"
       - name: Registration, native YTU and optional credential contract
         run: |
@@ -560,7 +562,7 @@ jobs:
       - name: Cache the pinned disposable runtime images
         run: |
           keycloak_image=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' Dockerfile)
-          mailpit_image=$(sed -n 's/^ *image: \(axllent\/mailpit:[^ ]*\)$/\1/p' tests/docker-compose.integration.yml)
+          mailpit_image=$(sed -n 's/^ *image: \(ghcr\.io\/axllent\/mailpit:[^ ]*\)$/\1/p' tests/docker-compose.integration.yml)
           docker pull "$keycloak_image"
           docker pull "$mailpit_image"
           docker pull "$B12_PG_IMAGE"
@@ -740,7 +742,8 @@ jobs:
           - group: roles
             timeout: 45
           - group: roles-noop
-            timeout: 45
+            # Also the whole reconciliation's dry run (ekip-yetkileri ticket 03): about 38 minutes.
+            timeout: 55
           - group: login
             timeout: 45
           - group: login-rollback
@@ -774,10 +777,18 @@ jobs:
           npm ci --ignore-scripts
           # The runner's apt mirror can hang (run 37664358276: 80 minutes in apt-get update until the
           # job timeout): each attempt gets 5 minutes, three attempts.
+          # apt gives up on a stalled mirror itself (30 s a request, three tries) instead of hanging.
+          printf 'Acquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nAcquire::Retries "3";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99-ci-timeouts >/dev/null
           for attempt in 1 2 3; do
-            timeout 300 npx playwright install --with-deps chromium && break
+            timeout -k 10 300 npx playwright install --with-deps chromium && break
             if [ "$attempt" = 3 ]; then exit 1; fi
             echo "playwright install attempt $attempt failed or timed out; retrying" >&2
+            # timeout stops npx, but the apt-get it started as root keeps the dpkg lock and the next
+            # attempt fails at once on /var/lib/dpkg/lock-frontend (run 39946385594): stop it first.
+            sudo pkill -KILL -x apt-get || true
+            sudo pkill -KILL -x dpkg || true
+            sudo dpkg --configure -a || true
           done
           npm run build-keycloak-theme
           bash ../tests/check-theme-contract.sh

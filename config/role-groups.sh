@@ -23,12 +23,21 @@
 # --audit adds the rules' read-only report (spec §4.1), with counts and group paths only, never a
 # person's name:
 #   K1  people (service accounts excluded) who hold client roles or realm roles directly, per role;
+#       an app role (config/app-assignments.json, core's AppRoles) held by a person is a panel
+#       assignment (ekip-yetkileri ticket 03, Yusuf's S1 of 2026-10-23: Microsoft Entra's individual
+#       assignment) and is counted apart; the target 0 is for admin, unclassified and realm roles;
 #   K3  people and groups that hold a realm-management role;
-#   K4  groups that hold a role outside the allowed places, the same rule as core's RolePlacement
-#       (internal/authz/role_placement.go) with its default roots (DefaultPrivilegedRoots): a
-#       Privileged root itself (/ADMIN, /YK, /DK, /UYELER/ADMIN, /UYELER/YK, /UYELER/DK; production
-#       has three of them), the Leader groups of a top team (/UYELER/<area>/<team>/LIDERLER or
-#       KOORDINATORLER) and a leaf /ROLLER/<NAME> without subgroups.
+#   K4  groups that hold a role outside the allowed places (ekip-yetkileri ticket 03 §6):
+#       - every role: a Privileged root itself (/ADMIN, /YK, /DK, /UYELER/ADMIN, /UYELER/YK,
+#         /UYELER/DK; production has three of them) and a leaf /ROLLER/<NAME> without subgroups;
+#       - an app role also: any team group under /UYELER/<area>/<team> (a top team, a Sub-team, a
+#         Leader group; the panel area), never /UYELER itself or an area;
+#       - an admin or unclassified role also, by name only, in a top team's Leader group
+#         (/UYELER/<area>/<team>/LIDERLER or KOORDINATORLER): the roles config/leader-app-roles.sh
+#         --print-expected gives every top team's Leaders (skycloud/skycloud:access), a Site client's
+#         cms:access for that site's own teams only (config/site-editor-grants.sh --print-expected:
+#         the event sites' lab and organization teams, the main site's Ek-2 list) and a client whose
+#         decision is pending there (frontend-arge, Fatih); any other site's cms:access is K4.
 # A failed read of a group (anything but Keycloak's "not found") stops the run with exit 1: it is
 # never taken for "absent".
 # The audit reads every client role's and realm role's holders (two kcadm calls a role): minutes in
@@ -446,17 +455,66 @@ for name in "${!existing[@]}"; do
 done
 
 # --- the audit (read only, counts and group paths only) --------------------------------------------
-# allowed_place PATH: true for the places a role may be mapped to: core's RolePlacement
-# (internal/authz/role_placement.go) with DefaultPrivilegedRoots, spec §4.1 K4.
+# The app roles (config/app-assignments.json, a copy of core's AppRoles): "client/role" keys.
+declare -A app_role=()
+if [[ $AUDIT == true ]]; then
+  if ! catalogue=$(json_tool app-assignments "$CONFIG_DIR/app-assignments.json" 2>"$WORK_DIR/catalogue.err"); then
+    cat "$WORK_DIR/catalogue.err" >&2
+    printf '[role-groups] %s is not a valid app catalogue; the audit cannot tell app roles from admin roles\n' "$CONFIG_DIR/app-assignments.json" >&2
+    exit 2
+  fi
+  while IFS=$'\t' read -r kind client _ roles _; do
+    [[ $kind == app ]] || continue
+    read -r -a role_list <<<"$roles"
+    for role in "${role_list[@]}"; do app_role[$client/$role]=1; done
+  done <<<"$catalogue"
+fi
+# The named exceptions of a top team's Leader group: every top team's (leader_role, "client/role")
+# and one team's (team_role, "team path|client/role"), from the code area's own lists; pending_client:
+# a client whose place is not decided yet.
+declare -A leader_role=() team_role=() pending_client=()
+if [[ $AUDIT == true ]]; then
+  if ! expected=$(bash "$CONFIG_DIR/leader-app-roles.sh" --print-expected 2>"$WORK_DIR/expected.err"); then
+    cat "$WORK_DIR/expected.err" >&2
+    printf '[role-groups] leader-app-roles.sh --print-expected failed; the audit cannot tell the allowed places\n' >&2
+    exit 2
+  fi
+  while IFS=$'\t' read -r kind client role; do
+    [[ $kind != top-team-leaders ]] || leader_role[$client/$role]=1
+  done <<<"$expected"
+  if ! expected=$(KEYCLOAK_REALM=$TARGET_REALM bash "$CONFIG_DIR/site-editor-grants.sh" --print-expected 2>"$WORK_DIR/expected.err"); then
+    cat "$WORK_DIR/expected.err" >&2
+    printf '[role-groups] site-editor-grants.sh --print-expected failed; the audit cannot tell the allowed places\n' >&2
+    exit 2
+  fi
+  while IFS=$'\t' read -r kind holder client role; do
+    case $kind in
+      team-leaders) team_role[$holder|$client/$role]=1 ;;
+      pending) pending_client[$client]=1 ;;
+    esac
+  done <<<"$expected"
+fi
+# allowed_place PATH LABEL: true for the places the role LABEL ("client/role", "realm/role") may be
+# mapped to (ekip-yetkileri ticket 03 §6; core's RolePlacement for the Privileged roots and the role
+# groups).
 declare -A roles_not_leaf=()
 allowed_place() {
-  case $1 in
+  local path=$1 label=$2
+  case $path in
     /ADMIN | /YK | /DK | /UYELER/ADMIN | /UYELER/YK | /UYELER/DK) return 0 ;;
   esac
-  if [[ $1 =~ ^/UYELER/([^/]+)/[^/]+/(LIDERLER|KOORDINATORLER)$ && " ${PRIVILEGED_NAMES[*]} " != *" ${BASH_REMATCH[1]} "* ]]; then
+  if [[ $path =~ ^/$ROOT/[^/]+$ && -z ${roles_not_leaf[$path]:-} ]]; then
     return 0
   fi
-  [[ $1 =~ ^/$ROOT/[^/]+$ && -z ${roles_not_leaf[$1]:-} ]]
+  if [[ $label != realm/* && -n ${app_role[$label]:-} ]]; then
+    [[ $path =~ ^/UYELER/([^/]+)/[^/]+(/.*)?$ && " ${PRIVILEGED_NAMES[*]} " != *" ${BASH_REMATCH[1]} "* ]]
+    return
+  fi
+  if [[ $path =~ ^(/UYELER/([^/]+)/[^/]+)/(LIDERLER|KOORDINATORLER)$ && " ${PRIVILEGED_NAMES[*]} " != *" ${BASH_REMATCH[2]} "* ]]; then
+    [[ -n ${leader_role[$label]:-} || -n ${team_role[${BASH_REMATCH[1]}|$label]:-} || -n ${pending_client[${label%%/*}]:-} ]]
+    return
+  fi
+  return 1
 }
 
 if [[ $AUDIT == true ]]; then
@@ -465,7 +523,7 @@ if [[ $AUDIT == true ]]; then
     leaf_children=$(children "${existing[$name]}")
     if [[ -n $leaf_children ]]; then roles_not_leaf[/$ROOT/$name]=1; fi
   done
-  declare -A client_people=() realm_people=() k3_people=() k4=()
+  declare -A client_people=() app_people=() realm_people=() k3_people=() k4=()
   k3_groups=''
   default_role="default-roles-${TARGET_REALM,,}"
   # audit_role LABEL BASE: the direct holders of one role (BASE is its admin path).
@@ -476,13 +534,19 @@ if [[ $AUDIT == true ]]; then
     while IFS= read -r user; do
       [[ -n $user && $user != service-account-* ]] || continue
       people=$((people + 1))
-      if [[ $kind == realm ]]; then realm_people[$user]=1; else client_people[$user]=1; fi
+      if [[ $kind == realm ]]; then
+        realm_people[$user]=1
+      elif [[ -n ${app_role[$label]:-} ]]; then
+        app_people[$user]=1
+      else
+        client_people[$user]=1
+      fi
       [[ $label != realm-management/* ]] || k3_people[$user]=1
     done <<<"$users_read"
     while IFS= read -r path; do
       [[ -n $path ]] || continue
       groups+=", $path"
-      allowed_place "$path" || k4[$path]="${k4[$path]:-}, $label"
+      allowed_place "$path" "$label" || k4[$path]="${k4[$path]:-}, $label"
       [[ $label != realm-management/* ]] || k3_groups+=", $path"
     done <<<"$groups_read"
     if [[ $people -gt 0 || -n $groups ]]; then
@@ -503,11 +567,12 @@ if [[ $AUDIT == true ]]; then
   while IFS= read -r role; do
     if [[ -n $role && $role != "$default_role" ]]; then audit_role "realm/$role" "roles/$role" realm; fi
   done <<<"$audit_roles"
-  log "audit K1: ${#client_people[@]} person(s) hold client roles directly, ${#realm_people[@]} person(s) hold realm roles directly (service accounts and $default_role left out; target 0, rol-temizligi F2 and F3)"
+  log "audit K1: ${#client_people[@]} person(s) hold admin or unclassified client roles directly, ${#realm_people[@]} person(s) hold realm roles directly (service accounts and $default_role left out; target 0, rol-temizligi F2 and F3)"
+  log "audit K1: ${#app_people[@]} person(s) hold app roles directly (panel assignments of config/app-assignments.json's apps; allowed, ekip-yetkileri ticket 03)"
   k3_groups=${k3_groups#, }
   log "audit K3: ${#k3_people[@]} person(s) hold realm-management roles directly; groups holding them: ${k3_groups:-none} (target 0 and none)"
   if [[ ${#k4[@]} == 0 ]]; then
-    log 'audit K4: every role is mapped to an allowed place (Privileged roots, top team Leader groups, role groups without subgroups)'
+    log 'audit K4: every role is mapped to an allowed place (Privileged roots, role groups without subgroups, team groups for app roles, top team Leader groups for the named exceptions: SkyCloud, a site'"'"'s cms:access for its own teams, frontend-arge pending)'
   else
     log "audit K4: ${#k4[@]} group(s) hold roles outside the allowed places:"
     while IFS= read -r path; do

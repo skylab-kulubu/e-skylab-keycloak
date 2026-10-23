@@ -22,7 +22,8 @@ ADMIN_CONFIG=/tmp/integration-kcadm.config
 #   roles           (core-erasure fixture) admin panel tokens, core resource roles, SkyMail
 #                   Privileged roles, group overage mapper
 #   roles-noop      (core-erasure fixture, operator state without core's service roles) core
-#                   service roles, exchange claims, no-op reconciliation, identity guardrails
+#                   service roles, exchange claims, no-op reconciliation, identity guardrails, the
+#                   whole reconciliation's dry run
 #   login           (core-erasure fixture, operator state) OIDC/PAR basics, K4 sign-in by e-mail,
 #                   the K4 reconciler's refusal and interrupted swap, re-authentication forwarded
 #                   to Microsoft (PR #89)
@@ -797,6 +798,36 @@ stage_v2_reconcile_noop() {
     | jq --argjson since "$newest_before" '[.[] | select(.time > $since)] | length')
   [[ $new_events == 0 ]] \
     || fail "a no-op reconciliation produced $new_events admin event(s)"
+}
+
+# The whole reconciliation's dry run (KEYCLOAK_RECONCILE_CHECK=true, ekip-yetkileri ticket 03: the
+# release wizard compares it with its plan before the real run). Right after the no-op run the realm
+# is reconciled; with one drift injected, the dry run withholds exactly that one write ("would kcadm
+# ..."), logs the line a real run would, ends as a dry run, writes nothing (no admin event, the drift
+# stays). One run (a full reconciliation takes minutes here); the drift is then repaired by hand.
+stage_v2_reconcile_check() {
+  CURRENT_STAGE='v2 dry run of the whole reconciliation: one drift is named, nothing is written'
+  local log="$TEST_STATE_DIR/reconcile-check.log" newest_before scope_uuid new_events
+  scope_uuid=$(v2_scope_uuid account-center-account-api)
+  kcadm update "client-scopes/$scope_uuid" -r "$V2_REALM" -s 'attributes."include.in.token.scope"=true' >/dev/null
+  newest_before=$(kcadm get admin-events -r "$V2_REALM" -q max=1 -c | jq -r '.[0].time // 0')
+  "${COMPOSE[@]}" run --rm --no-deps -e KEYCLOAK_RECONCILE_CHECK=true keycloak-config >"$log" 2>&1 \
+    || { cat "$log" >&2; fail 'the dry run of the drifted realm failed'; }
+  grep -Fq '[reconcile] CHECK: a dry run' "$log" || fail 'the dry run did not say it is one'
+  grep -Fq "[reconcile] would kcadm update client-scopes/$scope_uuid" "$log" \
+    || { cat "$log" >&2; fail 'the dry run did not name the withheld write'; }
+  [[ $(grep -Ec '^\[reconcile\] would kcadm ' "$log") == 1 ]] \
+    || { cat "$log" >&2; fail 'the dry run of a reconciled realm with one drift withheld more than that one write'; }
+  grep -Fq '[reconcile] client scope account-center-account-api: updated (attributes)' "$log" \
+    || { cat "$log" >&2; fail 'the dry run did not log what the real run would'; }
+  grep -Fq 'Account Center Keycloak configuration is checked; nothing was written (1 write(s) withheld).' "$log" \
+    || { cat "$log" >&2; fail 'the dry run did not count the one withheld write'; }
+  [[ $(kcadm get "client-scopes/$scope_uuid" -r "$V2_REALM" -c | jq -r '.attributes["include.in.token.scope"]') == true ]] \
+    || fail 'the dry run repaired the drift'
+  new_events=$(kcadm get admin-events -r "$V2_REALM" -q max=200 -c \
+    | jq --argjson since "$newest_before" '[.[] | select(.time > $since)] | length')
+  [[ $new_events == 0 ]] || fail "the dry run produced $new_events admin event(s)"
+  kcadm update "client-scopes/$scope_uuid" -r "$V2_REALM" -s 'attributes."include.in.token.scope"=false' >/dev/null
 }
 
 v2_state_snapshot() {
@@ -1927,7 +1958,7 @@ skyapp_scope_count=$(kcadm get client-scopes -r e-skylab-test -c \
 [[ $skyapp_scope_count == 1 ]] || fail "skyapp audience scope is missing or duplicated"
 
 built_in_scope_after=$(kcadm get client-scopes -r e-skylab-test -c \
-  | jq -c '[.[] | select(.name != "account-center-account-api" and .name != "account-center-core-claims" and .name != "skyapp-account-center-audience" and .name != "skyforms-forms-audience" and .name != "skyforms-groups" and .name != "frontend-main-core-audience" and .name != "frontend-arge-core-audience" and .name != "skycms-audience" and .name != "skymail-api-audience" and .name != "admin-panel-api-audience") | {id, name}] | sort_by(.id)')
+  | jq -c '[.[] | select(.name != "account-center-account-api" and .name != "account-center-core-claims" and .name != "skyapp-account-center-audience" and .name != "skyforms-forms-audience" and .name != "skyforms-groups" and .name != "skyforms-core-audience" and .name != "frontend-main-core-audience" and .name != "frontend-arge-core-audience" and .name != "skycms-audience" and .name != "skymail-api-audience" and .name != "admin-panel-api-audience") | {id, name}] | sort_by(.id)')
 [[ $built_in_scope_after == "$built_in_scope_snapshot" ]] \
   || fail "a built-in client scope id or name was mutated"
 
@@ -2103,6 +2134,8 @@ if group_runs roles-noop; then
   stage_admin_panel_exchange_claims
 
   stage_v2_reconcile_noop
+  # Right after the no-op run: the realm is reconciled, so the dry run must withhold nothing.
+  stage_v2_reconcile_check
   stage_event_retention_after_noop_reconciliation
   stage_reset_choose_user_after_noop_reconciliation
   stage_v2_identity_guardrails

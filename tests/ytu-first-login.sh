@@ -35,6 +35,8 @@
 #     action, schoolEmail/department/university filled, REGISTER and no SEND_VERIFY_EMAIL event;
 #   - a linked account signing in again keeps its Personal Primary e-mail; schoolEmail follows
 #     Microsoft (FORCE);
+#   - the default-roles step (ekip-yetkileri 03) turns OBS's Stored tokens readable off and keeps its
+#     client secret: a new YTÜ identity still signs in and holds no broker/read-token;
 #   - a School e-mail that is another account's personalEmail is not written: the review profile
 #     page is shown (today's path until ticket 12) and that account is untouched;
 #   - a School e-mail that is another account's verified email: Keycloak's "existing account"
@@ -174,12 +176,13 @@ stage() {
 }
 
 # reconcile CONFIG WANTED_STATUS [ENV=VALUE ...]: the reconciler's first broker login step inside
-# the container, with a kcadm session as an operator runs it; prints its output.
+# the container, with a kcadm session as an operator runs it; prints its output. RECONCILE_STEP
+# names another step (default-roles).
 reconcile() {
   local config=$1 wanted=$2 output status=0
   shift 2
   local environment=(-e KEYCLOAK_ADMIN_URL=http://localhost:8080 -e "KEYCLOAK_REALM=$REALM"
-    -e KEYCLOAK_RECONCILE_ONLY=first-broker-login -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$config")
+    -e "KEYCLOAK_RECONCILE_ONLY=${RECONCILE_STEP:-first-broker-login}" -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$config")
   local assignment
   for assignment in "$@"; do
     environment+=(-e "$assignment")
@@ -598,6 +601,36 @@ jq -e '.email == "linked.person@example.org" and .attributes.schoolEmail == ["Li
   || { printf '%s\n' "$linked_user" >&2; fail 'the linked account changed its Primary e-mail or kept an old School e-mail'; }
 [[ -z $(user_by_username "$MOCK_USERNAME") ]] || fail 'a second account was opened'
 printf '    linked account: Primary e-mail kept, schoolEmail follows Microsoft\n'
+
+# ---------------------------------------------------------------------------------------------------
+# The default-roles step (ekip-yetkileri 03) turns Stored tokens readable off with kcadm update: a
+# read, a merge and a write back in which Keycloak sees only the masked client secret. OBS must keep
+# its secret: a new YTÜ identity still signs in (the token request to the tenant carries it) and
+# holds no broker/read-token.
+stage 'default-roles keeps the OBS client secret'
+kcadm update identity-provider/instances/OBS -r "$REALM" -s addReadTokenRoleOnCreate=true \
+  -s "config.clientSecret=$BROKER_SECRET" >/dev/null
+output=$(RECONCILE_STEP=default-roles reconcile "$ADMIN_CONFIG" 0)
+expect_line "$output" '[reconcile] KOD|idp:OBS|-|addReadTokenRoleOnCreate|false|true' 'the token setting is not reported'
+expect_line "$output" '[reconcile] applied 1 change(s)' 'the step did not turn Stored tokens readable off'
+if grep -Fq -- "$BROKER_SECRET" <<<"$output"; then fail 'the step printed the client secret'; fi
+kcadm get identity-provider/instances/OBS -r "$REALM" \
+  | jq -e '(.addReadTokenRoleOnCreate // false) == false and .config.clientSecret == "**********"
+    and .config.clientId == "skylab-broker" and .config.clientAuthMethod == "client_secret_post"' >/dev/null \
+  || fail 'OBS is not as it was apart from Stored tokens readable'
+mock_person Token.Kontrol@std.yildiz.edu.tr 'Kimya'
+ytu_login token-check "$MOCK_USERNAME"
+[[ $LANDED == app ]] || fail "after the default-roles step a new YTÜ identity did not reach the application ($(page_summary)): OBS lost its client secret?"
+token_id=$(jq -r '.id // empty' <<<"$(user_by_username token.kontrol@std.yildiz.edu.tr)")
+[[ -n $token_id ]] || fail 'no account was opened after the default-roles step'
+broker_uuid=$(kcadm get clients -r "$REALM" -q clientId=broker | jq -r '.[0].id // empty')
+if [[ -n $broker_uuid ]]; then
+  kcadm get "users/$token_id/role-mappings/clients/$broker_uuid" -r "$REALM" | jq -e 'map(.name) | index("read-token") == null' >/dev/null \
+    || fail 'the first login gave broker/read-token although Stored tokens readable is off'
+fi
+output=$(RECONCILE_STEP=default-roles reconcile "$ADMIN_CONFIG" 0 KEYCLOAK_RECONCILE_CHECK=true)
+expect_line "$output" '[reconcile] check: 0 change(s) pending; nothing was written' 'a second default-roles run planned a change'
+printf '    default-roles: Stored tokens readable off, the OBS client secret kept (a new YTÜ identity signs in), no broker/read-token\n'
 
 # ---------------------------------------------------------------------------------------------------
 stage "School e-mail that is another account's personalEmail"

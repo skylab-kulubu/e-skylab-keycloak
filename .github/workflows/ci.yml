@@ -182,6 +182,7 @@ jobs:
           bash tests/check-account-center-origin.sh
           bash tests/check-operator-login-prompts.sh
           bash tests/check-site-editor-grants-team.sh
+          bash tests/check-app-assignments.sh
 
   theme:
     needs: scope
@@ -288,7 +289,8 @@ jobs:
     needs: [mode, scope]
     if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' role-groups ')
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # app-assignments.sh --check reads every role's holders (two kcadm reads a role): minutes.
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v7
 
@@ -740,7 +742,8 @@ jobs:
           - group: roles
             timeout: 45
           - group: roles-noop
-            timeout: 45
+            # Also the whole reconciliation's dry run (ekip-yetkileri ticket 03): about 38 minutes.
+            timeout: 55
           - group: login
             timeout: 45
           - group: login-rollback

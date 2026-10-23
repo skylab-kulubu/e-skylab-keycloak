@@ -1,29 +1,38 @@
 #!/usr/bin/env bash
 # Idempotent application roles of the Leader groups (rol-temizligi ticket 09; decisions S5, S7, S8 in
 # sky_lab_genel .scratch/rol-temizligi). The Java era's realm role <TEAM>_LEADER does live things
-# only through its composite: the Forms seat and SkyCloud. This script maps them to the Leader groups
-# as client roles, so that the realm role can go (rol-temizligi F3) without a Leader losing access:
-#   forms     skyforms:access  (the Forms seat, S7; required)
+# only through its composite: the Forms seat and SkyCloud. This script maps SkyCloud to the Leader
+# groups as a client role, so that the realm role can go (rol-temizligi F3) without a Leader losing
+# access:
 #   skycloud  skycloud:access  (Yusuf 2026-10-13: SkyCloud is used and stays; optional: a realm
-#                               without the client skycloud skips it with a WARNING)
-# The composite's other three Forms roles (skyforms:form:manage, response:manage, feedback:manage)
-# are not mapped: nothing reads them (forms-backend, forms-frontend), pending Fatih's confirmation
-# (ticket 15).
+#                               without the client skycloud skips it with a WARNING). Unclassified in
+#                               core (role_classes.go) until ekip-yetkileri ticket 15 decides: a role
+#                               of the code area until then.
+# The Forms seat (skyforms:access) is no longer written here (ekip-yetkileri ticket 03, Yusuf's S1 of
+# 2026-10-23, Microsoft Entra's Enterprise app "Users and groups"): it is an app role, so where it is
+# held outside the Privileged roots and /ROLLER is the panel's (core's Uygulamalar page,
+# config/app-assignments.json). The mappings this script made stay where they are; the one-time
+# initial assignment (config/app-assignments.sh --seed) gives it to every top team. The composite's
+# other three Forms roles (skyforms:form:manage, response:manage, feedback:manage) are not mapped:
+# nothing reads them (forms-backend, forms-frontend), pending Fatih's confirmation (ticket 15).
 # A Leader group that holds no <TEAM>_LEADER realm role today gets the roles newly: the run says so in
 # a "NEW SEAT" line with the member count (never a name).
 # The groups: LIDERLER and KOORDINATORLER, the direct subgroups of every top team
 # /UYELER/<area>/<team>, read from the live tree (no list is kept here). A Sub-team's Leader groups
 # never get them (ADR-0065 addendum of 2026-10-12, as site-editor-grants.sh). The areas ADMIN, YK and
-# DK under /UYELER are Privileged, not areas, and are skipped. Run it again whenever a top team or a
-# Leader group is opened (rol-temizligi F5 too).
+# DK under /UYELER are Privileged, not areas, and are skipped. Run it again when a top team or a
+# Leader group is opened (rol-temizligi F5 too); the app roles of a new team are given in the panel.
 #
 # Grants go to groups only, never to a person, never to a group at or above a default group (a
 # PROBLEM: the grant is not made). Nothing is ever taken away: a group outside the expected places
 # (the Leader groups above, the role groups /ROLLER/<NAME>, the Privileged roots) or a person holding
-# one of the roles directly is a WARNING (counts and group paths only, never a person's name). A
-# missing client forms is a PROBLEM (exit 1); a missing optional client or a missing role is a
-# WARNING and is skipped. A failed read of a group (anything but Keycloak's "not found") stops the run
-# with exit 1: it is never taken for "absent".
+# one of the roles directly is a WARNING (counts and group paths only, never a person's name; the
+# roles here are no app roles, so a person holding one is a WARNING, ekip-yetkileri ticket 03 §5). A
+# missing client or a missing role is a WARNING and is skipped. A failed read of a group (anything but
+# Keycloak's "not found") stops the run with exit 1: it is never taken for "absent".
+#
+# --print-expected prints what the code area expects of these roles for config/app-assignments.sh,
+# "top-team-leaders<TAB>client<TAB>role" per role, and exits before any realm check or login.
 #
 # It refuses every realm but e-skylab and e-skylab-sandbox, before it logs in; KEYCLOAK_REALM has no
 # default. The reconciler runs it as its operator step KEYCLOAK_RECONCILE_ONLY=leader-app-roles (with
@@ -33,6 +42,7 @@
 #   KEYCLOAK_REALM=<realm> leader-app-roles.sh --admin-user <admin>            # --check (default)
 #   KEYCLOAK_REALM=<realm> leader-app-roles.sh --admin-user <admin> --apply    # grants
 #   KEYCLOAK_REALM=<realm> leader-app-roles.sh --kcadm-config <file> [--apply]
+#   leader-app-roles.sh --print-expected
 #
 # Environment: KEYCLOAK_ADMIN_URL (default http://keycloak:8080), KEYCLOAK_REALM (required),
 # KEYCLOAK_ADMIN_REALM (default master), KEYCLOAK_LEADER_ROLES_ADMIN_USERNAME (or --admin-user).
@@ -55,7 +65,6 @@ MODE=check
 
 # client|role|required or optional
 APP_ROLES=(
-  'forms|skyforms:access|required'
   'skycloud|skycloud:access|optional'
 )
 PRIVILEGED_NAMES=(ADMIN YK DK)
@@ -88,11 +97,23 @@ while [[ $# -gt 0 ]]; do
       MODE=check
       shift
       ;;
+    --print-expected)
+      MODE=print-expected
+      shift
+      ;;
     *)
       usage
       ;;
   esac
 done
+
+if [[ $MODE == print-expected ]]; then
+  for entry in "${APP_ROLES[@]}"; do
+    IFS='|' read -r client role _ <<<"$entry"
+    printf 'top-team-leaders\t%s\t%s\n' "$client" "$role"
+  done
+  exit 0
+fi
 
 if [[ $TARGET_REALM != e-skylab && $TARGET_REALM != e-skylab-sandbox ]]; then
   printf '[leader-app-roles] refusing realm %s: set KEYCLOAK_REALM to e-skylab (production) or e-skylab-sandbox; nothing was read or changed\n' \
@@ -364,7 +385,9 @@ for entry in ${grants[@]+"${grants[@]}"}; do
   [[ -z $others ]] || warning "$client/$role is also held by the group(s) ${others#, } (a Sub-team's Leader group or another place; not taken away, remove it in the SKY LAB admin panel if unintended)"
   holder_users=$(csv "clients/$client_uuid/roles/$role/users" username -q first=0 -q max=100000)
   people=$(sed '/^$/d' <<<"$holder_users" | grep -vc '^service-account-' || true)
-  [[ $people == 0 ]] || log "NOTE: $client/$role is granted directly to $people person(s): rol-temizligi F2 moves them to a role group under $ROLE_GROUP_ROOT (not taken away here)"
+  # No role here is an app role (config/app-assignments.json): a person holding one directly is a
+  # WARNING, not a panel assignment (ekip-yetkileri ticket 03 §5).
+  [[ $people == 0 ]] || warning "$client/$role is granted directly to $people person(s): rol-temizligi F2 moves them to a role group under $ROLE_GROUP_ROOT (not taken away here)"
 done
 
 if [[ $MODE == apply ]]; then

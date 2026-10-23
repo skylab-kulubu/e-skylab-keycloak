@@ -13,9 +13,15 @@
 #   artlab     /UYELER/ARGE/AIRLAB   and  /UYELER/ORGANIZASYON/ARTLAB
 #   yildizjam  /UYELER/ARGE/GAMELAB  and  /UYELER/ORGANIZASYON/YILDIZJAM
 #   skydays    /UYELER/ARGE/SKYSEC   and  /UYELER/ORGANIZASYON/SKYDAYS
-#   main       none: the main site's sandbox client (frontend-main in e-skylab-sandbox only, made by
-#              site-clients.sh --site main) gets the Privileged groups; production's frontend-main
-#              grants are made in the SKY LAB admin panel and --site main is refused in e-skylab
+#   main       e-skylab: the top teams of MAIN_SITE_TEAMS_E_SKYLAB (ekip-yetkileri ticket 03, Yusuf's
+#              Ek-2 of 2026-10-23: the Leader groups that hold the main site's cms:access today are
+#              taken into code, nobody loses it and no new group gets it; measured in production
+#              before the release, as group paths only); e-skylab-sandbox (frontend-main made by
+#              site-clients.sh --site main): none. Production's frontend-main itself is hand-made
+#              (site-clients.sh still refuses --site main there); its grants were made in the SKY LAB
+#              admin panel and are the code area's now, so this script checks and keeps them.
+#   arge       not here: frontend-arge's grants wait for Fatih, who rebuilds arge (the code area's
+#              check, config/app-assignments.sh, reports them as pending, never as drift).
 # --team SITE=PATH adds one more team for one site; its Leader groups get cms:access too. PATH must
 # be a top team, /UYELER/<area>/<team>: a Sub-team's Leader groups never get cms:access (ADR-0065
 # addendum of 2026-10-12: a Group that holds site-wide write is not delegated, and only top teams'
@@ -39,7 +45,11 @@
 #   KEYCLOAK_REALM=<realm> site-editor-grants.sh --admin-user <admin> --apply    # grants
 #   KEYCLOAK_REALM=<realm> site-editor-grants.sh --kcadm-config <file> [--apply]
 #   ... [--site artlab|yildizjam|skydays]... [--team SITE=/PATH]...
-#   KEYCLOAK_REALM=e-skylab-sandbox site-editor-grants.sh ... --site main [--team main=/PATH]...
+#   KEYCLOAK_REALM=<realm> site-editor-grants.sh ... --site main [--team main=/PATH]...
+#   KEYCLOAK_REALM=<realm> site-editor-grants.sh --print-expected
+# --print-expected prints what the code area expects of the Site clients for config/app-assignments.sh
+# (no login): "privileged<TAB>NAMES<TAB>client<TAB>role", "team-leaders<TAB>team path<TAB>client<TAB>
+# role" and "pending<TAB>*<TAB>client<TAB>*" (frontend-arge), for every site of the realm.
 #
 # Environment: KEYCLOAK_ADMIN_URL (default http://keycloak:8080), KEYCLOAK_REALM (required),
 # KEYCLOAK_ADMIN_REALM (default master), KEYCLOAK_SITE_GRANTS_ADMIN_USERNAME (or --admin-user).
@@ -71,14 +81,39 @@ READER_ROLE=content:read
 # The Privileged names whose groups read and do not write (core's AUTHZ_PRIVILEGED_READER_ROOTS).
 READER_NAMES=(DK)
 
+# The top teams whose Leader groups hold frontend-main's cms:access in production (Ek-2): the
+# production measurement's group paths, before the release (ekip-yetkileri ticket 03; the
+# --server-precheck of 2026-10-23, 13 EK2_MAIN_LEADER lines: ARTLAB, SKYDAYS and YILDIZJAM through
+# KOORDINATORLER, the others through LIDERLER). A top team only (/UYELER/<area>/<team>); a Sub-team's
+# Leader group holding it is not taken into code.
+MAIN_SITE_TEAMS_E_SKYLAB=(
+  /UYELER/ARGE/AIRLAB
+  /UYELER/ARGE/ALGOLAB
+  /UYELER/ARGE/CHAINLAB
+  /UYELER/ARGE/GAMELAB
+  /UYELER/ARGE/MOBILAB
+  /UYELER/ARGE/SKYSEC
+  /UYELER/ARGE/SKYSIS
+  /UYELER/ARGE/WEBLAB
+  /UYELER/ORGANIZASYON/ARTLAB
+  /UYELER/ORGANIZASYON/BIZBIZE
+  /UYELER/ORGANIZASYON/GECEKODU
+  /UYELER/ORGANIZASYON/SKYDAYS
+  /UYELER/ORGANIZASYON/YILDIZJAM
+)
+
 # site_teams SITE: the site's teams, one per line: the owning lab team, then the event's
-# organization team.
+# organization team (main: MAIN_SITE_TEAMS_E_SKYLAB in e-skylab).
 site_teams() {
   case $1 in
     artlab) printf '%s\n' /UYELER/ARGE/AIRLAB /UYELER/ORGANIZASYON/ARTLAB ;;
     yildizjam) printf '%s\n' /UYELER/ARGE/GAMELAB /UYELER/ORGANIZASYON/YILDIZJAM ;;
     skydays) printf '%s\n' /UYELER/ARGE/SKYSEC /UYELER/ORGANIZASYON/SKYDAYS ;;
-    main) ;;
+    main)
+      if [[ $TARGET_REALM == e-skylab && ${#MAIN_SITE_TEAMS_E_SKYLAB[@]} -gt 0 ]]; then
+        printf '%s\n' "${MAIN_SITE_TEAMS_E_SKYLAB[@]}"
+      fi
+      ;;
   esac
 }
 
@@ -125,6 +160,10 @@ while [[ $# -gt 0 ]]; do
       MODE=check
       shift
       ;;
+    --print-expected)
+      MODE=print-expected
+      shift
+      ;;
     *)
       usage
       ;;
@@ -137,13 +176,18 @@ if [[ $TARGET_REALM != e-skylab && $TARGET_REALM != e-skylab-sandbox ]]; then
     "${TARGET_REALM:-(unset)}" >&2
   exit 2
 fi
-for site in "${SITES[@]}"; do
-  if [[ $site == main && $TARGET_REALM != e-skylab-sandbox ]]; then
-    printf '[site-grants] refusing --site main in realm %s: production'"'"'s frontend-main grants are made in the SKY LAB admin panel; --site main is for e-skylab-sandbox; nothing was read or changed\n' \
-      "$TARGET_REALM" >&2
-    exit 2
-  fi
-done
+if [[ $MODE == print-expected ]]; then
+  for site in "${ALL_SITES[@]}" main; do
+    client="frontend-$site"
+    printf 'privileged\tADMIN YK\t%s\t%s\n' "$client" "$EDITOR_ROLE" "$client" "$ADMIN_ROLE"
+    printf 'privileged\t%s\t%s\t%s\n' "${READER_NAMES[*]}" "$client" "$READER_ROLE"
+    while IFS= read -r team; do
+      [[ -z $team ]] || printf 'team-leaders\t%s\t%s\t%s\n' "$team" "$client" "$EDITOR_ROLE"
+    done < <(site_teams "$site")
+  done
+  printf 'pending\t*\tfrontend-arge\t*\n'
+  exit 0
+fi
 
 if [[ -z $KCADM_CONFIG ]]; then
   if [[ -z $ADMIN_USER ]]; then

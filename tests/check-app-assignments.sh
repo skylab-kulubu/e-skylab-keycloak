@@ -6,6 +6,7 @@
 # every role once, the suggested roles among the roles, and the one-time initial assignments name
 # only roles of their app and a known target (top-teams, top-team-leaders or one top team's path).
 # Needs no Keycloak: jq only.
+# shellcheck disable=SC2016  # jq programs name jq variables
 set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 CATALOGUE="$SCRIPT_DIR/../config/app-assignments.json"

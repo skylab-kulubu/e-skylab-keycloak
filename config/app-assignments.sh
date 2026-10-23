@@ -424,8 +424,8 @@ done <<<"$client_list"
 # --check: the code area and the panel area
 # ==================================================================================================
 run_check() {
-  local line kind names client role path name team leader expected entry holder label people services
-  local users groups apps_groups apps_people uuid roles_read
+  local kind names client role path name leader entry holder
+  local users groups uuid roles_read
   declare -A expect=() pending_client=() live=() existing_role=()
   # expect["path|client|role"] = evet | geçici; pending_client[client] = 1 (frontend-arge).
   add_privileged() { # NAMES CLIENT ROLE VALUE
@@ -482,8 +482,8 @@ run_check() {
   # Every role's direct holders: groups by path, people and service accounts by number.
   declare -A panel_groups=() panel_people=()
   local kod_ok=0 kod_missing=0 kod_extra=0 kod_temporary=0 kod_pending=0 service_held=0
-  read_holders() { # LABEL BASE CLIENT ROLE
-    local label=$1 base=$2 client=$3 role=$4 path user persons=0 accounts=0 value
+  read_holders() { # BASE CLIENT ROLE
+    local base=$1 client=$2 role=$3 path user persons=0 accounts=0 value
     users=$(csv "$base/users" username -q first=0 -q max=100000)
     groups=$(csv "$base/groups" path -q first=0 -q max=100000)
     while IFS= read -r user; do
@@ -524,7 +524,7 @@ run_check() {
             if [[ $client != realm && -n ${app_role[$client/$role]:-} ]]; then
               problem "$client/$role (an app role) is mapped to $path, which is no panel target (no team group, or it reaches every member: a default role's job)"
             else
-              problem "$client/$role (an admin, unclassified or realm role) is mapped to $path, a group of the panel area: only a Privileged root, a role group or a named exception may hold it"
+              problem "$client/$role (an admin, unclassified or realm role) is mapped to $path, outside the code area's places: only a Privileged root, a role group or a named exception may hold it"
             fi
           fi
           ;;
@@ -542,14 +542,14 @@ run_check() {
     while IFS= read -r role; do
       [[ -n $role ]] || continue
       existing_role[$client|$role]=1
-      read_holders "$client/$role" "clients/$uuid/roles/${role//\*/%2A}" "$client" "$role"
+      read_holders "clients/$uuid/roles/${role//\*/%2A}" "$client" "$role"
     done <<<"$roles_read"
   done <<<"$sorted_clients"
   roles_read=$(csv roles name -q first=0 -q max=10000)
   while IFS= read -r role; do
     [[ -n $role && $role != "default-roles-${TARGET_REALM,,}" ]] || continue
     existing_role[realm|$role]=1
-    read_holders "realm/$role" "roles/$role" realm "$role"
+    read_holders "roles/$role" realm "$role"
   done <<<"$roles_read"
 
   # What the code expects and the realm lacks (only roles the realm has: a client or a role of

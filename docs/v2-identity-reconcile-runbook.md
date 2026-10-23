@@ -38,7 +38,7 @@ entegrasyon testi bunu doğrular.
 | Parola sıfırlamanın OTP adımı (eskylab-login-ux 23, §17.1) | Bağlı (düzenlenebilir) sıfırlama akışının "Reset - Conditional OTP" alt akışında `reset-otp`'nin yerine aynı öncelik ve `REQUIRED` ile `auth-otp-form` konur; koşul `conditional-user-configured` aynen kalır. Durdurma kuralları parola formununkiyle aynıdır; yarıda kalmış değişim ve Admin Console'un acil yolunun bıraktığı hâl (DISABLED `reset-otp` yanında REQUIRED `auth-otp-form`) tamamlanır. Keycloak'ın yerleşik akışına dokunulmaz. `KEYCLOAK_RESET_OTP_STEP=reset` Keycloak'ın adımını geri koyar. |
 | Kimlik korumaları: core sertifika rolleri, OBS `department mapper`, core'un `manage-clients` rolü | Uzlaştırıcı **dokunmaz**: kimliğinin kullanıcı ve kimlik sağlayıcısı yetkisi yoktur. Operatör `config/identity-guardrails.sh` ile uygular (§8). |
 | Forms'un Privileged rolü (§28) | `forms` istemcisinde `skyforms:read-all` (DK'nın Forms okuması; forms-backend henüz okumuyor) her koşuda var edilir; SkyMail'inkiler gibi yalnız `DK`'ya **bir kez** verilir (operatörün `core-roles` koşusu). |
-| SkyMail'in Privileged rolleri (§25) | `skymail` istemcisinde `skymail:system-mails:read` (ADMIN, YK, DK) `skymail:announcements:send` (yalnız ADMIN ve YK; duyuru-haber D4) ve `skymail:mails:tracking:read` (ADMIN, YK, DK; kişi bazındaki takip raporu, iletisim-servisi 17) her koşuda var edilir (yoksa açıklamasıyla oluşturulur). core'un kaynak rolleri gibi kendi Privileged gruplarına **bir kez** verilir ve `skylab.seeded-group-mappings` ile işaretlenir; tohumlamayı operatörün `KEYCLOAK_RECONCILE_ONLY=core-roles` koşusu yapar. Kişilerin diğer `skymail:*` rolleri `/ROLLER` rol gruplarına taşınır (§26). |
+| SkyMail'in Privileged rolleri (§25) | `skymail` istemcisinde `skymail:system-mails:read` ve `skymail:mails:tracking:read` (ADMIN, YK, DK; kişi bazındaki takip raporu, iletisim-servisi 17) her koşuda var edilir (yoksa açıklamasıyla oluşturulur); SkyMail'in kendi rolleri `skymail:access`, `templates:read`, `lists:read`, `mails:read`, `mails:send`, `mails:write` (ADMIN, YK) ve `mails:approve` (yalnız YK) oluşturulmaz, varsa tohumlanır (ekip-yetkileri 03; `announcements:send` listeden çıktı). core'un kaynak rolleri gibi kendi Privileged gruplarına **bir kez** verilir ve `skylab.seeded-group-mappings` ile işaretlenir; tohumlamayı operatörün `KEYCLOAK_RECONCILE_ONLY=core-roles` koşusu yapar. Kişilerin diğer `skymail:*` rolleri `/ROLLER` rol gruplarına taşınır (§26). |
 | Servis hesaplarının rolleri (§20, §20.1) | `forms`'a core'un dört servis rolü, `skymail-backend`'e core'un `audience:read`'i ve `communication-preferences:read`'i ile `realm-management`'ın `view-users` ve `view-clients`'ı, `core`'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`, `skymail:lists:read`, `skymail:lists:write`, `skymail:tracking:withdraw` rolleri, `skymail-seed`'in servis hesabına `skymail:templates:system`. Uzlaştırıcı kimliği core rollerini, `skymail:tracking:withdraw`'u ve `skymail:templates:system`'ı oluşturur ve raporlar; vermeyi operatör `KEYCLOAK_RECONCILE_ONLY=service-roles` ile yapar. SkyMail'in öbür rolleri oluşturulmaz. Yalnız servis hesaplarının rolünü taşıyan kişi, grup, varsayılan rol ve bileşik rol bildirilir. |
 | Rol grupları `/ROLLER/<UYGULAMA>-<ROL>` (§26) ve Leader gruplarının uygulama rolleri (§27) | Uzlaştırıcı **dokunmaz** (gruba rol eşlemek kullanıcı yetkisi ister). Operatör `config/role-groups.sh` ve `config/leader-app-roles.sh` (ya da `KEYCLOAK_RECONCILE_ONLY=role-groups` / `leader-app-roles`) ile kurar; kuru koşu varsayılandır, `--apply` yazar; üye hiç eklenmez. |
 
@@ -2982,13 +2982,21 @@ olsun. Bu yüzden rol §19'daki core kaynak rolleriyle aynı biçimde yönetilir
   zaman geçer, yani Privileged bir kişinin SkyMail token'ındaki `resource_access.skymail.roles` rolü
   taşır. Ek kapsam eşlemesi gerekmez.
 
-**`skymail:announcements:send` (duyuru-haber D4, 2026-10-12).** Aynı listede (`SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS`,
-`rol|Privileged adlar|açıklama`) ikinci rol: haber ve duyuruyu Mail onayı olmadan gönderir. Yalnız
-`ADMIN` ve `YK`'ya (`/ADMIN`, `/YK`, `/UYELER/ADMIN`, `/UYELER/YK`; hangileri varsa) bir kez verilir;
-DK okur, yazmaz (grup-yonetimi GY1), DK'ya hiç verilmez ve DK eksikliği bu rol için uyarılmaz. Alt
-gruplar (YK görev grupları) eşlemeyi miras alır. Başkaları Mail onayıyla gönderir. Tohumlama, işaret
-ve geri dönüş `skymail:system-mails:read` ile aynıdır; operatör çıktısı `skymail role
-skymail:announcements:send: seeded once to /ADMIN,/UYELER/YK (granted to: …)`.
+**SkyMail'in kod alanı rolleri (ekip-yetkileri bilet 03, 2026-10-23).** Aynı listede
+(`SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS`, `rol|Privileged adlar|açıklama`) SkyMail'in kendi rolleri de
+var: `skymail:access`, `skymail:templates:read`, `skymail:lists:read`, `skymail:mails:read`,
+`skymail:mails:send` ve `skymail:mails:write` `ADMIN` ve `YK`'ya (ADR 0067: YK doğrudan gönderir),
+`skymail:mails:approve` yalnız `YK`'ya (S2: Mail onayının onaycısı YK kökü; dönem devrinde
+kendiliğinden değişir). Açıklama sütunu `-` olan rol SkyMail'indir: uzlaştırıcı onu **oluşturmaz**,
+realm'de varsa bir kez tohumlar, yoksa `Privileged roles of skymail (9): unchanged; not in the
+realm, the application makes them, seeded once they exist: …` satırında adını yazar. DK bu
+rollerin hiçbirini almaz (GY1). `skymail:access` ve `skymail:templates:read` uygulama rolüdür: köklerin
+dışındaki atamaları panelindir (§33), uzlaştırıcı onlara dokunmaz.
+
+**`skymail:announcements:send` listeden çıktı (bilet 03, YETKI-MATRISI §3 D-1).** Okuyan servis yok;
+YK'nın doğrudan gönderimi `mails:write`/`mails:send` ile. Listeden çıkınca yeni bir realm onu almaz;
+var olan rol ve ADMIN/YK eşlemeleri yerinde kalır (uzlaştırıcı bir şey silmez), §33'ün denetimi
+onları "kodda yok" diye bildirir, sıfırlama penceresi (bilet 06 c2) kaldırır.
 
 **`skymail:mails:tracking:read` (iletisim-servisi 14b/17, karar T2).** Aynı listede üçüncü rol:
 gönderimlerin kişi bazındaki açılma ve tıklama raporunu okur (skymail-backend
@@ -3003,11 +3011,11 @@ roles not yet granted to the Privileged groups: skymail:mails:tracking:read`. Op
 `skymail role skymail:mails:tracking:read: seeded once to <yollar> (granted to: …)`. Rol yokken
 SkyMail'in rapor ucu yalnız gönderene açıktır (zararsız).
 
-**Kuru koşu yok.** `core-roles` adımının `KEYCLOAK_RECONCILE_CHECK=true`'su yoktur; koşu doğrudan
-yazar. Önizleme, yayından sonraki tam uzlaştırmanın uyarı satırlarıdır: `WARNING: skymail roles not
-yet granted to the Privileged groups: …` ve `WARNING: core roles not yet granted to the Privileged
-groups: …`. Operatör `core-roles`'ı koşmadan önce bu satırlarda yalnız beklenen rolleri (bu yayında
-`skymail:announcements:send`) gördüğünü doğrular; başka işaretsiz rol varsa aynı koşu onu da tohumlar.
+**Kuru koşu (bilet 03'ten beri).** `KEYCLOAK_RECONCILE_CHECK=true` ile `core-roles` adımı hiçbir şey
+yazmaz: her yazma `[reconcile] would kcadm VERB YOL …` satırıdır, adımın kendi satırları gerçek
+koşunun yazacağını söyler (`skymail role …: seeded once to … (granted to: …)`), son satır `Core
+resource roles are checked; nothing was written (N write(s) withheld).` Wizard kuru koşuyu planla
+karşılaştırır, eşleşirse gerçek koşuyu yapar, sonra kuru koşu 0 olmalıdır (§33.4).
 
 **Sıra.** Rol SkyMail'de yalnız bir yetkiyi açar; rol yokken #61'in kapısı kapalı kalır (içerik
 gizli). Bu yüzden Keycloak yayını ve operatör tohumlaması skymail-backend #61'in yayınından önce
@@ -3019,11 +3027,12 @@ her istemcinin rollerini, `skymail`'inkileri de listeler) ya da Keycloak Admin C
 işaret kaldığı
 için uzlaştırıcı onları geri koymaz.
 
-Harness (`tests/skymail-roles.sh`, `run-integration.sh` çağırır, `roles` grubu): ilk tam koşu rolü
-açıklamasıyla oluşturur, kimseye vermez, işaretlemez ve uyarır; operatörün `core-roles` koşusu rolü
-`/ADMIN` ve `/UYELER/YK`'ya verir ve işaretler; YK üyesinin etkin `skymail` rolleri `skymail:access`
-ve bu iki rol, gruba üye olmayan kişide rol yok. Koşu için açılan `/DK` grubu varken işareti silinen
-`skymail:announcements:send` yalnız `/ADMIN` ve `/UYELER/YK`'ya verilir, `/DK` almaz. Gruptan kaldırılan eşleme sonraki koşuda geri gelmez;
+Harness (`tests/skymail-roles.sh`, `run-integration.sh` çağırır, `roles` grubu): ilk tam koşu iki okuma
+rolünü açıklamasıyla oluşturur, SkyMail'in kendi rollerini oluşturmaz, kimseye vermez, işaretlemez ve
+uyarır; operatörün `core-roles` koşusu rolleri `/ADMIN` ve `/UYELER/YK`'ya verir ve işaretler (fixture'da
+olan `skymail:access`, `skymail:lists:read`, `skymail:mails:send` da); YK üyesinin etkin `skymail`
+rolleri tam bunlar, gruba üye olmayan kişide rol yok. Sonradan oluşan `skymail:mails:approve` yalnız
+`/UYELER/YK`'ya gider, `/ADMIN` ve `/DK` almaz. Gruptan kaldırılan eşleme sonraki koşuda geri gelmez;
 işareti silinen rol yalnız eksik gruba yeniden verilir. Değişiklik üretmeyen tam koşu rolleri,
 işaretleri ve grupların `skymail` eşlemelerini de karşılaştırır.
 
@@ -3123,7 +3132,7 @@ Rol F3'te kalkmadan önce bunlar client rolü olarak doğrudan Leader grupların
 
 | İstemci / rol | Neden |
 | --- | --- |
-| `forms` `skyforms:access` (zorunlu) | Forms koltuğu (S7, bilet 09); `forms` yoksa `PROBLEM` |
+| ~~`forms` `skyforms:access`~~ | **Bilet 03'ten (2026-10-23) beri yazılmaz**: Forms koltuğu uygulama rolüdür, köklerin ve `/ROLLER`'in dışındaki ataması panelindir (§33). Betiğin önceden yaptığı eşlemeler yerinde kalır; bütün en üst ekiplere tek seferlik başlangıç ataması (§33.3) verir |
 | `skycloud` `skycloud:access` (isteğe bağlı) | SkyCloud kullanılıyor ve kalıyor (Yusuf, 2026-10-13); bugün `_LEADER` composite'iyle geliyor, liderler F3'te kaybetmesin diye. `skycloud` yoksa (sandbox) `WARNING` ile atlanır |
 
 Composite'in öbür üç Forms rolü (`skyforms:form:manage`, `skyforms:response:manage`,
@@ -3146,14 +3155,18 @@ aynı betiği koşar):
   yeniden koşulur).
 - Yalnız eksik eşleme eklenir; ikinci koşu `applied 0 change(s)`.
 - Beklenen yerler (en üst ekiplerin Leader grupları, `/ROLLER/<AD>`, Privileged kökler) dışında bu
-  rolleri taşıyan grup `WARNING`; rolü doğrudan taşıyan kişiler yalnız sayıyla `NOTE` (F2 taşır);
-  hiçbir şey alınmaz. Varsayılan grup bir Leader grubunun altındaysa o gruba verilmez (`PROBLEM`).
-- `forms` yoksa `PROBLEM` (çıkış 1); `skycloud` yoksa ya da bir rol yoksa `WARNING` ile atlanır.
+  rolleri taşıyan grup `WARNING`; rolü doğrudan taşıyan kişiler yalnız sayıyla `WARNING` (rol uygulama
+  rolü değil; F2 taşır); hiçbir şey alınmaz. Varsayılan grup bir Leader grubunun altındaysa o gruba
+  verilmez (`PROBLEM`).
+- `skycloud` yoksa ya da bir rol yoksa `WARNING` ile atlanır.
+- `--print-expected` kod alanının beklediğini yazar (`top-team-leaders<TAB>skycloud<TAB>skycloud:access`;
+  §33.1 okur), oturum açmaz.
 - Bir grubun okunması "yok" dışında bir nedenle düşerse (ör. `/UYELER`) betik 1 ile durur ve yazmaz;
   hata "ekip yok" sayılmaz.
 
 **Ne zaman koşulur.** Her yeni en üst ekip ya da Leader grubu açıldığında (site editörlüğüyle aynı yer,
-§18), F5'ten sonra ve F3'ten (realm rollerinin kaldırılması) önce. En üst ekip Leader grubunu yalnız
+§18), F5'ten sonra ve F3'ten (realm rollerinin kaldırılması) önce. Yeni ekibin uygulama atamalarını
+(Forms, SkyMail) YK panelden yapar (§33). En üst ekip Leader grubunu yalnız
 Privileged değiştirir; devir kuralı değişmez.
 
 ```bash
@@ -3162,11 +3175,10 @@ KEYCLOAK_REALM=e-skylab-sandbox /opt/keycloak/config/leader-app-roles.sh --kcadm
 ```
 
 Harness: `tests/role-groups.sh` (aynı CI işi): yalnız en üst ekibin `LIDERLER` ve `KOORDINATORLER`'i
-`skyforms:access` ve `skycloud:access`'i alır (4 değişiklik), üç `*:manage` planlanmaz; `_LEADER`
-taşımayan `LIDERLER` `NEW SEAT` satırında 1 üyeyle görünür, `AIRLAB_LEADER` taşıyan `KOORDINATORLER`
-görünmez; Leader'ın token'ında iki rol vardır, alt ekip Leader'ınınki boştur; alt ekip grubundaki rol
-`WARNING`'dir; `/UYELER` okuması düşerse 1 ile durur, yazmaz; sandbox'ta `skycloud` atlanır (2 değişiklik,
-1 uyarı).
+`skycloud:access`'i alır (2 değişiklik), Forms koltuğu planlanmaz; `_LEADER` taşımayan `LIDERLER`
+`NEW SEAT` satırında 1 üyeyle görünür, `AIRLAB_LEADER` taşıyan `KOORDINATORLER` görünmez; Leader'ın
+token'ında SkyCloud vardır, Forms rolü yoktur; alt ekip grubundaki rol `WARNING`'dir; `/UYELER`
+okuması düşerse 1 ile durur, yazmaz; sandbox'ta `skycloud` atlanır (0 değişiklik, 1 uyarı).
 
 ## 28. DK salt okur: okuma rolleri ve yazma rollerinin bir kez kaldırılması (grup-yonetimi 08)
 
@@ -3857,3 +3869,98 @@ ikinci sayfaya döner; terminal conflict/error ekranı atlanmaz. İlk kayıt ad/
 senkronizasyonu eklenmez. Parola/passkey isteğe bağlıdır, hepsini atlayınca kodla giriş sürer.
 Özgün RP callback/state/nonce/PKCE korunur; genel AC redirect'i yoktur. Bu bölüm canlı açılış yetkisi
 vermez; §30'daki bütün kayıt bağımlılıkları ve sandbox doğrulaması ayrıca tamamlanmalıdır.
+
+## 33. Kod alanı ve panel alanı, başlangıç ataması, varsayılan rol (ekip-yetkileri bilet 03)
+
+Microsoft Entra'da bir uygulamanın tanımı (roller, "Assignment required") ve yönetici rollerinin
+role-assignable gruplara ataması yapılandırmadır; uygulamanın hangi gruba ya da kişiye atandığı
+("Users and groups") ise yöneticinin portaldan tuttuğu veridir. Bizde (Yusuf'un S1 son kararı,
+2026-10-23; sky_lab_genel `.scratch/ekip-yetkileri-20261022/YETKI-MATRISI.md` §6.1):
+
+| Alan | Ne | Kim değiştirir | Uzlaştırıcı |
+| --- | --- | --- | --- |
+| **Kod** | rol tanımları ve "atama gerekli" (`config/app-assignments.json`); Privileged kökler (`/ADMIN`, `/YK`, `/DK`, `/UYELER/ADMIN`, `/UYELER/YK`, `/UYELER/DK` ve altları) üzerindeki her eşleme; `/ROLLER` ve yaprakları; yönetici ya da sınıfsız rolün ve realm rolünün her eşlemesi (adlı istisnalar: en üst ekip Leader gruplarında `skycloud:access`, site editörlerinin `cms:access`'i); servis hesapları; varsayılan rol | PR + Keycloak yayını | kurar (Privileged kökler bir kez, §19/§25/§28), farkı raporlar, kaldırmaz |
+| **Panel** | uygulama rolünün (`config/app-assignments.json`, tam olarak core'un `AppRoles`'u) bir ekip grubuna (en üst ekip, alt ekip, Leader grubu) ya da kişiye ataması | Yusuf ve YK, core'un Uygulamalar sayfasından (bilet 15) | **dokunmaz**, sapma saymaz |
+
+`/UYELER`, alan grupları ve varsayılan grubu kapsayan gruplar panel hedefi olamaz (herkese gider:
+varsayılan rolün işi).
+
+### 33.1 Denetim: `KEYCLOAK_RECONCILE_ONLY=app-assignments`
+
+Operatör adımı, yalnız okur. `config/app-assignments.sh --check`'i uzlaştırıcının Privileged
+beklentileriyle (§19, §25, §28 listeleri) koşar; öbür beklentiler `config/role-groups.json`,
+`config/leader-app-roles.sh --print-expected`, `config/site-editor-grants.sh --print-expected` ve DK'nın
+geçici Forms yönetici rolleridir. Her rolün doğrudan sahiplerini okur (rol başına iki okuma; production'da
+dakikalar). Önek `[app-assignments] `'den sonra makine okur satırlar:
+
+- `KOD|<grup yolu ya da kişi:<n>>|<istemci ya da realm>|<rol>|<beklenen>|<var|yok>`; beklenen `evet`,
+  `hayır` (kodda yok), `geçici` (DK'nın `skyforms:*`'ı, `dk-read-only.sh --forms`'a kadar) ya da
+  `karar-bekliyor` (`frontend-arge`: arge'yi Fatih yeniden yapıyor);
+- `PANEL|<grup yolu ya da kişi:<n>>|<istemci>|<rol>`;
+- sonda sayılar (`KOD: … as expected, … missing, … not in code, …`, uygulama başına `PANEL: …`) ve
+  panel alanına düşmüş yönetici, sınıfsız ya da realm rolü, kişiye doğrudan yönetici rolü ve herkese
+  giden hedefteki uygulama rolü için `PROBLEM` satırları.
+
+Kişi adı basmaz. Sapma ve PROBLEM'le de çıkış 0'dır (rapor; bilet 07'nin alarmı okur), okuma düşerse 1.
+Varsayılan rol ve IdP ayarları §33.2'nin, servis hesapları §20'nin işidir.
+
+### 33.2 Varsayılan rol ve IdP belirteç ayarları: `KEYCLOAK_RECONCILE_ONLY=default-roles`
+
+`default-roles-<realm>` herkeste olduğu için yalnız Keycloak'ın kendi rollerini taşır: `offline_access`,
+`uma_authorization`, `account/view-profile`, `account/manage-account`. Adım (operatör, kuru koşu
+`KEYCLOAK_RECONCILE_CHECK=true`):
+
+- `broker/read-token`'ı varsayılan rolden kaldırır (Yusuf K2, 2026-10-23; kişinin YTÜ/Microsoft
+  girişinden saklanan belirteci okutur, hiçbir uygulama okumuyor);
+- her IdP'de **Stored tokens readable** (`addReadTokenRoleOnCreate`) açıksa kapatır (açıkken Keycloak
+  ilk girişle açılan her hesaba rolü doğrudan verir); **Store tokens** (`storeToken`) açıksa `WARNING`,
+  değiştirmez (eskylab-login-ux bilet 04 sandbox testinden sonra kapatır);
+- beklenen listede olmayan başka bir rolü `WARNING` ile bildirir, kaldırmaz; eksik Keycloak rolünü `NOTE`
+  ile yazar, eklemez;
+- `broker/read-token`'ı doğrudan taşıyan kişileri sayıyla, grupları yoluyla, bileşik rolleri adıyla
+  bildirir; almaz (sıfırlama penceresi, bilet 06).
+
+Satırlar `KOD|default-roles-<realm>|<istemci>|<rol>|evet|hayır|var|yok` ve
+`KOD|idp:<alias>|-|<ayar>|false|<canlı>`; son satır `check: N change(s) pending; nothing was written` ya
+da `applied N change(s)`. Sıra: kuru → uygula → kuru 0.
+
+### 33.3 Tek seferlik başlangıç ataması: `KEYCLOAK_RECONCILE_ONLY=tohum-atamalar`
+
+`config/app-assignments.json`'ın `initialAssignments`'ı (YETKI-MATRISI §6.3, Yusuf K1): SkyForms
+`skyforms:access` bütün en üst ekiplere (`/UYELER/<alan>/<ekip>`, alt ekipler miras alır); SkyMail
+`skymail:access` + `skymail:templates:read` bütün en üst ekiplerin `LIDERLER`/`KOORDINATORLER`
+gruplarına ve `/UYELER/ARGE/ALGOLAB`'a. Kuru koşu (`KEYCLOAK_RECONCILE_CHECK=true`) her eksik ataması
+için `YENI ATAMA <yol> <istemci> <rol> (<n> etkin üye)` yazar; grup ya da üst grubu rolü zaten
+taşıyorsa atlar, hiçbir şeyi kaldırmaz. Uygulama önce yedeği yazar
+(`KEYCLOAK_APP_ASSIGNMENTS_BACKUP_FILE`, varsayılan `/tmp/app-assignments-seed-<realm>-<UTC>.tsv`, 0600,
+ilk satırda adı), sonra atar, en son realm özniteliği `skylab.app-assignments-seeded`'ı yazar. Bu
+işaret varken ikinci `--apply` reddedilir (panelin bilerek kaldırdığı bir atamayı geri getirmesin):
+**yalnız ilk kurulumda**. Ret (`PROBLEM`, çıkış 1, yazmaz): olmayan hedef, Privileged kök altı, varsayılan
+grubu kapsayan hedef, realm'de olmayan istemci ya da rol. Geri alma:
+`app-assignments.sh --restore <yedek>` (kuru varsayılan, `--apply` yedekteki atamaları kaldırır ve
+işareti siler). Rutin uzlaştırmanın parçası değildir; sonrası panelden.
+
+### 33.4 Tam uzlaştırmanın kuru koşusu
+
+`KEYCLOAK_RECONCILE_CHECK=true` uzlaştırıcı kimliğiyle (`KEYCLOAK_RECONCILE_ONLY` boş) ve `core-roles`,
+`default-roles` adımlarında her `kcadm create|update|delete`'i tutar: yerine `[reconcile] would kcadm
+VERB YOL (-s …)` satırı (kişi kimliği maskeli; uzlaştırıcı sır yazmaz), adımların kendi satırları gerçek
+koşunun yazacağını söyler, son satır `… is checked; nothing was written (N write(s) withheld).` Yeni
+oluşacak bir kaynağın kimliği yer tutucudur, onun altı boş okunur. Yazdığını geri okuyan bir adım (ör.
+kopyalayacağı akış) kuru koşuyu durdurabilir (çıkış 1): o değişiklik kuru koşuda görünmez ve gerçek
+koşu biri bakmadan yapılmaz. Yayın wizard'ı kuru koşuyu planla karşılaştırır, eşleşirse gerçek koşuyu
+yapar, sonra kuru koşu 0 olmalıdır.
+
+### 33.5 Ana sitenin editörleri (Ek-2)
+
+Ana sitenin `cms:access`'ini bugün taşıyan en üst ekip Leader grupları koda alınır (kimse kaybetmez,
+yeni grup eklenmez): `config/site-editor-grants.sh`'ın `MAIN_SITE_TEAMS_E_SKYLAB` listesi, production
+ölçümünün grup yollarından. `--site main` artık production'da da koşar (istemcinin kendisi elle
+kurulu kalır: `site-clients.sh` reddeder). `frontend-arge`'ın eşlemeleri Fatih'in cevabına kadar koda
+alınmaz; §33.1 onları `karar-bekliyor` sayar.
+
+Harness `tests/role-groups.sh` (CI işi `role-groups`): sınıflama (panel ataması sapma değil, ekipteki
+yönetici rolü ve alandaki uygulama rolü `PROBLEM`, Privileged beklentiler uzlaştırıcıdan), başlangıç
+ataması (kuru 8 atama ve etkin üye sayıları, yedek 0600, işaret, ikinci `--apply` reddi, `--restore`),
+retler ve okuma hatası, `default-roles` (kuru → uygula → kuru 0). Tam uzlaştırmanın kuru koşusu
+`run-integration.sh`'ın `roles-noop` grubunda.

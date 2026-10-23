@@ -1,0 +1,129 @@
+{
+  "_comment": "Uygulama atamalarının kataloğu (ekip-yetkileri bilet 03 ve 15; Microsoft Entra Enterprise apps → uygulama → Users and groups). apps: panelin Uygulamalar sayfasının atadığı uygulama rolleri, tam olarak core'un uygulama sınıfı rolleri (core-backend internal/authz/role_classes.go AppRoles; tests/check-app-assignments.sh tests/fixtures/core-app-roles.json ile karşılaştırır); assignmentRequired Entra'nın Assignment required ayarıdır, kodda durur, panel salt okur gösterir, uygulamanın kendisi koltuk rolüyle zorlar. core-backend config/app-assignments.json bu dosyanın apps kopyasıdır. initialAssignments: config/app-assignments.sh --seed'in bir kez yazdığı başlangıç ataması (YETKI-MATRISI §6.3, Yusuf K1 2026-10-23); rutin uzlaştırmanın parçası değildir, sonrası panelden yönetilir. Hedef top-teams her en üst ekip /UYELER/<alan>/<ekip>, top-team-leaders onların LIDERLER ve KOORDINATORLER grupları, /… tek bir grup yolu.",
+  "apps": [
+    {
+      "client": "forms",
+      "name": "SkyForms",
+      "assignmentRequired": true,
+      "roles": [
+        "skyforms:access",
+        "skyforms:form:manage",
+        "skyforms:response:manage",
+        "skyforms:feedback:manage"
+      ],
+      "suggestedRoles": [
+        "skyforms:access"
+      ]
+    },
+    {
+      "client": "skymail",
+      "name": "SkyMail",
+      "assignmentRequired": true,
+      "roles": [
+        "skymail:access",
+        "skymail:templates:read"
+      ],
+      "suggestedRoles": [
+        "skymail:access",
+        "skymail:templates:read"
+      ]
+    },
+    {
+      "client": "core",
+      "name": "Panel: kısa link ve sertifika",
+      "assignmentRequired": false,
+      "roles": [
+        "url:access",
+        "url:create",
+        "url:get",
+        "url:update",
+        "url:delete",
+        "certificate:issue",
+        "certificate:revoke",
+        "certificate:template:manage",
+        "certificate:binding:manage"
+      ],
+      "suggestedRoles": []
+    },
+    {
+      "client": "frontend-main",
+      "name": "Ana site: içerik okuma",
+      "assignmentRequired": false,
+      "roles": [
+        "content:read"
+      ],
+      "suggestedRoles": [
+        "content:read"
+      ]
+    },
+    {
+      "client": "frontend-arge",
+      "name": "AR-GE sitesi: içerik okuma",
+      "assignmentRequired": false,
+      "roles": [
+        "content:read"
+      ],
+      "suggestedRoles": [
+        "content:read"
+      ]
+    },
+    {
+      "client": "frontend-artlab",
+      "name": "ARTLAB sitesi: içerik okuma",
+      "assignmentRequired": false,
+      "roles": [
+        "content:read"
+      ],
+      "suggestedRoles": [
+        "content:read"
+      ]
+    },
+    {
+      "client": "frontend-yildizjam",
+      "name": "Yıldız Jam sitesi: içerik okuma",
+      "assignmentRequired": false,
+      "roles": [
+        "content:read"
+      ],
+      "suggestedRoles": [
+        "content:read"
+      ]
+    },
+    {
+      "client": "frontend-skydays",
+      "name": "SKYDAYS sitesi: içerik okuma",
+      "assignmentRequired": false,
+      "roles": [
+        "content:read"
+      ],
+      "suggestedRoles": [
+        "content:read"
+      ]
+    }
+  ],
+  "initialAssignments": [
+    {
+      "client": "forms",
+      "roles": [
+        "skyforms:access"
+      ],
+      "target": "top-teams"
+    },
+    {
+      "client": "skymail",
+      "roles": [
+        "skymail:access",
+        "skymail:templates:read"
+      ],
+      "target": "top-team-leaders"
+    },
+    {
+      "client": "skymail",
+      "roles": [
+        "skymail:access",
+        "skymail:templates:read"
+      ],
+      "target": "/UYELER/ARGE/ALGOLAB"
+    }
+  ]
+}

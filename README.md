@@ -676,12 +676,18 @@ edilebileceği) ile `realm-management`'ın `view-users` ve `view-clients` roller
 geri alma; yalnız `service-account-core`) rollerini, Template seed'in servis hesabına
 (`skymail-seed`) `skymail:templates:system`'ı (yalnız o bir şablonu sistem şablonu yapar ya da
 işareti kaldırır; skymail-backend README) verir; SkyMail'in rollerinden yalnız
-`skymail:tracking:withdraw`'u ve `skymail:templates:system`'ı oluşturur, öbürleri eksikse uyarır (runbook §20.1); listelenen servis istemcisinde varsayılan `roles` kapsamı yoksa ekler (runbook §20.1). `skymail:announcements:send` (haber ve duyuruyu Mail onayı olmadan gönderme)
-`skymail:system-mails:read` gibi bir kez tohumlanır ama yalnız ADMIN ve YK'ya (runbook §25).
+`skymail:tracking:withdraw`'u ve `skymail:templates:system`'ı oluşturur, öbürleri eksikse uyarır (runbook §20.1); listelenen servis istemcisinde varsayılan `roles` kapsamı yoksa ekler (runbook §20.1). SkyMail'in kendi
+rolleri `skymail:access`, `skymail:templates:read`, `skymail:lists:read`, `skymail:mails:read`,
+`skymail:mails:send`, `skymail:mails:write` ADMIN ve YK'ya, `skymail:mails:approve` yalnız YK'ya
+(onaycı YK kökü) aynı biçimde bir kez tohumlanır; uzlaştırıcı onları oluşturmaz, realm'de olanı
+tohumlar. `skymail:announcements:send` listeden çıktı (okuyan yok; ekip-yetkileri bilet 03), var olan
+eşlemeleri kalır (runbook §25).
 `skymail:mails:tracking:read` (gönderimlerin kişi bazındaki açılma ve tıklama raporu) aynı biçimde
 ADMIN, YK ve DK'ya bir kez tohumlanır; okuma rolüdür, DK'da kalır (runbook §25). Forms'un
 salt okur rolü `skyforms:read-all` (DK her formu ve cevabı okur, yazamaz; forms-backend henüz okumuyor)
-aynı biçimde `forms` istemcisinde var edilir ve yalnız DK'ya bir kez verilir (runbook §28).
+aynı biçimde `forms` istemcisinde var edilir ve yalnız DK'ya bir kez verilir (runbook §28). Forms
+koltuğu `skyforms:access` ADMIN, YK ve DK'ya, `skyforms:*` (bütün formları okuma) yalnız YK'ya bir kez
+tohumlanır (bilet 03, S4); ikisi de Forms'un rolüdür, oluşturulmaz.
 
 DK salt okurdur (grup-yonetimi 08; Entra'nın Global Reader + Reports Reader'ı: `global:read` +
 `audit:read`). Uzlaştırıcı bir eşlemeyi hiç geri almadığı için DK'nın eskiden aldığı yazma rollerini
@@ -697,13 +703,27 @@ gruplarındaki ve üst gruptan gelen yazma rollerini yalnız bildirir. Forms'un 
 onayıyla, önce sandbox'ta koşulur (runbook §28). Harness `tests/dk-read-only.sh` tek başına çalışır.
 
 Uygulama rolü grupları `/ROLLER/<UYGULAMA>-<ROL>` (Entra'nın uygulama rolü güvenlik grupları;
-`config/role-groups.json`) ve en üst ekiplerin Leader gruplarına Forms koltuğu (`skyforms:access`) ile
-`skycloud:access` iki operatör betiğiyle
-kurulur: `config/role-groups.sh` ve `config/leader-app-roles.sh` (kuru koşu varsayılan, `--apply`
+`config/role-groups.json`) ve en üst ekiplerin Leader gruplarına `skycloud:access` iki operatör
+betiğiyle kurulur (Forms koltuğunu Leader gruplarına artık `leader-app-roles.sh` yazmaz: uygulama
+rolüdür, panelindir): `config/role-groups.sh` ve `config/leader-app-roles.sh` (kuru koşu varsayılan, `--apply`
 yazar, ikinci koşu 0 değişiklik; uzlaştırıcıda `KEYCLOAK_RECONCILE_ONLY=role-groups` ve
 `leader-app-roles`). Hiçbiri üye eklemez ya da bir şey almaz; `role-groups.sh --audit` doğrudan rol
 sahiplerini ve izinli yerler dışındaki grup eşlemelerini kişi adı basmadan sayar (runbook §26, §27).
 Harness `tests/role-groups.sh` tek başına çalışır.
+
+Kod alanı ve panel alanı (ekip-yetkileri bilet 03; Microsoft Entra'nın Enterprise app modeli): rol
+tanımları, "atama gerekli" (`config/app-assignments.json`, tam olarak core'un uygulama rolleri;
+`tests/check-app-assignments.sh` core'un kopyasıyla karşılaştırır), Privileged kökler, `/ROLLER`,
+yönetici rolleri, servis hesapları ve varsayılan rol koddadır; uygulama rolünün ekip grubuna ya da
+kişiye ataması panelindir ve uzlaştırıcı ona dokunmaz. Operatör adımları:
+`KEYCLOAK_RECONCILE_ONLY=app-assignments` (her eşlemeyi `KOD|…` ya da `PANEL|…` satırıyla sınıflar,
+yalnız okur), `default-roles` (`broker/read-token`'ı varsayılan rolden alır, IdP'lerde "Stored tokens
+readable"ı kapatır; kuru koşulu), `tohum-atamalar` (tek seferlik başlangıç ataması: bütün en üst
+ekiplere SkyForms, Leader gruplarına ve ALGOLAB'a SkyMail "onaya gönder"; yedekli, işaretli, ikinci
+kez uygulanmaz). `KEYCLOAK_RECONCILE_CHECK=true` tam uzlaştırmanın ve `core-roles`'ın kuru koşusudur:
+her yazma `would kcadm …` satırıdır, hiçbir şey yazılmaz. `skyforms`'un token'ı `skyforms-core-audience`
+kapsamıyla `aud: core` taşır (Forms'un kişi seçicisi core'u kişinin token'ıyla çağırır). Ayrıntı:
+runbook §33.
 
 Etkinlik siteleri (ARTLAB, YıldızJam, SkyDays) da canlıdaki inscribed'ın tenant'larıdır (ADR-0056
 eki, 2026-10-03). Site istemcilerini (`frontend-artlab`, `frontend-yildizjam`, `frontend-skydays`)
@@ -714,8 +734,11 @@ idempotent `config/site-clients.sh` kurar; realm açıkça verilir (`KEYCLOAK_RE
 `skycms` ortak `skycms-audience` kapsamından, `core` site başına `frontend-<site>-core-audience`
 kapsamından gelir; tam yollu `groups`, `groups`'u başka biçimde yazan kapsam (ör.
 `microprofile-jwt`) yalnız bu istemciden ayrılır. Elle yapılmış `frontend-main` ve `frontend-arge`
-yalnız raporlanır; tek istisna ana sitenin sandbox'ı: `--site main` yalnız `e-skylab-sandbox`'ta
-`frontend-main`'i aynı biçimde `https://sandbox.yildizskylab.com` için kurar (production'da reddedilir).
+yalnız raporlanır; tek istisna ana sitenin sandbox'ı: `site-clients.sh --site main` yalnız
+`e-skylab-sandbox`'ta `frontend-main`'i aynı biçimde `https://sandbox.yildizskylab.com` için kurar
+(production'da reddedilir). `site-editor-grants.sh --site main` ise production'da da koşar: ana sitenin
+`cms:access`'ini bugün taşıyan en üst ekip Leader grupları koddadır (`MAIN_SITE_TEAMS_E_SKYLAB`,
+bilet 03 Ek-2).
 Ardından `inscribed-cms-roles.sh --client frontend-<site>` rolleri kurar (servis
 hesabına yalnız `content:read` + `schema:sync`) ve `config/site-editor-grants.sh` `cms:access`'i
 `ADMIN` ve `YK` gruplarına, sahip lab takımının ve etkinliğin organizasyon takımının

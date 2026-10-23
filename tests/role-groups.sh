@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Real-Keycloak contract for config/role-groups.sh (the application role groups /ROLLER/<APP>-<ROLE>,
-# rol-temizligi ticket 05) and config/leader-app-roles.sh (the Forms seat on the Leader groups of the
-# top teams, ticket 09), and for the reconciler's operator steps that run them
-# (KEYCLOAK_RECONCILE_ONLY=role-groups and leader-app-roles). Stand-alone: starts the stock Keycloak
+# rol-temizligi ticket 05), config/leader-app-roles.sh (SkyCloud on the Leader groups of the top teams,
+# ticket 09) and config/app-assignments.sh (the code and panel areas and the one-time initial
+# assignment, ekip-yetkileri ticket 03), and for the reconciler's operator steps that run them
+# (KEYCLOAK_RECONCILE_ONLY=role-groups, leader-app-roles, app-assignments and tohum-atamalar) and its
+# step default-roles (the default role and the identity providers' token settings). Stand-alone: starts the stock Keycloak
 # image this repository builds on (the Dockerfile's KEYCLOAK_IMAGE) in dev mode with docker run --rm
 # and no volume, copies config/ into the container and runs the scripts there the way an operator
 # does; tokens are real password grants of a harness login client.
@@ -26,13 +28,31 @@
 #     sandbox a leaf whose client is missing is skipped with a WARNING (exit 0);
 #   - --audit counts direct holders and lists the groups outside the allowed places, and never
 #     prints a person's name;
-#   - leader-app-roles: only the top teams' LIDERLER and KOORDINATORLER get skyforms:access and
-#     skycloud:access (not a Sub-team's, not a YK task group's); a Leader group without a _LEADER
-#     realm role is a NEW SEAT line with a member count; a second --apply writes nothing; a Leader's
-#     token carries both; a Sub-team Leader group holding one is a WARNING, a direct holder a NOTE
-#     with a count; in the sandbox the missing skycloud client is skipped with a WARNING;
-#   - a failed group read (injected) stops both scripts with exit 1 and writes nothing;
-#   - the reconciler's operator steps run both scripts (dry run with KEYCLOAK_RECONCILE_CHECK=true)
+#   - leader-app-roles: only the top teams' LIDERLER and KOORDINATORLER get skycloud:access (not a
+#     Sub-team's, not a YK task group's) and no Forms seat any more (the panel's, ekip-yetkileri 03); a
+#     Leader group without a _LEADER realm role is a NEW SEAT line with a member count; a second
+#     --apply writes nothing; a Leader's token carries SkyCloud and no Forms role; a Sub-team Leader
+#     group holding it is a WARNING; in the sandbox the missing skycloud client is skipped with a
+#     WARNING;
+#   - app-assignments --check: every mapping lands in the code area (KOD|path|client|role|expected|
+#     live) or the panel area (PANEL|path|client|role): an app role on a top team or a Sub-team and
+#     on a person is the panel's and no drift; an admin role on a team, an app role on an area and a
+#     realm role outside the Privileged roots are PROBLEMs; the role groups' and the Leader groups'
+#     code area roles are as expected; through the reconciler's step the Privileged roots' own
+#     expectations come in (present and missing); nothing is written and no person is named;
+#   - app-assignments --seed: a dry run plans exactly the missing initial assignments (every top
+#     team's Forms seat, the Leader groups' and ALGOLAB's SkyMail pair) with enabled member counts and
+#     writes nothing; the reconciler's step tohum-atamalar applies them with a 0600 backup and marks
+#     the realm; a second dry run plans nothing and a second --apply is refused; --restore takes
+#     exactly the backup's assignments away and clears the mark; a missing target, a Privileged
+#     target and a default group under a target are PROBLEMs (exit 1, nothing written); a failed
+#     read stops it;
+#   - default-roles: the dry run names broker/read-token in the default role and an identity
+#     provider's Stored tokens readable as changes, Store tokens as a WARNING and the direct holder
+#     as a count, and writes nothing; the step takes read-token out and turns the setting off, leaves
+#     Store tokens and the direct holder alone; a second dry run plans nothing;
+#   - a failed group read (injected) stops the scripts with exit 1 and writes nothing;
+#   - the reconciler's operator steps run the scripts (dry run with KEYCLOAK_RECONCILE_CHECK=true)
 #     and refuse to run without an operator session.
 # Requirements on the host: docker, curl, jq. ROLE_GROUPS_TEST_PORT (default 18096),
 # ROLE_GROUPS_TEST_CONTAINER (default role-groups-test-<pid>).
@@ -58,7 +78,7 @@ SANDBOX=e-skylab-sandbox
 LEAVES=(FORMS-ACCESS FORMS-ALL PLACE-ADMIN PLACE-MODERATOR SKYMAIL-ACCESS SKYMAIL-TEMPLATES-READ
   SKYMAIL-TEMPLATES-WRITE SKYMAIL-LISTS-READ SKYMAIL-LISTS-WRITE SKYMAIL-MAILS-READ SKYMAIL-MAILS-WRITE
   SKYMAIL-MAILS-APPROVE CF-ZERO-TRUST-ACCESS SKYCLOUD-ACCESS SKYCLOUD-ADMIN)
-LEADER_ROLES='["forms/skyforms:access","skycloud/skycloud:access"]'
+LEADER_ROLES='["skycloud/skycloud:access"]'
 CURRENT_STAGE=startup
 
 fail() {
@@ -289,7 +309,7 @@ run_failing_read() {
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='refused realms and an invalid file'
-for script in role-groups.sh leader-app-roles.sh; do
+for script in role-groups.sh leader-app-roles.sh app-assignments.sh; do
   refused=$(run_expecting 2 "$script" master --apply)
   expect_line "$refused" 'refusing realm master' "$script did not refuse master"
   reject_line "$refused" 'realm=' "$script went on in master"
@@ -413,7 +433,8 @@ kcadm create "groups/$(group_id "$REALM" /UYELER/YK/BASKAN)/role-mappings/client
   -b "$(role_body "$REALM" skymail skymail:access)" >/dev/null
 audited=$(run_expecting 0 role-groups.sh "$REALM" --audit)
 expect_line "$audited" 'audit: skymail/skymail:mails:write: 1 person(s) directly; groups: /ROLLER/SKYMAIL-MAILS-WRITE' 'the per-role count is wrong'
-expect_line "$audited" 'audit K1: 1 person(s) hold client roles directly, 1 person(s) hold realm roles directly' 'K1 is wrong'
+expect_line "$audited" 'audit K1: 1 person(s) hold admin or unclassified client roles directly, 1 person(s) hold realm roles directly' 'K1 is wrong'
+expect_line "$audited" 'audit K1: 1 person(s) hold app roles directly (panel assignments' 'K1 did not count the app role apart'
 expect_line "$audited" 'audit K4: 3 group(s) hold roles outside the allowed places:' 'K4 is wrong'
 expect_line "$audited" 'audit K4:   /UYELER: realm/USER' 'K4 did not name /UYELER'
 expect_line "$audited" 'audit K4:   /ROLLER/SKYMAIL-ACCESS: skymail/skymail:access' 'K4 did not name the role group with a subgroup'
@@ -483,29 +504,28 @@ before=$(events "$REALM")
 checked=$(run_expecting 0 leader-app-roles.sh "$REALM")
 expect_line "$checked" 'Leader groups of the top teams: 2' 'the top teams were not read from the tree'
 for path in /UYELER/ARGE/AIRLAB/LIDERLER /UYELER/ARGE/AIRLAB/KOORDINATORLER; do
-  expect_line "$checked" "would grant forms/skyforms:access to the group $path" "the Forms seat was not planned for $path"
   expect_line "$checked" "would grant skycloud/skycloud:access to the group $path" "SkyCloud was not planned for $path"
 done
+reject_line "$checked" 'forms/skyforms:access' 'the Forms seat (now the panel'"'"'s) was planned'
 expect_line "$checked" 'NEW SEAT: /UYELER/ARGE/AIRLAB/LIDERLER holds no <TEAM>_LEADER realm role: its 1 member(s) get the roles newly' 'the new seat was not reported'
 reject_line "$checked" 'NEW SEAT: /UYELER/ARGE/AIRLAB/KOORDINATORLER' 'a Leader group with a _LEADER role was reported as a new seat'
 expect_line "$checked" 'new seats: 1 Leader group(s) without a <TEAM>_LEADER realm role, 1 member(s) in all' 'the new seat summary is wrong'
 expect_line "$checked" 'NOTE: /UYELER/ORGANIZASYON/ARTLAB has no LIDERLER or KOORDINATORLER group' 'the team without Leaders was not noted'
-expect_line "$checked" 'NOTE: forms/skyforms:access is granted directly to 1 person(s)' 'the direct holder was not counted'
 reject_line "$checked" 'skyforms:form:manage' 'an unread Forms role was planned'
 reject_line "$checked" 'SUB/LIDERLER' 'a Sub-team Leader group was planned'
 reject_line "$checked" '/UYELER/YK/' 'a YK task group was planned'
 for name in direct-person leader-person; do reject_line "$checked" "$name" 'a person was named'; done
-expect_line "$checked" 'check: 4 change(s) pending, 0 warning(s), 0 problem(s)' 'the dry run did not count four grants'
+expect_line "$checked" 'check: 2 change(s) pending, 0 warning(s), 0 problem(s)' 'the dry run did not count two grants'
 [[ $(events "$REALM") == "$before" ]] || fail 'the dry run wrote something'
 applied=$(run_expecting 0 leader-app-roles.sh "$REALM" --apply)
-expect_line "$applied" 'applied 4 change(s), 0 warning(s), 0 problem(s)' 'the apply did not grant'
+expect_line "$applied" 'applied 2 change(s), 0 warning(s), 0 problem(s)' 'the apply did not grant'
 for path in /UYELER/ARGE/AIRLAB/LIDERLER /UYELER/ARGE/AIRLAB/KOORDINATORLER; do
   [[ $(group_roles "$REALM" "$path" | jq -c 'map(select(startswith("realm/") | not))') == "$LEADER_ROLES" ]] \
-    || fail "$path does not hold exactly skyforms:access and skycloud:access: $(group_roles "$REALM" "$path")"
+    || fail "$path does not hold exactly skycloud:access: $(group_roles "$REALM" "$path")"
 done
 [[ $(group_roles "$REALM" /UYELER/ARGE/AIRLAB/SUB/LIDERLER) == '[]' ]] || fail 'the Sub-team Leader group got a role'
 [[ $(group_roles "$REALM" /UYELER/YK/BASKAN/LIDERLER) == '[]' ]] || fail 'the YK task group got a role'
-[[ $(token_roles "$REALM" leader-person forms) == '["skyforms:access"]' ]] || fail "the Leader's token lacks the Forms seat: $(token_roles "$REALM" leader-person forms)"
+[[ $(token_roles "$REALM" leader-person forms) == '[]' ]] || fail "the Leader's token carries a Forms role from leader-app-roles: $(token_roles "$REALM" leader-person forms)"
 [[ $(token_roles "$REALM" leader-person skycloud) == '["skycloud:access"]' ]] || fail "the Leader's token lacks SkyCloud: $(token_roles "$REALM" leader-person skycloud)"
 [[ $(token_roles "$REALM" sub-leader-person forms) == '[]' ]] || fail "the Sub-team Leader's token carries a Forms role"
 before=$(events "$REALM")
@@ -513,12 +533,14 @@ again=$(run_expecting 0 leader-app-roles.sh "$REALM" --apply)
 expect_line "$again" 'applied 0 change(s), 0 warning(s), 0 problem(s)' 'the second apply changed something'
 expect_line "$again" 'new seats: 0 Leader group(s)' 'the second apply reported a new seat'
 [[ $(events "$REALM") == "$before" ]] || fail 'the second apply wrote something'
-kcadm create "groups/$(group_id "$REALM" /UYELER/ARGE/AIRLAB/SUB/LIDERLER)/role-mappings/clients/$(client_uuid "$REALM" forms)" \
-  -r "$REALM" -b "$(role_body "$REALM" forms skyforms:access)" >/dev/null
+kcadm create "groups/$(group_id "$REALM" /UYELER/ARGE/AIRLAB/SUB/LIDERLER)/role-mappings/clients/$(client_uuid "$REALM" skycloud)" \
+  -r "$REALM" -b "$(role_body "$REALM" skycloud skycloud:access)" >/dev/null
 checked=$(run_expecting 0 leader-app-roles.sh "$REALM")
-expect_line "$checked" 'WARNING: forms/skyforms:access is also held by the group(s) /UYELER/ARGE/AIRLAB/SUB/LIDERLER' 'the Sub-team holder was not reported'
-reject_line "$checked" '/ROLLER/FORMS-ACCESS (' 'the role group was reported as a stray holder'
-printf '    leader-app-roles: the two top team Leader groups get skyforms:access and skycloud:access, nothing more; NEW SEAT counted; idempotent\n'
+expect_line "$checked" 'WARNING: skycloud/skycloud:access is also held by the group(s) /UYELER/ARGE/AIRLAB/SUB/LIDERLER' 'the Sub-team holder was not reported'
+reject_line "$checked" '/ROLLER/SKYCLOUD-ACCESS (' 'the role group was reported as a stray holder'
+expected=$(run_expecting 0 leader-app-roles.sh "$REALM" --print-expected)
+[[ $expected == $'top-team-leaders\tskycloud\tskycloud:access' ]] || fail "--print-expected is not the one code area role: $expected"
+printf '    leader-app-roles: the two top team Leader groups get skycloud:access, no Forms seat; NEW SEAT counted; idempotent\n'
 
 CURRENT_STAGE='leader-app-roles: a failed group read stops the run'
 before=$(events "$REALM")
@@ -532,9 +554,205 @@ printf '    a failed read of /UYELER stops leader-app-roles.sh (exit 1), nothing
 CURRENT_STAGE='leader-app-roles: the sandbox skips the missing client'
 applied=$(run_expecting 0 leader-app-roles.sh "$SANDBOX" --apply)
 expect_line "$applied" "WARNING: the client skycloud does not exist in realm $SANDBOX; skycloud/skycloud:access skipped" 'the missing skycloud client was not skipped'
-expect_line "$applied" 'applied 2 change(s), 1 warning(s), 0 problem(s)' 'the sandbox grants are wrong'
-[[ $(group_roles "$SANDBOX" /UYELER/ARGE/AIRLAB/LIDERLER) == '["forms/skyforms:access"]' ]] || fail 'the sandbox Leader group is wrong'
-printf '    sandbox: skyforms:access granted, the missing skycloud client skipped with a WARNING\n'
+expect_line "$applied" 'applied 0 change(s), 1 warning(s), 0 problem(s)' 'the sandbox grants are wrong'
+[[ $(group_roles "$SANDBOX" /UYELER/ARGE/AIRLAB/LIDERLER) == '[]' ]] || fail 'the sandbox Leader group got a role'
+printf '    sandbox: the missing skycloud client skipped with a WARNING, nothing granted\n'
+
+# ---------------------------------------------------------------------------------------------------
+CURRENT_STAGE='app-assignments: an invalid catalogue'
+printf '{"apps":[{"client":"forms","name":"SkyForms","assignmentRequired":true,"roles":["skyforms:access"]}],"initialAssignments":[{"client":"forms","roles":["skyforms:*"],"target":"top-teams"}]}\n' \
+  | docker exec -i "$CONTAINER" sh -c 'cat > /tmp/bad-app-assignments.json'
+trap - ERR
+bad=$(docker exec -e KEYCLOAK_REALM=$REALM -e KEYCLOAK_APP_ASSIGNMENTS_FILE=/tmp/bad-app-assignments.json "$CONTAINER" \
+  bash "$IN_CONTAINER_CONFIG/app-assignments.sh" --kcadm-config "$KCADM_CONFIG" --seed 2>&1) && status=0 || status=$?
+trap 'on_error "$LINENO"' ERR
+[[ $status == 2 ]] || { printf '%s\n' "$bad" >&2; fail "an initial assignment of an admin role was not refused (exit $status)"; }
+expect_line "$bad" 'is not a valid app catalogue; nothing was read or changed' 'the invalid catalogue was not reported'
+printf '    a catalogue whose initial assignment names an admin role is refused (exit 2)\n'
+
+# ---------------------------------------------------------------------------------------------------
+CURRENT_STAGE='app-assignments: every mapping in the code area or the panel area'
+# The panel area: the Forms seat on a top team, SkyMail on a Sub-team, the Forms seat on direct-person.
+# Outside it: an admin role on a top team, an app role on an area. /ADMIN holds the Forms seat (code).
+grant_group() { # grant_group PATH CLIENT ROLE
+  kcadm create "groups/$(group_id "$REALM" "$1")/role-mappings/clients/$(client_uuid "$REALM" "$2")" -r "$REALM" \
+    -b "$(role_body "$REALM" "$2" "$3")" >/dev/null
+}
+grant_group /UYELER/ARGE/AIRLAB forms skyforms:access
+grant_group /UYELER/ARGE/AIRLAB/SUB skymail skymail:access
+grant_group /UYELER/ARGE/AIRLAB skymail skymail:mails:write
+grant_group /UYELER/ARGE skymail skymail:access
+grant_group /ADMIN forms skyforms:access
+before=$(events "$REALM")
+sorted=$(run_expecting 0 app-assignments.sh "$REALM" --check)
+expect_line "$sorted" 'NOTE: no --privileged-file' 'the run without the reconciler'"'"'s expectations did not say so'
+expect_line "$sorted" '[app-assignments] PANEL|/UYELER/ARGE/AIRLAB|forms|skyforms:access' 'the top team'"'"'s Forms seat is not the panel'"'"'s'
+expect_line "$sorted" '[app-assignments] PANEL|/UYELER/ARGE/AIRLAB/SUB|skymail|skymail:access' 'the Sub-team'"'"'s SkyMail is not the panel'"'"'s'
+expect_line "$sorted" '[app-assignments] PANEL|kişi:1|forms|skyforms:access' 'the person'"'"'s Forms seat is not a panel assignment'
+expect_line "$sorted" '[app-assignments] KOD|kişi:1|skymail|skymail:mails:write|hayır|var' 'the person'"'"'s admin role is not the code area'"'"'s'
+expect_line "$sorted" '[app-assignments] KOD|/UYELER/ARGE/AIRLAB|skymail|skymail:mails:write|hayır|var' 'the admin role on a team is not reported'
+expect_line "$sorted" 'PROBLEM: skymail/skymail:mails:write (an admin, unclassified or realm role) is mapped to /UYELER/ARGE/AIRLAB' 'the admin role on a team is no PROBLEM'
+expect_line "$sorted" '[app-assignments] KOD|/UYELER/ARGE|skymail|skymail:access|hayır|var' 'the app role on an area is not the code area'"'"'s'
+expect_line "$sorted" 'PROBLEM: skymail/skymail:access (an app role) is mapped to /UYELER/ARGE, which is no panel target' 'the app role on an area is no PROBLEM'
+expect_line "$sorted" '[app-assignments] KOD|/ROLLER/SKYMAIL-ACCESS|skymail|skymail:access|evet|var' 'a role group'"'"'s role is not as expected'
+expect_line "$sorted" '[app-assignments] KOD|/UYELER/ARGE/AIRLAB/LIDERLER|skycloud|skycloud:access|evet|var' 'the Leader group'"'"'s SkyCloud is not as expected'
+expect_line "$sorted" '[app-assignments] KOD|/UYELER/ARGE/AIRLAB/SUB/LIDERLER|skycloud|skycloud:access|hayır|var' 'SkyCloud on a Sub-team'"'"'s Leader group is not reported'
+expect_line "$sorted" '[app-assignments] KOD|/UYELER|realm|USER|hayır|var' 'the realm role on /UYELER is not reported'
+expect_line "$sorted" '[app-assignments] KOD|/ADMIN|forms|skyforms:access|hayır|var' 'the Privileged root'"'"'s mapping is not the code area'"'"'s'
+expect_line "$sorted" 'PANEL: SkyForms (forms): 1 group assignment(s), 1 person assignment(s)' 'the SkyForms panel count is wrong'
+expect_line "$sorted" 'PANEL: SkyMail (skymail): 1 group assignment(s), 0 person assignment(s)' 'the SkyMail panel count is wrong'
+reject_line "$sorted" 'PANEL|/ROLLER' 'a role group was taken for the panel area'
+reject_line "$sorted" 'PANEL|/ADMIN' 'a Privileged root was taken for the panel area'
+expect_line "$sorted" 'check: 0 change(s) pending' 'the check planned a change'
+for name in direct-person leader-person role-group-person sub-leader-person; do
+  reject_line "$sorted" "$name" 'the check printed a person'
+done
+[[ $(events "$REALM") == "$before" ]] || fail 'the check wrote something'
+output=$(reconcile_step 2 app-assignments)
+expect_line "$output" 'KEYCLOAK_RECONCILE_ONLY=app-assignments is an operator step' 'the check ran without an operator session'
+output=$(reconcile_step 0 app-assignments -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KCADM_CONFIG")
+reject_line "$output" 'NOTE: no --privileged-file' 'the reconciler'"'"'s step did not pass its expectations'
+expect_line "$output" '[app-assignments] KOD|/ADMIN|forms|skyforms:access|evet|var' 'the reconciler does not expect the Forms seat on ADMIN'
+expect_line "$output" '[app-assignments] KOD|/UYELER/YK|forms|skyforms:access|evet|yok' 'the missing Forms seat of YK is not reported'
+expect_line "$output" '[app-assignments] KOD|/UYELER/YK|skymail|skymail:mails:approve|evet|yok' 'the missing SkyMail approver role of YK is not reported'
+expect_line "$output" '[app-assignments] KOD|/UYELER/YK|forms|skyforms:*|evet|yok' 'the missing skyforms:* of YK is not reported'
+reject_line "$output" 'KOD|/ADMIN|skymail|skymail:mails:approve' 'ADMIN was expected to approve (YK alone does)'
+[[ $(events "$REALM") == "$before" ]] || fail 'the reconciler'"'"'s check wrote something'
+kcadm delete "groups/$(group_id "$REALM" /UYELER/ARGE/AIRLAB)/role-mappings/clients/$(client_uuid "$REALM" skymail)" -r "$REALM" \
+  -b "$(role_body "$REALM" skymail skymail:mails:write)" >/dev/null
+kcadm delete "groups/$(group_id "$REALM" /UYELER/ARGE)/role-mappings/clients/$(client_uuid "$REALM" skymail)" -r "$REALM" \
+  -b "$(role_body "$REALM" skymail skymail:access)" >/dev/null
+printf '    --check: panel assignments counted, code area compared (expected, missing, not in code), PROBLEMs named, nothing written, nobody named\n'
+
+# ---------------------------------------------------------------------------------------------------
+CURRENT_STAGE='app-assignments: the one-time initial assignment'
+create_group "$REALM" /UYELER/ARGE ALGOLAB
+make_person algolab-member /UYELER/ARGE/ALGOLAB
+make_person algolab-off /UYELER/ARGE/ALGOLAB
+kcadm update "users/$(kcadm get users -r "$REALM" -q username=algolab-off -q exact=true | jq -r '.[0].id')" -r "$REALM" \
+  -s enabled=false >/dev/null
+before=$(events "$REALM")
+planned=$(run_expecting 0 app-assignments.sh "$REALM" --seed)
+expect_line "$planned" 'top teams: 3, their Leader groups: 2' 'the top teams were not read from the tree'
+expect_line "$planned" 'YENI ATAMA /UYELER/ARGE/ALGOLAB forms skyforms:access (1 etkin üye)' 'ALGOLAB'"'"'s Forms seat was not planned with its enabled member'
+expect_line "$planned" 'YENI ATAMA /UYELER/ORGANIZASYON/ARTLAB forms skyforms:access (0 etkin üye)' 'ARTLAB'"'"'s Forms seat was not planned'
+for role in skymail:access skymail:templates:read; do
+  expect_line "$planned" "YENI ATAMA /UYELER/ARGE/AIRLAB/LIDERLER skymail $role (1 etkin üye)" "LIDERLER's $role was not planned"
+  expect_line "$planned" "YENI ATAMA /UYELER/ARGE/AIRLAB/KOORDINATORLER skymail $role (0 etkin üye)" "KOORDINATORLER's $role was not planned"
+  expect_line "$planned" "YENI ATAMA /UYELER/ARGE/ALGOLAB skymail $role (1 etkin üye)" "ALGOLAB's $role was not planned"
+done
+reject_line "$planned" 'YENI ATAMA /UYELER/ARGE/AIRLAB forms' 'a team that holds the seat was planned again'
+reject_line "$planned" 'SUB/LIDERLER' 'a Sub-team Leader group was planned'
+reject_line "$planned" '/UYELER/YK' 'a Privileged group was planned'
+expect_line "$planned" 'already held (by the group or a parent): 1' 'the held seat was not counted'
+expect_line "$planned" 'check: 8 change(s) pending, 0 warning(s), 0 problem(s)' 'the dry run did not plan eight assignments'
+for name in algolab-member algolab-off leader-person; do reject_line "$planned" "$name" 'the seed printed a person'; done
+[[ $(events "$REALM") == "$before" ]] || fail 'the dry run wrote something'
+output=$(reconcile_step 0 tohum-atamalar -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KCADM_CONFIG" \
+  -e KEYCLOAK_APP_ASSIGNMENTS_BACKUP_FILE=/tmp/seed-backup.tsv)
+expect_line "$output" '[app-assignments] backup: /tmp/seed-backup.tsv' 'the backup was not named'
+expect_line "$output" 'applied 8 change(s), 0 warning(s), 0 problem(s)' 'the step did not apply the eight assignments'
+expect_line "$output" 'realm attribute skylab.app-assignments-seeded=' 'the realm was not marked'
+[[ $(docker exec "$CONTAINER" stat -c %a /tmp/seed-backup.tsv) == 600 ]] || fail 'the backup is not mode 0600'
+[[ $(docker exec "$CONTAINER" wc -l </dev/null /tmp/seed-backup.tsv | cut -d' ' -f1) == 8 ]] || fail 'the backup does not hold eight lines'
+[[ $(group_roles "$REALM" /UYELER/ARGE/ALGOLAB) == '["forms/skyforms:access","skymail/skymail:access","skymail/skymail:templates:read"]' ]] \
+  || fail "ALGOLAB does not hold the seat and the SkyMail pair: $(group_roles "$REALM" /UYELER/ARGE/ALGOLAB)"
+[[ $(group_roles "$REALM" /UYELER/ORGANIZASYON/ARTLAB) == '["forms/skyforms:access"]' ]] || fail 'ARTLAB does not hold the Forms seat'
+[[ $(token_roles "$REALM" leader-person skymail) == '["skymail:access","skymail:templates:read"]' ]] \
+  || fail "the Leader does not carry the SkyMail pair: $(token_roles "$REALM" leader-person skymail)"
+[[ $(token_roles "$REALM" leader-person forms) == '["skyforms:access"]' ]] || fail 'the Leader does not inherit the team'"'"'s Forms seat'
+[[ $(token_roles "$REALM" algolab-member forms) == '["skyforms:access"]' ]] || fail 'the ALGOLAB member does not carry the Forms seat'
+again=$(run_expecting 0 app-assignments.sh "$REALM" --seed)
+expect_line "$again" 'NOTE: the initial assignment ran in realm e-skylab before' 'the second dry run did not see the mark'
+expect_line "$again" 'check: 0 change(s) pending' 'the second dry run planned something'
+before=$(events "$REALM")
+refused=$(run_expecting 1 app-assignments.sh "$REALM" --seed --apply)
+expect_line "$refused" 'PROBLEM: the initial assignment ran in realm e-skylab before' 'a second --apply was not refused'
+[[ $(events "$REALM") == "$before" ]] || fail 'the refused second --apply wrote something'
+restore=$(run_expecting 0 app-assignments.sh "$REALM" --restore /tmp/seed-backup.tsv)
+expect_line "$restore" 'would take forms/skyforms:access away from the group /UYELER/ARGE/ALGOLAB' 'the restore did not plan the seat away'
+expect_line "$restore" 'check: 9 change(s) pending' 'the restore did not plan the eight assignments and the mark'
+[[ $(events "$REALM") == "$before" ]] || fail 'the restore dry run wrote something'
+restore=$(run_expecting 0 app-assignments.sh "$REALM" --restore /tmp/seed-backup.tsv --apply)
+expect_line "$restore" 'applied 9 change(s), 0 warning(s), 0 problem(s)' 'the restore did not take the eight assignments and the mark away'
+[[ $(group_roles "$REALM" /UYELER/ARGE/ALGOLAB) == '[]' ]] || fail 'the restore left an assignment on ALGOLAB'
+[[ $(group_roles "$REALM" /UYELER/ARGE/AIRLAB) == '["forms/skyforms:access"]' ]] || fail 'the restore took away what the seed had not made'
+replanned=$(run_expecting 0 app-assignments.sh "$REALM" --seed)
+reject_line "$replanned" 'NOTE: the initial assignment ran' 'the restore did not clear the mark'
+expect_line "$replanned" 'check: 8 change(s) pending' 'after the restore the dry run does not plan the eight again'
+printf '    --seed: eight missing assignments planned with enabled member counts, applied once with a backup and a mark; a second --apply refused; --restore takes exactly them away\n'
+
+CURRENT_STAGE='app-assignments: refused targets and a failed read'
+kcadm update "realms/$REALM/default-groups/$(group_id "$REALM" /UYELER/ORGANIZASYON/ARTLAB)" -n -b '{}' >/dev/null
+before=$(events "$REALM")
+refused=$(run_expecting 1 app-assignments.sh "$REALM" --seed --apply)
+expect_line "$refused" 'PROBLEM: refusing /UYELER/ORGANIZASYON/ARTLAB as a target of forms' 'a default group target was not refused'
+reject_line "$refused" 'YENI ATAMA' 'a refused run planned assignments'
+[[ $(events "$REALM") == "$before" ]] || fail 'the refused run wrote something'
+kcadm delete "realms/$REALM/default-groups/$(group_id "$REALM" /UYELER/ORGANIZASYON/ARTLAB)" >/dev/null
+printf '{"apps":[{"client":"skymail","name":"SkyMail","assignmentRequired":true,"roles":["skymail:access"]}],"initialAssignments":[{"client":"skymail","roles":["skymail:access"],"target":"/UYELER/YK/BASKAN"}]}\n' \
+  | docker exec -i "$CONTAINER" sh -c 'cat > /tmp/privileged-target.json'
+trap - ERR
+refused=$(docker exec -e KEYCLOAK_REALM=$REALM -e KEYCLOAK_APP_ASSIGNMENTS_FILE=/tmp/privileged-target.json "$CONTAINER" \
+  bash "$IN_CONTAINER_CONFIG/app-assignments.sh" --kcadm-config "$KCADM_CONFIG" --seed --apply 2>&1) && status=0 || status=$?
+trap 'on_error "$LINENO"' ERR
+[[ $status == 1 ]] || { printf '%s\n' "$refused" >&2; fail "a Privileged target was not refused (exit $status)"; }
+expect_line "$refused" 'PROBLEM: refusing /UYELER/YK/BASKAN as a target of skymail' 'the Privileged target was not named'
+refused=$(run_expecting 1 app-assignments.sh "$SANDBOX" --seed)
+expect_line "$refused" "PROBLEM: the target /UYELER/ARGE/ALGOLAB does not exist in realm $SANDBOX" 'the missing target was not refused'
+[[ $(events "$REALM") == "$before" ]] || fail 'a refused run wrote something'
+failed=$(run_failing_read app-assignments.sh "$REALM" group-by-path/UYELER --seed --apply)
+expect_line "$failed" '[app-assignments] the group /UYELER could not be read in realm e-skylab; stopped' 'the failed read was not reported'
+reject_line "$failed" 'applied' 'the run went on after a failed read'
+[[ $(events "$REALM") == "$before" ]] || fail 'the run wrote something after a failed read'
+printf '    --seed: a default group under a target, a Privileged target and a missing target are PROBLEMs (exit 1); a failed read stops it\n'
+
+# ---------------------------------------------------------------------------------------------------
+CURRENT_STAGE='default-roles: broker/read-token and the identity providers'"'"' token settings'
+# Production's shape (10-22 precheck): broker/read-token in the default role; an identity provider
+# with Store tokens and Stored tokens readable on; a person who got read-token at a first login.
+if [[ -z $(client_uuid "$REALM" broker) ]]; then
+  kcadm create clients -r "$REALM" -s clientId=broker -s bearerOnly=true >/dev/null
+  kcadm create "clients/$(client_uuid "$REALM" broker)/roles" -r "$REALM" -s name=read-token >/dev/null
+fi
+default_role=$(kcadm get "realms/$REALM" | jq -r .defaultRole.name)
+default_role_id=$(kcadm get "realms/$REALM" | jq -r .defaultRole.id)
+kcadm create "roles-by-id/$default_role_id/composites" -r "$REALM" -b "$(role_body "$REALM" broker read-token)" >/dev/null
+kcadm create identity-provider/instances -r "$REALM" -s alias=obs-test -s providerId=oidc -s enabled=true \
+  -s storeToken=true -s addReadTokenRoleOnCreate=true -s config.clientId=harness -s config.clientSecret=harness-idp-secret \
+  -s config.authorizationUrl=https://idp.invalid/auth -s config.tokenUrl=https://idp.invalid/token >/dev/null
+kcadm add-roles -r "$REALM" --uusername direct-person --cclientid broker --rolename read-token >/dev/null
+default_composites() {
+  kcadm get "roles-by-id/$default_role_id/composites" -r "$REALM" | jq -c '[.[].name] | sort'
+}
+before=$(events "$REALM")
+composites_before=$(default_composites)
+output=$(reconcile_step 2 default-roles)
+expect_line "$output" 'KEYCLOAK_RECONCILE_ONLY=default-roles is an operator step' 'the step ran without an operator session'
+checked=$(reconcile_step 0 default-roles -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KCADM_CONFIG" -e KEYCLOAK_RECONCILE_CHECK=true)
+expect_line "$checked" "[reconcile] KOD|$default_role|broker|read-token|hayır|var" 'read-token in the default role is not reported'
+expect_line "$checked" "[reconcile] would remove broker/read-token from the default role $default_role" 'the removal was not planned'
+expect_line "$checked" "[reconcile] KOD|$default_role|realm|offline_access|evet|var" 'a Keycloak default role is not reported as expected'
+expect_line "$checked" '[reconcile] KOD|idp:obs-test|-|addReadTokenRoleOnCreate|false|true' 'the token setting is not reported'
+expect_line "$checked" '[reconcile] would turn off Stored tokens readable of identity provider obs-test' 'turning the setting off was not planned'
+expect_line "$checked" 'WARNING: identity provider obs-test stores the tokens of its logins' 'Store tokens was not reported'
+expect_line "$checked" 'NOTE: broker/read-token is held directly by 1 person(s)' 'the direct holder was not counted'
+expect_line "$checked" '[reconcile] check: 2 change(s) pending; nothing was written' 'the dry run did not count two changes'
+expect_line "$checked" 'Default roles and identity provider token settings are checked; nothing was written.' 'the dry run did not end as one'
+reject_line "$checked" 'direct-person' 'the step printed a person'
+reject_line "$checked" 'harness-idp-secret' 'the step printed a secret'
+[[ $(events "$REALM") == "$before" ]] || fail 'the dry run wrote something'
+[[ $(default_composites) == "$composites_before" ]] || fail 'the dry run changed the default role'
+applied=$(reconcile_step 0 default-roles -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KCADM_CONFIG")
+expect_line "$applied" '[reconcile] applied 2 change(s)' 'the step did not apply the two changes'
+default_composites | jq -e 'index("read-token") == null' >/dev/null || fail 'read-token is still in the default role'
+idp=$(kcadm get identity-provider/instances/obs-test -r "$REALM")
+jq -e '.addReadTokenRoleOnCreate == false and .storeToken == true' <<<"$idp" >/dev/null \
+  || fail "the token settings are not Stored tokens readable off and Store tokens untouched: $(jq -c '{storeToken, addReadTokenRoleOnCreate}' <<<"$idp")"
+[[ $(token_roles "$REALM" direct-person broker) == '["read-token"]' ]] || fail 'the direct holder lost read-token (the reset window'"'"'s job)'
+again=$(reconcile_step 0 default-roles -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KCADM_CONFIG" -e KEYCLOAK_RECONCILE_CHECK=true)
+expect_line "$again" '[reconcile] check: 0 change(s) pending; nothing was written' 'the second dry run planned a change'
+printf '    default-roles: read-token out of the default role and Stored tokens readable off (dry run first, then 0); Store tokens and the direct holder reported, kept\n'
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='the reconciler operator steps'
@@ -546,6 +764,12 @@ for step in role-groups leader-app-roles; do
 done
 output=$(reconcile_step 0 leader-app-roles -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KCADM_CONFIG")
 expect_line "$output" 'applied 0 change(s)' 'the operator step did not run the script with --apply'
-printf '    KEYCLOAK_RECONCILE_ONLY=role-groups and leader-app-roles run the scripts; refused without an operator session\n'
+output=$(reconcile_step 2 tohum-atamalar)
+expect_line "$output" 'KEYCLOAK_RECONCILE_ONLY=tohum-atamalar is an operator step' 'the seed ran without an operator session'
+before=$(events "$REALM")
+output=$(reconcile_step 0 tohum-atamalar -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KCADM_CONFIG" -e KEYCLOAK_RECONCILE_CHECK=true)
+expect_line "$output" 'check: 8 change(s) pending' 'the seed'"'"'s dry run through the reconciler is not the dry run'
+[[ $(events "$REALM") == "$before" ]] || fail 'the seed'"'"'s dry run through the reconciler wrote something'
+printf '    KEYCLOAK_RECONCILE_ONLY=role-groups, leader-app-roles and tohum-atamalar run the scripts (dry run with KEYCLOAK_RECONCILE_CHECK=true); refused without an operator session\n'
 
-printf 'role-groups and leader-app-roles contract passed.\n'
+printf 'role-groups, leader-app-roles, app-assignments and default-roles contract passed.\n'

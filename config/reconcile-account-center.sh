@@ -151,6 +151,11 @@ FRONTEND_ARGE_SCOPE_NAME=frontend-arge-core-audience
 SKYFORMS_CLIENT_ID=skyforms
 SKYFORMS_SCOPE_NAME=skyforms-forms-audience
 SKYFORMS_GROUPS_SCOPE_NAME=skyforms-groups
+# forms-frontend calls core with the person's own skyforms token (the person picker, /v1/groups;
+# ekip-yetkileri ticket 03 §7), and core wants aud core. Members got it only through audience-resolve
+# of core roles some composite or default role gave them, which the role clean-up takes away: a
+# fixed Audience mapper, as frontend-main's.
+SKYFORMS_CORE_SCOPE_NAME=skyforms-core-audience
 # Login clients whose token is narrowed to the APIs their app calls (ADR-0058, ADR-0059; see
 # reconcile_login_clients). skycms-audience is the realm scope that puts inscribed's audience into
 # the Site clients' tokens: the event sites' clients (site-clients.sh) and skyapp
@@ -182,12 +187,21 @@ ADMIN_PANEL_API_CLIENTS=(core forms)
 # only as the scoped reconciler identity, so an operator session requires KEYCLOAK_RECONCILE_ONLY.
 OPERATOR_KCADM_CONFIG=${KEYCLOAK_RECONCILE_KCADM_CONFIG:-}
 RECONCILE_ONLY=${KEYCLOAK_RECONCILE_ONLY:-}
-# KEYCLOAK_RECONCILE_CHECK=true: a dry run of the operator's service-roles step (runbook §20), or of
-# the role-groups and leader-app-roles steps (§26, §27); it prints "would ..." for each change and
-# writes nothing. No other step has a dry run.
-# role-groups and leader-app-roles are operator scripts of their own (config/role-groups.sh,
-# config/leader-app-roles.sh: a dry run by default, --apply writes); this step runs the script with
-# the operator's kcadm session and --apply unless KEYCLOAK_RECONCILE_CHECK=true.
+# KEYCLOAK_RECONCILE_CHECK=true: a dry run. Of the operator's service-roles step (runbook §20), of the
+# role-groups, leader-app-roles and tohum-atamalar steps (§26, §27, §33) and of the default-roles step
+# (§33): it prints "would ..." for each change and writes nothing. Of the whole reconciliation (the
+# reconciler identity, no KEYCLOAK_RECONCILE_ONLY) and of the operator's core-roles step: every write
+# is withheld (see kcadm below): each one is a "[reconcile] would kcadm VERB PATH ..." line instead,
+# the step's own lines say what a real run would log, and the run ends with "... is checked; nothing
+# was written (N write(s) withheld)." A step that reads back what it would have written (a flow it
+# would have copied, say) may then stop the dry run (exit 1): the dry run cannot show that change, and
+# the real run must wait for someone to look. The release wizard compares the dry run with its plan
+# and runs the real reconciliation only when they match (ekip-yetkileri ticket 03).
+# role-groups, leader-app-roles and tohum-atamalar are operator scripts of their own
+# (config/role-groups.sh, config/leader-app-roles.sh, config/app-assignments.sh --seed: a dry run by
+# default, --apply writes); this step runs the script with the operator's kcadm session and --apply
+# unless KEYCLOAK_RECONCILE_CHECK=true. app-assignments (config/app-assignments.sh --check) only reads:
+# the code and panel areas of every role mapping (§33).
 RECONCILE_CHECK=${KEYCLOAK_RECONCILE_CHECK:-false}
 # Event retention (account erasure ticket 09). Keycloak deletes no event with the person core's
 # erasure saga removes: CREATE and UPDATE admin events hold the whole user representation
@@ -202,19 +216,21 @@ EVENT_RETENTION_SETTINGS="{\"eventsEnabled\":true,\"eventsExpiration\":$EVENT_RE
 ADMIN_EVENTS_EXPIRATION_ATTRIBUTE=adminEventsExpiration
 ACCOUNT_ROLE_ALLOWLIST=(manage-account view-profile manage-account-links)
 case $RECONCILE_ONLY in
-  '' | admin-panel-client | login-clients | core-roles | service-roles | first-broker-login | email-code-login | role-groups | leader-app-roles) ;;
+  '' | admin-panel-client | login-clients | core-roles | service-roles | first-broker-login | email-code-login | role-groups | leader-app-roles | default-roles | app-assignments | tohum-atamalar) ;;
   # The step's name before core's service roles became a list (core-internal-auth ticket 03).
   media-attach) RECONCILE_ONLY=service-roles ;;
   *)
-    printf 'KEYCLOAK_RECONCILE_ONLY must be empty, admin-panel-client, login-clients, core-roles, service-roles, first-broker-login, email-code-login, role-groups or leader-app-roles, not %s\n' "$RECONCILE_ONLY" >&2
+    printf 'KEYCLOAK_RECONCILE_ONLY must be empty, admin-panel-client, login-clients, core-roles, service-roles, first-broker-login, email-code-login, role-groups, leader-app-roles, default-roles, app-assignments or tohum-atamalar, not %s\n' "$RECONCILE_ONLY" >&2
     exit 2
     ;;
 esac
 case $RECONCILE_CHECK in
   false) ;;
   true)
-    if [[ ! $RECONCILE_ONLY =~ ^(service-roles|role-groups|leader-app-roles)$ || -z $OPERATOR_KCADM_CONFIG ]]; then
-      printf 'KEYCLOAK_RECONCILE_CHECK=true is a dry run of the operator step KEYCLOAK_RECONCILE_ONLY=service-roles (or role-groups, leader-app-roles) with KEYCLOAK_RECONCILE_KCADM_CONFIG only\n' >&2
+    # The whole reconciliation (the reconciler identity) or one operator step that has a dry run.
+    if [[ -n $RECONCILE_ONLY ]] \
+      && [[ ! $RECONCILE_ONLY =~ ^(service-roles|role-groups|leader-app-roles|core-roles|default-roles|app-assignments|tohum-atamalar)$ || -z $OPERATOR_KCADM_CONFIG ]]; then
+      printf 'KEYCLOAK_RECONCILE_CHECK=true is a dry run of the operator step KEYCLOAK_RECONCILE_ONLY=service-roles (or core-roles, role-groups, leader-app-roles, default-roles, tohum-atamalar) with KEYCLOAK_RECONCILE_KCADM_CONFIG only, or of the whole reconciliation with the reconciler identity\n' >&2
       exit 2
     fi
     ;;
@@ -236,6 +252,12 @@ if [[ -n $OPERATOR_KCADM_CONFIG ]]; then
   KCADM_CONFIG=$OPERATOR_KCADM_CONFIG
 else
   KCADM_CONFIG=$(mktemp /tmp/account-center-kcadm.XXXXXX)
+fi
+if [[ $RECONCILE_ONLY =~ ^(default-roles|app-assignments|tohum-atamalar)$ && -z $OPERATOR_KCADM_CONFIG ]]; then
+  rm -f "$KCADM_CONFIG"
+  printf 'KEYCLOAK_RECONCILE_ONLY=%s is an operator step: set KEYCLOAK_RECONCILE_KCADM_CONFIG (it reads or maps roles of groups and people, or identity providers, which the reconciler identity %s may not)\n' \
+    "$RECONCILE_ONLY" "$CONFIG_CLIENT_ID" >&2
+  exit 2
 fi
 if [[ $RECONCILE_ONLY == role-groups || $RECONCILE_ONLY == leader-app-roles ]]; then
   if [[ -z $OPERATOR_KCADM_CONFIG ]]; then
@@ -364,10 +386,87 @@ BASE_URL=$(normalize_account_center_base_url \
   "$BASE_URL" \
   "$REQUIRE_PRODUCTION_HOST")
 
+# The dry run of the whole reconciliation, of core-roles and of default-roles (KEYCLOAK_RECONCILE_CHECK
+# =true, see above): every kcadm create, update and delete is withheld. Each one is logged on the
+# run's own stderr (file descriptor CHECK_FD, so that a caller that captures or silences the call's
+# output, as kcadm_quiet does, cannot hide it) as "[reconcile] would kcadm VERB PATH (-s KEY=VALUE
+# ..., body)", with a person's id masked; nothing the reconciler writes is secret. A create that asks
+# for the new id (-i) answers a placeholder (CHECK_ID_PREFIX<n>), and a read of a path that holds a
+# placeholder answers an empty list (an empty object for one resource or a mapping set, nothing in
+# CSV), so that a step goes on as if the thing were made and empty. Anything else is read live.
+CHECK_WRITES=false
+if [[ $RECONCILE_CHECK == true && ( -z $RECONCILE_ONLY || $RECONCILE_ONLY == core-roles || $RECONCILE_ONLY == default-roles ) ]]; then
+  CHECK_WRITES=true
+fi
+CHECK_ID_PREFIX=checked-not-created-
+CHECK_FD=8
+exec 8>&2
+
+check_write() {
+  local verb=$1 path=$2 summary='' argument
+  shift 2
+  while [[ $# -gt 0 ]]; do
+    argument=$1
+    shift
+    case $argument in
+      -s) summary="$summary -s ${1:0:160}"; shift ;;
+      -b | -f) summary="$summary (body)"; shift ;;
+      -r | -q) shift ;;
+      *) ;;
+    esac
+  done
+  printf '%s\n' "$verb $path" >>"$WORK_DIR/check-writes"
+  path=$(sed -E 's#users/[0-9a-f-]{36}#users/<person>#g' <<<"$path")
+  printf '[reconcile] would kcadm %s %s%s\n' "$verb" "$path" "${summary:+ (${summary# })}" >&"$CHECK_FD"
+}
+
+check_placeholder_read() {
+  local path=$1 argument csv=false
+  for argument in "$@"; do
+    [[ $argument != csv ]] || csv=true
+  done
+  if [[ $csv == true ]]; then
+    return 0
+  fi
+  path=${path%%\?*}
+  case ${path##*/} in
+    models | default-client-scopes | optional-client-scopes | executions | roles | composites | members | groups \
+      | users | children | clients | realm | flows | mappers)
+      printf '[]\n' ;;
+    *) printf '{}\n' ;;
+  esac
+}
+
 kcadm() {
   local command=$1
   shift
+  if [[ $CHECK_WRITES == true ]]; then
+    case $command in
+      create | update | delete)
+        check_write "$command" "$@"
+        if [[ $command == create && " $* " == *' -i '* ]]; then
+          printf '%s%s\n' "$CHECK_ID_PREFIX" "$(wc -l <"$WORK_DIR/check-writes" | tr -d ' ')"
+        fi
+        return 0
+        ;;
+      get)
+        if [[ $1 == *"$CHECK_ID_PREFIX"* ]]; then
+          check_placeholder_read "$@"
+          return 0
+        fi
+        ;;
+    esac
+  fi
   "$KCADM" "$command" --config "$KCADM_CONFIG" "$@"
+}
+
+# The number of writes the dry run withheld so far.
+check_writes_withheld() {
+  if [[ -f $WORK_DIR/check-writes ]]; then
+    wc -l <"$WORK_DIR/check-writes" | tr -d ' '
+  else
+    printf '0\n'
+  fi
 }
 
 authenticate() {
@@ -2897,7 +2996,11 @@ seed_privileged_client_roles() {
     body=''
     for name in "${names[@]}"; do
       grep -Fxq -- "$name" <<<"$held" && continue
-      role_id=$(sed -n "s/^\([^,]*\),$name\$/\1/p" <<<"$role_ids")
+      # By exact name: a role name like skyforms:* is no pattern.
+      role_id=$(id_from_csv "$name" "$role_ids" || true)
+      if [[ -z $role_id && $CHECK_WRITES == true ]]; then
+        role_id="${CHECK_ID_PREFIX}role"
+      fi
       [[ -n $role_id ]] || { printf '%s role %s could not be read back\n' "$label" "$name" >&2; return 1; }
       body="$body,$(role_reference "$role_id" "$name")"
       granted_to[$name]="${granted_to[$name]:-}, $path"
@@ -2909,7 +3012,8 @@ seed_privileged_client_roles() {
   done <<<"$groups"
   # The mark comes last: a run cut before it grants the same (idempotently) next time.
   for name in "${names[@]}"; do
-    kcadm_quiet update "clients/$client_uuid/roles/$name" -r "$TARGET_REALM" \
+    # The role's name in the admin path: a "*" (skyforms:*) is sent percent-encoded.
+    kcadm_quiet update "clients/$client_uuid/roles/${name//\*/%2A}" -r "$TARGET_REALM" \
       -s "attributes.\"$CORE_ROLE_SEED_ATTRIBUTE\"=[\"$stamp $paths\"]" || return 1
     granted=${granted_to[$name]:-, none (every group already held it)}
     log "$label role $name: seeded once to $paths (granted to: ${granted#, })"
@@ -3560,30 +3664,50 @@ reconcile_core_service_roles() {
 
 # SkyMail's Privileged roles (runbook §25): client roles of skymail that go to the Privileged groups,
 # with the same one-time seeding as core's resource roles (CORE_ROLE_SEED_ATTRIBUTE,
-# core_privileged_groups, the default-group refusal). The other skymail:* roles were granted by hand
-# and are not managed here. Every run creates a missing role (manage-clients; the description is
-# written only then); the operator's core-roles step (KEYCLOAK_RECONCILE_ONLY=core-roles) grants an
-# unmarked role to the Privileged groups once and marks it (seed_privileged_client_roles, shared with
-# core), so a mapping changed later in the SKY LAB admin panel (its group page lists every
-# client's roles, skymail's too) or the Keycloak Admin Console stays that way. Nothing here removes a mapping or a role. skymail is SkyMail's login client too,
-# and its own roles always pass its role scope, so a Privileged person's SkyMail token carries them.
+# core_privileged_groups, the default-group refusal). This is the code area of SkyMail's roles
+# (ekip-yetkileri ticket 03, YETKI-MATRISI §6.1 and §6.2): what the Privileged roots hold. Where else
+# skymail:access and skymail:templates:read (app roles) are held is the panel's (config/app-assignments.json,
+# core's Uygulamalar page) and never touched here. A role with a description is made by this step when
+# it is missing (manage-clients; the description is written only then); a role whose description is
+# "-" is SkyMail's own (SkyMail's M1 makes it): never created here, seeded once it exists, and a realm
+# without it says so in the "unchanged" line. The operator's core-roles step (KEYCLOAK_RECONCILE_ONLY=
+# core-roles) grants an unmarked role to its Privileged groups once and marks it
+# (seed_privileged_client_roles, shared with core); a mapping changed later in the SKY LAB admin panel
+# or the Keycloak Admin Console stays that way (the code area's check, KEYCLOAK_RECONCILE_ONLY=
+# app-assignments, reports it). Nothing here removes a mapping or a role. skymail is SkyMail's login
+# client too, and its own roles always pass its role scope, so a Privileged person's SkyMail token
+# carries them.
 # name|Privileged groups (space separated names, each at /<NAME> and/or /UYELER/<NAME>)|description
-# (the description is written only when the role is created).
+# (written only when the role is created; "-": SkyMail's own role, never created here).
 #   skymail:system-mails:read      ADMIN, YK, DK: reading is for all three (skymail-backend #61).
-#   skymail:announcements:send     ADMIN and YK only (duyuru-haber decision D4, 2026-10-12; DK reads
-#                                  and does not write, grup-yonetimi GY1): they send a News or an
-#                                  announcement without Mail approval; everyone else sends it through
-#                                  Mail approval. Sub-groups inherit the mapping.
 #   skymail:mails:tracking:read    ADMIN, YK, DK: the per-person opening and click report of any send
 #                                  (iletisim-servisi tickets 14b/17, decision T2; the privacy notice:
 #                                  YK, DK, the system administrators and the sending officer see it).
 #                                  A reading role, so DK holds it too; the sender sees their own send
 #                                  without it (SkyMail checks sent_by, skymail-backend
 #                                  internal/handlers/tracking_read.go).
+#   skymail:access, skymail:templates:read, skymail:lists:read, skymail:mails:read,
+#   skymail:mails:send, skymail:mails:write
+#                                  ADMIN and YK (ekip-yetkileri ticket 03; ADR 0067: YK sends directly,
+#                                  everyone else through Mail approval). DK reads and does not write
+#                                  (grup-yonetimi GY1): none of them. Sub-groups inherit the mapping.
+#   skymail:mails:approve          YK only (Yusuf, 2026-10-23, S2: the approver of Mail approval is the
+#                                  YK root, so it follows the term's handover; until then one named
+#                                  person in /ROLLER/SKYMAIL-MAILS-APPROVE approved).
+# skymail:announcements:send left the list (ticket 03, YETKI-MATRISI §3 D-1): no service reads it (YK
+# sends directly with mails:write and mails:send), so it only misled. Taken off the list, a new realm
+# never gets it; the role and its mappings stay where they are (nothing here removes anything): the
+# code area's check reports them as not in code, and the reset window (ticket 06 c2) takes them away.
 SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS=(
   'skymail:system-mails:read|ADMIN YK DK|Tekil sistem postalarının (doğrulama, bildirim) içeriğini görür (skymail-backend #61)'
-  'skymail:announcements:send|ADMIN YK|Duyuru ve haberi Mail onayı olmadan gönderir (duyuru-haber D4; yalnız ADMIN ve YK, DK yazmaz)'
   'skymail:mails:tracking:read|ADMIN YK DK|Her gönderimin kişi bazındaki açılma ve tıklama raporunu görür (iletisim-servisi 14b/17, T2; gönderen kendi gönderimini rolsüz görür)'
+  'skymail:access|ADMIN YK|-'
+  'skymail:templates:read|ADMIN YK|-'
+  'skymail:lists:read|ADMIN YK|-'
+  'skymail:mails:read|ADMIN YK|-'
+  'skymail:mails:send|ADMIN YK|-'
+  'skymail:mails:write|ADMIN YK|-'
+  'skymail:mails:approve|YK|-'
 )
 
 # Forms' Privileged roles (runbook §28), the same way as SkyMail's (same list format):
@@ -3594,11 +3718,20 @@ SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS=(
 #                      notes/mesajlar-2026-10-02/ekler/fatih-forms-rol-temizligi-devir-notu.md §6).
 #                      Until then DK keeps the skyforms:* it holds (config/dk-read-only.sh --forms takes
 #                      it away once forms-backend reads this role).
+#   skyforms:access    ADMIN, YK, DK: the Forms seat of the Privileged roots (ekip-yetkileri ticket 03;
+#                      DK's own forms, a known deviation: PLAN §1.10 row 13). Forms' own role ("-"):
+#                      never created here. Where else the seat is held is the panel's (an app role).
+#   skyforms:*         YK only (Yusuf, 2026-10-23, S4: "YK de olsun"; a deviation from Microsoft, where
+#                      an admin does not see other people's forms by default: YK reads every answer,
+#                      personal data, so the privacy notice names YK). The two named people of
+#                      /ROLLER/FORMS-ALL keep it there (config/role-groups.json). Forms' own role.
 # forms is a service account client (Forms signs people in through skyforms); the admin panel's role
-# scope carries every forms role (ADMIN_PANEL_API_CLIENTS), this one too.
+# scope carries every forms role (ADMIN_PANEL_API_CLIENTS), these too.
 FORMS_CLIENT_ID=forms
 FORMS_PRIVILEGED_ROLE_DEFINITIONS=(
   'skyforms:read-all|DK|Her formu, cevaplarını ve iş akışlarını okur, hiçbir şeyi değiştirmez (DK; grup-yonetimi 08)'
+  'skyforms:access|ADMIN YK DK|-'
+  'skyforms:*|YK|-'
 )
 
 # reconcile_privileged_app_roles CLIENT_ID LABEL OWNER DEFINITIONS SECTION: the Privileged roles of one
@@ -3619,25 +3752,34 @@ reconcile_privileged_app_roles() {
   fi
   roles_csv=$(kcadm get "clients/$client_uuid/roles" -r "$TARGET_REALM" --fields name --format csv --noquotes \
     | tr -d '\r')
+  # absent: the application's own roles ("-") the realm does not have; never created, never seeded.
+  local absent=''
   for definition in "${definitions[@]}"; do
     name=${definition%%|*}
     description=${definition##*|}
     if ! grep -Fxq -- "$name" <<<"$roles_csv"; then
+      if [[ $description == - ]]; then
+        absent="$absent $name"
+        continue
+      fi
       kcadm_quiet create "clients/$client_uuid/roles" -r "$TARGET_REALM" \
         -s "name=$name" -s "description=$description"
       created="$created, $name"
     fi
   done
+  local not_here=''
+  [[ -z $absent ]] || not_here="; not in the realm, the application makes them, seeded once they exist:$absent"
   if [[ -z $created ]]; then
-    log "Privileged roles of $client_id (${#definitions[@]}): unchanged"
+    log "Privileged roles of $client_id (${#definitions[@]}): unchanged$not_here"
   else
-    log "Privileged roles of $client_id (${#definitions[@]}): created (${created#, })"
+    log "Privileged roles of $client_id (${#definitions[@]}): created (${created#, })$not_here"
   fi
 
   seeds=$(kcadm_json "clients/$client_uuid/roles" -r "$TARGET_REALM" -q briefRepresentation=false \
     | json_tool role-attribute "$CORE_ROLE_SEED_ATTRIBUTE")
   for definition in "${definitions[@]}"; do
     name=${definition%%|*}
+    [[ " $absent " != *" $name "* ]] || continue
     seed=''
     while IFS=$'\t' read -r role_name role_seed_value; do
       [[ $role_name == "$name" ]] && seed=$role_seed_value
@@ -3676,6 +3818,166 @@ reconcile_privileged_app_roles() {
       seed_privileged_client_roles "$label" "$client_uuid" "$group_names" "${set_names[@]}"
     fi
   done
+}
+
+# write_privileged_expectations FILE: the code area's Privileged expectations that only this file
+# holds, for config/app-assignments.sh (KEYCLOAK_RECONCILE_ONLY=app-assignments and tohum-atamalar):
+# "privileged<TAB>NAMES<TAB>client<TAB>role" per role of CORE_ROLE_DEFINITIONS (its seed groups),
+# SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS and FORMS_PRIVILEGED_ROLE_DEFINITIONS; NAMES is the space
+# separated Privileged names (ADMIN, YK, DK), each at /<NAME> and /UYELER/<NAME>.
+write_privileged_expectations() {
+  local file=$1 definition name groups
+  : >"$file"
+  for definition in "${CORE_ROLE_DEFINITIONS[@]}"; do
+    name=${definition%%|*}
+    printf 'privileged\t%s\t%s\t%s\n' "$(core_role_seed_names "$name")" "$CORE_CLIENT_ID" "$name" >>"$file"
+  done
+  for definition in "${SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS[@]}"; do
+    groups=${definition#*|}
+    printf 'privileged\t%s\t%s\t%s\n' "${groups%%|*}" "$SKYMAIL_CLIENT_ID" "${definition%%|*}" >>"$file"
+  done
+  for definition in "${FORMS_PRIVILEGED_ROLE_DEFINITIONS[@]}"; do
+    groups=${definition#*|}
+    printf 'privileged\t%s\t%s\t%s\n' "${groups%%|*}" "$FORMS_CLIENT_ID" "${definition%%|*}" >>"$file"
+  done
+}
+
+# The realm's default role (ekip-yetkileri ticket 03, YETKI-MATRISI §6.2 and §6.4; Yusuf, 2026-10-23,
+# K2): every account holds it, so it carries Keycloak's own roles only. DEFAULT_ROLE_EXPECTED is that
+# set (Keycloak's own default for a new realm); a role of it that is missing is a NOTE and is not
+# added. DEFAULT_ROLE_REMOVALS are taken away (KEYCLOAK_RECONCILE_ONLY=default-roles, an operator step:
+# a dry run with KEYCLOAK_RECONCILE_CHECK=true, then the same without it, then a dry run with 0
+# changes): broker/read-token lets its holder read the token Keycloak stored from their YTÜ/Microsoft
+# login (GET /realms/<realm>/broker/<alias>/token); no app reads it (2026-10-23 origin/main sweep) and
+# neither Keycloak's own default nor Entra hands it out. Any other role in the default role is a
+# WARNING and stays (a decision of its own; the reset window, ticket 06, takes it).
+# The identity providers' token settings: Keycloak gives broker/read-token to every account a first
+# login of an identity provider opens while its "Stored tokens readable" (addReadTokenRoleOnCreate) is
+# on, so the step turns it off; "Store tokens" (storeToken) is reported, not changed (eskylab-login-ux
+# ticket 04 turns it off after its sandbox test). The reconciler identity cannot read identity
+# providers, hence an operator step. The people who already hold broker/read-token directly (given
+# at a first login) and the groups and composite roles that hold it are reported, never taken away:
+# the reset window (ticket 06) does. Lines "KOD|<holder>|<client>|<role or setting>|<expected>|<live>"
+# (holder default-roles-<realm> or idp:<alias>; expected evet or hayır for a role, false for a
+# setting), counts only, never a person.
+DEFAULT_ROLE_EXPECTED=(realm/offline_access realm/uma_authorization account/view-profile account/manage-account)
+DEFAULT_ROLE_REMOVALS=(broker/read-token)
+DEFAULT_ROLE_CHANGES=0
+
+default_role_change() {
+  DEFAULT_ROLE_CHANGES=$((DEFAULT_ROLE_CHANGES + 1))
+  if [[ $RECONCILE_CHECK == true ]]; then
+    log "would $1"
+    return 1
+  fi
+  log "$1"
+  return 0
+}
+
+reconcile_default_roles() {
+  local realm_file default_json default_name default_id composites clients line id rest name client_role
+  local container owner key wanted found removal idps alias store readable broker_uuid holders people groups
+  local -A client_of=()
+  DEFAULT_ROLE_CHANGES=0
+  realm_file=$(mktemp "$WORK_DIR/realm.XXXXXX")
+  kcadm_json "realms/$TARGET_REALM" >"$realm_file"
+  default_json=$(json_tool field defaultRole <"$realm_file")
+  default_name=$(json_tool field name <<<"$default_json")
+  default_id=$(json_tool field id <<<"$default_json")
+  [[ -n $default_name && -n $default_id ]] || { printf 'The default role of realm %s could not be read\n' "$TARGET_REALM" >&2; return 1; }
+  clients=$(service_role_read 'The clients' clients --fields id,clientId) || return 1
+  while IFS=, read -r id rest; do
+    [[ -z $id ]] || client_of[$id]=$rest
+  done <<<"$clients"
+  # id first, containerId last: a role name holds no comma.
+  composites=$(service_role_read "The composites of $default_name" "roles-by-id/$default_id/composites" \
+    --fields id,name,clientRole,containerId) || return 1
+  found=' '
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    id=${line%%,*}
+    rest=${line#*,}
+    container=${rest##*,}
+    rest=${rest%,*}
+    client_role=${rest##*,}
+    name=${rest%,*}
+    if [[ $client_role == true ]]; then
+      owner=${client_of[$container]:-?}
+    else
+      owner=realm
+    fi
+    key="$owner/$name"
+    found="$found$key "
+    if [[ " ${DEFAULT_ROLE_EXPECTED[*]} " == *" $key "* ]]; then
+      log "KOD|$default_name|$owner|$name|evet|var"
+      continue
+    fi
+    log "KOD|$default_name|$owner|$name|hayır|var"
+    removal=false
+    for wanted in "${DEFAULT_ROLE_REMOVALS[@]}"; do
+      [[ $wanted != "$key" ]] || removal=true
+    done
+    if [[ $removal == true ]]; then
+      if default_role_change "remove $key from the default role $default_name (every account holds it; no app reads it)"; then
+        kcadm delete "roles-by-id/$default_id/composites" -r "$TARGET_REALM" -b "[{\"id\":\"$id\"}]" >/dev/null
+      fi
+    else
+      warn "$key is in the default role $default_name: every account holds it, and it is not one of Keycloak's own (${DEFAULT_ROLE_EXPECTED[*]}); not taken away here (the reset window, ekip-yetkileri ticket 06)"
+    fi
+  done <<<"$composites"
+  for wanted in "${DEFAULT_ROLE_EXPECTED[@]}"; do
+    [[ $found == *" $wanted "* ]] && continue
+    log "KOD|$default_name|${wanted%%/*}|${wanted#*/}|evet|yok"
+    log "NOTE: $wanted, one of Keycloak's own default roles, is not in $default_name; not added"
+  done
+
+  # The identity providers' token settings. Booleans Keycloak leaves out are false.
+  idps=$(service_role_read 'The identity providers' identity-provider/instances \
+    --fields alias,storeToken,addReadTokenRoleOnCreate) || return 1
+  while IFS=, read -r alias store readable; do
+    [[ -n $alias ]] || continue
+    store=${store:-false}
+    readable=${readable:-false}
+    log "KOD|idp:$alias|-|storeToken|false|$store"
+    log "KOD|idp:$alias|-|addReadTokenRoleOnCreate|false|$readable"
+    if [[ $readable == true ]]; then
+      if default_role_change "turn off Stored tokens readable of identity provider $alias (addReadTokenRoleOnCreate: Keycloak would give broker/read-token to every account its first login opens)"; then
+        kcadm update "identity-provider/instances/$alias" -r "$TARGET_REALM" -s addReadTokenRoleOnCreate=false >/dev/null
+      fi
+    fi
+    if [[ $store == true ]]; then
+      warn "identity provider $alias stores the tokens of its logins (Store tokens on): turn it off once eskylab-login-ux ticket 04's sandbox test shows that the department still arrives; not changed here"
+    fi
+  done <<<"$idps"
+
+  # Other holders of broker/read-token: counts and group paths only.
+  if ! broker_uuid=$(optional_lookup client_id_by_client_id broker); then
+    return 2
+  fi
+  if [[ -n $broker_uuid ]]; then
+    holders=$(service_role_read 'The holders of broker/read-token' "clients/$broker_uuid/roles/read-token/users" \
+      --fields username -q first=0 -q max=100000) || return 1
+    people=$(grep -vc '^service-account-' <<<"$holders" || true)
+    [[ -z $holders ]] && people=0
+    [[ $people == 0 ]] \
+      || log "NOTE: broker/read-token is held directly by $people person(s) (given at a first login while Stored tokens readable was on); not taken away here: the reset window (ekip-yetkileri ticket 06) does"
+    groups=$(service_role_read 'The groups holding broker/read-token' "clients/$broker_uuid/roles/read-token/groups" \
+      --fields path -q first=0 -q max=100000) || return 1
+    [[ -z $groups ]] \
+      || warn "broker/read-token is held by the group(s) $(paste -sd, - <<<"$groups" | sed 's/,/, /g') (every member holds it); not taken away here"
+    id=$(service_role_read 'The roles of broker' "clients/$broker_uuid/roles" --fields id,name) || return 1
+    id=$(id_from_csv read-token "$id" || true)
+    if [[ -n $id ]]; then
+      service_role_composite_parents || return 1
+      [[ -z ${SERVICE_ROLE_PARENTS[$id]:-} ]] \
+        || warn "broker/read-token is in the composite role(s) ${SERVICE_ROLE_PARENTS[$id]#,} (every holder holds it; the Java era's realm roles leave in rol-temizligi F3); not taken away here"
+    fi
+  fi
+  if [[ $RECONCILE_CHECK == true ]]; then
+    log "check: $DEFAULT_ROLE_CHANGES change(s) pending; nothing was written"
+  else
+    log "applied $DEFAULT_ROLE_CHANGES change(s)"
+  fi
 }
 
 reconcile_skymail_privileged_roles() {
@@ -3850,13 +4152,48 @@ if [[ $RECONCILE_ONLY == login-clients ]]; then
   printf 'Login client configuration is reconciled.\n'
   exit 0
 fi
+if [[ $CHECK_WRITES == true ]]; then
+  log "CHECK: a dry run; no write is sent (each is a \"would kcadm\" line); the other lines say what a real run would log"
+fi
 if [[ $RECONCILE_ONLY == core-roles ]]; then
   reconcile_core_roles
   # SkyMail's and Forms' Privileged roles have the same operator step (runbook §25, §28).
   reconcile_skymail_privileged_roles
   reconcile_forms_privileged_roles
-  printf 'Core resource roles are reconciled.\n'
+  if [[ $CHECK_WRITES == true ]]; then
+    printf 'Core resource roles are checked; nothing was written (%s write(s) withheld).\n' "$(check_writes_withheld)"
+  else
+    printf 'Core resource roles are reconciled.\n'
+  fi
   exit 0
+fi
+if [[ $RECONCILE_ONLY == default-roles ]]; then
+  reconcile_default_roles
+  if [[ $RECONCILE_CHECK == true ]]; then
+    printf 'Default roles and identity provider token settings are checked; nothing was written.\n'
+  else
+    printf 'Default roles and identity provider token settings are reconciled.\n'
+  fi
+  exit 0
+fi
+if [[ $RECONCILE_ONLY == app-assignments || $RECONCILE_ONLY == tohum-atamalar ]]; then
+  # config/app-assignments.sh with the Privileged expectations of this file (core's resource roles,
+  # SkyMail's and Forms' Privileged roles), which only the reconciler knows.
+  write_privileged_expectations "$WORK_DIR/privileged-expected.tsv"
+  app_arguments=(--kcadm-config "$OPERATOR_KCADM_CONFIG" --privileged-file "$WORK_DIR/privileged-expected.tsv")
+  if [[ $RECONCILE_ONLY == tohum-atamalar ]]; then
+    app_arguments+=(--seed)
+    [[ $RECONCILE_CHECK == true ]] || app_arguments+=(--apply)
+  else
+    app_arguments+=(--check)
+  fi
+  app_status=0
+  # By name, as role-groups and leader-app-roles above: tests/role-groups.sh runs these steps
+  # (tests/affected-jobs.sh EXTRA_EDGES), no reconciliation of the integration harness does.
+  app_script=app-assignments
+  KEYCLOAK_REALM=$TARGET_REALM KEYCLOAK_ADMIN_URL=$ADMIN_URL \
+    bash "$CONFIG_DIR/$app_script.sh" "${app_arguments[@]}" || app_status=$?
+  exit "$app_status"
 fi
 if [[ $RECONCILE_ONLY == first-broker-login ]]; then
   reconcile_first_broker_login
@@ -3930,6 +4267,8 @@ reconcile_login_client_audience "$SKYFORMS_CLIENT_ID" "$SKYFORMS_SCOPE_NAME" \
 # also reaches skyforms adds nothing (Keycloak merges a multivalued claim without repeating a path).
 reconcile_login_client_audience "$SKYFORMS_CLIENT_ID" "$SKYFORMS_GROUPS_SCOPE_NAME" \
   "$CONFIG_DIR/skyforms-groups-mappers.json"
+reconcile_login_client_audience "$SKYFORMS_CLIENT_ID" "$SKYFORMS_CORE_SCOPE_NAME" \
+  "$CONFIG_DIR/skyforms-core-audience-mappers.json"
 reconcile_account_center_client_scopes "$scope_uuid" "$core_scope_uuid"
 reconcile_account_scope_mappings
 verify_mailer_client
@@ -3955,5 +4294,9 @@ if [[ -n $EMAIL_CODE_UNGUARDED ]]; then
 fi
 if [[ -n $RESET_OTP_UNGUARDED || -n $EMAIL_CODE_UNGUARDED ]]; then
   exit 3
+fi
+if [[ $CHECK_WRITES == true ]]; then
+  printf 'Account Center Keycloak configuration is checked; nothing was written (%s write(s) withheld).\n' "$(check_writes_withheld)"
+  exit 0
 fi
 printf 'Account Center Keycloak configuration is reconciled.\n'

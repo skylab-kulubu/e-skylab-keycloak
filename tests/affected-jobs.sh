@@ -29,6 +29,7 @@ STATIC_SCRIPTS=(
   tests/check-account-center-origin.sh
   tests/check-operator-login-prompts.sh
   tests/check-site-editor-grants-team.sh
+  tests/check-app-assignments.sh
 )
 
 # The whole suite: job, then the tests/ scripts its steps run (less STATIC_SCRIPTS).
@@ -70,10 +71,11 @@ OTHER_SCRIPTS=(
 
 # Calls no pattern sees, from the test that makes them: tests/role-groups.sh runs the operator
 # steps KEYCLOAK_RECONCILE_ONLY=role-groups and leader-app-roles (the reconciler execs
-# "$CONFIG_DIR/$RECONCILE_ONLY.sh") and its scripts as "$IN_CONTAINER_CONFIG/$script";
+# "$CONFIG_DIR/$RECONCILE_ONLY.sh") and its scripts, app-assignments.sh too, as
+# "$IN_CONTAINER_CONFIG/$script";
 # tests/login-clients.sh runs operator scripts as "/tmp/config/$script".
 EXTRA_EDGES=(
-  'tests/role-groups.sh config/role-groups.sh config/leader-app-roles.sh'
+  'tests/role-groups.sh config/role-groups.sh config/leader-app-roles.sh config/app-assignments.sh'
   'tests/login-clients.sh config/inscribed-cms-roles.sh config/sandbox-site-clients.sh config/site-clients.sh config/skyapp-cms-editor.sh'
 )
 

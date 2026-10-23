@@ -10,10 +10,11 @@ import org.keycloak.events.admin.AdminEvent;
 import org.keycloak.models.KeycloakSession;
 
 import java.nio.charset.StandardCharsets;
-import java.util.Map;
+import java.util.Date;
 
 /**
- * Publishes the events of one Keycloak session after its transaction. A channel is opened for each
+ * Publishes the catalog events of one Keycloak session after its transaction, without personal data
+ * ({@link RabbitMqConfig#publishes}, {@link EventMessages}). A channel is opened for each
  * message and closed right after it: Keycloak's admin event builder creates its listeners with
  * {@code factory.create(session)} and never closes them, so a channel held by the provider would
  * leak once per admin request until the connection reaches its channel limit (2047) and every
@@ -42,32 +43,39 @@ final class RabbitMqEventListenerProvider implements EventListenerProvider {
         session.getTransactionManager().enlistAfterCompletion(transaction);
     }
 
+    /** Only a catalog event is kept for the commit; every other one is dropped here, unread. */
     @Override
     public void onEvent(Event event) {
-        transaction.addEvent(event.clone());
+        if (config.publishes(event)) {
+            transaction.addEvent(event.clone());
+        }
     }
 
+    /**
+     * The representation is never published, whatever includeRepresentation says. A copy is kept,
+     * as of a user event: the builder's event is Keycloak's, not this listener's.
+     */
     @Override
     public void onEvent(AdminEvent event, boolean includeRepresentation) {
-        transaction.addAdminEvent(event, includeRepresentation);
+        if (config.publishes(event)) {
+            transaction.addAdminEvent(new AdminEvent(event), false);
+        }
     }
 
     private void publishEvent(Event event) {
+        String id = EventMessages.id(event.getId());
         publish(
-                RabbitMqConfig.json(EventClientNotificationMqMsg.from(event)),
-                properties(EventClientNotificationMqMsg.class.getName()),
+                RabbitMqConfig.json(EventMessages.user(event, id)),
+                properties(id, event.getTime()),
                 RabbitMqConfig.routingKey(event, session)
         );
     }
 
     private void publishAdminEvent(AdminEvent event, boolean includeRepresentation) {
-        EventAdminNotificationMqMsg message = EventAdminNotificationMqMsg.from(event);
-        if (!includeRepresentation) {
-            message.setRepresentation(null);
-        }
+        String id = EventMessages.id(event.getId());
         publish(
-                RabbitMqConfig.json(message),
-                properties(EventAdminNotificationMqMsg.class.getName()),
+                RabbitMqConfig.json(EventMessages.admin(event, id)),
+                properties(id, event.getTime()),
                 RabbitMqConfig.routingKey(event, session)
         );
     }
@@ -106,10 +114,12 @@ final class RabbitMqEventListenerProvider implements EventListenerProvider {
         }
     }
 
-    private static AMQP.BasicProperties properties(String className) {
+    /** message-id is the event's id: a consumer drops a repeat of it. */
+    private static AMQP.BasicProperties properties(String id, long time) {
         return new AMQP.BasicProperties.Builder()
                 .appId("Keycloak")
-                .headers(Map.of("__TypeId__", className))
+                .messageId(id)
+                .timestamp(time > 0 ? new Date(time) : null)
                 .contentType("application/json")
                 .contentEncoding(StandardCharsets.UTF_8.name())
                 .deliveryMode(2)

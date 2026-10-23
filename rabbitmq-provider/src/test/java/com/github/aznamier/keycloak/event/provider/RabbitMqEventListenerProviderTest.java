@@ -1,7 +1,6 @@
 package com.github.aznamier.keycloak.event.provider;
 
 import com.rabbitmq.client.AMQP;
-import com.rabbitmq.client.Channel;
 import org.junit.jupiter.api.Test;
 import org.keycloak.events.Event;
 import org.keycloak.events.EventType;
@@ -20,7 +19,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -33,47 +31,20 @@ class RabbitMqEventListenerProviderTest {
     private static final String ADDRESS = "ayse.yilmaz@example.invalid";
     private static final String IP = "192.0.2.10";
 
-    private final List<String> channelCalls = new ArrayList<>();
     private final List<Published> published = new ArrayList<>();
-    private final AtomicInteger opened = new AtomicInteger();
     private final AtomicReference<KeycloakTransaction> afterCompletion = new AtomicReference<>();
-    private boolean channelOpen = true;
 
-    private record Published(String exchange, String routingKey, AMQP.BasicProperties properties, String body) {
+    private record Published(String routingKey, AMQP.BasicProperties properties, String body) {
     }
 
     @Test
-    void aProviderThatIsNeverClosedHoldsNoChannel() {
+    void nothingIsHandedOnBeforeTheCommit() {
         RabbitMqEventListenerProvider provider = provider();
 
         provider.onEvent(userAdminEvent(OperationType.CREATE), false);
+        provider.onEvent(userEvent(EventType.REGISTER));
 
-        // Keycloak's admin event builder never closes its listeners: nothing may be open yet.
-        assertEquals(0, opened.get());
-        assertEquals(List.of(), channelCalls);
-    }
-
-    @Test
-    void everyMessageGetsItsOwnChannelWhichIsClosedAfterPublishing() {
-        RabbitMqEventListenerProvider provider = provider();
-        provider.onEvent(userAdminEvent(OperationType.CREATE), false);
-        provider.onEvent(userAdminEvent(OperationType.UPDATE), true);
-
-        commit();
-
-        assertEquals(2, opened.get());
-        assertEquals(List.of("isOpen", "basicPublish", "close", "isOpen", "basicPublish", "close"), channelCalls);
-    }
-
-    @Test
-    void aClosedChannelIsSkippedAndStillReleased() {
-        channelOpen = false;
-        RabbitMqEventListenerProvider provider = provider();
-        provider.onEvent(userAdminEvent(OperationType.CREATE), false);
-
-        commit();
-
-        assertEquals(List.of("isOpen", "close"), channelCalls);
+        assertEquals(List.of(), published);
     }
 
     @Test
@@ -86,7 +57,6 @@ class RabbitMqEventListenerProviderTest {
 
         assertEquals(1, published.size());
         Published message = published.get(0);
-        assertEquals("keycloak.events", message.exchange());
         assertEquals("KK.EVENT.CLIENT.e-skylab.SUCCESS.accountcenter.REGISTER", message.routingKey());
         Map<?, ?> body = JsonSerialization.readValue(message.body(), Map.class);
         assertEquals(List.of("id", "type", "realmId", "clientId", "userId", "time"), List.copyOf(body.keySet()));
@@ -137,7 +107,6 @@ class RabbitMqEventListenerProviderTest {
 
         commit();
 
-        assertEquals(0, opened.get());
         assertEquals(List.of(), published);
     }
 
@@ -223,7 +192,6 @@ class RabbitMqEventListenerProviderTest {
 
         commit();
 
-        assertEquals(0, opened.get());
         assertEquals(List.of(), published);
     }
 
@@ -263,7 +231,7 @@ class RabbitMqEventListenerProviderTest {
         transaction.begin();
         transaction.rollback();
 
-        assertEquals(0, opened.get());
+        assertEquals(List.of(), published);
     }
 
     private static void assertNoPersonalData(String body) {
@@ -287,14 +255,6 @@ class RabbitMqEventListenerProviderTest {
     }
 
     private RabbitMqEventListenerProvider provider(Map<String, String> settings) {
-        Channel channel = proxy(Channel.class, (method, args) -> {
-            channelCalls.add(method);
-            if ("basicPublish".equals(method)) {
-                published.add(new Published((String) args[0], (String) args[1], (AMQP.BasicProperties) args[2],
-                        new String((byte[]) args[3], StandardCharsets.UTF_8)));
-            }
-            return "isOpen".equals(method) ? channelOpen : null;
-        });
         KeycloakTransactionManager transactions = proxy(KeycloakTransactionManager.class, (method, args) -> {
             if ("enlistAfterCompletion".equals(method)) {
                 afterCompletion.set((KeycloakTransaction) args[0]);
@@ -309,10 +269,9 @@ class RabbitMqEventListenerProviderTest {
         });
         Map<String, String> config = new java.util.HashMap<>(settings);
         config.putIfAbsent("exchange", "keycloak.events");
-        return new RabbitMqEventListenerProvider(() -> {
-            opened.incrementAndGet();
-            return channel;
-        }, session, RabbitMqConfig.from(config::get));
+        return new RabbitMqEventListenerProvider(message -> published.add(new Published(message.routingKey(),
+                message.properties(), new String(message.body(), StandardCharsets.UTF_8))),
+                session, RabbitMqConfig.from(config::get));
     }
 
     private void commit() {

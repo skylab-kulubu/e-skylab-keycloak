@@ -1,7 +1,7 @@
 # Keycloak olayları RabbitMQ'ya (ADR-0071 karar 8, RabbitMQ R07)
 
 İmajdaki `keycloak-to-rabbitmq` olay dinleyicisi (`rabbitmq-provider/`,
-`keycloak-to-rabbit-3.2.0.jar`) Keycloak'ın kullanıcı ve yönetici olaylarından
+`keycloak-to-rabbit-3.3.0.jar`) Keycloak'ın kullanıcı ve yönetici olaylarından
 **yalnız olay kataloğundakileri**, **yalnız kimliklerle** RabbitMQ'ya yayımlar.
 Tüketici core'dur: her olayda `usersync.Wake()` çağırır, verinin kendisini
 Keycloak'tan okur (ADR-0008, core-backend #270). Olay yalnız eşitlemeyi
@@ -59,9 +59,44 @@ Admin olayı:
   `content-type` = `application/json`, `delivery-mode` = 2 (kalıcı),
   `timestamp` = olay zamanı. Tüketici tekrarı bu kimlikle eler.
 - Yayın Keycloak işlemi commit edildikten sonra, giden kutusu ve publisher
-  confirms olmadan yapılır (SPEC §3.1 Keycloak istisnası). Broker yoksa ya da
-  exchange eksikse olay kaybolur, Keycloak'ta giriş etkilenmez, hata satırında
-  yalnız routing key yazar.
+  confirms olmadan yapılır (SPEC §3.1 Keycloak istisnası).
+
+## Yayın isteği bekletmez (3.3.0)
+
+İstek thread'i ağa hiç dokunmaz: commit'ten sonra mesajı sınırlı bir kuyruğa
+(1000 olay) bırakır ve döner. Broker'la tek bir arka plan thread'i
+(`keycloak-to-rabbitmq-publisher`) konuşur; tek bağlantı, tek kanal kullanır.
+
+- **Olay düşer, istek beklemez:** kuyruk doluysa, broker yayını engelliyorsa
+  (kaynak alarmı, `connection.blocked`), bağlantı yoksa ya da yayın hata
+  verirse olay düşer. Her yeni nedenin ilk düşüşünde ve sonra en çok dakikada
+  bir WARN satırı yazılır: `keycloak-to-rabbitmq dropped event <routing key>:
+  <neden>; N dropped since start`. Düşen olayların toplamı yalnız bu satırda
+  görünür; metrik olarak dışarı verilmez, R06 izlemesi görmez. Satırda yalnız
+  routing key vardır. Açığı core'un 5 dakikalık eşitleme turu kapatır (ADR-0071
+  sapma 4 ve 12).
+- Bağlantı alarm sürerken koparsa (broker alarmı çözmek için yeniden
+  başlatıldıysa, ağ kesildiyse) bloklu durum o bağlantıyla birlikte biter;
+  sonraki olay yeni bağlantıdan gider.
+- **WARN'sız kayıp:** publisher confirms olmadığı için şu durumlarda olay
+  WARN yazılmadan ve sayılmadan kaybolur: exchange yoksa (broker kanalı 404
+  ile kapatır; o mesaj ve kapanma fark edilene kadar yayımlananlar), bağlantı
+  koptuğunda TCP tamponunda bekleyen mesajlar, hiçbir kuyruğa bağlanmayan
+  mesaj (`mandatory` yok; topolojide `unrouted` alternatif exchange'ine düşer,
+  R06 alarmı görür).
+- **Kısa zaman aşımları:** bağlantı 2 sn, el sıkışma 3 sn, kanal RPC 3 sn,
+  kapanış 1 sn, heartbeat 30 sn. İstemcinin otomatik kurtarması kapalıdır;
+  yayıncı bağlantıyı kendisi yeniden açar, başarısız denemeden sonra en erken
+  5 sn sonra.
+- **Kapanış:** Keycloak dururken kuyrukta kalanlar en çok 2 sn yayımlanır,
+  kalanı düşer; yanıt vermeyen broker'da bağlantı kesilir (abort).
+- Entegrasyon testi broker çalışırken, duraklatılmışken (`docker compose
+  pause`: soketini okumayan, yanıtsız broker) ve bellek alarmıyla
+  bloklanmışken Admin API kullanıcı güncellemesinin (katalog olayı, kaydın
+  `REGISTER`'ıyla aynı yayın yolu) 2 sn'nin altında yanıtlandığını ölçer.
+  Bloklu aşamada alarmın açıldığını (`/api/nodes` `mem_alarm`) ve sağlayıcının
+  bloklu bağlantıyı görüp olayı düşürdüğünü (Keycloak günlüğü) denetler; broker
+  dönünce yayının sürdüğünü doğrular.
 
 ## Ayarlar (`KK_TO_RMQ_*`)
 
@@ -116,7 +151,7 @@ açılan dinleyici sürüklenir.
 1. Production broker ve `keycloak_a`/`keycloak_b` kullanıcıları hazır (R04, R05);
    `keycloak.events` exchange'i ve `core.keycloak` bağları topolojide.
 2. Keycloak env sekmesine yukarıdaki `KK_TO_RMQ_*` referansları, Keycloak
-   `sky-lab-production-events` ağında, bu imaj (3.2.0) yayında. Keycloak
+   `sky-lab-production-events` ağında, bu imaj (3.3.0 ya da sonrası) yayında. Keycloak
    sürümü Touch ID kapısından geçer.
 3. Reconciler `e-skylab` realm'i için bir kez, koşu başına
    `-e KEYCLOAK_RABBITMQ_EVENTS=on` ile koşar; dinleyici yalnız orada açılır.
@@ -136,7 +171,12 @@ sağlayıcı bağlantı bile açmaz.
 
 - `rabbitmq-provider` birim testleri (imaj derlemesinde koşar): katalog,
   daraltma, boş liste, hata olayları, gövdenin alanları, `message-id`, admin
-  temsilinin ve yazarının gitmemesi, geri alınan işlemde yayın olmaması.
+  temsilinin ve yazarının gitmemesi, geri alınan işlemde yayın olmaması;
+  yayıncı: takılmış broker'a teklif beklemez ve dolu kuyruk düşürür, ulaşılamayan
+  broker yeniden deneme aralığından önce denenmez, bloklu broker'a yayın yok,
+  başarısız yayın kanalı yeniler, alarm sürerken kopan bağlantının yerine yenisi
+  açılır, kapanış kuyruğu boşaltır, takılmış broker'da uzun beklemez ve
+  kapanıştan sonra açılan bağlantıyı hemen kapatır.
 - `tests/run-integration.sh` RabbitMQ sözleşmesi (her grup): realm güncellemesi
   yayımlanmaz, Admin API'siyle açılan kullanıcı tek bir `USER CREATE` mesajı
   olarak gelir; gövde yalnız kimlik, `message-id` olay deposundaki kimlik,

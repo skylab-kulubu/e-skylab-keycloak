@@ -774,10 +774,18 @@ jobs:
           npm ci --ignore-scripts
           # The runner's apt mirror can hang (run 37664358276: 80 minutes in apt-get update until the
           # job timeout): each attempt gets 5 minutes, three attempts.
+          # apt gives up on a stalled mirror itself (30 s a request, three tries) instead of hanging.
+          printf 'Acquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nAcquire::Retries "3";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99-ci-timeouts >/dev/null
           for attempt in 1 2 3; do
-            timeout 300 npx playwright install --with-deps chromium && break
+            timeout -k 10 300 npx playwright install --with-deps chromium && break
             if [ "$attempt" = 3 ]; then exit 1; fi
             echo "playwright install attempt $attempt failed or timed out; retrying" >&2
+            # timeout stops npx, but the apt-get it started as root keeps the dpkg lock and the next
+            # attempt fails at once on /var/lib/dpkg/lock-frontend (run 39946385594): stop it first.
+            sudo pkill -KILL -x apt-get || true
+            sudo pkill -KILL -x dpkg || true
+            sudo dpkg --configure -a || true
           done
           npm run build-keycloak-theme
           bash ../tests/check-theme-contract.sh

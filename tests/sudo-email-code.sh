@@ -5,7 +5,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 IMAGE=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' "$ROOT/Dockerfile")
 NODE_IMAGE=$(sed -n 's/^ARG NODE_IMAGE=//p' "$ROOT/Dockerfile")
-MAIL_IMAGE=$(sed -n 's/^ *image: \(axllent\/mailpit:[^ ]*\)$/\1/p' "$SCRIPT_DIR/docker-compose.integration.yml")
+MAIL_IMAGE=$(sed -n 's/^ *image: \(ghcr\.io\/axllent\/mailpit:[^ ]*\)$/\1/p' "$SCRIPT_DIR/docker-compose.integration.yml")
 PORT=${SUDO_EMAIL_TEST_PORT:-18371}
 MAIL_PORT=${SUDO_EMAIL_TEST_MAIL_PORT:-18372}
 NAME=${SUDO_EMAIL_TEST_CONTAINER:-sudo-email-code-$$}

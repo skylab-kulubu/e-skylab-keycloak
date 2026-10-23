@@ -11,7 +11,7 @@ source "$SCRIPT_DIR/kcadm-jvm.sh"
 source "$SCRIPT_DIR/kcadm-rest.sh"
 REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 IMAGE=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' "$REPOSITORY_ROOT/Dockerfile")
-MAILPIT_IMAGE=$(sed -n 's/^ *image: \(axllent\/mailpit:[^ ]*\)$/\1/p' "$SCRIPT_DIR/docker-compose.integration.yml")
+MAILPIT_IMAGE=$(sed -n 's/^ *image: \(ghcr\.io\/axllent\/mailpit:[^ ]*\)$/\1/p' "$SCRIPT_DIR/docker-compose.integration.yml")
 PG_IMAGE=${B12_PG_IMAGE:-postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24}
 PG_TMPFS=${B12_PG_TMPFS:-/var/lib/postgresql/data}
 PORT=${B12_TEST_PORT:-18131}

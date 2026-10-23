@@ -14,7 +14,8 @@
 #
 # The SPI jar: SIGN_UP_BY_EMAIL_CODE_SPI_JAR names one already built (mvn -f spi/pom.xml package);
 # without it the jar is built from spi/ in the Dockerfile's Maven image (tests skipped: the image
-# build runs them).
+# build runs them). The RabbitMQ provider jar likewise: SIGN_UP_BY_EMAIL_CODE_RABBITMQ_JAR, or built
+# from rabbitmq-provider/.
 #
 # The realm has production's login settings (e-mail login, registrationAllowed=false, verifyEmail=true,
 # brute-force protection of config/account-center-realm-security.json, the production User Profile) and
@@ -48,6 +49,12 @@
 #   - two sign-ups of one address submitted at the same moment open one account;
 #   - SkyMail refuses: the sign-up code still comes through Keycloak's SMTP with the sign-up text, in
 #     Turkish or in English as the sign-in page was (Accept-Language), no link, no code in the subject;
+#   - the sign-up's REGISTER leaves through the RabbitMQ provider (keycloak-to-rabbitmq, built from
+#     rabbitmq-provider/, against the integration harness's RabbitMQ image; RabbitMQ R07): one
+#     message on KK.EVENT.CLIENT.e-skylab.SUCCESS.<client>.REGISTER with the identifiers-only body
+#     (id, type, realmId, clientId, userId, time), its message-id the id Keycloak stored for the
+#     event; no address, username or IP in any message, and no user event outside the catalog
+#     (LOGIN) on the broker;
 #   - the server log holds no code, no address of the run and not the client's IP;
 #   - off: the setting false, an address that names nobody is mailed nothing again, the accounts
 #     opened stay and sign in.
@@ -70,14 +77,20 @@ REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 IMAGE=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' "$REPOSITORY_ROOT/Dockerfile")
 MAVEN_IMAGE=$(sed -n 's/^FROM \(maven:[^ ]*\) AS providers$/\1/p' "$REPOSITORY_ROOT/Dockerfile")
 MAILPIT_IMAGE=$(sed -n 's/^ *image: \(axllent\/mailpit:[^ ]*\)$/\1/p' "$SCRIPT_DIR/docker-compose.integration.yml")
+RABBITMQ_IMAGE=$(sed -n 's/^ *image: \(rabbitmq:[^ ]*\)$/\1/p' "$SCRIPT_DIR/docker-compose.integration.yml")
 NODE_IMAGE=$(sed -n 's/^ARG NODE_IMAGE=//p' "$REPOSITORY_ROOT/Dockerfile")
 PORT=${SIGN_UP_BY_EMAIL_CODE_TEST_PORT:-18101}
 MAIL_PORT=${SIGN_UP_BY_EMAIL_CODE_TEST_MAIL_PORT:-18102}
+RABBITMQ_PORT=${SIGN_UP_BY_EMAIL_CODE_TEST_RABBITMQ_PORT:-18103}
+RABBITMQ_URL="http://127.0.0.1:$RABBITMQ_PORT"
 BASE_URL="http://127.0.0.1:$PORT"
 MAIL_URL="http://127.0.0.1:$MAIL_PORT"
 CONTAINER=${SIGN_UP_BY_EMAIL_CODE_TEST_CONTAINER:-sign-up-by-email-code-test-$$}
 MAIL_CONTAINER="$CONTAINER-mail"
 SKYMAIL_CONTAINER="$CONTAINER-skymail"
+RABBITMQ_CONTAINER="$CONTAINER-rabbitmq"
+RABBITMQ_PASSWORD=harness-rabbitmq-password
+RABBITMQ_QUEUE=sign-up-user-events
 NETWORK="$CONTAINER-net"
 MEMORY=${SIGN_UP_BY_EMAIL_CODE_TEST_MEMORY:-2g}
 STATE_DIR=$(mktemp -d)
@@ -113,7 +126,7 @@ fail() {
 }
 cleanup() {
   kcadm_rest_cleanup
-  docker rm -fv "$CONTAINER" "$MAIL_CONTAINER" "$SKYMAIL_CONTAINER" >/dev/null 2>&1 || true
+  docker rm -fv "$CONTAINER" "$MAIL_CONTAINER" "$SKYMAIL_CONTAINER" "$RABBITMQ_CONTAINER" >/dev/null 2>&1 || true
   docker network rm "$NETWORK" >/dev/null 2>&1 || true
   rm -rf "$STATE_DIR"
 }
@@ -124,6 +137,11 @@ on_error() {
   exit "$status"
 }
 trap 'on_error "$LINENO"' ERR
+
+# The RabbitMQ fixture's management API on the host.
+rabbit_api() {
+  curl --fail --silent --show-error --user "keycloak:$RABBITMQ_PASSWORD" "$@"
+}
 
 # kcadm "get" reads go to Admin REST from the host (tests/kcadm-rest.sh); writes stay on kcadm.
 kcadm_rest_setup "$BASE_URL" "$ADMIN_PASSWORD"
@@ -429,6 +447,17 @@ if grep -q 'EmailAddressOwnershipProbe' <<<"$spi_listing"; then
   fail 'the test-only ownership probe leaked into the production SPI jar'
 fi
 
+CURRENT_STAGE='RabbitMQ provider jar'
+RABBITMQ_JAR=${SIGN_UP_BY_EMAIL_CODE_RABBITMQ_JAR:-}
+if [[ -z $RABBITMQ_JAR ]]; then
+  mkdir -p "$STATE_DIR/rabbitmq-provider"
+  docker run --rm -v "$REPOSITORY_ROOT/rabbitmq-provider:/src:ro" -v "$STATE_DIR/rabbitmq-provider:/out" "$MAVEN_IMAGE" \
+    sh -ec 'cp -R /src /build && cd /build && mvn --batch-mode --no-transfer-progress -q -DskipTests package && cp target/keycloak-to-rabbit-*.jar /out/' >&2
+  RABBITMQ_JAR=$(find "$STATE_DIR/rabbitmq-provider" -name 'keycloak-to-rabbit-*.jar' | head -n 1)
+fi
+[[ -f $RABBITMQ_JAR ]] || fail "no RabbitMQ provider jar at ${RABBITMQ_JAR:-(unset)}"
+RABBITMQ_JAR=$(cd -- "$(dirname -- "$RABBITMQ_JAR")" && pwd)/$(basename -- "$RABBITMQ_JAR")
+
 # A separate test-only jar exposes deterministic transaction barriers. It never enters spi/ or the
 # production image: only this throwaway Keycloak mounts it, and it additionally requires SKY_HARNESS.
 CURRENT_STAGE='ownership probe jar'
@@ -455,12 +484,31 @@ docker run --rm -d --name "$SKYMAIL_CONTAINER" --network "$NETWORK" --memory 128
   -e SKYMAIL_HTTP_PORT=8080 -e SKYMAIL_SMTP_PORT=1025 \
   -v "$SCRIPT_DIR/skymail-server.mjs:/fixture/skymail-server.mjs:ro" \
   "$NODE_IMAGE" node /fixture/skymail-server.mjs >/dev/null
+# The provider's broker, with the exchange it publishes to and a queue for every user event (the
+# admin events of the fixture's own writes are not this harness's business).
+[[ -n $RABBITMQ_IMAGE ]] || fail 'tests/docker-compose.integration.yml has no RabbitMQ image'
+docker run --rm -d --name "$RABBITMQ_CONTAINER" --network "$NETWORK" --memory 512m -p "127.0.0.1:$RABBITMQ_PORT:15672" \
+  -e RABBITMQ_DEFAULT_USER=keycloak -e "RABBITMQ_DEFAULT_PASS=$RABBITMQ_PASSWORD" "$RABBITMQ_IMAGE" >/dev/null
+for _ in $(seq 1 60); do
+  rabbit_api "$RABBITMQ_URL/api/overview" >/dev/null 2>&1 && break
+  sleep 2
+done
+rabbit_api -X PUT -H 'content-type: application/json' \
+  -d '{"type":"topic","durable":true,"auto_delete":false,"internal":false,"arguments":{}}' \
+  "$RABBITMQ_URL/api/exchanges/%2F/keycloak.events" >/dev/null || fail 'the RabbitMQ fixture did not start'
+rabbit_api -X PUT -H 'content-type: application/json' -d '{"durable":true,"auto_delete":false,"arguments":{}}' \
+  "$RABBITMQ_URL/api/queues/%2F/$RABBITMQ_QUEUE" >/dev/null
+rabbit_api -X POST -H 'content-type: application/json' -d '{"routing_key":"KK.EVENT.CLIENT.#","arguments":{}}' \
+  "$RABBITMQ_URL/api/bindings/%2F/e/keycloak.events/q/$RABBITMQ_QUEUE" >/dev/null
 docker run --rm -d --name "$CONTAINER" --network "$NETWORK" --memory "$MEMORY" --tmpfs /opt/keycloak/data:rw,size=512m,mode=1777 -p "127.0.0.1:$PORT:$PORT" \
   -e KC_OPTS="$KCADM_JVM_OPTS" \
   -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
   -e SKY_HARNESS=1 -e SKY_MAIL_ENABLED=true -e "SKY_MAIL_BASE_URL=http://$SKYMAIL_CONTAINER:8080" \
   -e SKY_MAIL_CLIENT_ID=keycloak-mailer -e "SKY_MAIL_CLIENT_SECRET=$MAILER_SECRET" -e SKY_MAIL_TIMEOUT_MILLISECONDS=3000 \
   -v "$SPI_JAR:/opt/keycloak/providers/e-skylab-spi.jar:ro" \
+  -e "KK_TO_RMQ_URL=$RABBITMQ_CONTAINER" -e KK_TO_RMQ_PORT=5672 -e KK_TO_RMQ_USERNAME=keycloak \
+  -e "KK_TO_RMQ_PASSWORD=$RABBITMQ_PASSWORD" -e KK_TO_RMQ_VHOST=/ -e KK_TO_RMQ_EXCHANGE=keycloak.events \
+  -v "$RABBITMQ_JAR:/opt/keycloak/providers/keycloak-to-rabbit.jar:ro" \
   -v "$STATE_DIR/ownership-probe/probe.jar:/opt/keycloak/providers/ownership-probe.jar:ro" \
   -v "$REPOSITORY_ROOT/config:/opt/keycloak/sky-config:ro" \
   "$IMAGE" start-dev --http-port "$PORT" >/dev/null
@@ -470,14 +518,16 @@ for _ in $(seq 1 120); do
 done
 curl -fsS "$BASE_URL/realms/master" >/dev/null || { docker logs "$CONTAINER" 2>&1 | tail -n 40 >&2; fail "Keycloak did not start ($IMAGE)"; }
 sessions_login
-printf '    stock Keycloak in dev mode with the SPI jar (%s), SkyMail fixture, Mailpit\n' "$(basename -- "$SPI_JAR")"
+printf '    stock Keycloak in dev mode with the SPI jar (%s), the RabbitMQ provider (%s), SkyMail fixture, Mailpit, RabbitMQ\n' \
+  "$(basename -- "$SPI_JAR")" "$(basename -- "$RABBITMQ_JAR")"
 
 # ---------------------------------------------------------------------------------------------------
 stage 'e-skylab fixture'
 security=$(jq -c 'del(.passwordPolicy)' "$REPOSITORY_ROOT/config/account-center-realm-security.json")
 kcadm create realms -s "realm=$REALM" -s enabled=true -s loginWithEmailAllowed=true -s duplicateEmailsAllowed=false \
   -s verifyEmail=true -s registrationAllowed=false -s eventsEnabled=true -s adminEventsEnabled=true \
-  -s internationalizationEnabled=true -s 'supportedLocales=["tr","en"]' -s defaultLocale=tr >/dev/null
+  -s internationalizationEnabled=true -s 'supportedLocales=["tr","en"]' -s defaultLocale=tr \
+  -s 'eventsListeners=["jboss-logging","keycloak-to-rabbitmq"]' >/dev/null
 kcadm update "realms/$REALM" -f - <<<"$security" >/dev/null
 kcadm update "realms/$REALM" -s "smtpServer.host=$MAIL_CONTAINER" -s smtpServer.port=1025 \
   -s smtpServer.from=keycloak@example.invalid >/dev/null
@@ -706,6 +756,42 @@ type_code "$code"
 finish
 [[ $LANDED == app ]] || fail "the new account did not sign in with a Login code ($(page_summary))"
 printf '    code (purpose=signup) -> form -> account: verified Primary and Personal e-mail, username ayse.yilmaz, no credential, group or extra role; REGISTER and LOGIN events; JIT claims; signs in again by code\n'
+
+# ---------------------------------------------------------------------------------------------------
+# RabbitMQ R07 (ADR-0071 decision 8): does a sign-up by e-mail code reach core's queue? The SPI
+# writes Keycloak's REGISTER event (EmailCodeAuthenticator.registered); the realm's listener
+# keycloak-to-rabbitmq must publish it after the sign-up's transaction, as the catalog body. Every
+# user event since the realm was made is on the queue: the catalog's only, here exactly one REGISTER
+# (no account was opened before) and no LOGIN, though this account signed in twice.
+stage 'the REGISTER event on the broker'
+register_id=$(kcadm get events -r "$REALM" -q type=REGISTER -q "user=$new_id" | jq -r '.[0].id // ""')
+[[ -n $register_id ]] || fail 'the stored REGISTER event has no id'
+client_ip=$(kcadm get events -r "$REALM" -q type=LOGIN -q "user=$new_id" | jq -r '.[0].ipAddress // ""')
+[[ -n $client_ip ]] || fail 'no client IP in the LOGIN event to look for'
+for _ in $(seq 1 10); do
+  (($(rabbit_api "$RABBITMQ_URL/api/queues/%2F/$RABBITMQ_QUEUE" | jq -r '.messages // 0') > 0)) && break
+  sleep 1
+done
+messages=$(rabbit_api -X POST -H 'content-type: application/json' \
+  -d '{"count":200,"ackmode":"ack_requeue_false","encoding":"auto"}' "$RABBITMQ_URL/api/queues/%2F/$RABBITMQ_QUEUE/get")
+jq -e 'all(.[]; .routing_key | test("^KK\\.EVENT\\.CLIENT\\.e-skylab\\.SUCCESS\\.[^.]+\\.(REGISTER|UPDATE_EMAIL|UPDATE_PROFILE|DELETE_ACCOUNT)$"))' \
+  <<<"$messages" >/dev/null || fail "a user event outside the catalog reached the broker: $(jq -c '[.[].routing_key]' <<<"$messages")"
+jq -e --arg user "$new_id" --arg id "$register_id" --arg client "$APP" '
+    [.[] | select(.routing_key | endswith(".REGISTER"))] as $registers
+    | ($registers | length) == 1
+    and $registers[0].routing_key == ("KK.EVENT.CLIENT.e-skylab.SUCCESS." + $client + ".REGISTER")
+    and ($registers[0].payload | fromjson) as $body
+    | ($body | keys) == ["clientId", "id", "realmId", "time", "type", "userId"]
+      and $body.type == "REGISTER" and $body.userId == $user and $body.clientId == $client and $body.id == $id
+      and $registers[0].properties.message_id == $id' <<<"$messages" >/dev/null \
+  || fail "no single REGISTER of the new account with the catalog body and Keycloak's event id: $(jq -c '[.[].routing_key]' <<<"$messages")"
+for secret in yeni.kisi@example.invalid ayse.yilmaz "$client_ip" Ayşe Yılmaz; do
+  if jq -r '.[].payload' <<<"$messages" | grep -Fiq -- "$secret"; then
+    fail 'an address, the username, a name or the client IP reached the broker'
+  fi
+done
+printf '    REGISTER of the sign-up on KK.EVENT.CLIENT.e-skylab.SUCCESS.%s.REGISTER: identifiers only, message-id = event id; %s user event(s) on the broker, none outside the catalog\n' \
+  "$APP" "$(jq length <<<"$messages")"
 
 # ---------------------------------------------------------------------------------------------------
 stage 'usernames and names'

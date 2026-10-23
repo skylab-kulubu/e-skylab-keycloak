@@ -82,9 +82,25 @@ READER_ROLE=content:read
 READER_NAMES=(DK)
 
 # The top teams whose Leader groups hold frontend-main's cms:access in production (Ek-2): the
-# production measurement's group paths, before the release (ekip-yetkileri ticket 03). A top team
-# only (/UYELER/<area>/<team>); a Sub-team's Leader group holding it is not taken into code.
-MAIN_SITE_TEAMS_E_SKYLAB=()
+# production measurement's group paths, before the release (ekip-yetkileri ticket 03; the
+# --server-precheck of 2026-10-23, 13 EK2_MAIN_LEADER lines: ARTLAB, SKYDAYS and YILDIZJAM through
+# KOORDINATORLER, the others through LIDERLER). A top team only (/UYELER/<area>/<team>); a Sub-team's
+# Leader group holding it is not taken into code.
+MAIN_SITE_TEAMS_E_SKYLAB=(
+  /UYELER/ARGE/AIRLAB
+  /UYELER/ARGE/ALGOLAB
+  /UYELER/ARGE/CHAINLAB
+  /UYELER/ARGE/GAMELAB
+  /UYELER/ARGE/MOBILAB
+  /UYELER/ARGE/SKYSEC
+  /UYELER/ARGE/SKYSIS
+  /UYELER/ARGE/WEBLAB
+  /UYELER/ORGANIZASYON/ARTLAB
+  /UYELER/ORGANIZASYON/BIZBIZE
+  /UYELER/ORGANIZASYON/GECEKODU
+  /UYELER/ORGANIZASYON/SKYDAYS
+  /UYELER/ORGANIZASYON/YILDIZJAM
+)
 
 # site_teams SITE: the site's teams, one per line: the owning lab team, then the event's
 # organization team (main: MAIN_SITE_TEAMS_E_SKYLAB in e-skylab).

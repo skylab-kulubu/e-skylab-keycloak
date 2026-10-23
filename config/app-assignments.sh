@@ -510,7 +510,9 @@ run_check() {
         continue
       fi
       value=${expect[$path|$client|$role]:-}
-      if [[ -n ${pending_client[$client]:-} ]] && ! privileged_root "$path"; then
+      # A pending client's every group holder, a Privileged root included (Fatih decides who keeps
+      # frontend-arge's roles, ADMIN and YK too), waits for that decision.
+      if [[ -n ${pending_client[$client]:-} ]]; then
         value=${value:-karar-bekliyor}
       fi
       case $value in

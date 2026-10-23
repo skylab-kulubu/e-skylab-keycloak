@@ -3899,7 +3899,8 @@ dakikalar). Önek `[app-assignments] `'den sonra makine okur satırlar:
 
 - `KOD|<grup yolu ya da kişi:<n>>|<istemci ya da realm>|<rol>|<beklenen>|<var|yok>`; beklenen `evet`,
   `hayır` (kodda yok), `geçici` (DK'nın `skyforms:*`'ı, `dk-read-only.sh --forms`'a kadar) ya da
-  `karar-bekliyor` (`frontend-arge`: arge'yi Fatih yeniden yapıyor);
+  `karar-bekliyor` (`frontend-arge`: arge'yi Fatih yeniden yapıyor; rolünü taşıyan her grup, ADMIN ve YK
+  dahil);
 - `PANEL|<grup yolu ya da kişi:<n>>|<istemci>|<rol>`;
 - sonda sayılar (`KOD: … as expected, … missing, … not in code, …`, uygulama başına `PANEL: …`) ve
   panel alanına düşmüş yönetici, sınıfsız ya da realm rolü, kişiye doğrudan yönetici rolü ve herkese
@@ -3911,18 +3912,23 @@ Varsayılan rol ve IdP ayarları §33.2'nin, servis hesapları §20'nin işidir.
 ### 33.2 Varsayılan rol ve IdP belirteç ayarları: `KEYCLOAK_RECONCILE_ONLY=default-roles`
 
 `default-roles-<realm>` herkeste olduğu için yalnız Keycloak'ın kendi rollerini taşır: `offline_access`,
-`uma_authorization`, `account/view-profile`, `account/manage-account`. Adım (operatör, kuru koşu
-`KEYCLOAK_RECONCILE_CHECK=true`):
+`uma_authorization`, `account/view-profile`, `account/manage-account` (eksikse `NOTE`) ve hesap
+konsolunun öbür rolleri (`account/*`: yalnız kişinin kendi hesabı; uyarısız kalır). Adım (operatör,
+kuru koşu `KEYCLOAK_RECONCILE_CHECK=true`):
 
 - `broker/read-token`'ı varsayılan rolden kaldırır (Yusuf K2, 2026-10-23; kişinin YTÜ/Microsoft
-  girişinden saklanan belirteci okutur, hiçbir uygulama okumuyor);
+  girişinden saklanan belirteci okutur, hiçbir uygulama okumuyor). Varsayılan rolün içindeki bir
+  bileşik rolde duruyorsa oradan kaldırır: production'da (23 Ekim önkontrolü) rol varsayılan rolün
+  doğrudan içinde değil, içindeki Java dönemi realm rolü `USER`'ın composite'i olarak herkese geçiyor;
+  `USER` varsayılan rolde ve öbür rolleriyle kalır (satır `KOD|default-roles-<realm>>realm/USER|broker|
+  read-token|hayır|var`, `remove broker/read-token from the composite role realm/USER, …`);
 - her IdP'de **Stored tokens readable** (`addReadTokenRoleOnCreate`) açıksa kapatır (açıkken Keycloak
   ilk girişle açılan her hesaba rolü doğrudan verir); **Store tokens** (`storeToken`) açıksa `WARNING`,
   değiştirmez (eskylab-login-ux bilet 04 sandbox testinden sonra kapatır);
 - beklenen listede olmayan başka bir rolü `WARNING` ile bildirir, kaldırmaz; eksik Keycloak rolünü `NOTE`
   ile yazar, eklemez;
-- `broker/read-token`'ı doğrudan taşıyan kişileri sayıyla, grupları yoluyla, bileşik rolleri adıyla
-  bildirir; almaz (sıfırlama penceresi, bilet 06).
+- `broker/read-token`'ı doğrudan taşıyan kişileri sayıyla, grupları yoluyla, varsayılan rolden
+  ulaşılmayan bileşik rolleri adıyla bildirir; almaz (sıfırlama penceresi, bilet 06).
 
 Satırlar `KOD|default-roles-<realm>|<istemci>|<rol>|evet|hayır|var|yok` ve
 `KOD|idp:<alias>|-|<ayar>|false|<canlı>`; son satır `check: N change(s) pending; nothing was written` ya

@@ -47,10 +47,12 @@
 #     exactly the backup's assignments away and clears the mark; a missing target, a Privileged
 #     target and a default group under a target are PROBLEMs (exit 1, nothing written); a failed
 #     read stops it;
-#   - default-roles: the dry run names broker/read-token in the default role and an identity
-#     provider's Stored tokens readable as changes, Store tokens as a WARNING and the direct holder
-#     as a count, and writes nothing; the step takes read-token out and turns the setting off, leaves
-#     Store tokens and the direct holder alone; a second dry run plans nothing;
+#   - default-roles: the dry run names broker/read-token in the default role, broker/read-token
+#     inside the realm role USER the default role holds (production's shape, 2026-10-23) and an
+#     identity provider's Stored tokens readable as changes, USER itself and Store tokens as WARNINGs,
+#     an account console role as Keycloak's own and the direct holder as a count, and writes nothing;
+#     the step takes read-token out of both and turns the setting off, leaves USER in the default role
+#     and Store tokens and the direct holder alone; a second dry run plans nothing;
 #   - a failed group read (injected) stops the scripts with exit 1 and writes nothing;
 #   - the reconciler's operator steps run the scripts (dry run with KEYCLOAK_RECONCILE_CHECK=true)
 #     and refuse to run without an operator session.
@@ -600,6 +602,12 @@ grant_group /UYELER/ARGE/AIRLAB/SUB skymail skymail:access
 grant_group /UYELER/ARGE/AIRLAB skymail skymail:mails:write
 grant_group /UYELER/ARGE skymail skymail:access
 grant_group /ADMIN forms skyforms:access
+# frontend-arge (Fatih rebuilds arge, Ek-2): every group holding its roles waits for his decision, a
+# Privileged root as well as a top team's Leader group (production: ADMIN, YK and the Leaders).
+kcadm create clients -r "$REALM" -s clientId=frontend-arge -s publicClient=true >/dev/null
+kcadm create "clients/$(client_uuid "$REALM" frontend-arge)/roles" -r "$REALM" -s name=cms:access >/dev/null
+grant_group /ADMIN frontend-arge cms:access
+grant_group /UYELER/ARGE/AIRLAB/LIDERLER frontend-arge cms:access
 before=$(events "$REALM")
 output=$(reconcile_step 2 app-assignments)
 expect_line "$output" 'KEYCLOAK_RECONCILE_ONLY=app-assignments is an operator step' 'the check ran without an operator session'
@@ -624,6 +632,9 @@ expect_line "$sorted" '[app-assignments] KOD|/UYELER/YK|forms|skyforms:access|ev
 expect_line "$sorted" '[app-assignments] KOD|/UYELER/YK|skymail|skymail:mails:approve|evet|yok' 'the missing SkyMail approver role of YK is not reported'
 expect_line "$sorted" '[app-assignments] KOD|/UYELER/YK|forms|skyforms:*|evet|yok' 'the missing skyforms:* of YK is not reported'
 reject_line "$sorted" 'KOD|/ADMIN|skymail|skymail:mails:approve' 'ADMIN was expected to approve (YK alone does)'
+expect_line "$sorted" '[app-assignments] KOD|/ADMIN|frontend-arge|cms:access|karar-bekliyor|var' 'ADMIN'"'"'s frontend-arge role is not pending'
+expect_line "$sorted" '[app-assignments] KOD|/UYELER/ARGE/AIRLAB/LIDERLER|frontend-arge|cms:access|karar-bekliyor|var' 'the Leader group'"'"'s frontend-arge role is not pending'
+reject_line "$sorted" 'PROBLEM: frontend-arge' 'a pending frontend-arge role was a PROBLEM'
 expect_line "$sorted" 'PANEL: SkyForms (forms): 1 group assignment(s), 1 person assignment(s)' 'the SkyForms panel count is wrong'
 expect_line "$sorted" 'PANEL: SkyMail (skymail): 1 group assignment(s), 0 person assignment(s)' 'the SkyMail panel count is wrong'
 reject_line "$sorted" 'PANEL|/ROLLER' 'a role group was taken for the panel area'
@@ -637,6 +648,7 @@ kcadm delete "groups/$(group_id "$REALM" /UYELER/ARGE/AIRLAB)/role-mappings/clie
   -b "$(role_body "$REALM" skymail skymail:mails:write)" >/dev/null
 kcadm delete "groups/$(group_id "$REALM" /UYELER/ARGE)/role-mappings/clients/$(client_uuid "$REALM" skymail)" -r "$REALM" \
   -b "$(role_body "$REALM" skymail skymail:access)" >/dev/null
+kcadm delete "clients/$(client_uuid "$REALM" frontend-arge)" -r "$REALM" >/dev/null
 printf '    --check: panel assignments counted, code area compared (expected, missing, not in code), PROBLEMs named, nothing written, nobody named\n'
 
 # ---------------------------------------------------------------------------------------------------
@@ -738,6 +750,15 @@ kcadm create identity-provider/instances -r "$REALM" -s alias=obs-test -s provid
   -s storeToken=true -s addReadTokenRoleOnCreate=true -s config.clientId=harness -s config.clientSecret=harness-idp-secret \
   -s config.authorizationUrl=https://idp.invalid/auth -s config.tokenUrl=https://idp.invalid/token >/dev/null
 kcadm add-roles -r "$REALM" --uusername direct-person --cclientid broker --rolename read-token >/dev/null
+# Production's shape of the 2026-10-23 precheck: the Java era's realm role USER is in the default role and
+# carries broker/read-token as a composite; the account console's view-groups is in the default role too.
+user_role_id=$(kcadm get roles/USER -r "$REALM" | jq -r .id)
+kcadm create "roles-by-id/$user_role_id/composites" -r "$REALM" -b "$(role_body "$REALM" broker read-token)" >/dev/null
+kcadm create "roles-by-id/$default_role_id/composites" -r "$REALM" -b "[{\"id\":\"$user_role_id\"}]" >/dev/null
+kcadm create "roles-by-id/$default_role_id/composites" -r "$REALM" -b "$(role_body "$REALM" account view-groups)" >/dev/null
+user_composites() {
+  kcadm get "roles-by-id/$user_role_id/composites" -r "$REALM" | jq -c '[.[].name] | sort'
+}
 default_composites() {
   kcadm get "roles-by-id/$default_role_id/composites" -r "$REALM" | jq -c '[.[].name] | sort'
 }
@@ -749,26 +770,41 @@ checked=$(reconcile_step 0 default-roles -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KC
 expect_line "$checked" "[reconcile] KOD|$default_role|broker|read-token|hayır|var" 'read-token in the default role is not reported'
 expect_line "$checked" "[reconcile] would remove broker/read-token from the default role $default_role" 'the removal was not planned'
 expect_line "$checked" "[reconcile] KOD|$default_role|realm|offline_access|evet|var" 'a Keycloak default role is not reported as expected'
+expect_line "$checked" "[reconcile] KOD|$default_role|account|view-groups|evet|var" 'an account console role is not taken as Keycloak'"'"'s own'
+reject_line "$checked" 'WARNING: account/view-groups' 'an account console role was warned about'
+expect_line "$checked" "[reconcile] KOD|$default_role|realm|USER|hayır|var" 'the realm role USER in the default role is not reported'
+expect_line "$checked" "WARNING: realm/USER is in the default role $default_role" 'the realm role USER in the default role is not warned about'
+expect_line "$checked" "[reconcile] KOD|$default_role>realm/USER|broker|read-token|hayır|var" 'read-token inside USER is not reported'
+expect_line "$checked" "[reconcile] would remove broker/read-token from the composite role realm/USER, which is in the default role $default_role" \
+  'taking read-token out of USER was not planned'
+reject_line "$checked" 'broker/read-token is in the composite role(s)' 'the composite the step takes read-token from was warned about again'
 expect_line "$checked" '[reconcile] KOD|idp:obs-test|-|addReadTokenRoleOnCreate|false|true' 'the token setting is not reported'
 expect_line "$checked" '[reconcile] would turn off Stored tokens readable of identity provider obs-test' 'turning the setting off was not planned'
 expect_line "$checked" 'WARNING: identity provider obs-test stores the tokens of its logins' 'Store tokens was not reported'
 expect_line "$checked" 'NOTE: broker/read-token is held directly by 1 person(s)' 'the direct holder was not counted'
-expect_line "$checked" '[reconcile] check: 2 change(s) pending; nothing was written' 'the dry run did not count two changes'
+expect_line "$checked" '[reconcile] check: 3 change(s) pending; nothing was written' 'the dry run did not count three changes'
 expect_line "$checked" 'Default roles and identity provider token settings are checked; nothing was written.' 'the dry run did not end as one'
 reject_line "$checked" 'direct-person' 'the step printed a person'
 reject_line "$checked" 'harness-idp-secret' 'the step printed a secret'
 [[ $(events "$REALM") == "$before" ]] || fail 'the dry run wrote something'
 [[ $(default_composites) == "$composites_before" ]] || fail 'the dry run changed the default role'
+[[ $(user_composites) == '["read-token"]' ]] || fail "the dry run changed USER: $(user_composites)"
 applied=$(reconcile_step 0 default-roles -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KCADM_CONFIG")
-expect_line "$applied" '[reconcile] applied 2 change(s)' 'the step did not apply the two changes'
+expect_line "$applied" '[reconcile] applied 3 change(s)' 'the step did not apply the three changes'
 default_composites | jq -e 'index("read-token") == null' >/dev/null || fail 'read-token is still in the default role'
+default_composites | jq -e 'index("USER") != null and index("view-groups") != null' >/dev/null \
+  || fail "the step took USER or view-groups out of the default role: $(default_composites)"
+[[ $(user_composites) == '[]' ]] || fail "read-token is still in USER: $(user_composites)"
 idp=$(kcadm get identity-provider/instances/obs-test -r "$REALM")
 jq -e '.addReadTokenRoleOnCreate == false and .storeToken == true' <<<"$idp" >/dev/null \
   || fail "the token settings are not Stored tokens readable off and Store tokens untouched: $(jq -c '{storeToken, addReadTokenRoleOnCreate}' <<<"$idp")"
 [[ $(token_roles "$REALM" direct-person broker) == '["read-token"]' ]] || fail 'the direct holder lost read-token (the reset window'"'"'s job)'
 again=$(reconcile_step 0 default-roles -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KCADM_CONFIG" -e KEYCLOAK_RECONCILE_CHECK=true)
 expect_line "$again" '[reconcile] check: 0 change(s) pending; nothing was written' 'the second dry run planned a change'
-printf '    default-roles: read-token out of the default role and Stored tokens readable off (dry run first, then 0); Store tokens and the direct holder reported, kept\n'
+for role in "{\"id\":\"$user_role_id\"}" "$(role_body "$REALM" account view-groups | jq -c '.[0]')"; do
+  kcadm delete "roles-by-id/$default_role_id/composites" -r "$REALM" -b "[$role]" >/dev/null
+done
+printf '    default-roles: read-token out of the default role and out of USER inside it, Stored tokens readable off (dry run first, then 0); USER warned and kept, account roles kept; Store tokens and the direct holder reported, kept\n'
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='the reconciler operator steps'

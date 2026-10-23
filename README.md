@@ -719,8 +719,8 @@ tanımları, "atama gerekli" (`config/app-assignments.json`, tam olarak core'un 
 yönetici rolleri, servis hesapları ve varsayılan rol koddadır; uygulama rolünün ekip grubuna ya da
 kişiye ataması panelindir ve uzlaştırıcı ona dokunmaz. Operatör adımları:
 `KEYCLOAK_RECONCILE_ONLY=app-assignments` (her eşlemeyi `KOD|…` ya da `PANEL|…` satırıyla sınıflar,
-yalnız okur), `default-roles` (`broker/read-token`'ı varsayılan rolden alır, IdP'lerde "Stored tokens
-readable"ı kapatır; kuru koşulu), `tohum-atamalar` (tek seferlik başlangıç ataması: bütün en üst
+yalnız okur), `default-roles` (`broker/read-token`'ı varsayılan rolden ve onun içindeki bileşik rollerden, ör.
+`USER`, alır, IdP'lerde "Stored tokens readable"ı kapatır; kuru koşulu), `tohum-atamalar` (tek seferlik başlangıç ataması: bütün en üst
 ekiplere SkyForms, Leader gruplarına ve ALGOLAB'a SkyMail "onaya gönder"; yedekli, işaretli, ikinci
 kez uygulanmaz). `KEYCLOAK_RECONCILE_CHECK=true` tam uzlaştırmanın ve `core-roles`'ın kuru koşusudur:
 her yazma `would kcadm …` satırıdır, hiçbir şey yazılmaz. `skyforms`'un token'ı `skyforms-core-audience`

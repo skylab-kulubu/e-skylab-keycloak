@@ -3918,12 +3918,16 @@ write_privileged_expectations() {
 # The realm's default role (ekip-yetkileri ticket 03, YETKI-MATRISI §6.2 and §6.4; Yusuf, 2026-10-23,
 # K2): every account holds it, so it carries Keycloak's own roles only. DEFAULT_ROLE_EXPECTED is that
 # set (Keycloak's own default for a new realm); a role of it that is missing is a NOTE and is not
-# added. DEFAULT_ROLE_REMOVALS are taken away (KEYCLOAK_RECONCILE_ONLY=default-roles, an operator step:
-# a dry run with KEYCLOAK_RECONCILE_CHECK=true, then the same without it, then a dry run with 0
-# changes): broker/read-token lets its holder read the token Keycloak stored from their YTÜ/Microsoft
-# login (GET /realms/<realm>/broker/<alias>/token); no app reads it (2026-10-23 origin/main sweep) and
-# neither Keycloak's own default nor Entra hands it out. Any other role in the default role is a
-# WARNING and stays (a decision of its own; the reset window, ticket 06, takes it).
+# added. The account console's other roles (account/*: one's own account only) are Keycloak's own
+# too and stay without a word. DEFAULT_ROLE_REMOVALS are taken away (KEYCLOAK_RECONCILE_ONLY=
+# default-roles, an operator step: a dry run with KEYCLOAK_RECONCILE_CHECK=true, then the same without
+# it, then a dry run with 0 changes): broker/read-token lets its holder read the token Keycloak stored
+# from their YTÜ/Microsoft login (GET /realms/<realm>/broker/<alias>/token); no app reads it
+# (2026-10-23 origin/main sweep) and neither Keycloak's own default nor Entra hands it out. It is taken
+# away where the default role holds it: directly, or inside a composite role the default role holds
+# (production, 2026-10-23 precheck: the Java era's realm role USER carries it; the composite stays in
+# the default role with its other roles). Any other role in the default role is a WARNING and stays (a
+# decision of its own; the reset window, ticket 06, takes it).
 # The identity providers' token settings: Keycloak gives broker/read-token to every account a first
 # login of an identity provider opens while its "Stored tokens readable" (addReadTokenRoleOnCreate) is
 # on, so the step turns it off; "Store tokens" (storeToken) is reported, not changed (eskylab-login-ux
@@ -3950,7 +3954,8 @@ default_role_change() {
 reconcile_default_roles() {
   local realm_file default_json default_name default_id composites clients line id rest name client_role
   local container owner key wanted found removal idps alias store readable broker_uuid holders people groups
-  local -A client_of=()
+  local queue next parent parent_key nested composite depth=0 parents parent_list
+  local -A client_of=() key_of=() seen_parent=() removed_from=()
   DEFAULT_ROLE_CHANGES=0
   realm_file=$(mktemp "$WORK_DIR/realm.XXXXXX")
   kcadm_json "realms/$TARGET_REALM" >"$realm_file"
@@ -3980,8 +3985,9 @@ reconcile_default_roles() {
       owner=realm
     fi
     key="$owner/$name"
+    key_of[$id]=$key
     found="$found$key "
-    if [[ " ${DEFAULT_ROLE_EXPECTED[*]} " == *" $key "* ]]; then
+    if [[ " ${DEFAULT_ROLE_EXPECTED[*]} " == *" $key "* || $owner == account ]]; then
       log "KOD|$default_name|$owner|$name|evet|var"
       continue
     fi
@@ -3995,9 +4001,56 @@ reconcile_default_roles() {
         kcadm delete "roles-by-id/$default_id/composites" -r "$TARGET_REALM" -b "[{\"id\":\"$id\"}]" >/dev/null
       fi
     else
-      warn "$key is in the default role $default_name: every account holds it, and it is not one of Keycloak's own (${DEFAULT_ROLE_EXPECTED[*]}); not taken away here (the reset window, ekip-yetkileri ticket 06)"
+      warn "$key is in the default role $default_name: every account holds it, and it is not one of Keycloak's own (${DEFAULT_ROLE_EXPECTED[*]} or an account console role); not taken away here (the reset window, ekip-yetkileri ticket 06)"
     fi
   done <<<"$composites"
+  # The roles the default role reaches through its composite roles: every account holds them as well. A
+  # DEFAULT_ROLE_REMOVALS role there is taken away from the composite that holds it; the rest is left
+  # (Keycloak's own nesting such as account/manage-account -> manage-account-links). Three levels, each
+  # composite read once. kcadm's CSV keeps the representation's field order (id, name, composite,
+  # clientRole, containerId), so "composite" is read on its own, next to the id.
+  queue=$(service_role_read "The composite roles in $default_name" "roles-by-id/$default_id/composites" --fields id,composite) || return 1
+  queue=$(sed -n 's/^\([^,]*\),true$/\1/p' <<<"$queue")
+  while [[ -n $queue ]] && ((depth < 3)); do
+    depth=$((depth + 1))
+    next=''
+    for parent in $queue; do
+      [[ -z ${seen_parent[$parent]:-} ]] || continue
+      seen_parent[$parent]=1
+      parent_key=${key_of[$parent]:-?}
+      nested=$(service_role_read "The composites of $parent_key" "roles-by-id/$parent/composites" \
+        --fields id,name,clientRole,containerId) || return 1
+      composite=$(service_role_read "The composites of $parent_key" "roles-by-id/$parent/composites" --fields id,composite) || return 1
+      next="$next $(sed -n 's/^\([^,]*\),true$/\1/p' <<<"$composite" | paste -sd' ' -)"
+      while IFS= read -r line; do
+        [[ -n $line ]] || continue
+        id=${line%%,*}
+        rest=${line#*,}
+        container=${rest##*,}
+        rest=${rest%,*}
+        client_role=${rest##*,}
+        name=${rest%,*}
+        if [[ $client_role == true ]]; then
+          owner=${client_of[$container]:-?}
+        else
+          owner=realm
+        fi
+        key="$owner/$name"
+        [[ -n ${key_of[$id]:-} ]] || key_of[$id]=$key
+        removal=false
+        for wanted in "${DEFAULT_ROLE_REMOVALS[@]}"; do
+          [[ $wanted != "$key" ]] || removal=true
+        done
+        [[ $removal == true ]] || continue
+        log "KOD|$default_name>$parent_key|$owner|$name|hayır|var"
+        removed_from[$parent_key]=1
+        if default_role_change "remove $key from the composite role $parent_key, which is in the default role $default_name (every account holds it through $parent_key; no app reads it; $parent_key itself stays)"; then
+          kcadm delete "roles-by-id/$parent/composites" -r "$TARGET_REALM" -b "[{\"id\":\"$id\"}]" >/dev/null
+        fi
+      done <<<"$nested"
+    done
+    queue=$next
+  done
   for wanted in "${DEFAULT_ROLE_EXPECTED[@]}"; do
     [[ $found == *" $wanted "* ]] && continue
     log "KOD|$default_name|${wanted%%/*}|${wanted#*/}|evet|yok"
@@ -4042,8 +4095,14 @@ reconcile_default_roles() {
     id=$(id_from_csv read-token "$id" || true)
     if [[ -n $id ]]; then
       service_role_composite_parents || return 1
-      [[ -z ${SERVICE_ROLE_PARENTS[$id]:-} ]] \
-        || warn "broker/read-token is in the composite role(s) ${SERVICE_ROLE_PARENTS[$id]#,} (every holder holds it; the Java era's realm roles leave in rol-temizligi F3); not taken away here"
+      # The composites this step takes it away from (above) are not reported again.
+      parents=''
+      IFS=, read -r -a parent_list <<<"${SERVICE_ROLE_PARENTS[$id]:-}"
+      for parent in ${parent_list[@]+"${parent_list[@]}"}; do
+        [[ -z $parent || -n ${removed_from[$parent]:-} ]] || parents="$parents,$parent"
+      done
+      [[ -z $parents ]] \
+        || warn "broker/read-token is in the composite role(s) ${parents#,} (every holder holds it; the Java era's realm roles leave in rol-temizligi F3); not taken away here"
     fi
   fi
   if [[ $RECONCILE_CHECK == true ]]; then

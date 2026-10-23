@@ -815,7 +815,7 @@ stage_v2_reconcile_check() {
   grep -Fq 'Account Center Keycloak configuration is checked; nothing was written (0 write(s) withheld).' "$log" \
     || { cat "$log" >&2; fail 'the dry run of the reconciled realm withheld a write or did not end as a dry run'; }
   grep -Fq '[reconcile] CHECK: a dry run' "$log" || fail 'the dry run did not say it is one'
-  ! grep -Fq 'would kcadm' "$log" || { cat "$log" >&2; fail 'the dry run of the reconciled realm planned a write'; }
+  ! grep -Eq '^\[reconcile\] would kcadm ' "$log" || { cat "$log" >&2; fail 'the dry run of the reconciled realm planned a write'; }
   [[ $(v2_state_snapshot) == "$snapshot_before" ]] || fail 'the dry run changed the realm state'
   new_events=$(kcadm get admin-events -r "$V2_REALM" -q max=200 -c \
     | jq --argjson since "$newest_before" '[.[] | select(.time > $since)] | length')

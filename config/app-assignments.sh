@@ -542,7 +542,7 @@ run_check() {
     while IFS= read -r role; do
       [[ -n $role ]] || continue
       existing_role[$client|$role]=1
-      read_holders "clients/$uuid/roles/${role//\*/%2A}" "$client" "$role"
+      read_holders "clients/$uuid/roles/$role" "$client" "$role"
     done <<<"$roles_read"
   done <<<"$sorted_clients"
   roles_read=$(csv roles name -q first=0 -q max=10000)

@@ -584,8 +584,12 @@ grant_group /UYELER/ARGE/AIRLAB skymail skymail:mails:write
 grant_group /UYELER/ARGE skymail skymail:access
 grant_group /ADMIN forms skyforms:access
 before=$(events "$REALM")
-sorted=$(run_expecting 0 app-assignments.sh "$REALM" --check)
-expect_line "$sorted" 'NOTE: no --privileged-file' 'the run without the reconciler'"'"'s expectations did not say so'
+output=$(reconcile_step 2 app-assignments)
+expect_line "$output" 'KEYCLOAK_RECONCILE_ONLY=app-assignments is an operator step' 'the check ran without an operator session'
+# One run (every role's holders are read: minutes), through the reconciler's step, which passes the
+# Privileged roots' expectations.
+sorted=$(reconcile_step 0 app-assignments -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KCADM_CONFIG")
+reject_line "$sorted" 'NOTE: no --privileged-file' 'the reconciler'"'"'s step did not pass its expectations'
 expect_line "$sorted" '[app-assignments] PANEL|/UYELER/ARGE/AIRLAB|forms|skyforms:access' 'the top team'"'"'s Forms seat is not the panel'"'"'s'
 expect_line "$sorted" '[app-assignments] PANEL|/UYELER/ARGE/AIRLAB/SUB|skymail|skymail:access' 'the Sub-team'"'"'s SkyMail is not the panel'"'"'s'
 expect_line "$sorted" '[app-assignments] PANEL|kişi:1|forms|skyforms:access' 'the person'"'"'s Forms seat is not a panel assignment'
@@ -598,7 +602,11 @@ expect_line "$sorted" '[app-assignments] KOD|/ROLLER/SKYMAIL-ACCESS|skymail|skym
 expect_line "$sorted" '[app-assignments] KOD|/UYELER/ARGE/AIRLAB/LIDERLER|skycloud|skycloud:access|evet|var' 'the Leader group'"'"'s SkyCloud is not as expected'
 expect_line "$sorted" '[app-assignments] KOD|/UYELER/ARGE/AIRLAB/SUB/LIDERLER|skycloud|skycloud:access|hayır|var' 'SkyCloud on a Sub-team'"'"'s Leader group is not reported'
 expect_line "$sorted" '[app-assignments] KOD|/UYELER|realm|USER|hayır|var' 'the realm role on /UYELER is not reported'
-expect_line "$sorted" '[app-assignments] KOD|/ADMIN|forms|skyforms:access|hayır|var' 'the Privileged root'"'"'s mapping is not the code area'"'"'s'
+expect_line "$sorted" '[app-assignments] KOD|/ADMIN|forms|skyforms:access|evet|var' 'the reconciler does not expect the Forms seat on ADMIN'
+expect_line "$sorted" '[app-assignments] KOD|/UYELER/YK|forms|skyforms:access|evet|yok' 'the missing Forms seat of YK is not reported'
+expect_line "$sorted" '[app-assignments] KOD|/UYELER/YK|skymail|skymail:mails:approve|evet|yok' 'the missing SkyMail approver role of YK is not reported'
+expect_line "$sorted" '[app-assignments] KOD|/UYELER/YK|forms|skyforms:*|evet|yok' 'the missing skyforms:* of YK is not reported'
+reject_line "$sorted" 'KOD|/ADMIN|skymail|skymail:mails:approve' 'ADMIN was expected to approve (YK alone does)'
 expect_line "$sorted" 'PANEL: SkyForms (forms): 1 group assignment(s), 1 person assignment(s)' 'the SkyForms panel count is wrong'
 expect_line "$sorted" 'PANEL: SkyMail (skymail): 1 group assignment(s), 0 person assignment(s)' 'the SkyMail panel count is wrong'
 reject_line "$sorted" 'PANEL|/ROLLER' 'a role group was taken for the panel area'
@@ -608,16 +616,6 @@ for name in direct-person leader-person role-group-person sub-leader-person; do
   reject_line "$sorted" "$name" 'the check printed a person'
 done
 [[ $(events "$REALM") == "$before" ]] || fail 'the check wrote something'
-output=$(reconcile_step 2 app-assignments)
-expect_line "$output" 'KEYCLOAK_RECONCILE_ONLY=app-assignments is an operator step' 'the check ran without an operator session'
-output=$(reconcile_step 0 app-assignments -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KCADM_CONFIG")
-reject_line "$output" 'NOTE: no --privileged-file' 'the reconciler'"'"'s step did not pass its expectations'
-expect_line "$output" '[app-assignments] KOD|/ADMIN|forms|skyforms:access|evet|var' 'the reconciler does not expect the Forms seat on ADMIN'
-expect_line "$output" '[app-assignments] KOD|/UYELER/YK|forms|skyforms:access|evet|yok' 'the missing Forms seat of YK is not reported'
-expect_line "$output" '[app-assignments] KOD|/UYELER/YK|skymail|skymail:mails:approve|evet|yok' 'the missing SkyMail approver role of YK is not reported'
-expect_line "$output" '[app-assignments] KOD|/UYELER/YK|forms|skyforms:*|evet|yok' 'the missing skyforms:* of YK is not reported'
-reject_line "$output" 'KOD|/ADMIN|skymail|skymail:mails:approve' 'ADMIN was expected to approve (YK alone does)'
-[[ $(events "$REALM") == "$before" ]] || fail 'the reconciler'"'"'s check wrote something'
 kcadm delete "groups/$(group_id "$REALM" /UYELER/ARGE/AIRLAB)/role-mappings/clients/$(client_uuid "$REALM" skymail)" -r "$REALM" \
   -b "$(role_body "$REALM" skymail skymail:mails:write)" >/dev/null
 kcadm delete "groups/$(group_id "$REALM" /UYELER/ARGE)/role-mappings/clients/$(client_uuid "$REALM" skymail)" -r "$REALM" \
@@ -627,8 +625,8 @@ printf '    --check: panel assignments counted, code area compared (expected, mi
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='app-assignments: the one-time initial assignment'
 create_group "$REALM" /UYELER/ARGE ALGOLAB
-make_person algolab-member /UYELER/ARGE/ALGOLAB
-make_person algolab-off /UYELER/ARGE/ALGOLAB
+make_person "$REALM" algolab-member /UYELER/ARGE/ALGOLAB
+make_person "$REALM" algolab-off /UYELER/ARGE/ALGOLAB
 kcadm update "users/$(kcadm get users -r "$REALM" -q username=algolab-off -q exact=true | jq -r '.[0].id')" -r "$REALM" \
   -s enabled=false >/dev/null
 before=$(events "$REALM")

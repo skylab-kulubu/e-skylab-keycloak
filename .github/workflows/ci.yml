@@ -289,7 +289,8 @@ jobs:
     needs: [mode, scope]
     if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' role-groups ')
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # app-assignments.sh --check reads every role's holders (two kcadm reads a role): minutes.
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v7
 

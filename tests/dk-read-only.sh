@@ -325,7 +325,9 @@ mark skymail skymail:announcements:send '2026-10-13T09:00:00Z /ADMIN,/UYELER/YK'
 mark skymail skymail:access '2026-10-24T09:00:00Z /ADMIN,/UYELER/YK'
 mark skymail skymail:mails:approve '2026-10-24T09:00:00Z /UYELER/YK'
 mark forms skyforms:access "$OLD_MARK"
-mark forms 'skyforms%2A' '2026-10-24T09:00:00Z /UYELER/YK'
+# skyforms:* by id, as the reconciler marks it (a "*" never goes into an admin path).
+kcadm update "roles-by-id/$(kcadm get "clients/$(client_uuid "$REALM" forms)/roles" -r "$REALM" | jq -r '.[] | select(.name == "skyforms:*") | .id')" \
+  -r "$REALM" -s 'attributes."skylab.seeded-group-mappings"=["2026-10-24T09:00:00Z /UYELER/YK"]' >/dev/null
 make_person yk-person /UYELER/YK
 make_person dk-person "$DK"
 make_person dk-sub-person "$DK/ALT"

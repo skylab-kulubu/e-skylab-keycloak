@@ -390,7 +390,7 @@ BASE_URL=$(normalize_account_center_base_url \
 # =true, see above): every kcadm create, update and delete is withheld. Each one is logged on the
 # run's own stderr (file descriptor CHECK_FD, so that a caller that captures or silences the call's
 # output, as kcadm_quiet does, cannot hide it) as "[reconcile] would kcadm VERB PATH (-s KEY=VALUE
-# ..., body)", with a person's id masked; nothing the reconciler writes is secret. A create that asks
+# ... body)" ("(body)" for a body alone), with a person's id masked; nothing the reconciler writes is secret. A create that asks
 # for the new id (-i) answers a placeholder (CHECK_ID_PREFIX<n>), and a read of a path that holds a
 # placeholder answers an empty list (an empty object for one resource or a mapping set, nothing in
 # CSV), so that a step goes on as if the thing were made and empty. Anything else is read live.
@@ -410,7 +410,7 @@ check_write() {
     shift
     case $argument in
       -s) summary="$summary -s ${1:0:160}"; shift ;;
-      -b | -f) summary="$summary (body)"; shift ;;
+      -b | -f) summary="$summary body"; shift ;;
       -r | -q) shift ;;
       *) ;;
     esac
@@ -3012,8 +3012,13 @@ seed_privileged_client_roles() {
   done <<<"$groups"
   # The mark comes last: a run cut before it grants the same (idempotently) next time.
   for name in "${names[@]}"; do
-    # The role's name in the admin path: a "*" (skyforms:*) is sent percent-encoded.
-    kcadm_quiet update "clients/$client_uuid/roles/${name//\*/%2A}" -r "$TARGET_REALM" \
+    # By id: a role name like skyforms:* never goes into the admin path.
+    role_id=$(id_from_csv "$name" "$role_ids" || true)
+    if [[ -z $role_id && $CHECK_WRITES == true ]]; then
+      role_id="${CHECK_ID_PREFIX}role"
+    fi
+    [[ -n $role_id ]] || { printf '%s role %s could not be read back\n' "$label" "$name" >&2; return 1; }
+    kcadm_quiet update "roles-by-id/$role_id" -r "$TARGET_REALM" \
       -s "attributes.\"$CORE_ROLE_SEED_ATTRIBUTE\"=[\"$stamp $paths\"]" || return 1
     granted=${granted_to[$name]:-, none (every group already held it)}
     log "$label role $name: seeded once to $paths (granted to: ${granted#, })"

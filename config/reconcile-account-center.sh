@@ -195,11 +195,21 @@ RECONCILE_CHECK=${KEYCLOAK_RECONCILE_CHECK:-false}
 # user events hold the typed address, and admin events without an expiration are kept forever.
 # Both stores therefore expire after 30 days, the period KVKK (Law 6698, art. 13) gives for
 # concluding an erasure request. Admin event details stay on: they are the audit trail of who
-# changed what (Yusuf's choice, 2026-09-26). Listeners and enabled event types are not managed.
+# changed what (Yusuf's choice, 2026-09-26). Enabled event types are not managed; of the listeners
+# only keycloak-to-rabbitmq is (KEYCLOAK_RABBITMQ_EVENTS below).
 EVENT_RETENTION_SECONDS=2592000
 EVENT_RETENTION_SETTINGS="{\"eventsEnabled\":true,\"eventsExpiration\":$EVENT_RETENTION_SECONDS,\"adminEventsEnabled\":true,\"adminEventsDetailsEnabled\":true}"
 # The admin event expiration is a realm attribute (seconds), read by Keycloak's scheduled task.
 ADMIN_EVENTS_EXPIRATION_ATTRIBUTE=adminEventsExpiration
+# RabbitMQ R07 (ADR-0071 decision 8, docs/keycloak-events-to-rabbitmq.md): the realm's event listener
+# RABBITMQ_EVENT_LISTENER, which publishes the event catalog to RabbitMQ. KEYCLOAK_RABBITMQ_EVENTS=on
+# adds it to the realm's eventsListeners, off removes it (the rollback); every other listener
+# (jboss-logging) stays as it is. The default, keep, only reports, so a release never turns it on or
+# off: production turns it on once its broker, its KK_TO_RMQ_* settings and this image are live
+# (R15). The sandbox realm is never connected to a broker (Yusuf, 2026-10-21): the provider's
+# connection is one per Keycloak, the production one, so on is refused there before anything is read.
+RABBITMQ_EVENTS=${KEYCLOAK_RABBITMQ_EVENTS:-keep}
+RABBITMQ_EVENT_LISTENER=keycloak-to-rabbitmq
 ACCOUNT_ROLE_ALLOWLIST=(manage-account view-profile manage-account-links)
 case $RECONCILE_ONLY in
   '' | admin-panel-client | login-clients | core-roles | service-roles | first-broker-login | email-code-login | role-groups | leader-app-roles) ;;
@@ -220,6 +230,19 @@ case $RECONCILE_CHECK in
     ;;
   *)
     printf 'KEYCLOAK_RECONCILE_CHECK must be true or false, not %s\n' "$RECONCILE_CHECK" >&2
+    exit 2
+    ;;
+esac
+case $RABBITMQ_EVENTS in
+  keep | off) ;;
+  on)
+    if [[ $TARGET_REALM == e-skylab-sandbox ]]; then
+      printf 'KEYCLOAK_RABBITMQ_EVENTS=on is refused for e-skylab-sandbox: the sandbox realm is never connected to a broker; nothing was read or changed\n' >&2
+      exit 2
+    fi
+    ;;
+  *)
+    printf 'KEYCLOAK_RABBITMQ_EVENTS must be keep, on or off, not %s\n' "$RABBITMQ_EVENTS" >&2
     exit 2
     ;;
 esac
@@ -1919,6 +1942,51 @@ reconcile_event_retention() {
   fi
   kcadm update "realms/$TARGET_REALM" -n -f "$write_file" >/dev/null
   log "$label: updated ($(sed '/^$/d' <<<"$changed" | tr '\n' ' ' | sed 's/ $//'))"
+}
+
+# The realm's RabbitMQ event listener (KEYCLOAK_RABBITMQ_EVENTS above). Only its own entry of
+# eventsListeners is written, with one realm PUT of that field alone (manage-realm) and only when it
+# changes, so an unchanged realm produces no admin event.
+reconcile_rabbitmq_event_listener() {
+  local label="realm event listener $RABBITMQ_EVENT_LISTENER" live entry state=off
+  local write_file="$WORK_DIR/event-listeners.json" listeners=() kept=()
+  local shape='^\[("[A-Za-z0-9_.-]+"(,"[A-Za-z0-9_.-]+")*)?\]$'
+  live=$(kcadm_json "realms/$TARGET_REALM" --fields eventsListeners | json_tool field eventsListeners)
+  [[ -n $live ]] || live='[]'
+  if [[ ! $live =~ $shape ]]; then
+    printf '%s: the realm eventsListeners are not a list of provider ids: %s\n' "$label" "$live" >&2
+    return 1
+  fi
+  live=${live#[}
+  live=${live%]}
+  [[ -z $live ]] || IFS=',' read -ra listeners <<<"$live"
+  for entry in ${listeners[@]+"${listeners[@]}"}; do
+    entry=${entry//\"/}
+    if [[ $entry == "$RABBITMQ_EVENT_LISTENER" ]]; then
+      state=on
+    else
+      kept+=("$entry")
+    fi
+  done
+  if [[ $RABBITMQ_EVENTS == keep ]]; then
+    log "$label: unchanged ($state; KEYCLOAK_RABBITMQ_EVENTS=on or off changes it)"
+    return 0
+  fi
+  if [[ $RABBITMQ_EVENTS == "$state" ]]; then
+    log "$label: unchanged ($state)"
+    return 0
+  fi
+  [[ $RABBITMQ_EVENTS == off ]] || kept+=("$RABBITMQ_EVENT_LISTENER")
+  {
+    printf '{"eventsListeners":['
+    for entry in "${!kept[@]}"; do
+      ((entry == 0)) || printf ','
+      printf '"%s"' "${kept[$entry]}"
+    done
+    printf ']}\n'
+  } >"$write_file"
+  kcadm update "realms/$TARGET_REALM" -n -f "$write_file" >/dev/null
+  log "$label: updated ($state -> $RABBITMQ_EVENTS)"
 }
 
 validate_passkey_policy_inputs() {
@@ -3891,6 +3959,7 @@ fi
 reconcile_realm_settings
 reconcile_brute_force_and_password_policy
 reconcile_event_retention
+reconcile_rabbitmq_event_listener
 reconcile_passkey_policy
 reconcile_required_actions
 reconcile_user_profile

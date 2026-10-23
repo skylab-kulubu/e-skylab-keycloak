@@ -42,7 +42,8 @@ realm ayarı bırakmamaktır.
   üretilir.
 - `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.27.0`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
-  sağlayıcısı (`3.1.1`) bulunur.
+  sağlayıcısı (`3.2.0`; yalnız olay kataloğu, kişisel verisiz gövde:
+  [`docs/keycloak-events-to-rabbitmq.md`](docs/keycloak-events-to-rabbitmq.md)) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
   etkinleştirilir.
 - `/` adresi (Keycloak'ın karşılama sayfası) Admin Console'a yönlenmez, e-SKY LAB
@@ -474,7 +475,8 @@ KVKK yalnız bilgilendirir. "Hesabı aç" hesabı User Profile ile açar (`Profi
 bağlamı, realm'in ad ve adres doğrulamaları): adres doğrulanmış birincil ve kanıtlı kişisel adres
 (`personalEmailVerifiedAt`), kullanıcı adı formdaki ad ve soyaddan `ad.soyad` olarak (`SignUpUsernames`: Türkçe/aksanlı harfler ASCII'ye, Hesap Merkezi'nin
 `[a-z0-9._]{3,30}` alfabesi, çakışmada sayı), parola, grup ve realm varsayılanı dışında rol yok,
-`REGISTER` olayı (`register_method` ve `sky_method` `email_code`); kişi girer, oturum notu
+`REGISTER` olayı (`register_method` ve `sky_method` `email_code`; RabbitMQ'ya kimlikleriyle gider,
+[`docs/keycloak-events-to-rabbitmq.md`](docs/keycloak-events-to-rabbitmq.md)); kişi girer, oturum notu
 `sky-email-code.signed-up` bilet 10'un soruları içindir. YTÜ alan adındaki adres hesap açmaz, YTÜ
 girişine (OBS) yönlendirilir. Adres bu arada bir hesaba eklendiyse ikinci hesap açılmaz, kod o hesapla
 girer; aynı adresin iki kaydı tek hesap açar (adres başına bir dakikalık kilit ve veritabanının tekil
@@ -767,6 +769,11 @@ uzlaştırıcı istemcinin `browser` akış bağlamasını kaldırır ve eski
 `account-center-browser` akışını alt akışıyla birlikte siler; ikisi de yoksa
 hiçbir şey yazmaz (`unchanged`). Bilinmeyen mapper, rol ve kapsamlar izin
 listeleriyle temizlenir.
+
+Realm'in `eventsListeners` alanında uzlaştırıcı yalnız `keycloak-to-rabbitmq`'yu yönetir:
+`KEYCLOAK_RABBITMQ_EVENTS=on` ekler, `off` çıkarır, varsayılan `keep` yalnız raporlar;
+`e-skylab-sandbox` realm'inde `on` reddedilir (RabbitMQ R07,
+[`docs/keycloak-events-to-rabbitmq.md`](docs/keycloak-events-to-rabbitmq.md)).
 
 Uzlaştırıcı her adımda önce canlı durumu okur, yalnız farklı olan alanları
 yazar ve `[reconcile] <adım>: unchanged|updated (...)` satırı basar;

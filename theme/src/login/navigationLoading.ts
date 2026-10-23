@@ -9,7 +9,9 @@
  * - Shown for MIN_VISIBLE_MS at least, so a fast step does not flicker: the next page of the same
  *   tab keeps it for the rest of that time (session storage, read once), its logo at the same point
  *   of the drawing (`--sl-loading-phase`). The logo and the frame stay in place across the page
- *   change (pageTransitions.ts), so it reads as one animation.
+ *   change (pageTransitions.ts), so it reads as one animation. That remainder is only a look
+ *   (`data-sl-loading="carry-over"`): the new page takes clicks and its card is not marked busy,
+ *   since nothing is on its way any more.
  * - A second submit while a step is on its way is cancelled (double submission). Buttons are not
  *   disabled: a disabled submit button would drop its own name/value from the POST.
  * - Cleared when the page comes back from the back/forward cache, and after FAILSAFE_MS in case
@@ -24,6 +26,8 @@ export const MIN_VISIBLE_MS = 600;
 export const FAILSAFE_MS = 20_000;
 export const LOADING_ATTRIBUTE = "data-sl-loading";
 export const PHASE_PROPERTY = "--sl-loading-phase";
+/** LOADING_ATTRIBUTE's value for the next page's remainder, which only looks busy. */
+export const CARRY_OVER = "carry-over";
 const SINCE_KEY = "sl-loading-since";
 const WEBAUTHN_FORM_IDS = ["webauth", "register"];
 
@@ -74,13 +78,16 @@ function clearTimers(): void {
   carryOverTimer = undefined;
 }
 
-/** The busy look; `announce` fills the live region (only on the page the step started from). */
-function show(elapsedMs: number, announce: boolean): void {
+/**
+ * The busy look. On the page the step started from (`navigating`) the card is busy too: it takes no
+ * clicks, `aria-busy` is set and the live region is filled. The next page's remainder is a look only.
+ */
+function show(elapsedMs: number, navigating: boolean): void {
   const root = document.documentElement;
   root.style.setProperty(PHASE_PROPERTY, `${-Math.max(0, Math.round(elapsedMs))}ms`);
-  root.setAttribute(LOADING_ATTRIBUTE, "");
+  root.setAttribute(LOADING_ATTRIBUTE, navigating ? "" : CARRY_OVER);
+  if (!navigating) return;
   document.querySelectorAll<HTMLElement>(".sl-legacy-card").forEach(card => card.setAttribute("aria-busy", "true"));
-  if (!announce) return;
   // The live region sits outside the busy card and is empty until now, so this text is announced.
   document.querySelectorAll<HTMLElement>(".sl-legacy-loading__status").forEach(status => {
     status.textContent = status.dataset.label ?? "";
@@ -121,7 +128,8 @@ export function isNavigationPending(): boolean {
 /**
  * Runs once in main.tsx right after the first render, before the first frame: when the step that
  * led here started less than MIN_VISIBLE_MS ago, this page keeps the loading state for the rest.
- * The page's fields work meanwhile (autofocus, typing); nothing is pending, so a submit goes through.
+ * Only the look: the page's fields and buttons work meanwhile (autofocus, typing, clicks), the card
+ * is not marked busy, and nothing is pending, so a submit goes through.
  */
 export function continueNavigationLoading(now: number = Date.now()): void {
   const since = takeSince();

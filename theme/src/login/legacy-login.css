@@ -710,6 +710,35 @@ a:hover {
   height: 1rem;
 }
 
+/* A passkey button pressed before Keycloak's script was set up (passkeyButtonReady.ts): it waits,
+   then asks for the press again (the page's data-sl-again-label). */
+[data-sl-passkey="waiting"] {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+[data-sl-passkey="again"] {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+
+[data-sl-passkey="again"]::after {
+  content: attr(data-sl-again-label);
+  flex-basis: 100%;
+  color: var(--sl-legacy-ink);
+  font-weight: 600;
+}
+
+[data-sl-passkey="waiting"] .sl-key-icon {
+  animation: sl-legacy-passkey-wait 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes sl-legacy-passkey-wait {
+  to {
+    opacity: 0.3;
+  }
+}
+
 .sl-legacy-passkey-wrap {
   margin-top: 1.25rem;
   padding-top: 1rem;
@@ -1903,14 +1932,18 @@ html[data-sl-entered] .sl-legacy-logo .sl-legacy-logo__svg path {
 /* The loading state between two steps (navigationLoading.ts): the card's own logo draws itself over
    and over (a light line traces each path while the fill dims, then the fill comes back) and the
    content dims and takes no clicks. The logo stays in place across the page change, and the next
-   page picks the drawing up where it was (--sl-loading-phase). With reduced motion: a still logo
-   and a plain "Yükleniyor…" over the content. */
+   page picks the drawing up where it was (--sl-loading-phase); there it is only a look
+   (data-sl-loading="carry-over"), so that page takes clicks at once. With reduced motion: a still
+   logo and a plain "Yükleniyor…" over the content. */
 .sl-legacy-card__body {
   transition: opacity 200ms ease;
 }
 
 html[data-sl-loading] .sl-legacy-card__body {
   opacity: 0.4;
+}
+
+html[data-sl-loading]:not([data-sl-loading="carry-over"]) .sl-legacy-card__body {
   pointer-events: none;
 }
 
@@ -2068,7 +2101,8 @@ html[data-sl-loading] .sl-legacy-logo .sl-legacy-logo__svg path {
   .sl-legacy-background__stars,
   .sl-legacy-background__grain,
   .sl-legacy-brand__mark,
-  .sl-legacy-teams__track {
+  .sl-legacy-teams__track,
+  [data-sl-passkey="waiting"] .sl-key-icon {
     animation: none;
   }
 

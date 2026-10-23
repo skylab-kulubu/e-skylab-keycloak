@@ -62,6 +62,8 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     skylabNoAccountYtu: "YTÜ hesabın varsa",
     skylabNoAccountYtuLink: "YTÜ hesabınla devam et",
     passkeyChoice: "Erişim anahtarı ile giriş yap",
+    // On the passkey button pressed before it worked (passkeyButtonReady.ts), once it works.
+    passkeyPressAgain: "Hazır, tekrar bas",
     skipToContent: "İçeriğe geç",
     skylabInfoLabel: "Ek bilgi",
     skylabAttemptedUserLabel: "Giriş yapılan hesap",
@@ -461,6 +463,7 @@ const { useI18n, ofTypeI18n } = i18nBuilder.withThemeName<ThemeName>().withCusto
     skylabNoAccountYtu: "If you have a YTÜ account,",
     skylabNoAccountYtuLink: "continue with your YTÜ account",
     passkeyChoice: "Sign in with a passkey",
+    passkeyPressAgain: "Ready, press again",
     skipToContent: "Skip to content",
     skylabInfoLabel: "Additional information",
     skylabAttemptedUserLabel: "Signing in as",

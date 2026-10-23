@@ -49,10 +49,13 @@ final class RabbitMqPublisher implements AutoCloseable {
     private final AtomicLong published = new AtomicLong();
     private volatile boolean blocked;
     private volatile boolean closing;
+    /** close() has returned: a connection the thread opens after this is closed at once. */
+    private volatile boolean closed;
     private volatile Connection connection;
     private Channel channel;
     private long retryAt;
     private long warnedAt = Long.MIN_VALUE;
+    private String warnedWhy = "";
 
     RabbitMqPublisher(String exchange, Connector connector) {
         this(exchange, connector, CAPACITY, System::currentTimeMillis);
@@ -109,12 +112,19 @@ final class RabbitMqPublisher implements AutoCloseable {
             drop(left, "Keycloak stopped before it was published");
         }
         closeChannel();
+        closeConnection();
     }
 
     private void publish(Message message) {
         if (blocked) {
-            drop(message, "the broker blocks publishing (a resource alarm)");
-            return;
+            Connection current = connection;
+            if (current != null && current.isOpen()) {
+                drop(message, "the broker blocks publishing (a resource alarm)");
+                return;
+            }
+            // The blocked connection is gone (the broker restarted to clear its alarm, the network
+            // dropped it): the broker never sends it connection.unblocked, so the flag goes with it.
+            blocked = false;
         }
         Channel current = channel();
         if (current == null) {
@@ -146,6 +156,11 @@ final class RabbitMqPublisher implements AutoCloseable {
             Connection current = connection;
             if (current == null || !current.isOpen()) {
                 current = connector.open();
+                if (closed) {
+                    // close() returned while this thread was still connecting: nobody would close it.
+                    closeQuietly(current);
+                    return null;
+                }
                 current.addBlockedListener(reason -> {
                     blocked = true;
                     LOG.warnf("keycloak-to-rabbitmq: the broker blocks publishing (%s); events are dropped until it unblocks", reason);
@@ -157,6 +172,10 @@ final class RabbitMqPublisher implements AutoCloseable {
                 connection = current;
             }
             channel = current.createChannel();
+            if (channel == null) {
+                // The connection's channel limit: wait as after a failed attempt.
+                retryAt = clock.getAsLong() + RETRY_MILLIS;
+            }
             return channel;
         } catch (Exception exception) {
             LOG.errorf("keycloak-to-rabbitmq could not connect to the broker (%s); authentication remains available, "
@@ -171,8 +190,10 @@ final class RabbitMqPublisher implements AutoCloseable {
     private synchronized void drop(Message message, String why) {
         long total = dropped.incrementAndGet();
         long now = clock.getAsLong();
-        if (total == 1 || now - warnedAt >= WARN_EVERY_MILLIS) {
+        // The first drop of each reason, then at most one line a minute.
+        if (!why.equals(warnedWhy) || now - warnedAt >= WARN_EVERY_MILLIS) {
             warnedAt = now;
+            warnedWhy = why;
             LOG.warnf("keycloak-to-rabbitmq dropped event %s: %s; %d dropped since start (core's user sync catches up)",
                     message.routingKey(), why, total);
         }
@@ -188,6 +209,21 @@ final class RabbitMqPublisher implements AutoCloseable {
             current.close();
         } catch (Exception exception) {
             LOG.debug("Could not close RabbitMQ channel", exception);
+        }
+    }
+
+    private void closeConnection() {
+        Connection current = connection;
+        if (current != null && current.isOpen()) {
+            closeQuietly(current);
+        }
+    }
+
+    private static void closeQuietly(Connection current) {
+        try {
+            current.close(1_000);
+        } catch (Exception exception) {
+            LOG.debug("Could not close RabbitMQ connection", exception);
         }
     }
 
@@ -207,13 +243,17 @@ final class RabbitMqPublisher implements AutoCloseable {
                     current.abort(1_000);
                 }
                 thread.join(1_000);
-            } else if (current != null && current.isOpen()) {
-                current.close(1_000);
             }
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
         } catch (Exception exception) {
             LOG.debug("Could not close RabbitMQ connection", exception);
+        } finally {
+            closed = true;
+            // The thread may have connected after its last look at closing (T2 of the review).
+            if (!thread.isAlive()) {
+                closeConnection();
+            }
         }
     }
 }

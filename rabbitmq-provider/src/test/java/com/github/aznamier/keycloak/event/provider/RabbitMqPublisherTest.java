@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -35,12 +36,19 @@ class RabbitMqPublisherTest {
     private volatile CountDownLatch hang;
     private volatile boolean refuseConnections;
     private volatile boolean failPublish;
+    /** Holds connector.open, as a connection attempt that takes long; the test releases it. */
+    private volatile CountDownLatch slowConnect;
+    /** Every connection opened, as open or not: a test closes one as the broker or the network would. */
+    private final List<AtomicBoolean> open = new CopyOnWriteArrayList<>();
     private RabbitMqPublisher publisher;
 
     @AfterEach
     void stop() {
         if (hang != null) {
             hang.countDown();
+        }
+        if (slowConnect != null) {
+            slowConnect.countDown();
         }
         if (publisher != null) {
             publisher.close();
@@ -125,6 +133,41 @@ class RabbitMqPublisherTest {
     }
 
     @Test
+    void aConnectionLostWhileBlockedIsReplacedAndPublishingGoesOn() throws Exception {
+        publisher = publisher(10);
+        publisher.offer(message("before"));
+        await(() -> published.size() == 1);
+
+        blockedCallback.get().handle("low on disk");
+        publisher.offer(message("while-blocked"));
+        await(() -> publisher.dropped() == 1);
+        // The alarm is still on, but its connection is gone (the broker restarted, the network
+        // dropped it): no connection.unblocked ever comes for it.
+        open.get(0).set(false);
+
+        publisher.offer(message("after-the-connection-was-lost"));
+        await(() -> published.size() == 2);
+        assertEquals(2, connections.get());
+        assertTrue(published.get(1).contains(" after-the-connection-was-lost "));
+        assertTrue(!publisher.blocked());
+    }
+
+    @Test
+    void aConnectionMadeAfterStoppingIsClosedAtOnce() throws Exception {
+        slowConnect = new CountDownLatch(1);
+        publisher = publisher(10);
+        publisher.offer(message("connects-slowly"));
+        await(() -> connections.get() == 1);
+
+        publisher.close();
+        assertEquals(0, open.size(), "no connection was made before close returned");
+        slowConnect.countDown();
+
+        await(() -> open.size() == 1 && !open.get(0).get());
+        assertEquals(List.of(), published);
+    }
+
+    @Test
     void aFailedPublishClosesTheChannelAndTheNextOneOpensANewOne() {
         failPublish = true;
         publisher = publisher(10);
@@ -176,14 +219,28 @@ class RabbitMqPublisherTest {
 
     private Connection connection() throws IOException {
         connections.incrementAndGet();
+        CountDownLatch slow = slowConnect;
+        // A socket connect does not stop for an interrupt; neither does this one.
+        while (slow != null) {
+            try {
+                slow.await();
+                break;
+            } catch (InterruptedException interrupted) {
+                // keep waiting
+            }
+        }
         if (refuseConnections) {
             throw new IOException("connection refused");
         }
+        AtomicBoolean isOpen = new AtomicBoolean(true);
+        open.add(isOpen);
         Channel channel = proxy(Channel.class, (method, args) -> {
             calls.add(method);
             switch (method) {
                 case "isOpen":
-                    return !calls.contains("close") || calls.lastIndexOf("createChannel") > calls.lastIndexOf("close");
+                    // A channel closes with its connection.
+                    return isOpen.get()
+                            && (!calls.contains("close") || calls.lastIndexOf("createChannel") > calls.lastIndexOf("close"));
                 case "basicPublish":
                     CountDownLatch latch = hang;
                     if (latch != null) {
@@ -203,7 +260,10 @@ class RabbitMqPublisherTest {
         return proxy(Connection.class, (method, args) -> {
             switch (method) {
                 case "isOpen":
-                    return true;
+                    return isOpen.get();
+                case "close":
+                    isOpen.set(false);
+                    return null;
                 case "createChannel":
                     calls.add("createChannel");
                     return channel;
@@ -215,6 +275,7 @@ class RabbitMqPublisherTest {
                     return null;
                 case "abort":
                     calls.add("abort");
+                    isOpen.set(false);
                     CountDownLatch latch = hang;
                     if (latch != null) {
                         latch.countDown();

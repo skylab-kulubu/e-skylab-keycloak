@@ -108,7 +108,6 @@ class RabbitMqEventListenerProviderTest {
         commit();
 
         assertEquals(List.of(), published);
-        assertEquals(List.of(), published);
     }
 
     @Test
@@ -193,7 +192,6 @@ class RabbitMqEventListenerProviderTest {
 
         commit();
 
-        assertEquals(List.of(), published);
         assertEquals(List.of(), published);
     }
 

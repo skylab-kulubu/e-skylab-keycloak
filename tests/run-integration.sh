@@ -1376,7 +1376,29 @@ stage_rabbitmq_unavailable_broker() {
   "${COMPOSE[@]}" unpause rabbitmq >/dev/null
 
   "${COMPOSE[@]}" exec -T rabbitmq rabbitmqctl -q set_vm_memory_high_watermark 0.00001 >/dev/null
+  # The alarm is really on (the management API answers during it) ...
+  for attempt in $(seq 1 15); do
+    rabbit_api http://localhost:15673/api/nodes | jq -e 'any(.[]; .mem_alarm == true)' >/dev/null && break
+    sleep 1
+  done
+  rabbit_api http://localhost:15673/api/nodes | jq -e 'any(.[]; .mem_alarm == true)' >/dev/null \
+    || fail 'the memory alarm did not go on; the blocked case was not tested'
   rabbit_assert_fast "$user_uuid" 'broker blocked by a memory alarm'
+  # ... and the provider saw it: the broker blocked its connection, events were dropped, not waited for.
+  found=''
+  for attempt in $(seq 1 15); do
+    rabbit_timed_user_update "$user_uuid" "Blocked$attempt" >/dev/null
+    if "${COMPOSE[@]}" logs --no-color keycloak 2>&1 \
+      | grep -F 'keycloak-to-rabbitmq: the broker blocks publishing' >/dev/null \
+      && "${COMPOSE[@]}" logs --no-color keycloak 2>&1 \
+      | grep -F 'the broker blocks publishing (a resource alarm)' >/dev/null; then
+      found=yes
+      break
+    fi
+    sleep 1
+  done
+  [[ -n $found ]] || fail 'the provider did not report the blocked connection and a dropped event during the memory alarm'
+  printf '    memory alarm on; the provider reported the blocked connection and dropped events without waiting\n'
   "${COMPOSE[@]}" exec -T rabbitmq rabbitmqctl -q set_vm_memory_high_watermark 0.4 >/dev/null
 
   # Back to normal: a later update reaches the queue again (after the publisher's retry pause).

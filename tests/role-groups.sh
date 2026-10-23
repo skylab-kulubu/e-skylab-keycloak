@@ -431,18 +431,35 @@ CURRENT_STAGE='role-groups: the audit counts, it names nobody'
 create_group "$REALM" /ROLLER/SKYMAIL-ACCESS NESTED
 kcadm create "groups/$(group_id "$REALM" /UYELER/YK/BASKAN)/role-mappings/clients/$(client_uuid "$REALM" skymail)" -r "$REALM" \
   -b "$(role_body "$REALM" skymail skymail:access)" >/dev/null
+# A top team's Leader group holds admin roles by name only: skycloud:access (every top team) and a
+# site's cms:access for that site's own teams (AIRLAB is ArtLab's lab team, not YıldızJam's).
+for site in frontend-artlab frontend-yildizjam; do
+  kcadm create clients -r "$REALM" -s "clientId=$site" -s publicClient=true >/dev/null
+  kcadm create "clients/$(client_uuid "$REALM" "$site")/roles" -r "$REALM" -s name=cms:access >/dev/null
+  kcadm create "groups/$(group_id "$REALM" /UYELER/ARGE/AIRLAB/LIDERLER)/role-mappings/clients/$(client_uuid "$REALM" "$site")" \
+    -r "$REALM" -b "$(role_body "$REALM" "$site" cms:access)" >/dev/null
+done
+kcadm create "groups/$(group_id "$REALM" /UYELER/ARGE/AIRLAB/KOORDINATORLER)/role-mappings/clients/$(client_uuid "$REALM" skycloud)" \
+  -r "$REALM" -b "$(role_body "$REALM" skycloud skycloud:access)" >/dev/null
 audited=$(run_expecting 0 role-groups.sh "$REALM" --audit)
 expect_line "$audited" 'audit: skymail/skymail:mails:write: 1 person(s) directly; groups: /ROLLER/SKYMAIL-MAILS-WRITE' 'the per-role count is wrong'
 expect_line "$audited" 'audit K1: 1 person(s) hold admin or unclassified client roles directly, 1 person(s) hold realm roles directly' 'K1 is wrong'
 expect_line "$audited" 'audit K1: 1 person(s) hold app roles directly (panel assignments' 'K1 did not count the app role apart'
-expect_line "$audited" 'audit K4: 3 group(s) hold roles outside the allowed places:' 'K4 is wrong'
+expect_line "$audited" 'audit K4: 4 group(s) hold roles outside the allowed places:' 'K4 is wrong'
 expect_line "$audited" 'audit K4:   /UYELER: realm/USER' 'K4 did not name /UYELER'
 expect_line "$audited" 'audit K4:   /ROLLER/SKYMAIL-ACCESS: skymail/skymail:access' 'K4 did not name the role group with a subgroup'
 expect_line "$audited" 'audit K4:   /UYELER/YK/BASKAN: skymail/skymail:access' 'K4 did not name the YK duty group'
+expect_line "$audited" 'audit K4:   /UYELER/ARGE/AIRLAB/LIDERLER: frontend-yildizjam/cms:access' 'K4 did not name another site'"'"'s cms:access'
 reject_line "$audited" 'audit K4:   /ROLLER/SKYMAIL-MAILS' 'K4 reported a leaf role group'
+reject_line "$audited" 'audit K4:   /UYELER/ARGE/AIRLAB/KOORDINATORLER' 'K4 reported skycloud:access on a top team Leader group'
 kcadm delete "groups/$(group_id "$REALM" /ROLLER/SKYMAIL-ACCESS/NESTED)" -r "$REALM" >/dev/null
 kcadm delete "groups/$(group_id "$REALM" /UYELER/YK/BASKAN)/role-mappings/clients/$(client_uuid "$REALM" skymail)" -r "$REALM" \
   -b "$(role_body "$REALM" skymail skymail:access)" >/dev/null
+for site in frontend-artlab frontend-yildizjam; do
+  kcadm delete "clients/$(client_uuid "$REALM" "$site")" -r "$REALM" >/dev/null
+done
+kcadm delete "groups/$(group_id "$REALM" /UYELER/ARGE/AIRLAB/KOORDINATORLER)/role-mappings/clients/$(client_uuid "$REALM" skycloud)" \
+  -r "$REALM" -b "$(role_body "$REALM" skycloud skycloud:access)" >/dev/null
 for name in direct-person leader-person role-group-person sub-leader-person; do
   reject_line "$audited" "$name" 'the audit printed a person'
 done

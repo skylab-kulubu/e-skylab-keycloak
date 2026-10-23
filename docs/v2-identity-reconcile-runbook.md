@@ -3090,7 +3090,11 @@ taşıyan gruplar ve rolleri. İzinli yerler core'un kuralıyla birebir aynıdı
 `internal/authz/role_placement.go` `RolePlacement`, varsayılan kökler `DefaultPrivilegedRoots`): bir
 Privileged kökün kendisi (`/ADMIN`, `/YK`, `/DK`, `/UYELER/ADMIN`, `/UYELER/YK`, `/UYELER/DK`; altındaki
 görev grupları değil), en üst ekiplerin `LIDERLER`/`KOORDINATORLER` grupları ve altında grup olmayan
-`/ROLLER/<AD>` yaprakları. core'un varsayılanı altı köktür, production'da üçü vardır; core
+`/ROLLER/<AD>` yaprakları. En üst ekibin Leader grubunda yönetici rolü yalnız adı geçen istisnalarla
+durur: `leader-app-roles.sh --print-expected`'in her en üst ekibe verdiği rol (`skycloud:access`), bir
+sitenin `cms:access`'i yalnız o sitenin kendi ekiplerinde (`site-editor-grants.sh --print-expected`:
+etkinlik sitelerinin lab ve organizasyon ekibi, ana sitenin Ek-2 listesi) ve kararı bekleyen
+`frontend-arge`; başka bir sitenin `cms:access`'i K4'e yazılır. core'un varsayılanı altı köktür, production'da üçü vardır; core
 `AUTHZ_PRIVILEGED_ROOTS` ile daraltılırsa bu liste de daraltılır. Kim hangi SkyMail rolünü
 elle taşıyor sorusunun (duyuru-haber 04 madde 3) sayı cevabı da buradadır; adları rol-temizligi F0
 wizard'ı yalnız Yusuf'un terminalinde gösterir.

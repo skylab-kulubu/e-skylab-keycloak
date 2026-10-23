@@ -32,10 +32,12 @@
 #         /UYELER/DK; production has three of them) and a leaf /ROLLER/<NAME> without subgroups;
 #       - an app role also: any team group under /UYELER/<area>/<team> (a top team, a Sub-team, a
 #         Leader group; the panel area), never /UYELER itself or an area;
-#       - an admin or unclassified role also, by name only: a top team's Leader group
-#         (/UYELER/<area>/<team>/LIDERLER or KOORDINATORLER) for skycloud/skycloud:access
-#         (config/leader-app-roles.sh) and a Site client's cms:access (config/site-editor-grants.sh,
-#         the main site's Ek-2 list).
+#       - an admin or unclassified role also, by name only, in a top team's Leader group
+#         (/UYELER/<area>/<team>/LIDERLER or KOORDINATORLER): the roles config/leader-app-roles.sh
+#         --print-expected gives every top team's Leaders (skycloud/skycloud:access), a Site client's
+#         cms:access for that site's own teams only (config/site-editor-grants.sh --print-expected:
+#         the event sites' lab and organization teams, the main site's Ek-2 list) and a client whose
+#         decision is pending there (frontend-arge, Fatih); any other site's cms:access is K4.
 # A failed read of a group (anything but Keycloak's "not found") stops the run with exit 1: it is
 # never taken for "absent".
 # The audit reads every client role's and realm role's holders (two kcadm calls a role): minutes in
@@ -467,6 +469,31 @@ if [[ $AUDIT == true ]]; then
     for role in "${role_list[@]}"; do app_role[$client/$role]=1; done
   done <<<"$catalogue"
 fi
+# The named exceptions of a top team's Leader group: every top team's (leader_role, "client/role")
+# and one team's (team_role, "team path|client/role"), from the code area's own lists; pending_client:
+# a client whose place is not decided yet.
+declare -A leader_role=() team_role=() pending_client=()
+if [[ $AUDIT == true ]]; then
+  if ! expected=$(bash "$CONFIG_DIR/leader-app-roles.sh" --print-expected 2>"$WORK_DIR/expected.err"); then
+    cat "$WORK_DIR/expected.err" >&2
+    printf '[role-groups] leader-app-roles.sh --print-expected failed; the audit cannot tell the allowed places\n' >&2
+    exit 2
+  fi
+  while IFS=$'\t' read -r kind client role; do
+    [[ $kind != top-team-leaders ]] || leader_role[$client/$role]=1
+  done <<<"$expected"
+  if ! expected=$(KEYCLOAK_REALM=$TARGET_REALM bash "$CONFIG_DIR/site-editor-grants.sh" --print-expected 2>"$WORK_DIR/expected.err"); then
+    cat "$WORK_DIR/expected.err" >&2
+    printf '[role-groups] site-editor-grants.sh --print-expected failed; the audit cannot tell the allowed places\n' >&2
+    exit 2
+  fi
+  while IFS=$'\t' read -r kind holder client role; do
+    case $kind in
+      team-leaders) team_role[$holder|$client/$role]=1 ;;
+      pending) pending_client[$client]=1 ;;
+    esac
+  done <<<"$expected"
+fi
 # allowed_place PATH LABEL: true for the places the role LABEL ("client/role", "realm/role") may be
 # mapped to (ekip-yetkileri ticket 03 §6; core's RolePlacement for the Privileged roots and the role
 # groups).
@@ -483,8 +510,8 @@ allowed_place() {
     [[ $path =~ ^/UYELER/([^/]+)/[^/]+(/.*)?$ && " ${PRIVILEGED_NAMES[*]} " != *" ${BASH_REMATCH[1]} "* ]]
     return
   fi
-  if [[ $path =~ ^/UYELER/([^/]+)/[^/]+/(LIDERLER|KOORDINATORLER)$ && " ${PRIVILEGED_NAMES[*]} " != *" ${BASH_REMATCH[1]} "* ]]; then
-    [[ $label == skycloud/skycloud:access || $label =~ ^frontend-[^/]+/cms:access$ ]]
+  if [[ $path =~ ^(/UYELER/([^/]+)/[^/]+)/(LIDERLER|KOORDINATORLER)$ && " ${PRIVILEGED_NAMES[*]} " != *" ${BASH_REMATCH[2]} "* ]]; then
+    [[ -n ${leader_role[$label]:-} || -n ${team_role[${BASH_REMATCH[1]}|$label]:-} || -n ${pending_client[${label%%/*}]:-} ]]
     return
   fi
   return 1
@@ -545,7 +572,7 @@ if [[ $AUDIT == true ]]; then
   k3_groups=${k3_groups#, }
   log "audit K3: ${#k3_people[@]} person(s) hold realm-management roles directly; groups holding them: ${k3_groups:-none} (target 0 and none)"
   if [[ ${#k4[@]} == 0 ]]; then
-    log 'audit K4: every role is mapped to an allowed place (Privileged roots, role groups without subgroups, team groups for app roles, top team Leader groups for SkyCloud and the sites'"'"' cms:access)'
+    log 'audit K4: every role is mapped to an allowed place (Privileged roots, role groups without subgroups, team groups for app roles, top team Leader groups for the named exceptions: SkyCloud, a site'"'"'s cms:access for its own teams, frontend-arge pending)'
   else
     log "audit K4: ${#k4[@]} group(s) hold roles outside the allowed places:"
     while IFS= read -r path; do

@@ -417,7 +417,7 @@ jobs:
         run: |
           keycloak_image=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' Dockerfile)
           node_image=$(sed -n 's/^ARG NODE_IMAGE=//p' Dockerfile)
-          mailpit_image=$(sed -n 's/^ *image: \(axllent\/mailpit:[^ ]*\)$/\1/p' tests/docker-compose.integration.yml)
+          mailpit_image=$(sed -n 's/^ *image: \(ghcr\.io\/axllent\/mailpit:[^ ]*\)$/\1/p' tests/docker-compose.integration.yml)
           postgres_image=$(sed -n 's/^export LOGIN_BY_EMAIL_CODE_POSTGRES_IMAGE=//p' tests/login-code-persistent.sh)
           docker pull "$keycloak_image"
           docker pull "$node_image"
@@ -482,7 +482,7 @@ jobs:
       - name: Cache pinned disposable runtime images
         run: |
           docker pull "$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' Dockerfile)"
-          docker pull "$(sed -n 's/^ *image: \(axllent\/mailpit:[^ ]*\)$/\1/p' tests/docker-compose.integration.yml)"
+          docker pull "$(sed -n 's/^ *image: \(ghcr\.io\/axllent\/mailpit:[^ ]*\)$/\1/p' tests/docker-compose.integration.yml)"
           docker pull "$(sed -n 's/^export B12_PG_IMAGE=//p' tests/after-sign-up.sh)"
       - name: Registration, native YTU and optional credential contract
         run: |
@@ -560,7 +560,7 @@ jobs:
       - name: Cache the pinned disposable runtime images
         run: |
           keycloak_image=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' Dockerfile)
-          mailpit_image=$(sed -n 's/^ *image: \(axllent\/mailpit:[^ ]*\)$/\1/p' tests/docker-compose.integration.yml)
+          mailpit_image=$(sed -n 's/^ *image: \(ghcr\.io\/axllent\/mailpit:[^ ]*\)$/\1/p' tests/docker-compose.integration.yml)
           docker pull "$keycloak_image"
           docker pull "$mailpit_image"
           docker pull "$B12_PG_IMAGE"

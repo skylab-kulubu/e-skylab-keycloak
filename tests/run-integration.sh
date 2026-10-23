@@ -1269,8 +1269,8 @@ rabbit_api() {
 #     the IP; no Java type header. message-id and the body's id are the id Keycloak stored for the
 #     admin event.
 # The user events (REGISTER of a sign-up by e-mail code) are measured in tests/sign-up-by-email-code.sh.
-# keycloak-to-rabbit opens and closes one channel per message (3.1.1, #50), so after the group's
-# events the broker holds next to none; a provider that leaked one per event would hold dozens.
+# keycloak-to-rabbit 3.3.0 publishes from one thread on one channel, so after the group's events the
+# broker holds next to none; a provider that leaked one per event would hold dozens.
 stage_rabbitmq_provider_contract() {
   CURRENT_STAGE='RabbitMQ provider contract'
   local attempt message_count channel_count provider_names user_uuid messages stored_id
@@ -1332,10 +1332,76 @@ stage_rabbitmq_provider_contract() {
   [[ $(grep -c '^keycloak-to-rabbit-' <<<"$provider_names") == 1 ]] || fail "runtime does not contain exactly one RabbitMQ provider"
 }
 
+# rabbit_timed_user_update USER_UUID NAME: one Admin API USER UPDATE (a catalog event, published after
+# the request's transaction like a sign-up's REGISTER) that sets the first name; prints its seconds.
+rabbit_timed_user_update() {
+  local body result
+  kcadm_rest_token || fail 'no master token for the timed user update'
+  body=$(kcadm get "users/$1" -r e-skylab-test -c | jq -c --arg name "$2" '{username, email, firstName: $name, lastName, enabled, emailVerified}')
+  result=$(curl --silent --show-error --output /dev/null --write-out '%{http_code} %{time_total}' -X PUT \
+    --header "@$KCADM_REST_DIR/header" --header 'content-type: application/json' --data "$body" \
+    "$KCADM_REST_URL/admin/realms/e-skylab-test/users/$1")
+  [[ ${result%% *} == 204 ]] || fail "the timed user update answered HTTP ${result%% *}"
+  printf '%s\n' "${result#* }"
+}
+
+# rabbit_assert_fast USER_UUID WHAT: three user updates, each answered in under RABBIT_FAST_SECONDS.
+RABBIT_FAST_SECONDS=2
+rabbit_assert_fast() {
+  local attempt seconds times=''
+  for attempt in 1 2 3; do
+    seconds=$(rabbit_timed_user_update "$1" "Rabbit$attempt")
+    times="$times $seconds"
+    awk -v s="$seconds" -v limit="$RABBIT_FAST_SECONDS" 'BEGIN { exit !(s < limit) }' \
+      || fail "$2: a user update took $seconds s (limit $RABBIT_FAST_SECONDS s); the request waited for the broker"
+  done
+  printf '    %s: user updates answered in%s s\n' "$2" "$times"
+}
+
+# B1 (review of #142, T1): the provider publishes from one background thread through a bounded queue,
+# so a request whose transaction made a catalog event never waits for RabbitMQ. Measured here with
+# the broker running, paused (it no longer reads its sockets: what a hung or unreachable broker looks
+# like to Keycloak) and blocked by a memory alarm (RabbitMQ blocks every publisher of the node);
+# afterwards the provider publishes again. Before this, a paused broker held the request in
+# createChannel up to the client's channelRpcTimeout (10 minutes).
+stage_rabbitmq_unavailable_broker() {
+  CURRENT_STAGE='RabbitMQ provider: requests do not wait for an unavailable broker'
+  local user_uuid attempt found
+  user_uuid=$(kcadm get users -r e-skylab-test -q username=rabbitmq-contract -q exact=true -c | jq -r '.[0].id // empty')
+  [[ -n $user_uuid ]] || fail 'the RabbitMQ contract user is missing'
+  rabbit_assert_fast "$user_uuid" 'broker running'
+
+  "${COMPOSE[@]}" pause rabbitmq >/dev/null
+  rabbit_assert_fast "$user_uuid" 'broker paused'
+  "${COMPOSE[@]}" unpause rabbitmq >/dev/null
+
+  "${COMPOSE[@]}" exec -T rabbitmq rabbitmqctl -q set_vm_memory_high_watermark 0.00001 >/dev/null
+  rabbit_assert_fast "$user_uuid" 'broker blocked by a memory alarm'
+  "${COMPOSE[@]}" exec -T rabbitmq rabbitmqctl -q set_vm_memory_high_watermark 0.4 >/dev/null
+
+  # Back to normal: a later update reaches the queue again (after the publisher's retry pause).
+  rabbit_api -X DELETE http://localhost:15673/api/queues/%2F/keycloak-foundation-test/contents >/dev/null
+  found=''
+  for attempt in $(seq 1 20); do
+    rabbit_timed_user_update "$user_uuid" "Recovered$attempt" >/dev/null
+    sleep 2
+    if rabbit_api -X POST -H 'content-type: application/json' \
+      -d '{"count":50,"ackmode":"ack_requeue_false","encoding":"auto"}' \
+      http://localhost:15673/api/queues/%2F/keycloak-foundation-test/get \
+      | jq -e 'any(.[]; .routing_key == "KK.EVENT.ADMIN.e-skylab-test.SUCCESS.USER.UPDATE")' >/dev/null; then
+      found=yes
+      break
+    fi
+  done
+  [[ -n $found ]] || fail 'the provider did not publish again after the broker came back'
+  printf '    the provider published again once the broker was back\n'
+}
+
 # The end of every run: of a group that stops before the last stage of the full run, of the spi
 # group and of the full run.
 finish_group() {
   stage_rabbitmq_provider_contract
+  stage_rabbitmq_unavailable_broker
   if [[ $INTEGRATION_GROUP == all ]]; then
     printf 'Keycloak 26.7.4 Account Center integration contract passed.\n'
   else

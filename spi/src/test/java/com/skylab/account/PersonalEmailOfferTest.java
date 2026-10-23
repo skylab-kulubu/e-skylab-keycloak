@@ -382,7 +382,10 @@ class PersonalEmailOfferTest {
         String handle = browser.notes.get(PersonalEmailOffer.HANDLE_NOTE);
         assertNotNull(handle);
         assertTrue(store.notesHoldNo(code), "the store holds only a salted hash of the code");
-        assertFalse(store.keys().stream().anyMatch(key -> key.contains("new-user") || key.contains("ada")),
+        // The keys are hex digests ("s"/"h" + hex): a probe made of hex letters alone ("ada") would be
+        // found in roughly one digest in sixty by chance, so the probes hold letters hex never has.
+        assertFalse(store.keys().stream().anyMatch(key -> key.contains("new-user") || key.contains("lovelace")
+                        || key.contains("example") || key.contains("@")),
                 "store keys carry neither the user nor the address");
         verify(browser.event).detail(PersonalEmailOffer.EVENT_DETAIL, "code_sent");
 

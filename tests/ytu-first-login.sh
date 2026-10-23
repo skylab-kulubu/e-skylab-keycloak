@@ -89,7 +89,7 @@ REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 IMAGE=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' "$REPOSITORY_ROOT/Dockerfile")
 MAVEN_IMAGE=$(sed -n 's/^FROM \(maven:[^ ]*\) AS providers$/\1/p' "$REPOSITORY_ROOT/Dockerfile")
 # The same digest-pinned mail sink as the integration harness.
-MAILPIT_IMAGE=$(sed -n 's/^ *image: \(axllent\/mailpit:[^ ]*\)$/\1/p' "$SCRIPT_DIR/docker-compose.integration.yml")
+MAILPIT_IMAGE=$(sed -n 's/^ *image: \(ghcr\.io\/axllent\/mailpit:[^ ]*\)$/\1/p' "$SCRIPT_DIR/docker-compose.integration.yml")
 PORT=${YTU_FIRST_LOGIN_TEST_PORT:-18097}
 MAIL_PORT=${YTU_FIRST_LOGIN_TEST_MAIL_PORT:-18098}
 BASE_URL="http://127.0.0.1:$PORT"

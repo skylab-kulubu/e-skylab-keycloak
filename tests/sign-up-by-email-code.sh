@@ -508,7 +508,6 @@ docker run --rm -d --name "$CONTAINER" --network "$NETWORK" --memory "$MEMORY" -
   -v "$SPI_JAR:/opt/keycloak/providers/e-skylab-spi.jar:ro" \
   -e "KK_TO_RMQ_URL=$RABBITMQ_CONTAINER" -e KK_TO_RMQ_PORT=5672 -e KK_TO_RMQ_USERNAME=keycloak \
   -e "KK_TO_RMQ_PASSWORD=$RABBITMQ_PASSWORD" -e KK_TO_RMQ_VHOST=/ -e KK_TO_RMQ_EXCHANGE=keycloak.events \
-  -v "$SPI_JAR:/opt/keycloak/providers/e-skylab-spi.jar:ro" \
   -v "$RABBITMQ_JAR:/opt/keycloak/providers/keycloak-to-rabbit.jar:ro" \
   -v "$STATE_DIR/ownership-probe/probe.jar:/opt/keycloak/providers/ownership-probe.jar:ro" \
   -v "$REPOSITORY_ROOT/config:/opt/keycloak/sky-config:ro" \

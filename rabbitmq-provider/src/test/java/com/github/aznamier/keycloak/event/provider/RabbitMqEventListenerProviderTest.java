@@ -190,6 +190,23 @@ class RabbitMqEventListenerProviderTest {
     }
 
     @Test
+    void anAdminEventIsCopiedWhenItIsKeptForTheCommit() throws Exception {
+        RabbitMqEventListenerProvider provider = provider();
+        AdminEvent event = userAdminEvent(OperationType.CREATE);
+        String id = event.getId();
+
+        provider.onEvent(event, true);
+        // A builder that sends a second event with the same object must not change the first one.
+        event.setId(UUID.randomUUID().toString());
+        event.setOperationType(OperationType.DELETE);
+        commit();
+
+        Map<?, ?> body = JsonSerialization.readValue(published.get(0).body(), Map.class);
+        assertEquals(id, body.get("id"));
+        assertEquals("CREATE", body.get("operationType"));
+    }
+
+    @Test
     void adminEventsOutsideTheCatalogAndErrorsOpenNoChannel() {
         RabbitMqEventListenerProvider provider = provider();
         provider.onEvent(userAdminEvent(OperationType.ACTION), true);

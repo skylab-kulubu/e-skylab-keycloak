@@ -51,11 +51,14 @@ final class RabbitMqEventListenerProvider implements EventListenerProvider {
         }
     }
 
-    /** The representation is never published, whatever includeRepresentation says. */
+    /**
+     * The representation is never published, whatever includeRepresentation says. A copy is kept,
+     * as of a user event: the builder's event is Keycloak's, not this listener's.
+     */
     @Override
     public void onEvent(AdminEvent event, boolean includeRepresentation) {
         if (config.publishes(event)) {
-            transaction.addAdminEvent(event, false);
+            transaction.addAdminEvent(new AdminEvent(event), false);
         }
     }
 

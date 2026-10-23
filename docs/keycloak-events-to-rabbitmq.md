@@ -118,8 +118,13 @@ açılan dinleyici sürüklenir.
 2. Keycloak env sekmesine yukarıdaki `KK_TO_RMQ_*` referansları, Keycloak
    `sky-lab-production-events` ağında, bu imaj (3.2.0) yayında. Keycloak
    sürümü Touch ID kapısından geçer.
-3. Reconciler bir kez `KEYCLOAK_RABBITMQ_EVENTS=on` ile koşar (kalıcı olsun diye
-   reconciler ortamına da yazılır); dinleyici yalnız `e-skylab` realm'inde açılır.
+3. Reconciler `e-skylab` realm'i için bir kez, koşu başına
+   `-e KEYCLOAK_RABBITMQ_EVENTS=on` ile koşar; dinleyici yalnız orada açılır.
+   Değer Keycloak'ın kalıcı ortamına **yazılmaz**: production'da reconciler
+   Keycloak konteynerinde `docker exec -e KEYCLOAK_REALM=…` ile koşar, kalıcı
+   `on` sandbox koşusuna (`KEYCLOAK_REALM=e-skylab-sandbox`) da geçer ve onu her
+   seferinde çıkış 2 ile durdurur. Kalıcılık gerekmez: sonraki `keep` koşuları
+   girdiyi kaldırmaz, yalnız raporlar.
 4. Duman testi: bir profil güncellemesi `core.keycloak` kuyruğuna bir mesaj
    düşürür, `unrouted` boş kalır.
 

@@ -1253,39 +1253,75 @@ stage_v2_passkey_cleanup() {
   [[ $(v2_fixture_passkey_ids) == "$survivor_ids" ]] || fail 'a refused cleanup run changed the credentials'
 }
 
-# Provision the RabbitMQ topology expected by the provider, then use an admin
-# event to prove the rebuilt provider can publish on Keycloak 26.7.4. Every group ends with it.
+# The broker's management API on the host, as the fixture's only RabbitMQ user.
+rabbit_api() {
+  curl --fail --silent --show-error --user keycloak:integration-rabbit-password "$@"
+}
+
+# Provision the RabbitMQ topology expected by the provider, then prove on Keycloak 26.7.4 what the
+# provider publishes (RabbitMQ R07, ADR-0071 decision 8, docs/keycloak-events-to-rabbitmq.md). Every
+# group ends with it.
+#   - Only the event catalog leaves Keycloak: a realm update (an admin event outside it) is not
+#     published, a user created by the Admin API (USER CREATE) is, and nothing else arrives.
+#   - The body is identifiers only: exactly id, realmId, resourceType, operationType, resourcePath
+#     and time; not the representation (admin event details are on in the fixture realm, so
+#     Keycloak hands the provider the whole user with its address and names), not the author, not
+#     the IP; no Java type header. message-id and the body's id are the id Keycloak stored for the
+#     admin event.
+# The user events (REGISTER of a sign-up by e-mail code) are measured in tests/sign-up-by-email-code.sh.
 # keycloak-to-rabbit opens and closes one channel per message (3.1.1, #50), so after the group's
-# events the broker holds next to none; a provider that leaked one per event would hold hundreds,
-# which a group no longer reaches the 2047-channel limit with (the full run did).
+# events the broker holds next to none; a provider that leaked one per event would hold dozens.
 stage_rabbitmq_provider_contract() {
   CURRENT_STAGE='RabbitMQ provider contract'
-  local attempt message_count channel_count provider_names
-  curl --fail --silent --show-error --user keycloak:integration-rabbit-password \
-    -X PUT -H 'content-type: application/json' \
+  local attempt message_count channel_count provider_names user_uuid messages stored_id
+  local address=rabbitmq-contract@example.invalid
+  rabbit_api -X PUT -H 'content-type: application/json' \
     -d '{"type":"topic","durable":true,"auto_delete":false,"internal":false,"arguments":{}}' \
     http://localhost:15673/api/exchanges/%2F/keycloak.events >/dev/null
-  curl --fail --silent --show-error --user keycloak:integration-rabbit-password \
-    -X PUT -H 'content-type: application/json' \
+  rabbit_api -X PUT -H 'content-type: application/json' \
     -d '{"durable":false,"auto_delete":true,"arguments":{}}' \
     http://localhost:15673/api/queues/%2F/keycloak-foundation-test >/dev/null
-  curl --fail --silent --show-error --user keycloak:integration-rabbit-password \
-    -X POST -H 'content-type: application/json' \
+  rabbit_api -X POST -H 'content-type: application/json' \
     -d '{"routing_key":"KK.EVENT.#","arguments":{}}' \
     http://localhost:15673/api/bindings/%2F/e/keycloak.events/q/keycloak-foundation-test >/dev/null
 
   kcadm update realms/e-skylab-test -s displayName='SKY LAB integration event' >/dev/null
+  user_uuid=$(kcadm create users -r e-skylab-test -i \
+    -s username=rabbitmq-contract -s enabled=true -s emailVerified=true \
+    -s firstName=Rabbit -s lastName=Contract -s "email=$address")
+  [[ -n $user_uuid ]] || fail 'the RabbitMQ contract user was not created'
   for attempt in $(seq 1 30); do
-    message_count=$(curl --fail --silent --show-error --user keycloak:integration-rabbit-password \
-      http://localhost:15673/api/queues/%2F/keycloak-foundation-test | jq -r '.messages // 0')
+    message_count=$(rabbit_api http://localhost:15673/api/queues/%2F/keycloak-foundation-test | jq -r '.messages // 0')
     if [[ ${message_count:-0} -gt 0 ]]; then
       break
     fi
     sleep 1
   done
   [[ ${message_count:-0} -gt 0 ]] || fail "RabbitMQ provider did not publish the Keycloak admin event"
-  channel_count=$(curl --fail --silent --show-error --user keycloak:integration-rabbit-password \
-    http://localhost:15673/api/channels | jq 'length')
+  # Anything else the provider would publish has arrived by now: the realm update came first.
+  sleep 2
+  messages=$(rabbit_api -X POST -H 'content-type: application/json' \
+    -d '{"count":50,"ackmode":"ack_requeue_false","encoding":"auto"}' \
+    http://localhost:15673/api/queues/%2F/keycloak-foundation-test/get)
+  json_assert "$messages" 'length == 1 and .[0].routing_key == "KK.EVENT.ADMIN.e-skylab-test.SUCCESS.USER.CREATE"' \
+    "the provider published other than the one USER CREATE: $(jq -c '[.[].routing_key]' <<<"$messages")"
+  json_assert "$messages" \
+    '.[0] as $m | ($m.payload | fromjson) as $b
+      | ($b | keys) == ["id", "operationType", "realmId", "resourcePath", "resourceType", "time"]
+      and $b.resourceType == "USER" and $b.operationType == "CREATE" and $b.resourcePath == ("users/" + $user)
+      and ($b.time | type) == "number" and $m.properties.message_id == $b.id
+      and $m.properties.app_id == "Keycloak" and $m.properties.delivery_mode == 2
+      and (($m.properties.headers // {}) | has("__TypeId__") | not)' \
+    'the USER CREATE message is not the identifiers-only body with its id as message-id' --arg user "$user_uuid"
+  if jq -r '.[0].payload' <<<"$messages" | grep -Fq -e "$address" -e Rabbit -e Contract -e rabbitmq-contract -e 172. -e 127.0.0.1; then
+    fail 'the USER CREATE message carries the address, a name, the username or an IP'
+  fi
+  stored_id=$(kcadm get admin-events -r e-skylab-test -q operationTypes=CREATE -q resourceTypes=USER \
+    -q "resourcePath=users/$user_uuid" -c | jq -r 'if length == 1 then .[0].id else empty end')
+  [[ -n $stored_id && $stored_id == "$(jq -r '.[0].properties.message_id' <<<"$messages")" ]] \
+    || fail 'the message-id is not the id Keycloak stored for the admin event'
+
+  channel_count=$(rabbit_api http://localhost:15673/api/channels | jq 'length')
   [[ $channel_count -le 10 ]] \
     || fail "the RabbitMQ provider holds $channel_count open channels after the run (leaked channels)"
 

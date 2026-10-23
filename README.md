@@ -42,7 +42,8 @@ realm ayarı bırakmamaktır.
   üretilir.
 - `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.27.0`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
-  sağlayıcısı (`3.1.1`) bulunur.
+  sağlayıcısı (`3.2.0`; yalnız olay kataloğu, kişisel verisiz gövde:
+  [`docs/keycloak-events-to-rabbitmq.md`](docs/keycloak-events-to-rabbitmq.md)) bulunur.
 - `account-api:v1`, PAR, geçiş anahtarları ve WebAuthn imaj derlenirken açıkça
   etkinleştirilir.
 - `/` adresi (Keycloak'ın karşılama sayfası) Admin Console'a yönlenmez, e-SKY LAB

@@ -1535,7 +1535,8 @@ stage_admin_panel_hand_made
 stage_event_retention_before_first_reconciliation
 
 CURRENT_STAGE='first reconciliation'
-"${COMPOSE[@]}" run --rm --no-deps keycloak-config >"$TEST_STATE_DIR/reconcile-first.log" 2>&1
+# KEYCLOAK_RABBITMQ_EVENTS: off here, on in the second reconciliation, keep after (tests/event-retention.sh).
+"${COMPOSE[@]}" run --rm --no-deps -e KEYCLOAK_RABBITMQ_EVENTS=off keycloak-config >"$TEST_STATE_DIR/reconcile-first.log" 2>&1
 
 assert_account_center_uses_the_realm_browser_flow() {
   local client_json
@@ -1771,7 +1772,7 @@ kcadm get authentication/flows/account-center-native-handoff/executions -r e-sky
 
 # A second pass proves both idempotence and drift repair.
 CURRENT_STAGE='second reconciliation and drift repair'
-"${COMPOSE[@]}" run --rm --no-deps keycloak-config >"$TEST_STATE_DIR/reconcile-second.log" 2>&1
+"${COMPOSE[@]}" run --rm --no-deps -e KEYCLOAK_RABBITMQ_EVENTS=on keycloak-config >"$TEST_STATE_DIR/reconcile-second.log" 2>&1
 
 [[ -n $client_uuid ]] || fail "account-center client was not created"
 

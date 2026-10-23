@@ -742,7 +742,8 @@ jobs:
           - group: roles
             timeout: 45
           - group: roles-noop
-            timeout: 45
+            # Also the whole reconciliation's dry run (ekip-yetkileri ticket 03): about 38 minutes.
+            timeout: 55
           - group: login
             timeout: 45
           - group: login-rollback

@@ -688,6 +688,7 @@ expect_line "$refused" 'PROBLEM: refusing /UYELER/ORGANIZASYON/ARTLAB as a targe
 reject_line "$refused" 'YENI ATAMA' 'a refused run planned assignments'
 [[ $(events "$REALM") == "$before" ]] || fail 'the refused run wrote something'
 kcadm delete "realms/$REALM/default-groups/$(group_id "$REALM" /UYELER/ORGANIZASYON/ARTLAB)" >/dev/null
+before=$(events "$REALM")
 printf '{"apps":[{"client":"skymail","name":"SkyMail","assignmentRequired":true,"roles":["skymail:access"]}],"initialAssignments":[{"client":"skymail","roles":["skymail:access"],"target":"/UYELER/YK/BASKAN"}]}\n' \
   | docker exec -i "$CONTAINER" sh -c 'cat > /tmp/privileged-target.json'
 trap - ERR

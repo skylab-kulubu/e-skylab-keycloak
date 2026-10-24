@@ -689,7 +689,10 @@ ADMIN, YK ve DK'ya bir kez tohumlanır; okuma rolüdür, DK'da kalır (runbook �
 salt okur rolü `skyforms:read-all` (DK her formu ve cevabı okur, yazamaz; forms-backend henüz okumuyor)
 aynı biçimde `forms` istemcisinde var edilir ve yalnız DK'ya bir kez verilir (runbook §28). Forms
 koltuğu `skyforms:access` ADMIN, YK ve DK'ya, `skyforms:*` (bütün formları okuma) yalnız YK'ya bir kez
-tohumlanır (bilet 03, S4); ikisi de Forms'un rolüdür, oluşturulmaz.
+tohumlanır (bilet 03, S4); ikisi de Forms'un rolüdür, oluşturulmaz. SkyCloud'un yönetici rolü `skycloud`
+`admin` (Yusuf, 2026-10-24) yalnız `core-roles` adımında ADMIN ve YK'ya aynı biçimde bir kez tohumlanır;
+istemci production'da elle kuruludur, ne o ne rolü oluşturulur, istemci yoksa uyarıyla atlanır (runbook
+§33.6).
 
 DK salt okurdur (grup-yonetimi 08; Entra'nın Global Reader + Reports Reader'ı: `global:read` +
 `audit:read`). Uzlaştırıcı bir eşlemeyi hiç geri almadığı için DK'nın eskiden aldığı yazma rollerini

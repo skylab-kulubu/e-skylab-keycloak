@@ -1,9 +1,6 @@
 package com.github.aznamier.keycloak.event.provider;
 
-import com.rabbitmq.client.Channel;
-import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.ConnectionFactory;
-import org.jboss.logging.Logger;
 import org.keycloak.Config.Scope;
 import org.keycloak.events.EventListenerProvider;
 import org.keycloak.events.EventListenerProviderFactory;
@@ -20,57 +17,46 @@ public final class RabbitMqEventListenerProviderFactory implements EventListener
 
     public static final String PROVIDER_ID = "keycloak-to-rabbitmq";
 
-    private static final Logger LOG = Logger.getLogger(RabbitMqEventListenerProviderFactory.class);
+    static final int CONNECTION_TIMEOUT_MILLIS = 2_000;
+    static final int HANDSHAKE_TIMEOUT_MILLIS = 3_000;
+    static final int CHANNEL_RPC_TIMEOUT_MILLIS = 3_000;
+    static final int SHUTDOWN_TIMEOUT_MILLIS = 1_000;
+    static final int HEARTBEAT_SECONDS = 30;
 
     private RabbitMqConfig config;
-    private ConnectionFactory connectionFactory;
-    private volatile Connection connection;
+    private RabbitMqPublisher publisher;
 
     @Override
     public EventListenerProvider create(KeycloakSession session) {
-        return new RabbitMqEventListenerProvider(this::openChannel, session, config);
+        return new RabbitMqEventListenerProvider(publisher::offer, session, config);
     }
 
-    private Channel openChannel() {
-        try {
-            return connection().createChannel();
-        } catch (Exception exception) {
-            LOG.error("keycloak-to-rabbitmq could not open a channel; authentication remains available", exception);
-            return null;
-        }
-    }
-
-    private Connection connection() throws Exception {
-        Connection current = connection;
-        if (current != null && current.isOpen()) {
-            return current;
-        }
-        synchronized (this) {
-            current = connection;
-            if (current == null || !current.isOpen()) {
-                current = connectionFactory.newConnection("keycloak-event-listener");
-                connection = current;
-            }
-            return current;
-        }
-    }
-
+    /**
+     * Short limits everywhere: only the publisher thread waits on them, but a stuck attempt delays
+     * every event behind it. Automatic recovery is off: the publisher opens a new connection itself.
+     */
     @Override
     public void init(Scope scope) {
         config = RabbitMqConfig.from(scope);
-        connectionFactory = new ConnectionFactory();
+        ConnectionFactory connectionFactory = new ConnectionFactory();
         connectionFactory.setUsername(config.username());
         connectionFactory.setPassword(config.password());
         connectionFactory.setVirtualHost(config.virtualHost());
         connectionFactory.setHost(config.host());
         connectionFactory.setPort(config.port());
-        connectionFactory.setAutomaticRecoveryEnabled(true);
-        connectionFactory.setTopologyRecoveryEnabled(true);
-        connectionFactory.setConnectionTimeout(5_000);
+        connectionFactory.setAutomaticRecoveryEnabled(false);
+        connectionFactory.setTopologyRecoveryEnabled(false);
+        connectionFactory.setConnectionTimeout(CONNECTION_TIMEOUT_MILLIS);
+        connectionFactory.setHandshakeTimeout(HANDSHAKE_TIMEOUT_MILLIS);
+        connectionFactory.setChannelRpcTimeout(CHANNEL_RPC_TIMEOUT_MILLIS);
+        connectionFactory.setShutdownTimeout(SHUTDOWN_TIMEOUT_MILLIS);
+        connectionFactory.setRequestedHeartbeat(HEARTBEAT_SECONDS);
 
         if (config.useTls()) {
             configureTls(connectionFactory, config);
         }
+        publisher = new RabbitMqPublisher(config.exchange(),
+                () -> connectionFactory.newConnection("keycloak-event-listener"));
     }
 
     private static void configureTls(ConnectionFactory factory, RabbitMqConfig config) {
@@ -117,14 +103,8 @@ public final class RabbitMqEventListenerProviderFactory implements EventListener
 
     @Override
     public void close() {
-        Connection current = connection;
-        if (current == null) {
-            return;
-        }
-        try {
-            current.close();
-        } catch (Exception exception) {
-            LOG.debug("Could not close RabbitMQ connection", exception);
+        if (publisher != null) {
+            publisher.close();
         }
     }
 

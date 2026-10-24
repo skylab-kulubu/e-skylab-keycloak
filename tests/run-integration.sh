@@ -22,7 +22,8 @@ ADMIN_CONFIG=/tmp/integration-kcadm.config
 #   roles           (core-erasure fixture) admin panel tokens, core resource roles, SkyMail
 #                   Privileged roles, group overage mapper
 #   roles-noop      (core-erasure fixture, operator state without core's service roles) core
-#                   service roles, exchange claims, no-op reconciliation, identity guardrails
+#                   service roles, exchange claims, no-op reconciliation, identity guardrails, the
+#                   whole reconciliation's dry run
 #   login           (core-erasure fixture, operator state) OIDC/PAR basics, K4 sign-in by e-mail,
 #                   the K4 reconciler's refusal and interrupted swap, re-authentication forwarded
 #                   to Microsoft (PR #89)
@@ -799,6 +800,36 @@ stage_v2_reconcile_noop() {
     || fail "a no-op reconciliation produced $new_events admin event(s)"
 }
 
+# The whole reconciliation's dry run (KEYCLOAK_RECONCILE_CHECK=true, ekip-yetkileri ticket 03: the
+# release wizard compares it with its plan before the real run). Right after the no-op run the realm
+# is reconciled; with one drift injected, the dry run withholds exactly that one write ("would kcadm
+# ..."), logs the line a real run would, ends as a dry run, writes nothing (no admin event, the drift
+# stays). One run (a full reconciliation takes minutes here); the drift is then repaired by hand.
+stage_v2_reconcile_check() {
+  CURRENT_STAGE='v2 dry run of the whole reconciliation: one drift is named, nothing is written'
+  local log="$TEST_STATE_DIR/reconcile-check.log" newest_before scope_uuid new_events
+  scope_uuid=$(v2_scope_uuid account-center-account-api)
+  kcadm update "client-scopes/$scope_uuid" -r "$V2_REALM" -s 'attributes."include.in.token.scope"=true' >/dev/null
+  newest_before=$(kcadm get admin-events -r "$V2_REALM" -q max=1 -c | jq -r '.[0].time // 0')
+  "${COMPOSE[@]}" run --rm --no-deps -e KEYCLOAK_RECONCILE_CHECK=true keycloak-config >"$log" 2>&1 \
+    || { cat "$log" >&2; fail 'the dry run of the drifted realm failed'; }
+  grep -Fq '[reconcile] CHECK: a dry run' "$log" || fail 'the dry run did not say it is one'
+  grep -Fq "[reconcile] would kcadm update client-scopes/$scope_uuid" "$log" \
+    || { cat "$log" >&2; fail 'the dry run did not name the withheld write'; }
+  [[ $(grep -Ec '^\[reconcile\] would kcadm ' "$log") == 1 ]] \
+    || { cat "$log" >&2; fail 'the dry run of a reconciled realm with one drift withheld more than that one write'; }
+  grep -Fq '[reconcile] client scope account-center-account-api: updated (attributes)' "$log" \
+    || { cat "$log" >&2; fail 'the dry run did not log what the real run would'; }
+  grep -Fq 'Account Center Keycloak configuration is checked; nothing was written (1 write(s) withheld).' "$log" \
+    || { cat "$log" >&2; fail 'the dry run did not count the one withheld write'; }
+  [[ $(kcadm get "client-scopes/$scope_uuid" -r "$V2_REALM" -c | jq -r '.attributes["include.in.token.scope"]') == true ]] \
+    || fail 'the dry run repaired the drift'
+  new_events=$(kcadm get admin-events -r "$V2_REALM" -q max=200 -c \
+    | jq --argjson since "$newest_before" '[.[] | select(.time > $since)] | length')
+  [[ $new_events == 0 ]] || fail "the dry run produced $new_events admin event(s)"
+  kcadm update "client-scopes/$scope_uuid" -r "$V2_REALM" -s 'attributes."include.in.token.scope"=false' >/dev/null
+}
+
 v2_state_snapshot() {
   local client_uuid mailer_uuid account_uuid skymail_uuid service_user scope_uuid
   client_uuid=$(v2_client_uuid account-center)
@@ -1253,39 +1284,75 @@ stage_v2_passkey_cleanup() {
   [[ $(v2_fixture_passkey_ids) == "$survivor_ids" ]] || fail 'a refused cleanup run changed the credentials'
 }
 
-# Provision the RabbitMQ topology expected by the provider, then use an admin
-# event to prove the rebuilt provider can publish on Keycloak 26.7.4. Every group ends with it.
-# keycloak-to-rabbit opens and closes one channel per message (3.1.1, #50), so after the group's
-# events the broker holds next to none; a provider that leaked one per event would hold hundreds,
-# which a group no longer reaches the 2047-channel limit with (the full run did).
+# The broker's management API on the host, as the fixture's only RabbitMQ user.
+rabbit_api() {
+  curl --fail --silent --show-error --user keycloak:integration-rabbit-password "$@"
+}
+
+# Provision the RabbitMQ topology expected by the provider, then prove on Keycloak 26.7.4 what the
+# provider publishes (RabbitMQ R07, ADR-0071 decision 8, docs/keycloak-events-to-rabbitmq.md). Every
+# group ends with it.
+#   - Only the event catalog leaves Keycloak: a realm update (an admin event outside it) is not
+#     published, a user created by the Admin API (USER CREATE) is, and nothing else arrives.
+#   - The body is identifiers only: exactly id, realmId, resourceType, operationType, resourcePath
+#     and time; not the representation (admin event details are on in the fixture realm, so
+#     Keycloak hands the provider the whole user with its address and names), not the author, not
+#     the IP; no Java type header. message-id and the body's id are the id Keycloak stored for the
+#     admin event.
+# The user events (REGISTER of a sign-up by e-mail code) are measured in tests/sign-up-by-email-code.sh.
+# keycloak-to-rabbit 3.3.0 publishes from one thread on one channel, so after the group's events the
+# broker holds next to none; a provider that leaked one per event would hold dozens.
 stage_rabbitmq_provider_contract() {
   CURRENT_STAGE='RabbitMQ provider contract'
-  local attempt message_count channel_count provider_names
-  curl --fail --silent --show-error --user keycloak:integration-rabbit-password \
-    -X PUT -H 'content-type: application/json' \
+  local attempt message_count channel_count provider_names user_uuid messages stored_id
+  local address=rabbitmq-contract@example.invalid
+  rabbit_api -X PUT -H 'content-type: application/json' \
     -d '{"type":"topic","durable":true,"auto_delete":false,"internal":false,"arguments":{}}' \
     http://localhost:15673/api/exchanges/%2F/keycloak.events >/dev/null
-  curl --fail --silent --show-error --user keycloak:integration-rabbit-password \
-    -X PUT -H 'content-type: application/json' \
+  rabbit_api -X PUT -H 'content-type: application/json' \
     -d '{"durable":false,"auto_delete":true,"arguments":{}}' \
     http://localhost:15673/api/queues/%2F/keycloak-foundation-test >/dev/null
-  curl --fail --silent --show-error --user keycloak:integration-rabbit-password \
-    -X POST -H 'content-type: application/json' \
+  rabbit_api -X POST -H 'content-type: application/json' \
     -d '{"routing_key":"KK.EVENT.#","arguments":{}}' \
     http://localhost:15673/api/bindings/%2F/e/keycloak.events/q/keycloak-foundation-test >/dev/null
 
   kcadm update realms/e-skylab-test -s displayName='SKY LAB integration event' >/dev/null
+  user_uuid=$(kcadm create users -r e-skylab-test -i \
+    -s username=rabbitmq-contract -s enabled=true -s emailVerified=true \
+    -s firstName=Rabbit -s lastName=Contract -s "email=$address")
+  [[ -n $user_uuid ]] || fail 'the RabbitMQ contract user was not created'
   for attempt in $(seq 1 30); do
-    message_count=$(curl --fail --silent --show-error --user keycloak:integration-rabbit-password \
-      http://localhost:15673/api/queues/%2F/keycloak-foundation-test | jq -r '.messages // 0')
+    message_count=$(rabbit_api http://localhost:15673/api/queues/%2F/keycloak-foundation-test | jq -r '.messages // 0')
     if [[ ${message_count:-0} -gt 0 ]]; then
       break
     fi
     sleep 1
   done
   [[ ${message_count:-0} -gt 0 ]] || fail "RabbitMQ provider did not publish the Keycloak admin event"
-  channel_count=$(curl --fail --silent --show-error --user keycloak:integration-rabbit-password \
-    http://localhost:15673/api/channels | jq 'length')
+  # Anything else the provider would publish has arrived by now: the realm update came first.
+  sleep 2
+  messages=$(rabbit_api -X POST -H 'content-type: application/json' \
+    -d '{"count":50,"ackmode":"ack_requeue_false","encoding":"auto"}' \
+    http://localhost:15673/api/queues/%2F/keycloak-foundation-test/get)
+  json_assert "$messages" 'length == 1 and .[0].routing_key == "KK.EVENT.ADMIN.e-skylab-test.SUCCESS.USER.CREATE"' \
+    "the provider published other than the one USER CREATE: $(jq -c '[.[].routing_key]' <<<"$messages")"
+  json_assert "$messages" \
+    '.[0] as $m | ($m.payload | fromjson) as $b
+      | ($b | keys) == ["id", "operationType", "realmId", "resourcePath", "resourceType", "time"]
+      and $b.resourceType == "USER" and $b.operationType == "CREATE" and $b.resourcePath == ("users/" + $user)
+      and ($b.time | type) == "number" and $m.properties.message_id == $b.id
+      and $m.properties.app_id == "Keycloak" and $m.properties.delivery_mode == 2
+      and (($m.properties.headers // {}) | has("__TypeId__") | not)' \
+    'the USER CREATE message is not the identifiers-only body with its id as message-id' --arg user "$user_uuid"
+  if jq -r '.[0].payload' <<<"$messages" | grep -Fq -e "$address" -e Rabbit -e Contract -e rabbitmq-contract -e 172. -e 127.0.0.1; then
+    fail 'the USER CREATE message carries the address, a name, the username or an IP'
+  fi
+  stored_id=$(kcadm get admin-events -r e-skylab-test -q operationTypes=CREATE -q resourceTypes=USER \
+    -q "resourcePath=users/$user_uuid" -c | jq -r 'if length == 1 then .[0].id else empty end')
+  [[ -n $stored_id && $stored_id == "$(jq -r '.[0].properties.message_id' <<<"$messages")" ]] \
+    || fail 'the message-id is not the id Keycloak stored for the admin event'
+
+  channel_count=$(rabbit_api http://localhost:15673/api/channels | jq 'length')
   [[ $channel_count -le 10 ]] \
     || fail "the RabbitMQ provider holds $channel_count open channels after the run (leaked channels)"
 
@@ -1296,10 +1363,98 @@ stage_rabbitmq_provider_contract() {
   [[ $(grep -c '^keycloak-to-rabbit-' <<<"$provider_names") == 1 ]] || fail "runtime does not contain exactly one RabbitMQ provider"
 }
 
+# rabbit_timed_user_update USER_UUID NAME: one Admin API USER UPDATE (a catalog event, published after
+# the request's transaction like a sign-up's REGISTER) that sets the first name; prints its seconds.
+rabbit_timed_user_update() {
+  local body result
+  kcadm_rest_token || fail 'no master token for the timed user update'
+  body=$(kcadm get "users/$1" -r e-skylab-test -c | jq -c --arg name "$2" '{username, email, firstName: $name, lastName, enabled, emailVerified}')
+  result=$(curl --silent --show-error --output /dev/null --write-out '%{http_code} %{time_total}' -X PUT \
+    --header "@$KCADM_REST_DIR/header" --header 'content-type: application/json' --data "$body" \
+    "$KCADM_REST_URL/admin/realms/e-skylab-test/users/$1")
+  [[ ${result%% *} == 204 ]] || fail "the timed user update answered HTTP ${result%% *}"
+  printf '%s\n' "${result#* }"
+}
+
+# rabbit_assert_fast USER_UUID WHAT: three user updates, each answered in under RABBIT_FAST_SECONDS.
+RABBIT_FAST_SECONDS=2
+rabbit_assert_fast() {
+  local attempt seconds times=''
+  for attempt in 1 2 3; do
+    seconds=$(rabbit_timed_user_update "$1" "Rabbit$attempt")
+    times="$times $seconds"
+    awk -v s="$seconds" -v limit="$RABBIT_FAST_SECONDS" 'BEGIN { exit !(s < limit) }' \
+      || fail "$2: a user update took $seconds s (limit $RABBIT_FAST_SECONDS s); the request waited for the broker"
+  done
+  printf '    %s: user updates answered in%s s\n' "$2" "$times"
+}
+
+# B1 (review of #142, T1): the provider publishes from one background thread through a bounded queue,
+# so a request whose transaction made a catalog event never waits for RabbitMQ. Measured here with
+# the broker running, paused (it no longer reads its sockets: what a hung or unreachable broker looks
+# like to Keycloak) and blocked by a memory alarm (RabbitMQ blocks every publisher of the node);
+# afterwards the provider publishes again. Before this, a paused broker held the request in
+# createChannel up to the client's channelRpcTimeout (10 minutes).
+stage_rabbitmq_unavailable_broker() {
+  CURRENT_STAGE='RabbitMQ provider: requests do not wait for an unavailable broker'
+  local user_uuid attempt found
+  user_uuid=$(kcadm get users -r e-skylab-test -q username=rabbitmq-contract -q exact=true -c | jq -r '.[0].id // empty')
+  [[ -n $user_uuid ]] || fail 'the RabbitMQ contract user is missing'
+  rabbit_assert_fast "$user_uuid" 'broker running'
+
+  "${COMPOSE[@]}" pause rabbitmq >/dev/null
+  rabbit_assert_fast "$user_uuid" 'broker paused'
+  "${COMPOSE[@]}" unpause rabbitmq >/dev/null
+
+  "${COMPOSE[@]}" exec -T rabbitmq rabbitmqctl -q set_vm_memory_high_watermark 0.00001 >/dev/null
+  # The alarm is really on (the management API answers during it) ...
+  for attempt in $(seq 1 15); do
+    rabbit_api http://localhost:15673/api/nodes | jq -e 'any(.[]; .mem_alarm == true)' >/dev/null && break
+    sleep 1
+  done
+  rabbit_api http://localhost:15673/api/nodes | jq -e 'any(.[]; .mem_alarm == true)' >/dev/null \
+    || fail 'the memory alarm did not go on; the blocked case was not tested'
+  rabbit_assert_fast "$user_uuid" 'broker blocked by a memory alarm'
+  # ... and the provider saw it: the broker blocked its connection, events were dropped, not waited for.
+  found=''
+  for attempt in $(seq 1 15); do
+    rabbit_timed_user_update "$user_uuid" "Blocked$attempt" >/dev/null
+    if "${COMPOSE[@]}" logs --no-color keycloak 2>&1 \
+      | grep -F 'keycloak-to-rabbitmq: the broker blocks publishing' >/dev/null \
+      && "${COMPOSE[@]}" logs --no-color keycloak 2>&1 \
+      | grep -F 'the broker blocks publishing (a resource alarm)' >/dev/null; then
+      found=yes
+      break
+    fi
+    sleep 1
+  done
+  [[ -n $found ]] || fail 'the provider did not report the blocked connection and a dropped event during the memory alarm'
+  printf '    memory alarm on; the provider reported the blocked connection and dropped events without waiting\n'
+  "${COMPOSE[@]}" exec -T rabbitmq rabbitmqctl -q set_vm_memory_high_watermark 0.4 >/dev/null
+
+  # Back to normal: a later update reaches the queue again (after the publisher's retry pause).
+  rabbit_api -X DELETE http://localhost:15673/api/queues/%2F/keycloak-foundation-test/contents >/dev/null
+  found=''
+  for attempt in $(seq 1 20); do
+    rabbit_timed_user_update "$user_uuid" "Recovered$attempt" >/dev/null
+    sleep 2
+    if rabbit_api -X POST -H 'content-type: application/json' \
+      -d '{"count":50,"ackmode":"ack_requeue_false","encoding":"auto"}' \
+      http://localhost:15673/api/queues/%2F/keycloak-foundation-test/get \
+      | jq -e 'any(.[]; .routing_key == "KK.EVENT.ADMIN.e-skylab-test.SUCCESS.USER.UPDATE")' >/dev/null; then
+      found=yes
+      break
+    fi
+  done
+  [[ -n $found ]] || fail 'the provider did not publish again after the broker came back'
+  printf '    the provider published again once the broker was back\n'
+}
+
 # The end of every run: of a group that stops before the last stage of the full run, of the spi
 # group and of the full run.
 finish_group() {
   stage_rabbitmq_provider_contract
+  stage_rabbitmq_unavailable_broker
   if [[ $INTEGRATION_GROUP == all ]]; then
     printf 'Keycloak 26.7.4 Account Center integration contract passed.\n'
   else
@@ -1499,7 +1654,8 @@ stage_admin_panel_hand_made
 stage_event_retention_before_first_reconciliation
 
 CURRENT_STAGE='first reconciliation'
-"${COMPOSE[@]}" run --rm --no-deps keycloak-config >"$TEST_STATE_DIR/reconcile-first.log" 2>&1
+# KEYCLOAK_RABBITMQ_EVENTS: off here, on in the second reconciliation, keep after (tests/event-retention.sh).
+"${COMPOSE[@]}" run --rm --no-deps -e KEYCLOAK_RABBITMQ_EVENTS=off keycloak-config >"$TEST_STATE_DIR/reconcile-first.log" 2>&1
 
 assert_account_center_uses_the_realm_browser_flow() {
   local client_json
@@ -1735,7 +1891,7 @@ kcadm get authentication/flows/account-center-native-handoff/executions -r e-sky
 
 # A second pass proves both idempotence and drift repair.
 CURRENT_STAGE='second reconciliation and drift repair'
-"${COMPOSE[@]}" run --rm --no-deps keycloak-config >"$TEST_STATE_DIR/reconcile-second.log" 2>&1
+"${COMPOSE[@]}" run --rm --no-deps -e KEYCLOAK_RABBITMQ_EVENTS=on keycloak-config >"$TEST_STATE_DIR/reconcile-second.log" 2>&1
 
 [[ -n $client_uuid ]] || fail "account-center client was not created"
 
@@ -1802,7 +1958,7 @@ skyapp_scope_count=$(kcadm get client-scopes -r e-skylab-test -c \
 [[ $skyapp_scope_count == 1 ]] || fail "skyapp audience scope is missing or duplicated"
 
 built_in_scope_after=$(kcadm get client-scopes -r e-skylab-test -c \
-  | jq -c '[.[] | select(.name != "account-center-account-api" and .name != "account-center-core-claims" and .name != "skyapp-account-center-audience" and .name != "skyforms-forms-audience" and .name != "skyforms-groups" and .name != "frontend-main-core-audience" and .name != "frontend-arge-core-audience" and .name != "skycms-audience" and .name != "skymail-api-audience" and .name != "admin-panel-api-audience") | {id, name}] | sort_by(.id)')
+  | jq -c '[.[] | select(.name != "account-center-account-api" and .name != "account-center-core-claims" and .name != "skyapp-account-center-audience" and .name != "skyforms-forms-audience" and .name != "skyforms-groups" and .name != "skyforms-core-audience" and .name != "frontend-main-core-audience" and .name != "frontend-arge-core-audience" and .name != "skycms-audience" and .name != "skymail-api-audience" and .name != "admin-panel-api-audience") | {id, name}] | sort_by(.id)')
 [[ $built_in_scope_after == "$built_in_scope_snapshot" ]] \
   || fail "a built-in client scope id or name was mutated"
 
@@ -1978,6 +2134,8 @@ if group_runs roles-noop; then
   stage_admin_panel_exchange_claims
 
   stage_v2_reconcile_noop
+  # Right after the no-op run: the realm is reconciled, so the dry run must withhold nothing.
+  stage_v2_reconcile_check
   stage_event_retention_after_noop_reconciliation
   stage_reset_choose_user_after_noop_reconciliation
   stage_v2_identity_guardrails

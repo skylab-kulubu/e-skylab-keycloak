@@ -320,6 +320,14 @@ for role in "${CORE_SEEDED_ROLES[@]}"; do mark core "$role" "$OLD_MARK"; done
 mark skymail skymail:system-mails:read "$OLD_MARK"
 mark skymail skymail:mails:tracking:read "$OLD_MARK"
 mark skymail skymail:announcements:send '2026-10-13T09:00:00Z /ADMIN,/UYELER/YK'
+# The code area's SkyMail and Forms roles of ekip-yetkileri ticket 03 as if already seeded (this
+# stage proves DK's read roles; tests/role-groups.sh and the integration harness prove those seeds).
+mark skymail skymail:access '2026-10-24T09:00:00Z /ADMIN,/UYELER/YK'
+mark skymail skymail:mails:approve '2026-10-24T09:00:00Z /UYELER/YK'
+mark forms skyforms:access "$OLD_MARK"
+# skyforms:* by id, as the reconciler marks it (a "*" never goes into an admin path).
+kcadm update "roles-by-id/$(kcadm get "clients/$(client_uuid "$REALM" forms)/roles" -r "$REALM" | jq -r '.[] | select(.name == "skyforms:*") | .id')" \
+  -r "$REALM" -s 'attributes."skylab.seeded-group-mappings"=["2026-10-24T09:00:00Z /UYELER/YK"]' >/dev/null
 make_person yk-person /UYELER/YK
 make_person dk-person "$DK"
 make_person dk-sub-person "$DK/ALT"
@@ -343,7 +351,7 @@ seeded=$(core_roles_step)
 expect_line "$seeded" '[reconcile] client roles of core (16 resource roles): created (global:read, audit:read)' 'the core read roles were not created'
 expect_line "$seeded" "[reconcile] core role global:read: seeded once to $DK (granted to: $DK)" 'global:read was not seeded to DK alone'
 expect_line "$seeded" "[reconcile] core role audit:read: seeded once to /ADMIN,/UYELER/YK,$DK (granted to: /ADMIN, /UYELER/YK, $DK)" 'audit:read was not seeded to ADMIN, YK and DK'
-expect_line "$seeded" '[reconcile] Privileged roles of forms (1): created (skyforms:read-all)' 'skyforms:read-all was not created'
+expect_line "$seeded" '[reconcile] Privileged roles of forms (3): created (skyforms:read-all)' 'skyforms:read-all was not created'
 expect_line "$seeded" "[reconcile] forms role skyforms:read-all: seeded once to $DK (granted to: $DK)" 'skyforms:read-all was not seeded to DK alone'
 expect_line "$seeded" '[reconcile] group mappings of the skymail Privileged roles: unchanged' 'the seeded skymail roles were touched'
 reject_line "$seeded" 'core role event:manage' 'a marked write role was seeded again'

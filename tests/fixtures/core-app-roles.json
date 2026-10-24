@@ -1,0 +1,26 @@
+{
+  "_comment": "Bir kopya: core'un uygulama sınıfı rolleri (AppRoles), tam olarak core'un okuduğu biçimde. tests/check-app-assignments.sh config/app-assignments.json'ı bununla karşılaştırır; core listesi değişince bu dosya yeniden kopyalanır ve source satırı güncellenir.",
+  "source": "skylab-kulubu/core-backend 822a5610840861ed204823ae1b880a8cd8852b59 internal/authz/role_classes.go AppRoles() (son değişiklik 4cf44d2bdf9de5b9877876bf91bb2352f470967a)",
+  "roles": [
+    {"client": "core", "role": "certificate:issue"},
+    {"client": "core", "role": "certificate:revoke"},
+    {"client": "core", "role": "certificate:template:manage"},
+    {"client": "core", "role": "certificate:binding:manage"},
+    {"client": "core", "role": "url:create"},
+    {"client": "core", "role": "url:get"},
+    {"client": "core", "role": "url:update"},
+    {"client": "core", "role": "url:delete"},
+    {"client": "core", "role": "url:access"},
+    {"client": "forms", "role": "skyforms:access"},
+    {"client": "forms", "role": "skyforms:form:manage"},
+    {"client": "forms", "role": "skyforms:response:manage"},
+    {"client": "forms", "role": "skyforms:feedback:manage"},
+    {"client": "skymail", "role": "skymail:access"},
+    {"client": "skymail", "role": "skymail:templates:read"},
+    {"client": "frontend-main", "role": "content:read"},
+    {"client": "frontend-arge", "role": "content:read"},
+    {"client": "frontend-artlab", "role": "content:read"},
+    {"client": "frontend-yildizjam", "role": "content:read"},
+    {"client": "frontend-skydays", "role": "content:read"}
+  ]
+}

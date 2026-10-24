@@ -30,7 +30,7 @@ services:
   # throwaway SMTP sink with an HTTP API the harness reads the link from; it keeps every
   # mail inside the fixture network, so no address of the test realm can leave the run.
   mailpit:
-    image: axllent/mailpit:v1.28@sha256:c6cf0b06eb516a0b80a8a5251f945c131e6beb8396112964404f62856487f5bd
+    image: ghcr.io/axllent/mailpit:v1.28@sha256:c6cf0b06eb516a0b80a8a5251f945c131e6beb8396112964404f62856487f5bd
     environment:
       MP_SMTP_AUTH_ACCEPT_ANY: "true"
       MP_SMTP_AUTH_ALLOW_INSECURE: "true"

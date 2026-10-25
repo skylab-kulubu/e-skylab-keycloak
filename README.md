@@ -1085,7 +1085,8 @@ bir işe ulaşır ya da `LOCAL_ONLY` listesindedir (`check-fresh-runner.sh` dene
 makbuzları yayın kanıtı sayılmaz (bulucu yalnız tam push, gece ve elle koşularına bakar).
 *Tam takım* `main` push'unda, her gece (01:23 UTC), elle (`gh workflow run ci.yml --ref <dal>`)
 ve `full-ci` etiketli PR'larda (etiket PR açılırken/push'ta okunur; etiket eklenince
-`full-ci.yml` dalın başında hemen elle bir tam koşu başlatır) koşar. `ci.yml` `labeled` olayında
+`full-ci.yml` dalın başında hemen elle bir tam koşu başlatır; bu koşunun `gate`'i aynı commit'teki
+en yeni `gate` olur ve PR'ın birleşim (merge) commit'ini değil dalın başını test eder) koşar. `ci.yml` `labeled` olayında
 koşmaz: başka bir etiketin koşusu atlanmış (`skipped`) bir `gate` bırakırdı, GitHub atlanan zorunlu
 kontrolü geçmiş sayar ve aynı commit'in kırmızı `gate`'ini örterdi. `production`'a açılan
 PR'lar ve `production` push'u, ağaçlarını tamamen yeşil bir tam koşu zaten test ettiyse (yayın

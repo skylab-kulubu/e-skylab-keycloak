@@ -322,6 +322,25 @@ def assert_full_ci_label(ci, label_workflow)
       job.fetch("steps").map { |step| step.fetch("run", "") }.join("\n").include?('gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$HEAD_REF"')
     abort "#{label_workflow} must start a manual ci.yml run only for the full-ci label"
   end
+  # The pull request's fields reach the shell only through env (no ${{ }} in a run: line, not even
+  # a ::notice), a fork's branch is never dispatched, and the token may only start runs.
+  steps = job.fetch("steps")
+  if steps.any? { |step| step.fetch("run", "").include?("${{") }
+    abort "#{label_workflow} must pass the pull request's fields through env, not ${{ }} in run:"
+  end
+  env = steps.map { |step| step.fetch("env", {}) }.reduce({}, :merge)
+  run = steps.map { |step| step.fetch("run", "") }.join("\n")
+  unless env["HEAD_REF"] == "${{ github.event.pull_request.head.ref }}" &&
+      env["HEAD_REPOSITORY"] == "${{ github.event.pull_request.head.repo.full_name }}" &&
+      run.include?(%q(if [[ $HEAD_REPOSITORY != "$GITHUB_REPOSITORY" ]]; then)) &&
+      run.index(%q(if [[ $HEAD_REPOSITORY != "$GITHUB_REPOSITORY" ]]; then)) < run.index("gh workflow run") &&
+      run[/if \[\[ \$HEAD_REPOSITORY != "\$GITHUB_REPOSITORY" \]\]; then\n(.*?)\nfi\n/m, 1].to_s.lines.last.to_s.strip == "exit 0"
+    abort "#{label_workflow} must read HEAD_REF and HEAD_REPOSITORY from the pull request and stop for a fork's branch before it dispatches"
+  end
+  unless [{ "actions" => "write" }, { "contents" => "read", "actions" => "write" }].include?(job.fetch("permissions")) &&
+      document["permissions"] == { "contents" => "read" }
+    abort "#{label_workflow} dispatch may only write actions (and read contents)"
+  end
 end
 
 # The CI matrix runs exactly the harness's groups, each with a timeout, and one job named

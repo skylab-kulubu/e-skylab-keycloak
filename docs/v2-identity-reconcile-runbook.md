@@ -3974,3 +3974,36 @@ yönetici rolü ve alandaki uygulama rolü `PROBLEM`, Privileged beklentiler uzl
 ataması (kuru 8 atama ve etkin üye sayıları, yedek 0600, işaret, ikinci `--apply` reddi, `--restore`),
 retler ve okuma hatası, `default-roles` (kuru → uygula → kuru 0). Tam uzlaştırmanın kuru koşusu
 `run-integration.sh`'ın `roles-noop` grubunda.
+
+### 33.6 SkyCloud yöneticisi: `/ADMIN` ve `/UYELER/YK`
+
+Yusuf'un kararı (2026-10-24): SkyCloud (Nextcloud) yöneticileri `/ADMIN` ve `/UYELER/YK`. `skycloud`
+istemcisinin `admin` rolü yönetici rolüdür, kod alanındadır (YETKI-MATRISI §6.2). `core-roles` operatör
+adımı onu §25'teki SkyMail rolleri gibi iki köke **bir kez** verir ve işaretler
+(`skylab.seeded-group-mappings`); sonraki değişiklik panelden ya da konsoldan kalır, adım geri almaz.
+`/ROLLER/SKYCLOUD-ADMIN`'in adlı kişileri yaprakta kalır (§26). Sıfırlama penceresi (ekip-yetkileri bilet
+06) Java dönemi realm rolü composite'lerinden gelen `admin`'i kaldırmadan önce bu tohum koşulur.
+
+- `skycloud` istemcisi production'da elle kuruludur, bu repoda yoktur: istemci de rolü de burada hiç
+  oluşturulmaz. İstemci yoksa (sandbox) `WARNING: client skycloud does not exist in realm …; skipped
+  SkyCloud's Privileged roles`, rol yoksa `Privileged roles of skycloud (1): unchanged; not in the realm,
+  the application makes them, seeded once they exist: admin`.
+- Yalnız `core-roles` adımında koşar; tam uzlaştırmada yoktur (elle kurulu istemci için yapacağı bir şey
+  yok, istemcisiz realm'de her koşu uyarırdı).
+- `skycloud:access` köklere verilmez: matriste en üst ekiplerin Leader gruplarındadır (§27).
+- `app-assignments` denetimi (§33.1) iki kökteki `skycloud/admin`'i `evet` sayar; `role-groups.sh
+  --audit` K4'ü Privileged kökteki her rolü zaten izinli sayar.
+
+Kuru koşunun satırları (production, iki kök de rolü taşımıyorsa):
+
+```text
+[reconcile] Privileged roles of skycloud (1): unchanged
+[reconcile] would kcadm create groups/<ADMIN kimliği>/role-mappings/clients/<skycloud kimliği> (body)
+[reconcile] would kcadm create groups/<YK kimliği>/role-mappings/clients/<skycloud kimliği> (body)
+[reconcile] would kcadm update roles-by-id/<admin kimliği> (-s attributes."skylab.seeded-group-mappings"=["<UTC> /ADMIN,/UYELER/YK"])
+[reconcile] skycloud role admin: seeded once to /ADMIN,/UYELER/YK (granted to: /ADMIN, /UYELER/YK)
+```
+
+Kökün biri rolü zaten taşıyorsa onun eşleme satırı çıkmaz ve `granted to:` yalnız öbürünü sayar. İkinci
+koşu: `group mappings of the skycloud Privileged roles: unchanged`. Harness `tests/role-groups.sh`
+(kuru → uygula → ikinci koşu tohumsuz, YK alt grubundaki kişinin token'ında `admin`, sandbox atlanır).

@@ -55,7 +55,12 @@
 #     and Store tokens and the direct holder alone; a second dry run plans nothing;
 #   - a failed group read (injected) stops the scripts with exit 1 and writes nothing;
 #   - the reconciler's operator steps run the scripts (dry run with KEYCLOAK_RECONCILE_CHECK=true)
-#     and refuse to run without an operator session.
+#     and refuse to run without an operator session;
+#   - SkyCloud's admin (Yusuf, 2026-10-24: the SkyCloud administrators are /ADMIN and /UYELER/YK): the
+#     audit's K4 allows it on both, app-assignments --check expects it there (and skycloud:access
+#     nowhere on them), and the core-roles step seeds it once (dry run first, a group that holds it
+#     is left alone), marks it, creates no skycloud role; a YK sub-group's member carries it; a realm
+#     without the client skycloud is skipped with a WARNING.
 # Requirements on the host: docker, curl, jq. ROLE_GROUPS_TEST_PORT (default 18096),
 # ROLE_GROUPS_TEST_CONTAINER (default role-groups-test-<pid>).
 # shellcheck disable=SC2016  # jq programs name jq variables
@@ -443,6 +448,12 @@ for site in frontend-artlab frontend-yildizjam; do
 done
 kcadm create "groups/$(group_id "$REALM" /UYELER/ARGE/AIRLAB/KOORDINATORLER)/role-mappings/clients/$(client_uuid "$REALM" skycloud)" \
   -r "$REALM" -b "$(role_body "$REALM" skycloud skycloud:access)" >/dev/null
+# SkyCloud's admin on the Privileged roots ADMIN and YK (Yusuf, 2026-10-24; the core-roles step seeds
+# it): an allowed place.
+for path in /ADMIN /UYELER/YK; do
+  kcadm create "groups/$(group_id "$REALM" "$path")/role-mappings/clients/$(client_uuid "$REALM" skycloud)" \
+    -r "$REALM" -b "$(role_body "$REALM" skycloud admin)" >/dev/null
+done
 audited=$(run_expecting 0 role-groups.sh "$REALM" --audit)
 expect_line "$audited" 'audit: skymail/skymail:mails:write: 1 person(s) directly; groups: /ROLLER/SKYMAIL-MAILS-WRITE' 'the per-role count is wrong'
 expect_line "$audited" 'audit K1: 1 person(s) hold admin or unclassified client roles directly, 1 person(s) hold realm roles directly' 'K1 is wrong'
@@ -454,6 +465,14 @@ expect_line "$audited" 'audit K4:   /UYELER/YK/BASKAN: skymail/skymail:access' '
 expect_line "$audited" 'audit K4:   /UYELER/ARGE/AIRLAB/LIDERLER: frontend-yildizjam/cms:access' 'K4 did not name another site'"'"'s cms:access'
 reject_line "$audited" 'audit K4:   /ROLLER/SKYMAIL-MAILS' 'K4 reported a leaf role group'
 reject_line "$audited" 'audit K4:   /UYELER/ARGE/AIRLAB/KOORDINATORLER' 'K4 reported skycloud:access on a top team Leader group'
+reject_line "$audited" 'audit K4:   /ADMIN' 'K4 reported SkyCloud'"'"'s admin on ADMIN'
+reject_line "$audited" 'audit K4:   /UYELER/YK:' 'K4 reported SkyCloud'"'"'s admin on YK'
+grep -F 'audit: skycloud/admin: ' <<<"$audited" | grep -F '/ADMIN' | grep -Fq '/UYELER/YK' \
+  || { printf '%s\n' "$audited" >&2; fail 'the audit did not read SkyCloud'"'"'s admin on ADMIN and YK'; }
+for path in /ADMIN /UYELER/YK; do
+  kcadm delete "groups/$(group_id "$REALM" "$path")/role-mappings/clients/$(client_uuid "$REALM" skycloud)" \
+    -r "$REALM" -b "$(role_body "$REALM" skycloud admin)" >/dev/null
+done
 kcadm delete "groups/$(group_id "$REALM" /ROLLER/SKYMAIL-ACCESS/NESTED)" -r "$REALM" >/dev/null
 kcadm delete "groups/$(group_id "$REALM" /UYELER/YK/BASKAN)/role-mappings/clients/$(client_uuid "$REALM" skymail)" -r "$REALM" \
   -b "$(role_body "$REALM" skymail skymail:access)" >/dev/null
@@ -602,6 +621,9 @@ grant_group /UYELER/ARGE/AIRLAB/SUB skymail skymail:access
 grant_group /UYELER/ARGE/AIRLAB skymail skymail:mails:write
 grant_group /UYELER/ARGE skymail skymail:access
 grant_group /ADMIN forms skyforms:access
+# SkyCloud's admin: the reconciler expects it on ADMIN and YK (Yusuf, 2026-10-24); ADMIN holds it, YK
+# not yet. It stays on ADMIN for the core-roles stage at the end.
+grant_group /ADMIN skycloud admin
 # frontend-arge (Fatih rebuilds arge, Ek-2): every group holding its roles waits for his decision, a
 # Privileged root as well as a top team's Leader group (production: ADMIN, YK and the Leaders).
 kcadm create clients -r "$REALM" -s clientId=frontend-arge -s publicClient=true >/dev/null
@@ -632,6 +654,12 @@ expect_line "$sorted" '[app-assignments] KOD|/UYELER/YK|forms|skyforms:access|ev
 expect_line "$sorted" '[app-assignments] KOD|/UYELER/YK|skymail|skymail:mails:approve|evet|yok' 'the missing SkyMail approver role of YK is not reported'
 expect_line "$sorted" '[app-assignments] KOD|/UYELER/YK|forms|skyforms:*|evet|yok' 'the missing skyforms:* of YK is not reported'
 reject_line "$sorted" 'KOD|/ADMIN|skymail|skymail:mails:approve' 'ADMIN was expected to approve (YK alone does)'
+expect_line "$sorted" '[app-assignments] KOD|/ADMIN|skycloud|admin|evet|var' 'the reconciler does not expect SkyCloud'"'"'s admin on ADMIN'
+expect_line "$sorted" '[app-assignments] KOD|/UYELER/YK|skycloud|admin|evet|yok' 'the missing SkyCloud admin of YK is not reported'
+expect_line "$sorted" '[app-assignments] KOD|/ROLLER/SKYCLOUD-ADMIN|skycloud|admin|evet|var' 'the SkyCloud admin role group is not as expected'
+reject_line "$sorted" 'KOD|/ADMIN|skycloud|skycloud:access' 'ADMIN was expected to hold skycloud:access (the Leader groups do)'
+reject_line "$sorted" 'KOD|/UYELER/YK|skycloud|skycloud:access' 'YK was expected to hold skycloud:access (the Leader groups do)'
+reject_line "$sorted" 'PROBLEM: skycloud/admin' 'SkyCloud'"'"'s admin on ADMIN was a PROBLEM'
 expect_line "$sorted" '[app-assignments] KOD|/ADMIN|frontend-arge|cms:access|karar-bekliyor|var' 'ADMIN'"'"'s frontend-arge role is not pending'
 expect_line "$sorted" '[app-assignments] KOD|/UYELER/ARGE/AIRLAB/LIDERLER|frontend-arge|cms:access|karar-bekliyor|var' 'the Leader group'"'"'s frontend-arge role is not pending'
 reject_line "$sorted" 'PROBLEM: frontend-arge' 'a pending frontend-arge role was a PROBLEM'
@@ -823,5 +851,57 @@ output=$(reconcile_step 0 tohum-atamalar -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KC
 expect_line "$output" 'check: 8 change(s) pending' 'the seed'"'"'s dry run through the reconciler is not the dry run'
 [[ $(events "$REALM") == "$before" ]] || fail 'the seed'"'"'s dry run through the reconciler wrote something'
 printf '    KEYCLOAK_RECONCILE_ONLY=role-groups, leader-app-roles and tohum-atamalar run the scripts (dry run with KEYCLOAK_RECONCILE_CHECK=true); refused without an operator session\n'
+
+# ---------------------------------------------------------------------------------------------------
+CURRENT_STAGE='core-roles: SkyCloud'"'"'s admin seeded once to ADMIN and YK'
+# The client skycloud is made by hand (production) and its role admin is SkyCloud's own: the step never
+# creates either, it grants the role once to ADMIN and YK (ADMIN holds it since the app-assignments
+# stage) and marks it; a sub-group of YK inherits it; skycloud:access stays off the Privileged roots.
+make_person "$REALM" yk-person /UYELER/YK/BASKAN
+skycloud_seed_mark() {
+  kcadm get "clients/$(client_uuid "$REALM" skycloud)/roles" -r "$REALM" -q briefRepresentation=false \
+    | jq -r '.[] | select(.name == "admin") | ((.attributes // {})["skylab.seeded-group-mappings"][0] // "")'
+}
+skycloud_roles_before=$(kcadm get "clients/$(client_uuid "$REALM" skycloud)/roles" -r "$REALM" | jq -c '[.[].name] | sort')
+before=$(events "$REALM")
+checked=$(reconcile_step 0 core-roles -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KCADM_CONFIG" -e KEYCLOAK_RECONCILE_CHECK=true)
+expect_line "$checked" '[reconcile] Privileged roles of skycloud (1): unchanged' 'the SkyCloud role was not found'
+expect_line "$checked" '[reconcile] skycloud role admin: seeded once to /ADMIN,/UYELER/YK (granted to: /UYELER/YK)' \
+  'the dry run did not plan SkyCloud'"'"'s admin for YK alone'
+expect_line "$checked" "[reconcile] would kcadm create groups/$(group_id "$REALM" /UYELER/YK)/role-mappings/clients/$(client_uuid "$REALM" skycloud) (body)" \
+  'the dry run did not withhold the YK mapping'
+reject_line "$checked" "would kcadm create groups/$(group_id "$REALM" /ADMIN)/role-mappings/clients/$(client_uuid "$REALM" skycloud) " \
+  'the dry run planned a mapping ADMIN holds'
+expect_line "$checked" 'Core resource roles are checked; nothing was written' 'the dry run did not end as one'
+[[ $(events "$REALM") == "$before" ]] || fail 'the core-roles dry run wrote something'
+[[ -z $(skycloud_seed_mark) ]] || fail 'the dry run marked SkyCloud'"'"'s admin'
+seeded=$(reconcile_step 0 core-roles -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KCADM_CONFIG")
+expect_line "$seeded" '[reconcile] skycloud role admin: seeded once to /ADMIN,/UYELER/YK (granted to: /UYELER/YK)' \
+  'SkyCloud'"'"'s admin was not seeded to YK'
+expect_line "$seeded" 'Core resource roles are reconciled.' 'the step did not end'
+for path in /ADMIN /UYELER/YK; do
+  group_roles "$REALM" "$path" | jq -e 'index("skycloud/admin") != null and index("skycloud/skycloud:access") == null' >/dev/null \
+    || fail "$path does not hold SkyCloud's admin alone of skycloud's roles: $(group_roles "$REALM" "$path")"
+done
+[[ $(skycloud_seed_mark) =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\ /ADMIN,/UYELER/YK$ ]] \
+  || fail "SkyCloud's admin lacks its mark: $(skycloud_seed_mark)"
+[[ $(kcadm get "clients/$(client_uuid "$REALM" skycloud)/roles" -r "$REALM" | jq -c '[.[].name] | sort') == "$skycloud_roles_before" ]] \
+  || fail 'the step created or removed a skycloud role'
+[[ $(token_roles "$REALM" yk-person skycloud) == '["admin"]' ]] || fail "a YK duty member does not carry SkyCloud's admin: $(token_roles "$REALM" yk-person skycloud)"
+again=$(reconcile_step 0 core-roles -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KCADM_CONFIG")
+reject_line "$again" 'skycloud role admin: seeded once' 'the second core-roles step seeded SkyCloud again'
+expect_line "$again" '[reconcile] group mappings of the skycloud Privileged roles: unchanged' 'the second step did not leave the SkyCloud mapping alone'
+# A realm without the client skycloud (the sandbox) skips it with a WARNING.
+trap - ERR
+skipped=$(docker exec -e KEYCLOAK_ADMIN_URL=http://localhost:8080 -e KEYCLOAK_REALM=$SANDBOX \
+  -e KEYCLOAK_RECONCILE_ONLY=core-roles -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KCADM_CONFIG" -e KEYCLOAK_RECONCILE_CHECK=true \
+  "$CONTAINER" bash "$IN_CONTAINER_CONFIG/reconcile-account-center.sh" 2>&1) && status=0 || status=$?
+trap 'on_error "$LINENO"' ERR
+[[ $status == 0 ]] || { printf '%s\n' "$skipped" >&2; fail "the sandbox core-roles dry run failed (exit $status)"; }
+expect_line "$skipped" "[reconcile] WARNING: client skycloud does not exist in realm $SANDBOX; skipped SkyCloud's Privileged roles" \
+  'the missing skycloud client was not skipped'
+reject_line "$skipped" 'skycloud role admin' 'the sandbox seeded SkyCloud'
+reject_line "$checked$seeded$again" 'yk-person' 'the step printed a person'
+printf '    core-roles: SkyCloud'"'"'s admin to ADMIN and YK once (dry run first), marked, inherited by a YK sub-group, skycloud:access untouched; the sandbox without skycloud skipped with a WARNING\n'
 
 printf 'role-groups, leader-app-roles, app-assignments and default-roles contract passed.\n'

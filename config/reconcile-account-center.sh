@@ -3807,6 +3807,24 @@ FORMS_PRIVILEGED_ROLE_DEFINITIONS=(
   'skyforms:*|YK|-'
 )
 
+# SkyCloud's Privileged role (runbook §33.6), the same way as SkyMail's own roles (same list format):
+#   admin    ADMIN and YK (Yusuf, 2026-10-24: the SkyCloud, Nextcloud, administrators are /ADMIN and
+#            /UYELER/YK). An admin role, so the code area's (YETKI-MATRISI §6.2); the named people of
+#            /ROLLER/SKYCLOUD-ADMIN keep it there (config/role-groups.json). Seeded once before the
+#            reset window (ekip-yetkileri ticket 06), which takes away the admin the Java era's realm
+#            role composites gave.
+# The client skycloud is made by hand in production and is not in this repository (the sandbox has
+# none): neither it nor its role ("-") is ever created here. A realm without the client skips the
+# role with a WARNING; a client without the role says so in the "unchanged" line. skycloud:access is
+# not in the list: the top teams' Leader groups hold it (config/leader-app-roles.sh), the Privileged
+# roots do not (YETKI-MATRISI §6.2). Only the operator's core-roles step runs this: the full
+# reconciliation has nothing to make for a hand-made client, and a realm without it would warn on
+# every run.
+SKYCLOUD_CLIENT_ID=skycloud
+SKYCLOUD_PRIVILEGED_ROLE_DEFINITIONS=(
+  'admin|ADMIN YK|-'
+)
+
 # reconcile_privileged_app_roles CLIENT_ID LABEL OWNER DEFINITIONS SECTION: the Privileged roles of one
 # application client (DEFINITIONS names its list, "name|Privileged groups|description"). LABEL names
 # the roles in the messages ("<LABEL> roles not yet granted", "<LABEL> role <name>: seeded once"),
@@ -3896,7 +3914,8 @@ reconcile_privileged_app_roles() {
 # write_privileged_expectations FILE: the code area's Privileged expectations that only this file
 # holds, for config/app-assignments.sh (KEYCLOAK_RECONCILE_ONLY=app-assignments and tohum-atamalar):
 # "privileged<TAB>NAMES<TAB>client<TAB>role" per role of CORE_ROLE_DEFINITIONS (its seed groups),
-# SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS and FORMS_PRIVILEGED_ROLE_DEFINITIONS; NAMES is the space
+# SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS, FORMS_PRIVILEGED_ROLE_DEFINITIONS and
+# SKYCLOUD_PRIVILEGED_ROLE_DEFINITIONS; NAMES is the space
 # separated Privileged names (ADMIN, YK, DK), each at /<NAME> and /UYELER/<NAME>.
 write_privileged_expectations() {
   local file=$1 definition name groups
@@ -3912,6 +3931,10 @@ write_privileged_expectations() {
   for definition in "${FORMS_PRIVILEGED_ROLE_DEFINITIONS[@]}"; do
     groups=${definition#*|}
     printf 'privileged\t%s\t%s\t%s\n' "${groups%%|*}" "$FORMS_CLIENT_ID" "${definition%%|*}" >>"$file"
+  done
+  for definition in "${SKYCLOUD_PRIVILEGED_ROLE_DEFINITIONS[@]}"; do
+    groups=${definition#*|}
+    printf 'privileged\t%s\t%s\t%s\n' "${groups%%|*}" "$SKYCLOUD_CLIENT_ID" "${definition%%|*}" >>"$file"
   done
 }
 
@@ -4120,6 +4143,10 @@ reconcile_forms_privileged_roles() {
   reconcile_privileged_app_roles "$FORMS_CLIENT_ID" forms "Forms'" FORMS_PRIVILEGED_ROLE_DEFINITIONS '§28'
 }
 
+reconcile_skycloud_privileged_roles() {
+  reconcile_privileged_app_roles "$SKYCLOUD_CLIENT_ID" skycloud "SkyCloud's" SKYCLOUD_PRIVILEGED_ROLE_DEFINITIONS '§33.6'
+}
+
 # The keycloak-mailer service-account client (K5) is provisioned by the operator with
 # create-mailer-client.sh because assigning its SkyMail roles needs user permissions the
 # reconciler identity deliberately lacks. Here the client is verified only: a missing client
@@ -4289,9 +4316,11 @@ if [[ $CHECK_WRITES == true ]]; then
 fi
 if [[ $RECONCILE_ONLY == core-roles ]]; then
   reconcile_core_roles
-  # SkyMail's and Forms' Privileged roles have the same operator step (runbook §25, §28).
+  # SkyMail's, Forms' and SkyCloud's Privileged roles have the same operator step (runbook §25, §28,
+  # §33.6); SkyCloud's has this step alone (see SKYCLOUD_PRIVILEGED_ROLE_DEFINITIONS).
   reconcile_skymail_privileged_roles
   reconcile_forms_privileged_roles
+  reconcile_skycloud_privileged_roles
   if [[ $CHECK_WRITES == true ]]; then
     printf 'Core resource roles are checked; nothing was written (%s write(s) withheld).\n' "$(check_writes_withheld)"
   else
@@ -4310,7 +4339,7 @@ if [[ $RECONCILE_ONLY == default-roles ]]; then
 fi
 if [[ $RECONCILE_ONLY == app-assignments || $RECONCILE_ONLY == tohum-atamalar ]]; then
   # config/app-assignments.sh with the Privileged expectations of this file (core's resource roles,
-  # SkyMail's and Forms' Privileged roles), which only the reconciler knows.
+  # SkyMail's, Forms' and SkyCloud's Privileged roles), which only the reconciler knows.
   write_privileged_expectations "$WORK_DIR/privileged-expected.tsv"
   app_arguments=(--kcadm-config "$OPERATOR_KCADM_CONFIG" --privileged-file "$WORK_DIR/privileged-expected.tsv")
   if [[ $RECONCILE_ONLY == tohum-atamalar ]]; then

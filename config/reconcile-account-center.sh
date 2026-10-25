@@ -3288,6 +3288,18 @@ core_rename_list() {
 #                       track (core #256, docs/communication-preferences.md); SkyMail's service
 #                       account (skymail-backend) only, core refuses a person's token whatever it
 #                       carries (iletisim-servisi ticket 17).
+#   consent:record      POST /v1/consents, /v1/consents/withdrawals and /v1/consents/lookup: a
+#                       product records the contact consent (Davet onayı, ADR-0062) a person gave in
+#                       it (core docs/contact-consents.md); core also requires azp to be a client of
+#                       its CONTACT_CONSENT_SERVICE_CLIENTS (source:client pairs, unset
+#                       forms:forms,place:place,guessr:guessr). forms only: Place's client place is
+#                       its login client without a service account (config/create-place-client.sh)
+#                       and Guessr has no client; each is added here once it has a service account.
+#   consent:audience:read
+#                       GET /v1/consents/audience and POST /v1/consents/renewal-requests: who SkyMail
+#                       may send an invitation or a promotional mail to (core docs/contact-consents.md,
+#                       KVKK s6 tickets 11 and 12); SkyMail's service account (skymail-backend) only.
+# core refuses a person's token on both consent routes whatever it carries.
 # url:forms and users:read were granted to the forms service account by hand before (forms-url-role
 # wizard, Java era); they are codified here with the other two.
 # The same step grants SkyMail's client roles to core's own service account (client core), which
@@ -3323,6 +3335,8 @@ CORE_SERVICE_ROLE_DEFINITIONS=(
   "users:read|forms|shared|Reads a person's profile (GET /v1/users/{id}); held by the Forms service account."
   "audience:read|skymail-backend|services|SkyMail asks who a News send goes to (POST /v1/audiences/resolve, core docs/news-audience.md). SkyMail's service account only; never a person or a group."
   "communication-preferences:read|skymail-backend|services|SkyMail asks whom it may track (POST /internal/v1/communication-preferences/tracking:resolve, core docs/communication-preferences.md). SkyMail's service account only; never a person or a group."
+  "consent:record|forms|services|A product records, withdraws and looks up the contact consents its users gave (POST /v1/consents, /v1/consents/withdrawals, /v1/consents/lookup; core docs/contact-consents.md). Service accounts only; never a person or a group."
+  "consent:audience:read|skymail-backend|services|SkyMail reads who consented to invitations and promotional mail (GET /v1/consents/audience, POST /v1/consents/renewal-requests; core docs/contact-consents.md). SkyMail's service account only; never a person or a group."
 )
 # SkyMail's client roles that core's service account (client core) holds: core sends single mails
 # (POST /v1/mail_tasks/single: skymail:access and skymail:mails:send, core internal/mail/mail.go) and

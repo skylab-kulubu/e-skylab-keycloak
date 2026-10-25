@@ -3,7 +3,8 @@ name: CI
 # Two sizes of the same workflow (job "scope (full|fast)" says which one a run is; mode decides):
 # - full: every job below. Pushes to main, the nightly schedule, a manual run (workflow_dispatch,
 #   also on a PR branch: gh workflow run ci.yml --ref <branch>), pull requests into main labelled
-#   full-ci (the label is read when the PR is opened or pushed to), and pull requests into and
+#   full-ci (the label is read when the PR is opened or pushed to; adding it starts a manual run of
+#   the branch at once, full-ci.yml), and pull requests into and
 #   pushes to production whose tree no fully green full run has tested yet (a hotfix).
 # - fast: pull requests into main, and pull requests into and pushes to production whose tree a
 #   fully green full push, schedule or workflow_dispatch run already tested (the release PR and
@@ -143,6 +144,10 @@ jobs:
             fi
             if [[ -s $later ]]; then
               cat "$later"
+              # An annotation, so the pull request's checks page shows it too.
+              while IFS= read -r line; do
+                echo "::warning title=Long jobs left to main's push run::$line"
+              done <"$later"
               { echo "### Long jobs left to main's push run"; echo; cat "$later"; } >> "$GITHUB_STEP_SUMMARY"
             fi
           fi

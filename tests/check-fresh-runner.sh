@@ -303,6 +303,27 @@ def assert_ci_branches(workflow)
   end
 end
 
+# ci.yml never runs on "labeled" (another label's run would leave a skipped gate, which GitHub
+# counts as passed, over a failed gate of the same commit); full-ci.yml starts a manual, always
+# full ci.yml run when the label is full-ci, and only then.
+def assert_full_ci_label(ci, label_workflow)
+  ci_triggers = (YAML.load_file(ci, aliases: true).then { |d| d[true] || d["on"] })
+  pull_request = ci_triggers.fetch("pull_request")
+  unless pull_request.nil? || !Array(pull_request.is_a?(Hash) ? pull_request["types"] : nil).include?("labeled")
+    abort "#{ci} must not run on labeled pull requests"
+  end
+  document = YAML.load_file(label_workflow, aliases: true)
+  triggers = document[true] || document["on"]
+  unless triggers == { "pull_request" => { "types" => ["labeled"] } }
+    abort "#{label_workflow} must run only on labeled pull requests"
+  end
+  job = document.fetch("jobs").fetch("dispatch")
+  unless document.fetch("jobs").size == 1 && job.fetch("if") == "github.event.label.name == 'full-ci'" &&
+      job.fetch("steps").map { |step| step.fetch("run", "") }.join("\n").include?('gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$HEAD_REF"')
+    abort "#{label_workflow} must start a manual ci.yml run only for the full-ci label"
+  end
+end
+
 # The CI matrix runs exactly the harness's groups, each with a timeout, and one job named
 # integration passes only when all of them do. release.yml reads the same list from the harness
 # (assert_release_candidate_flow).
@@ -820,6 +841,7 @@ end
 
 assert_finder(File.join(root, "tests/find-green-full-ci-run.sh"))
 assert_ci_branches(File.join(root, ".github/workflows/ci.yml"))
+assert_full_ci_label(File.join(root, ".github/workflows/ci.yml"), File.join(root, ".github/workflows/full-ci.yml"))
 assert_ci_scope(File.join(root, ".github/workflows/ci.yml"))
 assert_integration_groups(File.join(root, ".github/workflows/ci.yml"), File.join(root, "tests/run-integration.sh"))
 assert_release_candidate_flow(File.join(root, ".github/workflows/release.yml"))

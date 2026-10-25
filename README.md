@@ -1076,14 +1076,18 @@ hızlı kümenin kısa işleri ve PR süresine (15 dk) sığan tam takım işler
 `sandbox-admin-local-client`, `after-sign-up-native`) içindir. 15 dakikayı aşan tam takım işleri
 (`PR_DEFERRED`: `integration (<grup>)` grupları, `role-groups`, `site-clients`, `login-clients`,
 `skyapp-cms-editor`, `ytu-first-login`, `inscribed-cms-roles`) PR etkilese de PR'da koşmaz; adları
-`scope` günlüğüne ve koşu özetine yazılır, `main` push'unun tam koşusunda koşarlar (yayından önce).
+`scope` günlüğüne, koşu özetine ve PR'ın kontrol sayfasına uyarı (`::warning::`) olarak yazılır,
+`main` push'unun tam koşusunda koşarlar (yayından önce).
 PR'da da koşsunlar istenirse PR'a `full-ci` etiketi konur. Hiçbir iş akışının ulaşmadığı bir
 `tests/` ya da `config/` dosyası PR'ın koşabileceği bütün işleri koşturur; izlenen her dosya ya
 bir işe ulaşır ya da `LOCAL_ONLY` listesindedir (`check-fresh-runner.sh` denetler). Hızlı
 `production` koşusu (terfi) tam takım işi koşturmaz: ağacı zaten tam test edildi. Bu koşuların
 makbuzları yayın kanıtı sayılmaz (bulucu yalnız tam push, gece ve elle koşularına bakar).
 *Tam takım* `main` push'unda, her gece (01:23 UTC), elle (`gh workflow run ci.yml --ref <dal>`)
-ve `full-ci` etiketli PR'larda (etiket PR açılırken/push'ta okunur) koşar. `production`'a açılan
+ve `full-ci` etiketli PR'larda (etiket PR açılırken/push'ta okunur; etiket eklenince
+`full-ci.yml` dalın başında hemen elle bir tam koşu başlatır) koşar. `ci.yml` `labeled` olayında
+koşmaz: başka bir etiketin koşusu atlanmış (`skipped`) bir `gate` bırakırdı, GitHub atlanan zorunlu
+kontrolü geçmiş sayar ve aynı commit'in kırmızı `gate`'ini örterdi. `production`'a açılan
 PR'lar ve `production` push'u, ağaçlarını tamamen yeşil bir tam koşu zaten test ettiyse (yayın
 PR'ı ve yayın push'u, `main` push koşusundan sonra) hızlı kümeyi koşar; etmediyse (hotfix) tam
 takımı. Kanıtı `tests/find-green-full-ci-run.sh` bulur: yalnız push, gece ya da elle koşuları

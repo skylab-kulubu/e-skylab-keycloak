@@ -1,4 +1,3 @@
-com.skylab.authenticator.Oauth2UserCreatorFactory
 com.skylab.passkey.PasskeyOfferAuthenticatorFactory
 com.skylab.passkey.SkyAfterLoginAuthenticatorFactory
 com.skylab.authenticator.SkyUsernamePasswordFormFactory

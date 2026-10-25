@@ -655,10 +655,14 @@ kullanıcılar, kompozit roller, rol kapsamları) bir kez verilir; eski rol sili
 
 core'un servis rollerini (`media:attach`: ADR-0052, Forms'un core'a Media bağlaması ve anonim form
 yüklemesi; `ticket:forms`: Forms'un cevap bildirimi, core `docs/form-response-tickets.md`; `url:forms`:
-forma bağlı kısa linkler; `users:read`: kişi profili) uzlaştırıcı her koşuda `core` istemcisinde var
-eder; `forms`'un `fullScopeAllowed`'ı kapalıysa rolleri onun kapsam eşlemesine ekler ve `aud: core`'u
-veren varsayılan `roles` kapsamını doğrular, yoksa ekler (ikinci audience mapper eklenmez). Roller
-`service-account-forms`'ta bulunur; servis hesabına rol vermek kullanıcı yetkisi istediği için bunu
+forma bağlı kısa linkler; `users:read`: kişi profili; `consent:record`: rıza kaydı, core
+`docs/contact-consents.md`, runbook §20.2; Place'in servis istemcisi `place-service`'te de, yalnız
+o rol) uzlaştırıcı her koşuda `core` istemcisinde var eder;
+`forms`'un `fullScopeAllowed`'ı kapalıysa rolleri onun kapsam eşlemesine ekler ve `aud: core`'u
+veren varsayılan `roles` kapsamını doğrular, yoksa ekler (ikinci audience mapper eklenmez).
+`place-service`'i (gizli, yalnız client credentials, `fullScopeAllowed=false`, redirect yok; sırrı
+Keycloak üretir, uzlaştırıcı okumaz) uzlaştırıcı oluşturur; Place'in giriş istemcisi `place` dar
+kalır (runbook §20.2). Roller `service-account-forms`'ta bulunur; servis hesabına rol vermek kullanıcı yetkisi istediği için bunu
 operatör yapar (`KEYCLOAK_RECONCILE_KCADM_CONFIG` + `KEYCLOAK_RECONCILE_ONLY=service-roles`; eski adı
 `media-attach` de çalışır). `KEYCLOAK_RECONCILE_CHECK=true` aynı adımı kuru koşar: yalnız eksikleri
 `would …` diye yazar, hiçbir şey yazmaz. Adım önce her şeyi okur, okuma hatasında hiçbir şey vermez
@@ -672,8 +676,8 @@ ile giriş yaptırır; core ürünü `client_id == azp`'den okur): uzlaştırıc
 operatör adımı açık olanları kapatır (kuru koşuda `would set …`). `media:attach`'ın istemci listesi
 core'un `MEDIA_SERVICE_CLIENTS`'ıyla aynı tutulur (runbook §20).
 Aynı adım SkyMail'in servis hesabına (`skymail-backend`) core'un `audience:read` rolünü (core #242,
-haber ve duyuru kitlesi) ve `communication-preferences:read` rolünü (core #256, kimin takip
-edilebileceği) ile `realm-management`'ın `view-users` ve `view-clients` rollerini (Admin REST'ten kişi okuma; production'da 2026-09-23'ten beri elle verilmişti), core'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`,
+haber ve duyuru kitlesi), `communication-preferences:read` rolünü (core #256, kimin takip
+edilebileceği) ve `consent:audience:read` rolünü (rıza kaydının davet ve tanıtım kitlesi, runbook §20.2) ile `realm-management`'ın `view-users` ve `view-clients` rollerini (Admin REST'ten kişi okuma; production'da 2026-09-23'ten beri elle verilmişti), core'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`,
 `skymail:lists:read`, `skymail:lists:write` ve `skymail:tracking:withdraw` (skymail-backend #75, takibi
 geri alma; yalnız `service-account-core`) rollerini, Template seed'in servis hesabına
 (`skymail-seed`) `skymail:templates:system`'ı (yalnız o bir şablonu sistem şablonu yapar ya da

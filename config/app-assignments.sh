@@ -28,8 +28,8 @@
 # person assignments); PROBLEM lines for an admin, unclassified or realm role in the panel area or on a
 # person, and for an app role on a target that reaches every member. The code area's expectations:
 # the reconciler's Privileged roles (--privileged-file, written by its operator step
-# KEYCLOAK_RECONCILE_ONLY=app-assignments: core's resource roles, SkyMail's and Forms' Privileged
-# roles), config/role-groups.json, config/leader-app-roles.sh --print-expected,
+# KEYCLOAK_RECONCILE_ONLY=app-assignments: core's resource roles, SkyMail's, Forms' and SkyCloud's
+# Privileged roles), config/role-groups.json, config/leader-app-roles.sh --print-expected,
 # config/site-editor-grants.sh --print-expected and DK's temporary Forms roles. Without
 # --privileged-file the Privileged roots' own expectations are unknown (a NOTE). The service
 # accounts are counted only (the service-roles step checks them), the default role and the identity

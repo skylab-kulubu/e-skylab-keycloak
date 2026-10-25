@@ -60,7 +60,14 @@
 #     audit's K4 allows it on both, app-assignments --check expects it there (and skycloud:access
 #     nowhere on them), and the core-roles step seeds it once (dry run first, a group that holds it
 #     is left alone), marks it, creates no skycloud role; a YK sub-group's member carries it; a realm
-#     without the client skycloud is skipped with a WARNING.
+#     without the client skycloud is skipped with a WARNING;
+#   - the admin panel's inscribed roles (ADR-0056: News is written in the panel; grup-yonetimi GY1: DK
+#     reads and does not write): app-assignments --check expects the panel client's content:read on
+#     ADMIN, YK and DK and its content:write on ADMIN and YK, never DK's content:write; the core-roles
+#     step seeds them once (dry run first, a group that holds a role is left alone), marks them,
+#     creates no role of the panel client; a YK member's token carries both, a DK member's
+#     content:read alone; a second run seeds nothing; in the sandbox the panel client is superadmin,
+#     and a panel client without the roles is a "not in the realm" line, nothing seeded.
 # Requirements on the host: docker, curl, jq. ROLE_GROUPS_TEST_PORT (default 18096),
 # ROLE_GROUPS_TEST_CONTAINER (default role-groups-test-<pid>).
 # shellcheck disable=SC2016  # jq programs name jq variables
@@ -630,6 +637,19 @@ kcadm create clients -r "$REALM" -s clientId=frontend-arge -s publicClient=true 
 kcadm create "clients/$(client_uuid "$REALM" frontend-arge)/roles" -r "$REALM" -s name=cms:access >/dev/null
 grant_group /ADMIN frontend-arge cms:access
 grant_group /UYELER/ARGE/AIRLAB/LIDERLER frontend-arge cms:access
+# The admin panel's client (admin in e-skylab) and its inscribed roles (config/inscribed-cms-roles.sh
+# makes them), as production holds them since 2026-09-28 (runbook "Admin panelinden verilecek roller",
+# then dk-read-only.sh): ADMIN reads and writes, DK reads; YK not yet. DK also holds content:write here,
+# the shape before dk-read-only.sh, which the code does not expect. /UYELER/DK for this stage only.
+kcadm create clients -r "$REALM" -s clientId=admin -s publicClient=false >/dev/null
+for role in content:read content:write; do
+  kcadm create "clients/$(client_uuid "$REALM" admin)/roles" -r "$REALM" -s "name=$role" >/dev/null
+done
+create_group "$REALM" /UYELER DK
+grant_group /ADMIN admin content:read
+grant_group /ADMIN admin content:write
+grant_group /UYELER/DK admin content:read
+grant_group /UYELER/DK admin content:write
 before=$(events "$REALM")
 output=$(reconcile_step 2 app-assignments)
 expect_line "$output" 'KEYCLOAK_RECONCILE_ONLY=app-assignments is an operator step' 'the check ran without an operator session'
@@ -660,6 +680,14 @@ expect_line "$sorted" '[app-assignments] KOD|/ROLLER/SKYCLOUD-ADMIN|skycloud|adm
 reject_line "$sorted" 'KOD|/ADMIN|skycloud|skycloud:access' 'ADMIN was expected to hold skycloud:access (the Leader groups do)'
 reject_line "$sorted" 'KOD|/UYELER/YK|skycloud|skycloud:access' 'YK was expected to hold skycloud:access (the Leader groups do)'
 reject_line "$sorted" 'PROBLEM: skycloud/admin' 'SkyCloud'"'"'s admin on ADMIN was a PROBLEM'
+# The admin panel's inscribed roles: News is written in the panel (ADR-0056), DK reads (GY1).
+expect_line "$sorted" '[app-assignments] KOD|/ADMIN|admin|content:read|evet|var' 'the reconciler does not expect the panel'"'"'s content:read on ADMIN'
+expect_line "$sorted" '[app-assignments] KOD|/ADMIN|admin|content:write|evet|var' 'the reconciler does not expect the panel'"'"'s content:write on ADMIN'
+expect_line "$sorted" '[app-assignments] KOD|/UYELER/YK|admin|content:read|evet|yok' 'the missing panel content:read of YK is not reported'
+expect_line "$sorted" '[app-assignments] KOD|/UYELER/YK|admin|content:write|evet|yok' 'the missing panel content:write of YK is not reported'
+expect_line "$sorted" '[app-assignments] KOD|/UYELER/DK|admin|content:read|evet|var' 'the reconciler does not expect the panel'"'"'s content:read on DK'
+expect_line "$sorted" '[app-assignments] KOD|/UYELER/DK|admin|content:write|hayır|var' 'DK'"'"'s panel content:write was expected (DK reads, GY1)'
+reject_line "$sorted" 'PROBLEM: admin/content' 'the panel'"'"'s inscribed roles on a Privileged root were a PROBLEM'
 expect_line "$sorted" '[app-assignments] KOD|/ADMIN|frontend-arge|cms:access|karar-bekliyor|var' 'ADMIN'"'"'s frontend-arge role is not pending'
 expect_line "$sorted" '[app-assignments] KOD|/UYELER/ARGE/AIRLAB/LIDERLER|frontend-arge|cms:access|karar-bekliyor|var' 'the Leader group'"'"'s frontend-arge role is not pending'
 reject_line "$sorted" 'PROBLEM: frontend-arge' 'a pending frontend-arge role was a PROBLEM'
@@ -677,6 +705,9 @@ kcadm delete "groups/$(group_id "$REALM" /UYELER/ARGE/AIRLAB)/role-mappings/clie
 kcadm delete "groups/$(group_id "$REALM" /UYELER/ARGE)/role-mappings/clients/$(client_uuid "$REALM" skymail)" -r "$REALM" \
   -b "$(role_body "$REALM" skymail skymail:access)" >/dev/null
 kcadm delete "clients/$(client_uuid "$REALM" frontend-arge)" -r "$REALM" >/dev/null
+# The panel's client and /UYELER/DK go: the core-roles stage at the end makes its own shape.
+kcadm delete "clients/$(client_uuid "$REALM" admin)" -r "$REALM" >/dev/null
+kcadm delete "groups/$(group_id "$REALM" /UYELER/DK)" -r "$REALM" >/dev/null
 printf '    --check: panel assignments counted, code area compared (expected, missing, not in code), PROBLEMs named, nothing written, nobody named\n'
 
 # ---------------------------------------------------------------------------------------------------
@@ -903,5 +934,106 @@ expect_line "$skipped" "[reconcile] WARNING: client skycloud does not exist in r
 reject_line "$skipped" 'skycloud role admin' 'the sandbox seeded SkyCloud'
 reject_line "$checked$seeded$again" 'yk-person' 'the step printed a person'
 printf '    core-roles: SkyCloud'"'"'s admin to ADMIN and YK once (dry run first), marked, inherited by a YK sub-group, skycloud:access untouched; the sandbox without skycloud skipped with a WARNING\n'
+
+# ---------------------------------------------------------------------------------------------------
+CURRENT_STAGE='core-roles: the admin panel'"'"'s inscribed roles seeded once to ADMIN, YK and DK'
+# The panel's client (admin; superadmin in the sandbox) and its roles content:read and content:write are
+# made elsewhere (production's client by hand, the roles by config/inscribed-cms-roles.sh): the step
+# never creates either. It grants content:read once to ADMIN, YK and DK and content:write once to ADMIN
+# and YK (DK reads, GY1), leaves a group that holds a role alone and marks both roles. Production's shape
+# before the step: ADMIN holds both (the panel's grants of 2026-09-28), YK content:read alone, DK none.
+kcadm create clients -r "$REALM" -s clientId=admin -s publicClient=false >/dev/null
+for role in content:read content:write; do
+  kcadm create "clients/$(client_uuid "$REALM" admin)/roles" -r "$REALM" -s "name=$role" >/dev/null
+done
+create_group "$REALM" /UYELER DK
+grant_group /ADMIN admin content:read
+grant_group /ADMIN admin content:write
+grant_group /UYELER/YK admin content:read
+make_person "$REALM" dk-person /UYELER/DK
+panel_uuid=$(client_uuid "$REALM" admin)
+panel_seed_marks() {
+  kcadm get "clients/$panel_uuid/roles" -r "$REALM" -q briefRepresentation=false \
+    | jq -c 'map({key: .name, value: ((.attributes // {})["skylab.seeded-group-mappings"][0] // "")}) | from_entries'
+}
+panel_roles_before=$(kcadm get "clients/$panel_uuid/roles" -r "$REALM" | jq -c '[.[].name] | sort')
+before=$(events "$REALM")
+checked=$(reconcile_step 0 core-roles -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KCADM_CONFIG" -e KEYCLOAK_RECONCILE_CHECK=true)
+expect_line "$checked" '[reconcile] Privileged roles of admin (2): unchanged' 'the panel'"'"'s roles were not found'
+expect_line "$checked" '[reconcile] admin role content:read: seeded once to /ADMIN,/UYELER/YK,/UYELER/DK (granted to: /UYELER/DK)' \
+  'the dry run did not plan the panel'"'"'s content:read for DK alone'
+expect_line "$checked" '[reconcile] admin role content:write: seeded once to /ADMIN,/UYELER/YK (granted to: /UYELER/YK)' \
+  'the dry run did not plan the panel'"'"'s content:write for YK alone'
+expect_line "$checked" "[reconcile] would kcadm create groups/$(group_id "$REALM" /UYELER/DK)/role-mappings/clients/$panel_uuid (body)" \
+  'the dry run did not withhold the DK mapping'
+expect_line "$checked" "[reconcile] would kcadm create groups/$(group_id "$REALM" /UYELER/YK)/role-mappings/clients/$panel_uuid (body)" \
+  'the dry run did not withhold the YK mapping'
+reject_line "$checked" "would kcadm create groups/$(group_id "$REALM" /ADMIN)/role-mappings/clients/$panel_uuid " \
+  'the dry run planned a mapping ADMIN holds'
+[[ $(grep -c 'would kcadm update roles-by-id/.* (-s attributes."skylab.seeded-group-mappings"' <<<"$checked" || true) -ge 2 ]] \
+  || { printf '%s\n' "$checked" >&2; fail 'the dry run did not withhold the two marks'; }
+expect_line "$checked" 'Core resource roles are checked; nothing was written' 'the dry run did not end as one'
+[[ $(events "$REALM") == "$before" ]] || fail 'the core-roles dry run wrote something'
+json_marks=$(panel_seed_marks)
+jq -e '.["content:read"] == "" and .["content:write"] == ""' <<<"$json_marks" >/dev/null \
+  || fail "the dry run marked a panel role: $json_marks"
+seeded=$(reconcile_step 0 core-roles -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KCADM_CONFIG")
+expect_line "$seeded" '[reconcile] admin role content:read: seeded once to /ADMIN,/UYELER/YK,/UYELER/DK (granted to: /UYELER/DK)' \
+  'the panel'"'"'s content:read was not seeded to DK'
+expect_line "$seeded" '[reconcile] admin role content:write: seeded once to /ADMIN,/UYELER/YK (granted to: /UYELER/YK)' \
+  'the panel'"'"'s content:write was not seeded to YK'
+expect_line "$seeded" 'Core resource roles are reconciled.' 'the step did not end'
+for path in /ADMIN /UYELER/YK; do
+  group_roles "$REALM" "$path" | jq -e '(map(select(startswith("admin/")))) == ["admin/content:read", "admin/content:write"]' >/dev/null \
+    || fail "$path does not hold exactly the panel's content:read and content:write: $(group_roles "$REALM" "$path")"
+done
+group_roles "$REALM" /UYELER/DK | jq -e '(map(select(startswith("admin/")))) == ["admin/content:read"]' >/dev/null \
+  || fail "/UYELER/DK does not hold exactly the panel's content:read: $(group_roles "$REALM" /UYELER/DK)"
+json_marks=$(panel_seed_marks)
+jq -e '(.["content:read"] | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z /ADMIN,/UYELER/YK,/UYELER/DK$"))
+  and (.["content:write"] | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z /ADMIN,/UYELER/YK$"))' <<<"$json_marks" >/dev/null \
+  || fail "the panel's roles lack their marks: $json_marks"
+[[ $(kcadm get "clients/$panel_uuid/roles" -r "$REALM" | jq -c '[.[].name] | sort') == "$panel_roles_before" ]] \
+  || fail 'the step created or removed a role of the panel client'
+[[ $(token_roles "$REALM" yk-person admin) == '["content:read","content:write"]' ]] \
+  || fail "a YK duty member does not carry the panel's content:read and content:write: $(token_roles "$REALM" yk-person admin)"
+[[ $(token_roles "$REALM" dk-person admin) == '["content:read"]' ]] \
+  || fail "a DK member does not carry the panel's content:read alone: $(token_roles "$REALM" dk-person admin)"
+again=$(reconcile_step 0 core-roles -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KCADM_CONFIG")
+reject_line "$again" '[reconcile] admin role content:' 'the second core-roles step seeded the panel'"'"'s roles again'
+expect_line "$again" '[reconcile] group mappings of the admin Privileged roles: unchanged' 'the second step did not leave the panel mappings alone'
+# The sandbox's panel client is superadmin: without its roles a "not in the realm" line and no seed;
+# with them the dry run seeds superadmin's roles (the sandbox fixture has no DK: a WARNING), never admin's.
+kcadm create clients -r "$SANDBOX" -s clientId=superadmin -s publicClient=false >/dev/null
+sandbox_core_roles() {
+  local output status
+  trap - ERR
+  output=$(docker exec -e KEYCLOAK_ADMIN_URL=http://localhost:8080 -e KEYCLOAK_REALM=$SANDBOX \
+    -e KEYCLOAK_RECONCILE_ONLY=core-roles -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KCADM_CONFIG" -e KEYCLOAK_RECONCILE_CHECK=true \
+    "$CONTAINER" bash "$IN_CONTAINER_CONFIG/reconcile-account-center.sh" 2>&1) && status=0 || status=$?
+  trap 'on_error "$LINENO"' ERR
+  [[ $status == 0 ]] || { printf '%s\n' "$output" >&2; fail "the sandbox core-roles dry run failed (exit $status)"; }
+  printf '%s\n' "$output"
+}
+skipped=$(sandbox_core_roles)
+expect_line "$skipped" '[reconcile] Privileged roles of superadmin (2): unchanged; not in the realm, the application makes them, seeded once they exist: content:read content:write' \
+  'the sandbox panel client without its roles was not reported'
+reject_line "$skipped" 'role content:' 'the sandbox seeded a panel role the realm lacks'
+for role in content:read content:write; do
+  kcadm create "clients/$(client_uuid "$SANDBOX" superadmin)/roles" -r "$SANDBOX" -s "name=$role" >/dev/null
+done
+sandbox_before=$(events "$SANDBOX")
+planned=$(sandbox_core_roles)
+expect_line "$planned" '[reconcile] superadmin role content:read: seeded once to /ADMIN,/UYELER/YK (granted to: /ADMIN, /UYELER/YK)' \
+  'the sandbox did not plan superadmin'"'"'s content:read'
+expect_line "$planned" '[reconcile] superadmin role content:write: seeded once to /ADMIN,/UYELER/YK (granted to: /ADMIN, /UYELER/YK)' \
+  'the sandbox did not plan superadmin'"'"'s content:write'
+expect_line "$planned" "[reconcile] WARNING: no Privileged group DK (neither /DK nor /UYELER/DK) in realm $SANDBOX; it gets none of the superadmin Privileged roles" \
+  'the sandbox without DK did not say so'
+reject_line "$planned" '[reconcile] admin role content:' 'the sandbox seeded the production panel client'
+[[ $(events "$SANDBOX") == "$sandbox_before" ]] || fail 'the sandbox dry run wrote something'
+reject_line "$checked$seeded$again" 'dk-person' 'the step printed a person'
+reject_line "$checked$seeded$again" 'yk-person' 'the step printed a person'
+printf '    core-roles: the panel'"'"'s content:read to ADMIN, YK and DK and content:write to ADMIN and YK once (dry run first), marked, in the tokens; the sandbox seeds superadmin'"'"'s\n'
 
 printf 'role-groups, leader-app-roles, app-assignments and default-roles contract passed.\n'

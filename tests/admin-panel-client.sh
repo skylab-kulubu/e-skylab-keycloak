@@ -401,8 +401,9 @@ stage_admin_panel_tokens() {
 # reads, for the three kinds of people the panel serves, with their roles coming from groups as in
 # production (the SKY LAB admin panel's grants):
 #   - a Privileged person in /UYELER/YK: core's resource roles as the operator seeded them (the
-#     core-roles stage ran before), the panel's content:read and content:write (inscribed) and the
-#     forms role skyforms:* that forms-backend checks (seeded to YK by the core-roles step, S4);
+#     core-roles stage ran before), the panel's content:read and content:write (inscribed; seeded to
+#     YK by the core-roles step, runbook §33.7) and the forms role skyforms:* that forms-backend
+#     checks (seeded to YK by the core-roles step, S4);
 #   - a team Leader in the team group and its LIDERLER subgroup: content:read and content:write for
 #     the team page; core and inscribed decide from the group paths;
 #   - a plain member of the team: no role of any API, only the group path.
@@ -436,8 +437,10 @@ stage_admin_panel_exchange_claims() {
     parent="$parent/$name"
   done
   [[ $parent == "$AP_LEADERS_PATH" ]] || fail "the team groups are not $AP_LEADERS_PATH"
-  ap_grant_group /UYELER/YK "$AP_CLIENT" content:read content:write
-  # /UYELER/YK holds skyforms:* since the core-roles step above (no hand grant).
+  # /UYELER/YK holds skyforms:* and the panel's content:read and content:write since the core-roles
+  # step (no hand grant): the panel's inscribed roles are Privileged roles too (runbook §33.7).
+  json_assert "$(kcadm get "groups/$(ap_group_id /UYELER/YK)/role-mappings/clients/$AP_UUID" -r "$V2_REALM" -c | jq -c '[.[].name] | sort')" \
+    '. == ["content:read", "content:write"]' "the core-roles step did not seed the panel's content:read and content:write to /UYELER/YK"
   ap_grant_group "$AP_LEADERS_PATH" "$AP_CLIENT" content:read content:write
   privileged=$(ap_person "$AP_PRIVILEGED_USER" /UYELER/YK)
   leader=$(ap_person "$AP_LEADER_USER" "$AP_TEAM_PATH" "$AP_LEADERS_PATH")

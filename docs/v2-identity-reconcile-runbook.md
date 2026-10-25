@@ -896,7 +896,8 @@ ister, §6). Realm yeniden kurulursa betik yeniden koşulur.
 | `frontend-main` | `client:admin` | `/ADMIN`, `/UYELER/YK` |
 | `frontend-arge` | `cms:access` | `/ADMIN`, `/UYELER/YK`, yalnız en üst takımların (`/UYELER/<alan>/<ekip>`) `LIDERLER` ve `KOORDINATORLER` grupları |
 | `frontend-arge` | `client:admin` | `/ADMIN`, `/UYELER/YK` |
-| `admin` | `content:read`, `content:write` | `/ADMIN`, `/UYELER/YK`, `/UYELER/DK` |
+| `admin` | `content:read` | `/ADMIN`, `/UYELER/YK`, `/UYELER/DK` (`core-roles` adımı bir kez tohumlar, §33.7) |
+| `admin` | `content:write` | `/ADMIN`, `/UYELER/YK` (DK okur, yazmaz: GY1; `core-roles` adımı bir kez tohumlar, §33.7) |
 
 - Hiçbir CMS rolü `/UYELER`'e, bir kişiye, varsayılan rollere ya da varsayılan gruplara
   verilmez. `client:admin` yalnız `ADMIN` ve `YK`'dadır (Yusuf, 2026-10-12): liderlere ve `DK`'ya
@@ -3994,7 +3995,7 @@ role-assignable gruplara ataması yapılandırmadır; uygulamanın hangi gruba y
 
 | Alan | Ne | Kim değiştirir | Uzlaştırıcı |
 | --- | --- | --- | --- |
-| **Kod** | rol tanımları ve "atama gerekli" (`config/app-assignments.json`); Privileged kökler (`/ADMIN`, `/YK`, `/DK`, `/UYELER/ADMIN`, `/UYELER/YK`, `/UYELER/DK` ve altları) üzerindeki her eşleme; `/ROLLER` ve yaprakları; yönetici ya da sınıfsız rolün ve realm rolünün her eşlemesi (adlı istisnalar: en üst ekip Leader gruplarında `skycloud:access`, site editörlerinin `cms:access`'i); servis hesapları; varsayılan rol | PR + Keycloak yayını | kurar (Privileged kökler bir kez, §19/§25/§28), farkı raporlar, kaldırmaz |
+| **Kod** | rol tanımları ve "atama gerekli" (`config/app-assignments.json`); Privileged kökler (`/ADMIN`, `/YK`, `/DK`, `/UYELER/ADMIN`, `/UYELER/YK`, `/UYELER/DK` ve altları) üzerindeki her eşleme; `/ROLLER` ve yaprakları; yönetici ya da sınıfsız rolün ve realm rolünün her eşlemesi (adlı istisnalar: en üst ekip Leader gruplarında `skycloud:access`, site editörlerinin `cms:access`'i); servis hesapları; varsayılan rol | PR + Keycloak yayını | kurar (Privileged kökler bir kez, §19/§25/§28/§33.6/§33.7), farkı raporlar, kaldırmaz |
 | **Panel** | uygulama rolünün (`config/app-assignments.json`, tam olarak core'un `AppRoles`'u) bir ekip grubuna (en üst ekip, alt ekip, Leader grubu) ya da kişiye ataması | Yusuf ve YK, core'un Uygulamalar sayfasından (bilet 15) | **dokunmaz**, sapma saymaz |
 
 `/UYELER`, alan grupları ve varsayılan grubu kapsayan gruplar panel hedefi olamaz (herkese gider:
@@ -4003,7 +4004,7 @@ varsayılan rolün işi).
 ### 33.1 Denetim: `KEYCLOAK_RECONCILE_ONLY=app-assignments`
 
 Operatör adımı, yalnız okur. `config/app-assignments.sh --check`'i uzlaştırıcının Privileged
-beklentileriyle (§19, §25, §28 listeleri) koşar; öbür beklentiler `config/role-groups.json`,
+beklentileriyle (§19, §25, §28, §33.6, §33.7 listeleri) koşar; öbür beklentiler `config/role-groups.json`,
 `config/leader-app-roles.sh --print-expected`, `config/site-editor-grants.sh --print-expected` ve DK'nın
 geçici Forms yönetici rolleridir. Her rolün doğrudan sahiplerini okur (rol başına iki okuma; production'da
 dakikalar). Önek `[app-assignments] `'den sonra makine okur satırlar:
@@ -4118,3 +4119,48 @@ Kuru koşunun satırları (production, iki kök de rolü taşımıyorsa):
 Kökün biri rolü zaten taşıyorsa onun eşleme satırı çıkmaz ve `granted to:` yalnız öbürünü sayar. İkinci
 koşu: `group mappings of the skycloud Privileged roles: unchanged`. Harness `tests/role-groups.sh`
 (kuru → uygula → ikinci koşu tohumsuz, YK alt grubundaki kişinin token'ında `admin`, sandbox atlanır).
+
+### 33.7 Yönetim panelinin inscribed rolleri: `content:read` ve `content:write`
+
+Yönetim panelinin Duyurular sayfası (core-frontend `src/lib/api/cms.ts`) inscribed'a panelin kendi
+istemcisinin rolleriyle yazar: production'da `admin`, sandbox'ta `superadmin` (`ADMIN_PANEL_CLIENT_ID`).
+ADR-0056'ya göre News'i Privileged kökler yazar; DK okur, yazmaz (grup-yonetimi GY1). Kod alanı
+beklentisi:
+
+| Rol | Kökler |
+| --- | --- |
+| `content:read` | `ADMIN`, `YK`, `DK` |
+| `content:write` | `ADMIN`, `YK` |
+
+Bu eşlemeler production'da 2026-09-28'den beri vardır (panelden elle, aşağıdaki "Admin panelinden
+verilecek roller" tablosu; DK'nın `content:write`'ını `dk-read-only.sh` `content:read`'e çevirdi). Kod
+onları beklemediği için `app-assignments` denetimi `hayır|var` sayıyordu ve sıfırlama penceresi
+(ekip-yetkileri bilet 06 c2) kaldıracaktı; ADMIN ve YK duyuru yazamaz, DK okuyamazdı. Artık
+`app-assignments` (§33.1) bunları `evet` sayar; DK'daki `content:write` `hayır` kalır.
+
+`core-roles` operatör adımı iki rolü §33.6'daki SkyCloud rolü gibi köklere **bir kez** verir ve işaretler
+(`skylab.seeded-group-mappings`); rolü zaten taşıyan köke eşleme yazmaz. Sonraki değişiklik panelden ya
+da konsoldan kalır.
+
+- Roller `config/inscribed-cms-roles.sh`'ındır (§12): burada oluşturulmaz. Rol yoksa `Privileged roles of
+  admin (2): unchanged; not in the realm, the application makes them, seeded once they exist: …`,
+  istemci yoksa `WARNING: client admin does not exist in realm …; skipped the admin panel's Privileged
+  roles`.
+- Yalnız `core-roles` adımında koşar, tam uzlaştırmada yoktur (rolleri o yapmıyor; tohum operatör
+  oturumu ister).
+- Liderler gruplarında panelin `content:*`'ı kod beklentisi değildir.
+
+Production'da kökler eşlemeleri zaten taşıyorsa kuru koşunun satırları (kimlikler yerine açıklama):
+
+```text
+[reconcile] Privileged roles of admin (2): unchanged
+[reconcile] would kcadm update roles-by-id/<content:read kimliği> (-s attributes."skylab.seeded-group-mappings"=["<UTC> /ADMIN,/UYELER/YK,/UYELER/DK"])
+[reconcile] admin role content:read: seeded once to /ADMIN,/UYELER/YK,/UYELER/DK (granted to: none (every group already held it))
+[reconcile] would kcadm update roles-by-id/<content:write kimliği> (-s attributes."skylab.seeded-group-mappings"=["<UTC> /ADMIN,/UYELER/YK"])
+[reconcile] admin role content:write: seeded once to /ADMIN,/UYELER/YK (granted to: none (every group already held it))
+```
+
+Bir kök rolü taşımıyorsa önce onun `would kcadm create groups/<kök kimliği>/role-mappings/clients/<admin
+kimliği> (body)` satırı çıkar ve `granted to:` onu sayar. İkinci koşu: `group mappings of the admin
+Privileged roles: unchanged`. Harness `tests/role-groups.sh` (denetimde `evet`/`hayır`, kuru → uygula →
+ikinci koşu tohumsuz, YK ve DK üyesinin token'ı, sandbox'ta `superadmin`).

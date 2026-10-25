@@ -2503,7 +2503,9 @@ reconcile_skyapp_audience() {
   # The person's own SkyMail endpoints (the in-app inbox, GET /v1/me/inbox; iletisim-servisi 04 and
   # 08) take a person's token with aud skymail and no role. sky-app's access token gets it from the
   # same scope the SkyMail UI's does (skymail-api-audience: one Audience mapper, access token and
-  # introspection only), kept among sky-app's default scopes.
+  # introspection only), kept among sky-app's default scopes. The scope is shared by skymail and
+  # skyapp from here on: a mapper added to config/skymail-api-audience-mappers.json reaches sky-app's
+  # token too, so that file must stay the skymail audience alone.
   ensure_default_audience_scope "$SKYAPP_CLIENT_ID" "$skyapp_client_uuid" "$SKYMAIL_SCOPE_NAME" \
     "$CONFIG_DIR/skymail-api-audience-mappers.json"
 }

@@ -3064,14 +3064,26 @@ scopes → Evaluate → kullanıcı `service-account-forms` (`service-account-sk
 `consent:record`'u taşır (başka `resource_access` ve realm rolü yok).
 
 Geri dönüş: §20 ile aynı (rol servis hesabından kaldırılır, `skylab.granted-service-accounts`
-özniteliği silinir; kalıcı geri dönüş satırı listeden çıkaran sürüm). `place-service` istemcisi
-silinmez: uzlaştırıcı istemci silmez ve `reconcile_place_service_client` kodda kaldıkça sonraki tam
-uzlaştırma silinen istemciyi yeniden oluşturur. Hemen geri dönüş Admin Console → Clients →
-`place-service` → Enabled kapalı (`enabled=false`): istemci token alamaz. Bu kapatma bir sonraki tam
-uzlaştırmaya kadar sürer; istenen alanlar `enabled=true` içerdiği için o koşu istemciyi yeniden açar
-(`client place-service: updated (enabled)`). Bu yüzden kapatmayla birlikte yukarıdaki rol geri
-dönüşü de yapılır: istemci yeniden açılsa da token'ında core rolü olmaz (uzlaştırıcı rolü vermez). Kalıcısı fonksiyonu çıkaran sürümdür; istemci ondan sonra
-elle silinebilir.
+özniteliği silinir; kalıcı geri dönüş satırı listeden çıkaran sürüm).
+
+`place-service` için hemen geri dönüş iki adımdır:
+1. Admin Console → Clients → `place-service` → Enabled kapalı (`enabled=false`): istemci token alamaz.
+   İstemci silinmez: uzlaştırıcı istemci silmez ve `reconcile_place_service_client` kodda kaldıkça
+   sonraki tam uzlaştırma silinen istemciyi yeniden oluşturur.
+2. Admin Console → Users → `service-account-place-service` → Role mapping → `core` `consent:record`
+   kaldırılır. `consent:record`'un `skylab.granted-service-accounts` özniteliği `forms` ile ortaktır
+   (`<zaman> service-account-forms,service-account-place-service`): tamamen silinmez, yalnız
+   `,service-account-place-service` girdisi çıkarılır (silinirse tam uzlaştırma `forms` için de "not
+   yet granted" uyarır).
+
+Bu geri dönüş yalnız bir sonraki Keycloak yayınına kadar sürer. Her yayın wizard'ı iki adımı da
+koşar: tam uzlaştırmanın istenen alanları `enabled=true` içerdiği için istemci yeniden açılır
+(`client place-service: updated (enabled)`), operatörün `service-roles` adımı da `consent:record`'u
+`service-account-place-service`'e yeniden verir (tanım satırı `consent:record|forms place-service|…`
+kodda kaldıkça). Kalıcı geri dönüş `place-service`'i `consent:record` satırından (ve gerekirse
+`reconcile_place_service_client`'i) koddan çıkaran sürümdür; istemci ondan sonra elle silinebilir.
+Pratik risk düşüktür: core'un `CONTACT_CONSENT_SERVICE_CLIENTS`'inde `place:place-service` yoktur,
+core bu istemcinin isteğini rol taşısa da `403 consent_source_unknown` ile reddeder.
 
 Harness (`tests/core-service-roles.sh`): ilk tam koşu iki rolü açıklamasıyla ve `place-service`'i
 (bayraklar, servis hesabı, rol kapsamında tam olarak `core/consent:record`, realm rolü yok; sırrı

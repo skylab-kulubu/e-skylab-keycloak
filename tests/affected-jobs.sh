@@ -90,9 +90,10 @@ PR_DEFERRED=(
   inscribed-cms-roles
 )
 
-# Files a job's own workflow steps read besides the scripts they run (the pinned Mailpit image of
-# the integration Compose file). Job, then paths; tests/check-fresh-runner.sh requires every
-# tests/ and config/ path a ci.yml step names to reach that step's job.
+# Files a job's own workflow steps read that the scripts it runs do not reach. Job, then paths;
+# tests/check-fresh-runner.sh requires every tests/ and config/ path a ci.yml step names to reach
+# that step's job. Empty today: the steps that read the pinned Mailpit image from
+# tests/docker-compose.integration.yml run scripts that already reach that file.
 STEP_READS=(
 )
 

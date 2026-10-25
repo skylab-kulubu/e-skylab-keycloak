@@ -605,17 +605,24 @@ def assert_affected_jobs(root, helper)
     abort "#{helper}: no workflow reaches #{unreached.join(" ")}; run it from a job or list it in LOCAL_ONLY"
   end
   scope_run = jobs.fetch("scope").fetch("steps").map { |step| step.fetch("run", "") }.join("\n")
-  unless scope_run.include?('affected=$(bash tests/affected-jobs.sh <<<"$changed")') &&
-      scope_run.include?("bash tests/affected-jobs.sh --entries")
+  unless scope_run.include?('if ! affected=$(bash tests/affected-jobs.sh --pull-request <<<"$changed" 2>"$later"); then') &&
+      scope_run.include?("bash tests/affected-jobs.sh --entries") &&
+      scope_run.include?("all=$(bash tests/affected-jobs.sh --pull-request-all)")
     abort "#{ci} scope must name the affected jobs of a fast run, and every one when its diff cannot be read"
+  end
+  # A pull request into main leaves tests/ and config/ paths to affected (only the jobs that read
+  # them run), a production run counts them as other.
+  unless scope_run.include?("tests/* | config/*) [[ $AFFECTED_RUN == true ]] || other=true ;;")
+    abort "#{ci} scope must count tests/ and config/ as other except in a pull request into main"
   end
   # Only a pull request into main has affected jobs: a fast production run promotes a tree a full
   # run already tested, and its diff (everything main gained since the last release) would start
   # the whole suite again.
   affected_run = "${{ (github.event_name == 'pull_request' && github.base_ref == 'main') && 'true' || 'false' }}"
   unless jobs.fetch("scope").fetch("steps").any? { |step| step.fetch("env", {})["AFFECTED_RUN"] == affected_run } &&
-      scope_run.include?("all=' '\n  if [[ $FULL == true || $AFFECTED_RUN == true ]]; then\n    all=\" $(bash tests/affected-jobs.sh --entries") &&
-      scope_run.include?("affected=' '\nif [[ $AFFECTED_RUN == true ]]; then\n  affected=$(bash tests/affected-jobs.sh <<<\"$changed\")\nfi\n")
+      scope_run.include?("all=' '\n  if [[ $FULL == true ]]; then\n    all=\" $(bash tests/affected-jobs.sh --entries") &&
+      scope_run.include?("\n  elif [[ $AFFECTED_RUN == true ]]; then\n    all=$(bash tests/affected-jobs.sh --pull-request-all)\n") &&
+      scope_run.include?("affected=' '\nif [[ $AFFECTED_RUN == true ]]; then\n  later=")
     abort "#{ci} scope must list affected jobs only in a pull request into main (a fast production run has none)"
   end
   # The sample paths are split ("tests/" "x") so that this script's own text names none of them.
@@ -654,6 +661,76 @@ def assert_affected_jobs(root, helper)
   exactly.each do |path, expected|
     unless got.fetch(path, nil).to_a.sort == expected.sort
       abort "#{helper} must run exactly #{expected.join(" ")} for #{path} (runs #{got.fetch(path, []).join(" ")})"
+    end
+  end
+
+  # A pull request into main (--pull-request): PR_DEFERRED are whole-suite jobs; every fast job but
+  # mode and gate also runs when scope's affected names it; a tests/ or config/ path runs the fast
+  # and whole-suite jobs that read it ("-job": a PR_DEFERRED job, left to main's full run), and every
+  # one for a path no job reaches. Every tests/ or config/ path a job's own steps name reaches that
+  # job (STEP_READS for a path its scripts do not name).
+  deferred = listing.("--deferred").split
+  unless !deferred.empty? && deferred.uniq == deferred && (deferred - whole_suite.keys).empty?
+    abort "#{helper} PR_DEFERRED must list whole-suite jobs only (#{(deferred - whole_suite.keys).join(" ")})"
+  end
+  step_reads = listing.("--step-reads").lines.map(&:split).reject(&:empty?).to_h { |words| [words.first, words.drop(1)] }
+  unless (step_reads.keys - whole_suite.keys - fast.keys).empty?
+    abort "#{helper} STEP_READS must name ci.yml's jobs (#{(step_reads.keys - whole_suite.keys - fast.keys).join(" ")})"
+  end
+  # (jobs was reused by the --each samples' block above.)
+  ci_jobs = YAML.load_file(ci, aliases: true).fetch("jobs")
+  pull_request_jobs = fast.keys - %w[mode gate]
+  pull_request_jobs.each do |name|
+    job = ci_jobs.fetch(name)
+    unless job.fetch("if", "").to_s.end_with?(" || contains(format(' {0} ', needs.scope.outputs.affected), ' #{name} ')") &&
+        Array(job.fetch("needs")).include?("scope")
+      abort "#{ci} #{name} must also run when scope lists it as affected"
+    end
+  end
+  all_pull_request = listing.("--pull-request-all").split
+  unless all_pull_request.sort == (whole_suite.keys - deferred + pull_request_jobs).sort
+    abort "#{helper} --pull-request-all must list every job a pull request may run (#{all_pull_request.join(" ")})"
+  end
+  step_paths = {}
+  (whole_suite.keys + pull_request_jobs).each do |name|
+    text = ci_jobs.fetch(name).fetch("steps").map { |step| step.fetch("run", "") }.join("\n")
+    text.scan(%r{(?<![A-Za-z0-9_./-])(?:\.\./)?((?:tests|config)/[A-Za-z0-9_][A-Za-z0-9_./-]*[A-Za-z0-9_])}).flatten.uniq.each do |path|
+      next if static_scripts.include?(path)
+      (step_paths[path] ||= []) << name
+    end
+  end
+  pr_reaches = {
+    "config/" "reconcile-account-center.sh" => %w[dk-read-only login-by-email-code sign-up-by-email-code -integration-group -role-groups -login-clients],
+    "config/" "not-read-by-any-job.sh" => all_pull_request + deferred.map { |name| "-#{name}" },
+  }
+  pr_exactly = {
+    "config/" "create-place-client.sh" => %w[place-client],
+    "tests/" "microsoft-reauthentication.sh" => %w[microsoft-reauthentication],
+    "tests/" "welcome-page.sh" => %w[welcome-page],
+    "tests/" "run-integration.sh" => %w[-integration-group],
+    "config/" "role-groups.json" => %w[-role-groups],
+    "tests/" "dk-read-only.sh" => %w[dk-read-only],
+    "docs/x.md" => [], "tests/" "check-fresh-runner.sh" => [], "tests/" "sudo-email-code.sh" => [],
+    "theme/src/login/x.tsx" => [],
+  }
+  paths = (pr_reaches.keys + pr_exactly.keys + step_paths.keys).uniq
+  output = IO.popen(["bash", helper, "--pull-request-each"], "r+") { |io| io.puts(paths); io.close_write; io.read }
+  abort "#{helper} --pull-request-each failed" unless $?.success?
+  got = output.lines.to_h { |line| path, names = line.chomp.split(":", 2); [path, names.to_s.split] }
+  pr_reaches.each do |path, expected|
+    missing = expected - got.fetch(path, [])
+    abort "#{helper} --pull-request does not reach #{missing.join(" ")} from #{path}" unless missing.empty?
+  end
+  pr_exactly.each do |path, expected|
+    unless got.fetch(path, nil).to_a.sort == expected.sort
+      abort "#{helper} --pull-request must run exactly #{expected.join(" ")} for #{path} (runs #{got.fetch(path, []).join(" ")})"
+    end
+  end
+  step_paths.each do |path, names|
+    reached_jobs = got.fetch(path, []).map { |name| name.delete_prefix("-") }
+    missing = names - reached_jobs
+    unless missing.empty?
+      abort "#{helper} --pull-request must run #{missing.join(" ")} for #{path}, which its steps read (STEP_READS)"
     end
   end
 end

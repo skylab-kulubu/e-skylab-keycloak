@@ -9,8 +9,10 @@ name: CI
 #   fully green full push, schedule or workflow_dispatch run already tested (the release PR and
 #   the release push after main's push run; tests/find-green-full-ci-run.sh). Static checks, the
 #   image build and the short contract jobs, each only when the paths it reads changed (scope);
-#   in a pull request into main also the whole suite's jobs its diff affects (tests/affected-
-#   jobs.sh). A fast production run runs none of them.
+#   in a pull request into main a tests/ or config/ path runs only the jobs that read it, and also
+#   the whole suite's jobs its diff affects that fit a pull request's 15 minutes (tests/affected-
+#   jobs.sh --pull-request; the longer ones, PR_DEFERRED there, run on main's push). A fast
+#   production run runs none of the whole suite's jobs.
 # A full run builds the candidate image once (candidate); every integration group tests those
 # bytes and leaves a receipt, and release.yml promotes them instead of building and testing again.
 # One required check: gate. It fails when any job fails or is cancelled, and in a full run also
@@ -70,11 +72,13 @@ jobs:
           printf 'full=%s\npromoted-from=%s\n' "$full" "$promoted_from" >> "$GITHUB_OUTPUT"
 
   # Which areas a fast run touches: theme/, spi/, and other (anything outside theme/, spi/, docs/
-  # and *.md). A full run, or a diff that cannot be read, selects everything.
-  # affected (pull requests into main only): the whole suite's jobs whose own tests a fast run's
-  # diff touches (tests/affected-jobs.sh); they run in that fast run too (integration-group: every
-  # group, on candidate's image). A fast production run promotes a tree a full run already tested,
-  # so it runs none of them (affected is empty).
+  # and *.md; in a pull request into main also outside tests/ and config/). A full run, or a diff
+  # that cannot be read, selects everything (a pull request: every job it may run).
+  # affected (pull requests into main only): the jobs whose own tests a fast run's diff touches
+  # (tests/affected-jobs.sh --pull-request): the fast set's jobs a tests/ or config/ path reaches,
+  # and the whole suite's but PR_DEFERRED (their names go to the log and the run's summary; main's
+  # push run is full). A fast production run promotes a tree a full run already tested, so it runs
+  # none of the whole suite's jobs (affected is empty).
   scope:
     name: scope (${{ needs.mode.outputs.full == 'true' && 'full' || 'fast' }})
     needs: mode
@@ -103,8 +107,10 @@ jobs:
         run: |
           everything() {
             all=' '
-            if [[ $FULL == true || $AFFECTED_RUN == true ]]; then
+            if [[ $FULL == true ]]; then
               all=" $(bash tests/affected-jobs.sh --entries | cut -d' ' -f1 | tr '\n' ' ')"
+            elif [[ $AFFECTED_RUN == true ]]; then
+              all=$(bash tests/affected-jobs.sh --pull-request-all)
             fi
             printf 'full=%s\ntheme=true\nspi=true\nother=true\naffected=%s\n' "$FULL" "$all" >> "$GITHUB_OUTPUT"
             exit 0
@@ -123,12 +129,22 @@ jobs:
               theme/*) theme=true ;;
               spi/*) spi=true ;;
               docs/* | *.md) ;;
+              # A pull request into main runs only the jobs that read the path (affected).
+              tests/* | config/*) [[ $AFFECTED_RUN == true ]] || other=true ;;
               *) other=true ;;
             esac
           done <<<"$changed"
           affected=' '
           if [[ $AFFECTED_RUN == true ]]; then
-            affected=$(bash tests/affected-jobs.sh <<<"$changed")
+            later="$RUNNER_TEMP/affected-later"
+            if ! affected=$(bash tests/affected-jobs.sh --pull-request <<<"$changed" 2>"$later"); then
+              cat "$later" >&2
+              exit 1
+            fi
+            if [[ -s $later ]]; then
+              cat "$later"
+              { echo "### Long jobs left to main's push run"; echo; cat "$later"; } >> "$GITHUB_STEP_SUMMARY"
+            fi
           fi
           printf 'fast run: theme=%s spi=%s other=%s affected=[%s]\n' "$theme" "$spi" "$other" "$affected"
           printf 'full=false\ntheme=%s\nspi=%s\nother=%s\naffected=%s\n' "$theme" "$spi" "$other" "$affected" >> "$GITHUB_OUTPUT"
@@ -245,7 +261,7 @@ jobs:
   # image in dev mode, with a real authorization code flow; needs no build of this repository's image.
   sandbox-site-clients:
     needs: scope
-    if: needs.scope.outputs.other == 'true'
+    if: needs.scope.outputs.other == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' sandbox-site-clients ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -258,7 +274,7 @@ jobs:
   # in dev mode, with a real authorization code flow (PKCE); needs no build of this repository's image.
   place-client:
     needs: scope
-    if: needs.scope.outputs.other == 'true'
+    if: needs.scope.outputs.other == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' place-client ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -272,7 +288,7 @@ jobs:
   # of this repository's image.
   forms-skymail-grants:
     needs: scope
-    if: needs.scope.outputs.other == 'true'
+    if: needs.scope.outputs.other == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' forms-skymail-grants ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -331,7 +347,7 @@ jobs:
   # User Profile and one account per case; needs no build of this repository's image.
   fill-missing-primary-from-school:
     needs: scope
-    if: needs.scope.outputs.other == 'true'
+    if: needs.scope.outputs.other == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' fill-missing-primary-from-school ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -368,7 +384,7 @@ jobs:
   # The login theme is built too, so the last stage proves its contract with the step (08b).
   login-by-email-code:
     needs: scope
-    if: needs.scope.outputs.spi == 'true' || needs.scope.outputs.theme == 'true' || needs.scope.outputs.other == 'true'
+    if: needs.scope.outputs.spi == 'true' || needs.scope.outputs.theme == 'true' || needs.scope.outputs.other == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' login-by-email-code ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -394,7 +410,7 @@ jobs:
   # The targeted baseline took 149s / 70 assertions on the developer Mac; no old login gate is removed.
   email-code-persistent-counter:
     needs: scope
-    if: needs.scope.outputs.spi == 'true' || needs.scope.outputs.theme == 'true' || needs.scope.outputs.other == 'true'
+    if: needs.scope.outputs.spi == 'true' || needs.scope.outputs.theme == 'true' || needs.scope.outputs.other == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' email-code-persistent-counter ')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -499,7 +515,7 @@ jobs:
   # redirect is read, Microsoft is never called.
   microsoft-reauthentication:
     needs: scope
-    if: needs.scope.outputs.spi == 'true' || needs.scope.outputs.other == 'true'
+    if: needs.scope.outputs.spi == 'true' || needs.scope.outputs.other == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' microsoft-reauthentication ')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -516,7 +532,7 @@ jobs:
   # this repository's image.
   sign-up-by-email-code:
     needs: scope
-    if: needs.scope.outputs.spi == 'true' || needs.scope.outputs.other == 'true'
+    if: needs.scope.outputs.spi == 'true' || needs.scope.outputs.other == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' sign-up-by-email-code ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -530,7 +546,7 @@ jobs:
   # The Microsoft transport/barrier fixtures are compiled into a separate test-only JAR.
   existing-account-link:
     needs: scope
-    if: needs.scope.outputs.spi == 'true' || needs.scope.outputs.theme == 'true' || needs.scope.outputs.other == 'true'
+    if: needs.scope.outputs.spi == 'true' || needs.scope.outputs.theme == 'true' || needs.scope.outputs.other == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' existing-account-link ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -632,7 +648,7 @@ jobs:
   # repository's image.
   welcome-page:
     needs: scope
-    if: needs.scope.outputs.theme == 'true' || needs.scope.outputs.other == 'true'
+    if: needs.scope.outputs.theme == 'true' || needs.scope.outputs.other == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' welcome-page ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -653,8 +669,8 @@ jobs:
       - name: Landing page at / against a throwaway Keycloak
         run: bash tests/welcome-page.sh
 
-  # Full runs, and fast pull requests into main whose diff affects the harness (scope's affected):
-  # the candidate image is built once. Every integration group loads these bytes
+  # Full runs: the candidate image is built once. (integration-group is PR_DEFERRED in
+  # tests/affected-jobs.sh, so scope's affected never names it in a pull request into main.) Every integration group loads these bytes
   # (SHA-256 and image ID checked) and uploads a receipt naming them; release.yml (keycloak-build)
   # promotes this artifact of the run that tested its tree, so the published bytes are the tested
   # bytes (only a full push, schedule or manual run counts; never a pull request's). Kept 14 days,
@@ -726,8 +742,8 @@ jobs:
   # takes about 20-28 minutes; timeouts are about 1.5 times that. The groups do not wait for the
   # theme job: they are the longest jobs of a full run, and behind the theme job they queued after
   # the short jobs (run 39262199516: 31 minutes before the first group started).
-  # Full runs and affected fast runs (as candidate); every group tests candidate's bytes and
-  # records them in a receipt that release.yml requires (of a full push, schedule or manual run).
+  # Full runs (as candidate); every group tests candidate's bytes and records them in a receipt
+  # that release.yml requires (of a full push, schedule or manual run).
   integration-group:
     name: integration (${{ matrix.group }})
     runs-on: ubuntu-latest

@@ -656,7 +656,8 @@ kullanıcılar, kompozit roller, rol kapsamları) bir kez verilir; eski rol sili
 core'un servis rollerini (`media:attach`: ADR-0052, Forms'un core'a Media bağlaması ve anonim form
 yüklemesi; `ticket:forms`: Forms'un cevap bildirimi, core `docs/form-response-tickets.md`; `url:forms`:
 forma bağlı kısa linkler; `users:read`: kişi profili; `consent:record`: rıza kaydı, core
-`docs/contact-consents.md`, runbook §20.2) uzlaştırıcı her koşuda `core` istemcisinde var eder; `forms`'un `fullScopeAllowed`'ı kapalıysa rolleri onun kapsam eşlemesine ekler ve `aud: core`'u
+`docs/contact-consents.md`, runbook §20.2) uzlaştırıcı her koşuda `core` istemcisinde var eder;
+`forms`'un `fullScopeAllowed`'ı kapalıysa rolleri onun kapsam eşlemesine ekler ve `aud: core`'u
 veren varsayılan `roles` kapsamını doğrular, yoksa ekler (ikinci audience mapper eklenmez). Roller
 `service-account-forms`'ta bulunur; servis hesabına rol vermek kullanıcı yetkisi istediği için bunu
 operatör yapar (`KEYCLOAK_RECONCILE_KCADM_CONFIG` + `KEYCLOAK_RECONCILE_ONLY=service-roles`; eski adı

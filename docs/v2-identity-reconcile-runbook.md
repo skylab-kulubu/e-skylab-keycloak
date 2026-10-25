@@ -2862,6 +2862,7 @@ Aynı adım iki servis hesabını daha yönetir:
 | `audience:read` | `core` (adım oluşturur) | yalnız `skymail-backend`'in servis hesabı | `POST /v1/audiences/resolve`: bir haber ya da duyuru gönderiminin kime gideceği (core #242, core `docs/news-audience.md`). core rolü yalnız servis hesabı token'ından okur; `skymail-backend` SkyMail'in `KEYCLOAK_SERVICE_CLIENT_ID`'sidir |
 | `skymail:access`, `skymail:mails:send` | `skymail` (oluşturulmaz) | `core`'un servis hesabı (kişiler de taşır) | core'un tekil postaları, `POST /v1/mail_tasks/single` (core `internal/mail/mail.go`) |
 | `skymail:lists:read`, `skymail:lists:write` | `skymail` (oluşturulmaz) | `core`'un servis hesabı (kişiler de taşır) | core'un etkinlik posta listeleri: `GET /v1/mailing_lists/…` okuma, `POST`/`DELETE` yazma (core `internal/mail/lists.go`, SkyMail `main.go` rota tablosu) |
+| `consent:audience:read` | `core` (adım oluşturur) | yalnız `skymail-backend`'in servis hesabı | `GET /v1/consents/audience` ve `POST /v1/consents/renewal-requests`: rıza kaydının davet ve tanıtım kitlesi (core `docs/contact-consents.md`). Ayrıntı ve yayın sırası §20.2 |
 | `communication-preferences:read` | `core` (adım oluşturur) | yalnız `skymail-backend`'in servis hesabı | `POST /internal/v1/communication-preferences/tracking:resolve`: SkyMail takipli bir gönderimi kuyruğa koymadan önce kimi takip edebileceğini sorar (core #256, core `docs/communication-preferences.md`). core kişi token'ını rol taşısa da 403 ile reddeder |
 | `view-users`, `view-clients` | `realm-management` (Keycloak'ın; oluşturulmaz) | `skymail-backend`'in servis hesabı (kişiler ve gruplar da taşır) | SkyMail kişileri Admin REST'ten okur: grup üyeleri, onay rollerinin sahipleri ve tekil postada takip için adresin tek Keycloak hesabı (`GET /users?email=…&exact=true`, skymail-backend #85). `view-users` gerekir (yalnız `query-users` kullanıcıları döndürmez), `view-clients` istemciyi ve rollerini okur. Production'da 2026-09-23'te elle verildi; burada kodlandı |
 | `skymail:tracking:withdraw` | `skymail` (**adım oluşturur**; açıklamalı SkyMail satırı) | yalnız `core`'un servis hesabı (`service-account-core`) | `PUT /internal/v1/tracking-withdrawals/{sub}`: kişi takibi kapatınca core SkyMail'deki olaylarını sildirir (skymail-backend #75, core #256). SkyMail `azp=core`, `aud ∋ skymail` ve bu rolü ister, token'ın servis hesabınınki olduğuna bakmaz: rol hiçbir kişiye, gruba, bileşik role ya da varsayılan role girmez (B2) |
@@ -2987,12 +2988,19 @@ consent:audience:read is not yet granted to service account service-account-skym
 operator step` yazar → operatörün `service-roles` kuru koşusu (önce sandbox, sonra production):
 bu iki rol için beklenen satırlar `would grant consent:record to service account
 service-account-forms`, `would grant consent:audience:read to service account
-service-account-skymail-backend` ve ikisinin `would record the grant of …`'u; `forms` ya da
-`skymail-backend`'de `fullScopeAllowed=false` ise `would map core/<rol> in the role scope of …` da
-gelir. Realm'de tam uzlaştırma koşmadıysa iki `would create client role …` satırı daha görünür.
+service-account-skymail-backend` ve ikisinin `would record the grant of …`'u. `forms` ya da
+`skymail-backend`'de `fullScopeAllowed=false` ise rol kapsamı eşlemesini uzlaştırıcı kimliği de
+yazar: yayının tam uzlaştırması koştuysa eşleme orada `role scope of <istemci>: updated
+(+core/<rol>; fullScopeAllowed is false)` olarak çıkar ve operatör kuru koşusunda görünmez. Realm'de
+tam uzlaştırma koşmadıysa kuru koşuda iki `would create client role …` satırı ve (tam kapsam
+kapalıysa) `would map core/<rol> in the role scope of … (fullScopeAllowed is false)` da görünür.
 Başka bir `would grant` ya da bir kişi, grup, bileşik rol uyarısı çıkarsa uygulamadan önce durulur.
 Uygulayan koşu, ardından kuru koşu `check: 0 change(s) pending`. Bütün bunlar rıza anahtarından
 (`CONTACT_CONSENT_KEY` sihirbazı) önce yapılır; açılış sırası data-lifecycle 10'dadır.
+Uyarı: sky_lab_genel'deki eski `ops/wizards/keycloak-forms-service-roles-wizard.sh` dört rollük sabit
+listeyle çalışır, `consent:record`'u tanımaz; yeniden kullanılmaz. Sandbox'ta elle koşulan
+`config/sandbox-admin-local-client.sh`'nin bir sonraki koşusu `add the core roles
+consent:audience:read, consent:record to the role scope of admin-local` der: beklenen, zararsız.
 
 **Doğrulama.** Admin Console → Clients → `forms` (ve `skymail-backend`) → Client scopes →
 Evaluate → kullanıcı `service-account-forms` (`service-account-skymail-backend`): access token'da

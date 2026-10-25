@@ -3295,6 +3295,8 @@ core_rename_list() {
 #                       forms:forms,place:place,guessr:guessr). forms only: Place's client place is
 #                       its login client without a service account (config/create-place-client.sh)
 #                       and Guessr has no client; each is added here once it has a service account.
+#                       A separate service client (say place-service) also changes core's pair to
+#                       place:place-service.
 #   consent:audience:read
 #                       GET /v1/consents/audience and POST /v1/consents/renewal-requests: who SkyMail
 #                       may send an invitation or a promotional mail to (core docs/contact-consents.md,

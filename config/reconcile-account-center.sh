@@ -3288,6 +3288,21 @@ core_rename_list() {
 #                       track (core #256, docs/communication-preferences.md); SkyMail's service
 #                       account (skymail-backend) only, core refuses a person's token whatever it
 #                       carries (iletisim-servisi ticket 17).
+#   consent:record      POST /v1/consents, /v1/consents/withdrawals and /v1/consents/lookup: a
+#                       product records the contact consent (Davet onayı, ADR-0062) a person gave in
+#                       it (core docs/contact-consents.md); core also requires azp to be a client of
+#                       its CONTACT_CONSENT_SERVICE_CLIENTS (source:client pairs, unset
+#                       forms:forms,place:place,guessr:guessr). forms, and place-service: Place's
+#                       own service client (PLACE_SERVICE_CLIENT_ID below; its login client place has
+#                       no service account, config/create-place-client.sh). Place has no consent box
+#                       yet, so core's list stays without place:place-service until it has one (then
+#                       place:place-service, not the default place:place). Guessr has no client; it is
+#                       added here once it has a service account.
+#   consent:audience:read
+#                       GET /v1/consents/audience and POST /v1/consents/renewal-requests: who SkyMail
+#                       may send an invitation or a promotional mail to (core docs/contact-consents.md,
+#                       KVKK s6 tickets 11 and 12); SkyMail's service account (skymail-backend) only.
+# core refuses a person's token on both consent routes whatever it carries.
 # url:forms and users:read were granted to the forms service account by hand before (forms-url-role
 # wizard, Java era); they are codified here with the other two.
 # The same step grants SkyMail's client roles to core's own service account (client core), which
@@ -3323,6 +3338,8 @@ CORE_SERVICE_ROLE_DEFINITIONS=(
   "users:read|forms|shared|Reads a person's profile (GET /v1/users/{id}); held by the Forms service account."
   "audience:read|skymail-backend|services|SkyMail asks who a News send goes to (POST /v1/audiences/resolve, core docs/news-audience.md). SkyMail's service account only; never a person or a group."
   "communication-preferences:read|skymail-backend|services|SkyMail asks whom it may track (POST /internal/v1/communication-preferences/tracking:resolve, core docs/communication-preferences.md). SkyMail's service account only; never a person or a group."
+  "consent:record|forms place-service|services|A product records, withdraws and looks up the contact consents its users gave (POST /v1/consents, /v1/consents/withdrawals, /v1/consents/lookup; core docs/contact-consents.md). Service accounts only; never a person or a group."
+  "consent:audience:read|skymail-backend|services|SkyMail reads who consented to invitations and promotional mail (GET /v1/consents/audience, POST /v1/consents/renewal-requests; core docs/contact-consents.md). SkyMail's service account only; never a person or a group."
 )
 # SkyMail's client roles that core's service account (client core) holds: core sends single mails
 # (POST /v1/mail_tasks/single: skymail:access and skymail:mails:send, core internal/mail/mail.go) and
@@ -3375,7 +3392,7 @@ REALM_MANAGEMENT_GRANT_ATTRIBUTE=skylab.granted-realm-management-roles
 # of forms must always be its service account's; Forms signs people in through skyforms. The
 # reconciler identity verifies and warns; the operator step sets the flags that are not false
 # (KEYCLOAK_RECONCILE_CHECK=true: "would set ..."). No other client is touched.
-CORE_SERVICE_ONLY_CLIENTS=(forms)
+CORE_SERVICE_ONLY_CLIENTS=(forms place-service)
 CORE_SERVICE_ONLY_FLAGS=(standardFlowEnabled implicitFlowEnabled directAccessGrantsEnabled)
 CORE_SERVICE_ROLE_OPERATOR_STEP='run this step alone with an operator session: KEYCLOAK_RECONCILE_ONLY=service-roles (runbook §20)'
 SERVICE_ROLE_CHANGES=0
@@ -3825,6 +3842,26 @@ SKYCLOUD_PRIVILEGED_ROLE_DEFINITIONS=(
   'admin|ADMIN YK|-'
 )
 
+# The admin panel's Privileged roles (runbook §33.7), the same way as SkyCloud's (same list format):
+# inscribed's roles on the panel's own client (ADMIN_PANEL_CLIENT_ID: admin, superadmin in the
+# sandbox), which the panel's News page writes inscribed with (ADR-0056: News is written in the panel
+# by the Privileged roots; core-frontend src/lib/api/cms.ts):
+#   content:read   ADMIN, YK and DK: reading is for all three.
+#   content:write  ADMIN and YK: DK reads and does not write (grup-yonetimi GY1; config/dk-read-only.sh
+#                  turned DK's content:write into content:read in production).
+# Both are admin roles on this client (no app role of config/app-assignments.json: its content:read is
+# a Site client's), so the code area's. Production has held exactly these mappings since 2026-09-28,
+# granted by hand in the SKY LAB admin panel (runbook "Admin panelinden verilecek roller"); with no
+# expectation the reset window (ekip-yetkileri ticket 06 c2) would take them away. The roles are
+# config/inscribed-cms-roles.sh's ("-"): never created here; a realm without them says so in the
+# "unchanged" line, a realm without the client skips them with a WARNING. Only the operator's
+# core-roles step runs this, as SkyCloud's: the full reconciliation does not make the roles, and the
+# seeding needs an operator session anyway.
+ADMIN_PANEL_PRIVILEGED_ROLE_DEFINITIONS=(
+  'content:read|ADMIN YK DK|-'
+  'content:write|ADMIN YK|-'
+)
+
 # reconcile_privileged_app_roles CLIENT_ID LABEL OWNER DEFINITIONS SECTION: the Privileged roles of one
 # application client (DEFINITIONS names its list, "name|Privileged groups|description"). LABEL names
 # the roles in the messages ("<LABEL> roles not yet granted", "<LABEL> role <name>: seeded once"),
@@ -3914,8 +3951,9 @@ reconcile_privileged_app_roles() {
 # write_privileged_expectations FILE: the code area's Privileged expectations that only this file
 # holds, for config/app-assignments.sh (KEYCLOAK_RECONCILE_ONLY=app-assignments and tohum-atamalar):
 # "privileged<TAB>NAMES<TAB>client<TAB>role" per role of CORE_ROLE_DEFINITIONS (its seed groups),
-# SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS, FORMS_PRIVILEGED_ROLE_DEFINITIONS and
-# SKYCLOUD_PRIVILEGED_ROLE_DEFINITIONS; NAMES is the space
+# SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS, FORMS_PRIVILEGED_ROLE_DEFINITIONS,
+# SKYCLOUD_PRIVILEGED_ROLE_DEFINITIONS and ADMIN_PANEL_PRIVILEGED_ROLE_DEFINITIONS (on this realm's
+# ADMIN_PANEL_CLIENT_ID); NAMES is the space
 # separated Privileged names (ADMIN, YK, DK), each at /<NAME> and /UYELER/<NAME>.
 write_privileged_expectations() {
   local file=$1 definition name groups
@@ -3935,6 +3973,10 @@ write_privileged_expectations() {
   for definition in "${SKYCLOUD_PRIVILEGED_ROLE_DEFINITIONS[@]}"; do
     groups=${definition#*|}
     printf 'privileged\t%s\t%s\t%s\n' "${groups%%|*}" "$SKYCLOUD_CLIENT_ID" "${definition%%|*}" >>"$file"
+  done
+  for definition in "${ADMIN_PANEL_PRIVILEGED_ROLE_DEFINITIONS[@]}"; do
+    groups=${definition#*|}
+    printf 'privileged\t%s\t%s\t%s\n' "${groups%%|*}" "$ADMIN_PANEL_CLIENT_ID" "${definition%%|*}" >>"$file"
   done
 }
 
@@ -4147,6 +4189,77 @@ reconcile_skycloud_privileged_roles() {
   reconcile_privileged_app_roles "$SKYCLOUD_CLIENT_ID" skycloud "SkyCloud's" SKYCLOUD_PRIVILEGED_ROLE_DEFINITIONS '§33.6'
 }
 
+reconcile_admin_panel_privileged_roles() {
+  reconcile_privileged_app_roles "$ADMIN_PANEL_CLIENT_ID" "$ADMIN_PANEL_CLIENT_ID" "the admin panel's" \
+    ADMIN_PANEL_PRIVILEGED_ROLE_DEFINITIONS '§33.7'
+}
+
+# place-service: Place's service account for core's contact consents (consent:record above; Yusuf,
+# 2026-10-25). A confidential client with the client-credentials grant only: no browser login, no
+# implicit flow, no password grant, no redirect URI, no web origin, no device grant, no CIBA, no token
+# exchange, and fullScopeAllowed=false, so its token carries only the roles the service-roles step maps
+# into its role scope (core/consent:record; aud core comes with it through the default scope roles).
+# Place's login client place stays as config/create-place-client.sh keeps it (no service account):
+# core reads the product from azp, and a person never signs in through place-service. Made by the
+# reconciler identity (manage-clients) in every realm it runs in (sandbox and production); every run
+# puts the fields below back. Keycloak generates the client secret when it creates the client; it is
+# never read or printed here. Moving it to Place (OpenBao, a Dokploy reference) is an operator's step
+# (runbook §20.2). The role itself is granted by the operator's service-roles step.
+PLACE_SERVICE_CLIENT_ID=place-service
+PLACE_SERVICE_CLIENT_NAME='Place service account'
+PLACE_SERVICE_CLIENT_DESCRIPTION="Place backend's service account (client credentials only) for core's contact consents (consent:record). Made by config/reconcile-account-center.sh; never a login client."
+
+reconcile_place_service_client() {
+  local desired_file="$WORK_DIR/client-$PLACE_SERVICE_CLIENT_ID.json" client_uuid
+  if ! client_uuid=$(optional_lookup client_id_by_client_id "$PLACE_SERVICE_CLIENT_ID"); then
+    return 2
+  fi
+  if [[ -z $client_uuid ]]; then
+    # The flags that matter are set when it is made, so that no moment has a login client.
+    client_uuid=$(kcadm create clients -r "$TARGET_REALM" -i \
+      -s "clientId=$PLACE_SERVICE_CLIENT_ID" \
+      -s enabled=true \
+      -s protocol=openid-connect \
+      -s publicClient=false \
+      -s bearerOnly=false \
+      -s serviceAccountsEnabled=true \
+      -s standardFlowEnabled=false \
+      -s implicitFlowEnabled=false \
+      -s directAccessGrantsEnabled=false \
+      -s fullScopeAllowed=false)
+    log "client $PLACE_SERVICE_CLIENT_ID: created"
+  fi
+  cat >"$desired_file" <<EOF
+{
+  "clientId": "$PLACE_SERVICE_CLIENT_ID",
+  "name": "$PLACE_SERVICE_CLIENT_NAME",
+  "description": "$PLACE_SERVICE_CLIENT_DESCRIPTION",
+  "enabled": true,
+  "protocol": "openid-connect",
+  "clientAuthenticatorType": "client-secret",
+  "publicClient": false,
+  "bearerOnly": false,
+  "standardFlowEnabled": false,
+  "implicitFlowEnabled": false,
+  "directAccessGrantsEnabled": false,
+  "serviceAccountsEnabled": true,
+  "authorizationServicesEnabled": false,
+  "consentRequired": false,
+  "frontchannelLogout": false,
+  "fullScopeAllowed": false,
+  "redirectUris": [],
+  "webOrigins": [],
+  "attributes": {
+    "oauth2.device.authorization.grant.enabled": "false",
+    "oidc.ciba.grant.enabled": "false",
+    "standard.token.exchange.enabled": "false"
+  }
+}
+EOF
+  apply_fields_if_changed "client $PLACE_SERVICE_CLIENT_ID" "$desired_file" \
+    "clients/$client_uuid" -r "$TARGET_REALM"
+}
+
 # The keycloak-mailer service-account client (K5) is provisioned by the operator with
 # create-mailer-client.sh because assigning its SkyMail roles needs user permissions the
 # reconciler identity deliberately lacks. Here the client is verified only: a missing client
@@ -4316,11 +4429,13 @@ if [[ $CHECK_WRITES == true ]]; then
 fi
 if [[ $RECONCILE_ONLY == core-roles ]]; then
   reconcile_core_roles
-  # SkyMail's, Forms' and SkyCloud's Privileged roles have the same operator step (runbook §25, §28,
-  # §33.6); SkyCloud's has this step alone (see SKYCLOUD_PRIVILEGED_ROLE_DEFINITIONS).
+  # SkyMail's, Forms', SkyCloud's and the admin panel's Privileged roles have the same operator step
+  # (runbook §25, §28, §33.6, §33.7); SkyCloud's and the admin panel's have this step alone (see
+  # SKYCLOUD_PRIVILEGED_ROLE_DEFINITIONS and ADMIN_PANEL_PRIVILEGED_ROLE_DEFINITIONS).
   reconcile_skymail_privileged_roles
   reconcile_forms_privileged_roles
   reconcile_skycloud_privileged_roles
+  reconcile_admin_panel_privileged_roles
   if [[ $CHECK_WRITES == true ]]; then
     printf 'Core resource roles are checked; nothing was written (%s write(s) withheld).\n' "$(check_writes_withheld)"
   else
@@ -4339,7 +4454,8 @@ if [[ $RECONCILE_ONLY == default-roles ]]; then
 fi
 if [[ $RECONCILE_ONLY == app-assignments || $RECONCILE_ONLY == tohum-atamalar ]]; then
   # config/app-assignments.sh with the Privileged expectations of this file (core's resource roles,
-  # SkyMail's, Forms' and SkyCloud's Privileged roles), which only the reconciler knows.
+  # SkyMail's, Forms', SkyCloud's and the admin panel's Privileged roles), which only the reconciler
+  # knows.
   write_privileged_expectations "$WORK_DIR/privileged-expected.tsv"
   app_arguments=(--kcadm-config "$OPERATOR_KCADM_CONFIG" --privileged-file "$WORK_DIR/privileged-expected.tsv")
   if [[ $RECONCILE_ONLY == tohum-atamalar ]]; then
@@ -4440,6 +4556,9 @@ reconcile_core_roles
 reconcile_skymail_privileged_roles
 # Before the admin panel's step too: a forms role created here enters its scope in this run.
 reconcile_forms_privileged_roles
+# Place's service client first, so that the service-roles step below maps consent:record into its
+# role scope in this run.
+reconcile_place_service_client
 # Also before the admin panel's step: a core service role created here enters its scope in this run.
 reconcile_core_service_roles
 # Last: a public admin panel client stops the run, and every other step is done by then; core and

@@ -39,7 +39,7 @@ entegrasyon testi bunu doğrular.
 | Kimlik korumaları: core sertifika rolleri, OBS `department mapper`, core'un `manage-clients` rolü | Uzlaştırıcı **dokunmaz**: kimliğinin kullanıcı ve kimlik sağlayıcısı yetkisi yoktur. Operatör `config/identity-guardrails.sh` ile uygular (§8). |
 | Forms'un Privileged rolü (§28) | `forms` istemcisinde `skyforms:read-all` (DK'nın Forms okuması; forms-backend henüz okumuyor) her koşuda var edilir; SkyMail'inkiler gibi yalnız `DK`'ya **bir kez** verilir (operatörün `core-roles` koşusu). |
 | SkyMail'in Privileged rolleri (§25) | `skymail` istemcisinde `skymail:system-mails:read` ve `skymail:mails:tracking:read` (ADMIN, YK, DK; kişi bazındaki takip raporu, iletisim-servisi 17) her koşuda var edilir (yoksa açıklamasıyla oluşturulur); SkyMail'in kendi rolleri `skymail:access`, `templates:read`, `lists:read`, `mails:read`, `mails:send`, `mails:write` (ADMIN, YK) ve `mails:approve` (yalnız YK) oluşturulmaz, varsa tohumlanır (ekip-yetkileri 03; `announcements:send` listeden çıktı). core'un kaynak rolleri gibi kendi Privileged gruplarına **bir kez** verilir ve `skylab.seeded-group-mappings` ile işaretlenir; tohumlamayı operatörün `KEYCLOAK_RECONCILE_ONLY=core-roles` koşusu yapar. Kişilerin diğer `skymail:*` rolleri `/ROLLER` rol gruplarına taşınır (§26). |
-| Servis hesaplarının rolleri (§20, §20.1, §20.2) | `forms`'a core'un beş servis rolü (`consent:record` dahil), `skymail-backend`'e core'un `audience:read`'i, `communication-preferences:read`'i ve `consent:audience:read`'i ile `realm-management`'ın `view-users` ve `view-clients`'ı, `core`'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`, `skymail:lists:read`, `skymail:lists:write`, `skymail:tracking:withdraw` rolleri, `skymail-seed`'in servis hesabına `skymail:templates:system`. Uzlaştırıcı kimliği core rollerini, `skymail:tracking:withdraw`'u ve `skymail:templates:system`'ı oluşturur ve raporlar; vermeyi operatör `KEYCLOAK_RECONCILE_ONLY=service-roles` ile yapar. SkyMail'in öbür rolleri oluşturulmaz. Yalnız servis hesaplarının rolünü taşıyan kişi, grup, varsayılan rol ve bileşik rol bildirilir. |
+| Servis hesaplarının rolleri (§20, §20.1, §20.2) | `place-service` istemcisini oluşturur (gizli, yalnız client credentials, §20.2); `forms`'a core'un beş servis rolü (`consent:record` dahil), `place-service`'e yalnız `consent:record`, `skymail-backend`'e core'un `audience:read`'i, `communication-preferences:read`'i ve `consent:audience:read`'i ile `realm-management`'ın `view-users` ve `view-clients`'ı, `core`'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`, `skymail:lists:read`, `skymail:lists:write`, `skymail:tracking:withdraw` rolleri, `skymail-seed`'in servis hesabına `skymail:templates:system`. Uzlaştırıcı kimliği core rollerini, `skymail:tracking:withdraw`'u ve `skymail:templates:system`'ı oluşturur ve raporlar; vermeyi operatör `KEYCLOAK_RECONCILE_ONLY=service-roles` ile yapar. SkyMail'in öbür rolleri oluşturulmaz. Yalnız servis hesaplarının rolünü taşıyan kişi, grup, varsayılan rol ve bileşik rol bildirilir. |
 | Rol grupları `/ROLLER/<UYGULAMA>-<ROL>` (§26) ve Leader gruplarının uygulama rolleri (§27) | Uzlaştırıcı **dokunmaz** (gruba rol eşlemek kullanıcı yetkisi ister). Operatör `config/role-groups.sh` ve `config/leader-app-roles.sh` (ya da `KEYCLOAK_RECONCILE_ONLY=role-groups` / `leader-app-roles`) ile kurar; kuru koşu varsayılandır, `--apply` yazar; üye hiç eklenmez. |
 
 Ortam değişkenleri: `KEYCLOAK_PASSKEY_RP_ID` (varsayılan `yildizskylab.com`) ve
@@ -2967,33 +2967,78 @@ kişilere ve gruplara **verilmez**. core bu uçlarda kişi token'ını rol taş�
 
 | Rol | Sahibi | core'da ne açar |
 | --- | --- | --- |
-| `consent:record` | yalnız `service-account-forms` | `POST /v1/consents` (kaydet), `POST /v1/consents/withdrawals` (kutuyu kaldırdı), `POST /v1/consents/lookup` (durum). core ayrıca `azp`'nin `CONTACT_CONSENT_SERVICE_CLIENTS`'te bir kaynağa eşli olmasını ister (`forms:forms`; yoksa `403 consent_source_unknown`) |
+| `consent:record` | yalnız `service-account-forms` ve `service-account-place-service` | `POST /v1/consents` (kaydet), `POST /v1/consents/withdrawals` (kutuyu kaldırdı), `POST /v1/consents/lookup` (durum). core ayrıca `azp`'nin `CONTACT_CONSENT_SERVICE_CLIENTS`'te bir kaynağa eşli olmasını ister (`forms:forms`; yoksa `403 consent_source_unknown`) |
 | `consent:audience:read` | yalnız `service-account-skymail-backend` | `GET /v1/consents/audience` (davet ve tanıtım kitlesi) ve `POST /v1/consents/renewal-requests` (yenileme sorusu gönderildi); SkyMail bilet 11 ve 12 (KVKK s6) |
 
-**Place ve Guessr yok.** Sözleşme `consent:record`'u Place ve Guessr'a da verir, ama ikisinin de
-servis hesabı yok: `place` Place'in BFF giriş istemcisidir ve servis hesabı kapalıdır
-(`config/create-place-client.sh` kapalı tutar), Guessr'ın istemcisi yoktur. Listeye bugün
-yazılsalar her tam uzlaştırma uyarır ve hiçbir şey verilmez. Kutularını yazdıklarında servis
-istemcileri kurulur; istemci adı satıra ve, `place`/`guessr` değilse, core'un
-`CONTACT_CONSENT_SERVICE_CLIENTS`'ine birlikte eklenir.
+**Place'in servis istemcisi `place-service`** (Yusuf, 2026-10-25). `place` Place'in BFF giriş
+istemcisidir ve servis hesabı kapalı kalır (`config/create-place-client.sh` kapalı tutar); Place'in
+rıza kaydı ayrı bir istemciyle yapılır. Uzlaştırıcı (`reconcile_place_service_client`, servis
+rolleri adımından hemen önce) her realm'de (sandbox ve production) istemciyi yoksa oluşturur ve her
+koşuda alanlarını geri koyar:
 
-**Audience.** Yeni audience mapper yok: `forms` ve `skymail-backend` zaten core rolleri taşıdığı
-için token'larında `aud ∋ core` vardır (varsayılan `roles` kapsamının audience resolve'u; adım
+| Alan | Değer |
+| --- | --- |
+| tür | gizli (`publicClient=false`, `clientAuthenticatorType=client-secret`) |
+| akışlar | yalnız client credentials (`serviceAccountsEnabled=true`); `standardFlowEnabled`, `implicitFlowEnabled`, `directAccessGrantsEnabled` `false`; device grant, CIBA ve token exchange kapalı |
+| adresler | redirect URI yok, web origin yok |
+| kapsam | `fullScopeAllowed=false`: token yalnız rol kapsamına eşlenmiş rolü taşır; servis rolleri adımı `core/consent:record`'u eşler (uzlaştırıcı kimliği de yapar). `aud ∋ core` varsayılan `roles` kapsamından gelir |
+| rol | `service-account-place-service`'e yalnız `core` `consent:record` (operatörün `service-roles` adımı); başka istemci rolü yok |
+
+İstemci `CORE_SERVICE_ONLY_CLIENTS`'tedir: servis rolleri adımı giriş bayraklarını da doğrular
+(`client place-service: service account only, verified (…)`). Kişi `place-service` ile giriş yapamaz.
+
+**Sır.** İstemci sırrını Keycloak istemciyi oluştururken üretir; uzlaştırıcı onu okumaz, yazdırmaz,
+repoya ya da log'a girmez (harness bunu sınar). Place'e taşımak ayrı bir operatör adımıdır, bu
+sürüm yapmaz. Kalıp, `place` istemcisinin sırrını taşıyan sky_lab_genel
+`ops/wizards/place-keycloak-client-wizard.sh`'dir; yalnız **production** (`e-skylab`;
+Place'in sandbox'ı yok, sandbox realm'deki istemcinin tüketicisi yoktur):
+
+1. Production sunucusunda Keycloak konteynerinde operatörün kcadm oturumu; sır
+   `kcadm.sh get clients/<place-service uuid>/client-secret -r e-skylab` ile okunur ve **yalnız
+   borudan** (`jq -j .value`) OpenBao'ya yazılır: `kv/etkinlik/<Place appName>/KEYCLOAK_SERVICE_CLIENT_SECRET`
+   (`cas=0`: varsa üstüne yazılmaz). Değer ekrana, dosyaya ya da bir komut satırına (argv) girmez.
+2. Doğrulama: OpenBao'daki değerin sha256'sı Keycloak'takiyle aynı; isteğe bağlı olarak sırrı
+   borudan alan bir client-credentials isteği (`azp=place-service`, `resource_access.core.roles`
+   = `["consent:record"]`), token ekrana basılmadan.
+3. Place'in Dokploy ortamına referans (değer değil), Place'in yayın bileti ekler:
+   `KEYCLOAK_SERVICE_CLIENT_ID=place-service` ve
+   `KEYCLOAK_SERVICE_CLIENT_SECRET=${{vault.bao-etkinlik.<Place appName>/KEYCLOAK_SERVICE_CLIENT_SECRET:value}}`
+   (adları Place'in bileti belirler).
+
+Sır yenilemesi (Admin Console → Clients → `place-service` → Credentials → Regenerate) aynı yoldan
+OpenBao'ya yeniden yazılır (`cas` ile), sonra Place yeniden başlatılır.
+
+**core'da `place:place-service` yok.** Place'in rıza kutusu henüz yok; core'un
+`CONTACT_CONSENT_SERVICE_CLIENTS`'ine `place:place-service` **eklenmez**: istemcinin rolü olsa da
+core onun isteğini `403 consent_source_unknown` ile reddeder. Kutu yazıldığında core'da
+`place:place-service` (varsayılan `place:place` değil) eklenir. Guessr'ın istemcisi yoktur; kutusu
+yazıldığında aynı biçimde kurulur.
+
+**Audience.** Yeni audience mapper yok: `forms`, `skymail-backend` ve `place-service` core rolü
+taşıdığı için token'larında `aud ∋ core` vardır (varsayılan `roles` kapsamının audience resolve'u; adım
 kapsamı doğrular, yoksa ekler). İstemci `fullScopeAllowed=false` ise adım rolü rol kapsamına ekler.
 
 **Sıra.** Roller zararsızdır: `CONTACT_CONSENT_KEY` ayarlı değilken uçlar 503 döner, rol yokken 403.
-Keycloak yayını → yayının tam uzlaştırması iki rolü oluşturur ve `WARNING: consent:record is not
-yet granted to service account service-account-forms by the operator step`, `WARNING:
-consent:audience:read is not yet granted to service account service-account-skymail-backend by the
-operator step` yazar → operatörün `service-roles` kuru koşusu (önce sandbox, sonra production):
-bu iki rol için beklenen satırlar `would grant consent:record to service account
-service-account-forms`, `would grant consent:audience:read to service account
-service-account-skymail-backend` ve ikisinin `would record the grant of …`'u. `forms` ya da
+Keycloak yayını → yayının tam uzlaştırması iki rolü ve `place-service` istemcisini oluşturur
+(`client place-service: created`, `client place-service: updated (…)`, `role scope of place-service:
+updated (+core/consent:record; fullScopeAllowed is false)`) ve `WARNING: consent:record is not yet
+granted to service account service-account-forms by the operator step`, aynısı
+`service-account-place-service` için, `WARNING: consent:audience:read is not yet granted to service
+account service-account-skymail-backend by the operator step` yazar → operatörün `service-roles`
+kuru koşusu (önce sandbox, sonra production): beklenen satırlar `would grant consent:record to
+service account service-account-forms`, `would grant consent:record to service account
+service-account-place-service`, `would grant consent:audience:read to service account
+service-account-skymail-backend`, `would record the grant of consent:record
+(skylab.granted-service-accounts=<now> service-account-forms,service-account-place-service)` ve
+`would record the grant of consent:audience:read (…)`; tam uzlaştırma koştuysa toplam `check: 5
+change(s) pending`. `forms` ya da
 `skymail-backend`'de `fullScopeAllowed=false` ise rol kapsamı eşlemesini uzlaştırıcı kimliği de
 yazar: yayının tam uzlaştırması koştuysa eşleme orada `role scope of <istemci>: updated
 (+core/<rol>; fullScopeAllowed is false)` olarak çıkar ve operatör kuru koşusunda görünmez. Realm'de
-tam uzlaştırma koşmadıysa kuru koşuda iki `would create client role …` satırı ve (tam kapsam
-kapalıysa) `would map core/<rol> in the role scope of … (fullScopeAllowed is false)` da görünür.
+tam uzlaştırma koşmadıysa `place-service` yoktur: kuru koşu iki `would create client role …`
+satırı, `WARNING: client place-service does not exist in realm …` ve (tam kapsam kapalıysa) `would
+map core/<rol> in the role scope of … (fullScopeAllowed is false)` gösterir; önce tam uzlaştırma
+koşulur.
 Başka bir `would grant` ya da bir kişi, grup, bileşik rol uyarısı çıkarsa uygulamadan önce durulur.
 Uygulayan koşu, ardından kuru koşu `check: 0 change(s) pending`. Bütün bunlar rıza anahtarından
 (`CONTACT_CONSENT_KEY` sihirbazı) önce yapılır; açılış sırası data-lifecycle 10'dadır.
@@ -3002,20 +3047,25 @@ listeyle çalışır, `consent:record`'u tanımaz; yeniden kullanılmaz. Sandbox
 `config/sandbox-admin-local-client.sh`'nin bir sonraki koşusu `add the core roles
 consent:audience:read, consent:record to the role scope of admin-local` der: beklenen, zararsız.
 
-**Doğrulama.** Admin Console → Clients → `forms` (ve `skymail-backend`) → Client scopes →
-Evaluate → kullanıcı `service-account-forms` (`service-account-skymail-backend`): access token'da
-`aud` `core`'u, `resource_access.core.roles` `consent:record`'u (`consent:audience:read`'i)
-içerir; `forms`'unki `consent:audience:read`'i, `skymail-backend`'inki `consent:record`'u içermez.
+**Doğrulama.** Admin Console → Clients → `forms` (ve `skymail-backend`, `place-service`) → Client
+scopes → Evaluate → kullanıcı `service-account-forms` (`service-account-skymail-backend`,
+`service-account-place-service`): access token'da `aud` `core`'u, `resource_access.core.roles`
+`consent:record`'u (`consent:audience:read`'i) içerir; `forms`'unki `consent:audience:read`'i,
+`skymail-backend`'inki `consent:record`'u içermez; `place-service`'inki yalnız `core`
+`consent:record`'u taşır (başka `resource_access` ve realm rolü yok).
 
 Geri dönüş: §20 ile aynı (rol servis hesabından kaldırılır, `skylab.granted-service-accounts`
 özniteliği silinir; kalıcı geri dönüş satırı listeden çıkaran sürüm).
 
-Harness (`tests/core-service-roles.sh`): ilk tam koşu iki rolü açıklamasıyla oluşturur, kimseye
-vermez ve uyarır; operatörün kuru koşusu verilecekleri yazar ve hiçbir şey yazmaz, uygulayan koşu
+Harness (`tests/core-service-roles.sh`): ilk tam koşu iki rolü açıklamasıyla ve `place-service`'i
+(bayraklar, servis hesabı, rol kapsamında tam olarak `core/consent:record`, realm rolü yok; sırrı
+çıktıda yok) oluşturur, kimseye vermez ve uyarır; operatörün kuru koşusu verilecekleri yazar ve hiçbir şey yazmaz, uygulayan koşu
 verir ve kaydeder, ikinci koşu 0 değişiklik. `forms`'un gerçek client-credentials token'ında
 `consent:record` var, `consent:audience:read` yok; `skymail-backend`'inkinde tersi, `aud ∋ core`;
-`core-erasure`'ınkinde ikisi de yok. Her rolü yalnız kendi servis hesabı taşır: başka kullanıcı,
-grup, bileşik rol ve varsayılan rol yok.
+`core-erasure`'ınkinde ikisi de yok; `place-service`'inkinde `azp` = `client_id` = `place-service`,
+`aud ∋ core` ve yalnız `consent:record`, servis hesabında başka istemci rolü yok. Her rolü yalnız
+kendi servis hesapları taşır (`consent:record`: `forms` ve `place-service`): başka kullanıcı, grup,
+bileşik rol ve varsayılan rol yok.
 
 ## 25. SkyMail'in Privileged rolü: `skymail:system-mails:read` (skymail-backend #61)
 

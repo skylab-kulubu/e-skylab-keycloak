@@ -4020,6 +4020,28 @@ dakikalar). Önek `[app-assignments] `'den sonra makine okur satırlar:
 Kişi adı basmaz. Sapma ve PROBLEM'le de çıkış 0'dır (rapor; bilet 07'nin alarmı okur), okuma düşerse 1.
 Varsayılan rol ve IdP ayarları §33.2'nin, servis hesapları §20'nin işidir.
 
+**Sapma özeti (ekip-yetkileri bilet 07; Entra PIM'in "rol PIM dışında atandı" uyarısı).** Sayılardan
+sonra her sapma bir satır `SAPMA|<sınıf>|<hedef>|<istemci>|<rol>`, en sonda
+`SAPMA: S1=… S1-realm=… (bilgi|alarm) S2-eksik=… S2-fazla=… S2b=… S3=… S5=…, alarm=<n>`. Panel alanı,
+`geçici` ve `karar-bekliyor` sapma değildir.
+
+| Sınıf | Ne |
+|---|---|
+| S1 | kişide doğrudan yönetici ya da sınıfsız client rolü (rol başına bir satır, `kişi:<n>`) |
+| S1-realm | kişide doğrudan realm rolü: Java dönemi rolleri, rol-temizligi bilet 19'un penceresine kadar yalnız bilgi; `KEYCLOAK_APP_ASSIGNMENTS_REALM_ROLES=alarm` (`--realm-roles alarm`) alarma katar |
+| S2-eksik | kodun beklediği, realm'de olmayan eşleme (beklenen `evet`, canlı `yok`) |
+| S2-fazla | kodun beklemediği kod alanı eşlemesi: Privileged kök, `/ROLLER` ve `role-groups.json`'daki yapraklar, `/UYELER`, alan ve öbür gruplar; herkese giden hedefteki uygulama rolü |
+| S2b | panel hedefinde (ekip, alt ekip, Leader grubu) yönetici, sınıfsız ya da realm rolü |
+| S3 | `/ROLLER` altında `role-groups.json`'ın adlamadığı yaprakta ya da yaprağın altındaki grupta eşleme |
+| S5 | Leader gruplarının (LIDERLER, KOORDINATORLER) hiçbirinde etkin üye olmayan en üst ekip |
+
+Varsayılan rol ve IdP ayarları (S4, S7) §33.2'nin, konsol yazımları (S6) Keycloak yönetici
+olaylarının, katalog-core karşılaştırması (S8) `tests/check-app-assignments.sh`'ın; bu adım okumaz.
+
+`KEYCLOAK_APP_ASSIGNMENTS_ALARM=true` (`--alarm`; yalnız `--check` ve `--privileged-file` ile, bu adım
+geçirir): `alarm=0` ise çıkış 0, sapma varsa 1, ölçülemeyen her şey (düşen okuma dahil) 2. Gecelik
+alarm (bilet 07, sunucu zamanlayıcısı ve ADMIN postası hub `ops/`'ta) bu adımı böyle koşar.
+
 ### 33.2 Varsayılan rol ve IdP belirteç ayarları: `KEYCLOAK_RECONCILE_ONLY=default-roles`
 
 `default-roles-<realm>` herkeste olduğu için yalnız Keycloak'ın kendi rollerini taşır: `offline_access`,

@@ -38,6 +38,31 @@
 # production. Exit 0 with drift and PROBLEMs (they are reported for ticket 07's alarm), 1 when a read
 # fails, 2 on a usage error, a refused realm or an invalid file.
 #
+# The drift summary (ekip-yetkileri ticket 07: Entra PIM's "roles assigned outside PIM"): after the
+# counts, one line per drift "SAPMA|<class>|<group path or kişi:<n>>|<client or realm>|<role>" and
+# "SAPMA: S1=… S1-realm=… S2-eksik=… S2-fazla=… S2b=… S3=… S5=…, alarm=<n>". The panel area (PANEL
+# lines) is never drift; geçici and karar-bekliyor neither.
+#   S1        an admin or unclassified client role held by people directly (one line a role);
+#   S1-realm  a realm role held by people directly: the old Java era's (rol-temizligi ticket 19 takes
+#             them away in its own window), so it counts towards the alarm only with
+#             --realm-roles alarm (KEYCLOAK_APP_ASSIGNMENTS_REALM_ROLES); the default is bilgi;
+#   S2-eksik  a mapping the code expects and the realm lacks (KOD|…|evet|yok);
+#   S2-fazla  a code area mapping the code does not expect: on a Privileged root, on /ROLLER or a
+#             leaf config/role-groups.json names, on /UYELER, an area or any other group, an app role
+#             on a target that reaches every member;
+#   S2b       an admin, unclassified or realm role on a panel target (a team, a Sub-team, a Leader
+#             group): e.g. skymail:mails:write on a team;
+#   S3        a mapping on a group under /ROLLER that config/role-groups.json does not name (a leaf
+#             it does not list, or a group under a leaf);
+#   S5        a top team none of whose Leader groups (LIDERLER, KOORDINATORLER) has an enabled member
+#             (Entra's ownerless group policy); the line names the team.
+# The default role and the identity providers' token settings (S4, S7) are the default-roles step's,
+# the console writes (S6) Keycloak's admin events, the catalogue against core (S8)
+# tests/check-app-assignments.sh: none of them is read here.
+# --alarm (KEYCLOAK_APP_ASSIGNMENTS_ALARM=true; --check only, with --privileged-file, since without it
+# every Privileged mapping would read as drift): exit 0 when alarm=0, 1 when there is drift, 2 when
+# anything could not be measured (a failed read included).
+#
 # --seed: the one-time initial assignment (YETKI-MATRISI §6.3, Yusuf's K1 of 2026-10-23), the
 # catalogue's initialAssignments: forms skyforms:access to every top team /UYELER/<area>/<team> (its
 # Sub-teams and Leader groups inherit it), skymail skymail:access and skymail:templates:read to every
@@ -90,6 +115,10 @@ KCADM_CONFIG=''
 OWN_CONFIG=false
 MODE=check
 APPLY=false
+ALARM=${KEYCLOAK_APP_ASSIGNMENTS_ALARM:-false}
+REALM_ROLES=${KEYCLOAK_APP_ASSIGNMENTS_REALM_ROLES:-bilgi}
+# Set just before the drift's exit 1, which --alarm keeps (every other failure is 2 there).
+DRIFT_EXIT=false
 PRIVILEGED_FILE=''
 BACKUP_FILE=''
 RESTORE_FILE=''
@@ -146,6 +175,15 @@ while [[ $# -gt 0 ]]; do
       APPLY=true
       shift
       ;;
+    --alarm)
+      ALARM=true
+      shift
+      ;;
+    --realm-roles)
+      [[ $# -ge 2 ]] || usage
+      REALM_ROLES=$2
+      shift 2
+      ;;
     *)
       usage
       ;;
@@ -160,6 +198,14 @@ fi
 # The reconciler's operator step tohum-atamalar names the backup through the environment.
 if [[ $MODE == seed && -z $BACKUP_FILE ]]; then
   BACKUP_FILE=${KEYCLOAK_APP_ASSIGNMENTS_BACKUP_FILE:-}
+fi
+if [[ $ALARM != true && $ALARM != false ]] || [[ $REALM_ROLES != bilgi && $REALM_ROLES != alarm ]]; then
+  printf 'app-assignments.sh: --alarm is true or false, --realm-roles bilgi or alarm\n' >&2
+  exit 2
+fi
+if [[ $ALARM == true && ( $MODE != check || -z $PRIVILEGED_FILE ) ]]; then
+  printf 'app-assignments.sh: --alarm belongs to --check with --privileged-file (KEYCLOAK_RECONCILE_ONLY=app-assignments passes it)\n' >&2
+  exit 2
 fi
 if [[ $MODE == check && ( $APPLY == true || -n $BACKUP_FILE ) ]]; then
   printf 'app-assignments.sh: --check only reads (--apply and --backup-file belong to --seed)\n' >&2
@@ -187,10 +233,15 @@ elif [[ ! -r $KCADM_CONFIG ]]; then
 fi
 
 cleanup() {
+  local status=$?
   if [[ $OWN_CONFIG == true ]]; then
     rm -f "$KCADM_CONFIG"
   fi
   rm -rf "$WORK_DIR"
+  # --alarm: 1 is the drift's alone; a failed read (exit 1 elsewhere) could not be measured.
+  if [[ $ALARM == true && $status -ne 0 && $DRIFT_EXIT != true ]]; then
+    exit 2
+  fi
 }
 trap cleanup EXIT
 
@@ -454,8 +505,10 @@ run_check() {
   local role_groups leader_roles site_roles
   # /ROLLER: config/role-groups.json.
   role_groups=$(json_tool role-groups "$CONFIG_DIR/role-groups.json")
+  declare -A known_leaf=()
   while IFS=$'\t' read -r kind name client roles _; do
     [[ $kind == group ]] || continue
+    known_leaf[/$ROLE_GROUP_ROOT/$name]=1
     read -r -a role_list <<<"$roles"
     for role in "${role_list[@]}"; do expect[/$ROLE_GROUP_ROOT/$name|$client|$role]=evet; done
   done <<<"$role_groups"
@@ -482,6 +535,28 @@ run_check() {
   # Every role's direct holders: groups by path, people and service accounts by number.
   declare -A panel_groups=() panel_people=()
   local kod_ok=0 kod_missing=0 kod_extra=0 kod_temporary=0 kod_pending=0 service_held=0
+  # The drift summary (ticket 07): one SAPMA line an item, kept for after the counts.
+  local drift_lines=() s1=0 s1_realm=0 s2_missing=0 s2_extra=0 s2b=0 s3=0 s5=0
+  drift() { # CLASS TARGET CLIENT ROLE
+    drift_lines+=("SAPMA|$1|$2|$3|$4")
+  }
+  # drift_class PATH CLIENT ROLE: the class of a group mapping the code does not expect.
+  drift_class() {
+    local path=$1 rest leaf
+    if [[ $path == "/$ROLE_GROUP_ROOT"/* ]]; then
+      rest=${path#/"$ROLE_GROUP_ROOT"/}
+      leaf=/$ROLE_GROUP_ROOT/${rest%%/*}
+      if [[ $path != "$leaf" || -z ${known_leaf[$leaf]:-} ]]; then
+        printf 'S3\n'
+        return
+      fi
+    elif ! privileged_root "$path" && panel_target "$path" \
+      && [[ $2 == realm || -z ${app_role[$2/$3]:-} ]]; then
+      printf 'S2b\n'
+      return
+    fi
+    printf 'S2-fazla\n'
+  }
   read_holders() { # BASE CLIENT ROLE
     local base=$1 client=$2 role=$3 path user persons=0 accounts=0 value
     users=$(csv "$base/users" username -q first=0 -q max=100000)
@@ -498,6 +573,13 @@ run_check() {
       else
         log "KOD|kişi:$persons|$client|$role|hayır|var"
         kod_extra=$((kod_extra + 1))
+        if [[ $client == realm ]]; then
+          s1_realm=$((s1_realm + 1))
+          drift S1-realm "kişi:$persons" "$client" "$role"
+        else
+          s1=$((s1 + 1))
+          drift S1 "kişi:$persons" "$client" "$role"
+        fi
         problem "$client/$role is held directly by $persons person(s): an admin, unclassified or realm role goes to a Privileged root or a role group, never to a person (the reset window, ekip-yetkileri ticket 06)"
       fi
     fi
@@ -522,6 +604,7 @@ run_check() {
         *)
           value=hayır
           kod_extra=$((kod_extra + 1))
+          drift "$(drift_class "$path" "$client" "$role")" "$path" "$client" "$role"
           if ! privileged_root "$path" && [[ $path != "/$ROLE_GROUP_ROOT" && $path != "/$ROLE_GROUP_ROOT"/* ]]; then
             if [[ $client != realm && -n ${app_role[$client/$role]:-} ]]; then
               problem "$client/$role (an app role) is mapped to $path, which is no panel target (no team group, or it reaches every member: a default role's job)"
@@ -562,13 +645,48 @@ run_check() {
     [[ -n ${existing_role[$client|$role]:-} ]] || continue
     log "KOD|$path|$client|$role|${expect[$entry]}|yok"
     kod_missing=$((kod_missing + 1))
+    drift S2-eksik "$path" "$client" "$role"
   done
 
   log "KOD: $kod_ok as expected, $kod_missing missing, $kod_extra not in code, $kod_temporary temporary (DK's Forms admin roles), $kod_pending pending a decision (frontend-arge: Fatih); service accounts: $service_held role(s) held (the service-roles step checks them); the default role and the identity providers: KEYCLOAK_RECONCILE_ONLY=default-roles"
   for client in "${APPS[@]}"; do
     log "PANEL: ${app_name_of[$client]} ($client): ${panel_groups[$client]:-0} group assignment(s), ${panel_people[$client]:-0} person assignment(s)"
   done
+
+  # S5: a top team none of whose Leader groups has an enabled member.
+  local team leader_id members_read has_leader member enabled
+  for team in ${TOP_TEAMS[@]+"${TOP_TEAMS[@]}"}; do
+    has_leader=false
+    for leader in "${LEADER_GROUPS[@]}"; do
+      leader_id=${gid_of[$team/$leader]:-}
+      [[ -n $leader_id ]] || continue
+      members_read=$(csv "groups/$leader_id/members" id,enabled -q first=0 -q max=100000)
+      while IFS=, read -r member enabled; do
+        if [[ -n $member && $enabled == true ]]; then has_leader=true; fi
+      done <<<"$members_read"
+    done
+    [[ $has_leader == true ]] || drift S5 "$team" - -
+  done
+
+  local line alarm
+  for line in ${drift_lines[@]+"${drift_lines[@]}"}; do
+    log "$line"
+    case $line in
+      SAPMA\|S2-eksik\|*) s2_missing=$((s2_missing + 1)) ;;
+      SAPMA\|S2-fazla\|*) s2_extra=$((s2_extra + 1)) ;;
+      SAPMA\|S2b\|*) s2b=$((s2b + 1)) ;;
+      SAPMA\|S3\|*) s3=$((s3 + 1)) ;;
+      SAPMA\|S5\|*) s5=$((s5 + 1)) ;;
+    esac
+  done
+  alarm=$((s1 + s2_missing + s2_extra + s2b + s3 + s5))
+  if [[ $REALM_ROLES == alarm ]]; then alarm=$((alarm + s1_realm)); fi
+  log "SAPMA: S1=$s1 S1-realm=$s1_realm ($REALM_ROLES) S2-eksik=$s2_missing S2-fazla=$s2_extra S2b=$s2b S3=$s3 S5=$s5, alarm=$alarm"
   log "check: 0 change(s) pending, $warnings warning(s), $problems problem(s)"
+  if [[ $ALARM == true && $alarm -gt 0 ]]; then
+    DRIFT_EXIT=true
+    exit 1
+  fi
 }
 
 # ==================================================================================================

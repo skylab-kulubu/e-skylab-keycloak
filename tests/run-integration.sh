@@ -153,8 +153,8 @@ source "$SCRIPT_DIR/core-roles.sh"
 # called below.
 # shellcheck source=skymail-roles.sh
 source "$SCRIPT_DIR/skymail-roles.sh"
-# core's service roles (media:attach, ticket:forms, url:forms, users:read) on the forms service
-# account; stages called below.
+# core's service roles (media:attach, ticket:forms, url:forms, users:read, consent:record) on the
+# forms service account, SkyMail's and core's service roles; stages called below.
 # shellcheck source=core-service-roles.sh
 source "$SCRIPT_DIR/core-service-roles.sh"
 # The realm's user and admin event retention (account erasure ticket 09); stages called below.

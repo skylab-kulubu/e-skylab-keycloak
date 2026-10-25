@@ -9,7 +9,7 @@ const allowedLinks = new Set([
   ACCOUNT_CENTER_URL,
   "https://forms.yildizskylab.com/",
   "https://admin.yildizskylab.com/",
-  "https://mail.yildizskylab.com/",
+  "https://iletisim.yildizskylab.com/",
   "https://place.yildizskylab.com/",
   "https://yildizskylab.com/",
   KVKK_URL,
@@ -64,7 +64,7 @@ describe("the e-SKY LAB landing page", () => {
       ["Hesap Merkezi", "my.yildizskylab.com"],
       ["SkyForms", "forms.yildizskylab.com"],
       ["Yönetim paneli", "admin.yildizskylab.com"],
-      ["SkyMail", "mail.yildizskylab.com"],
+      ["İletişim", "iletisim.yildizskylab.com"],
       ["YıldızPlace", "place.yildizskylab.com"],
       ["Kulüp siteleri", "yildizskylab.com"]
     ];

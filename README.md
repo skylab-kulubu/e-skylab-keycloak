@@ -696,7 +696,10 @@ koltuğu `skyforms:access` ADMIN, YK ve DK'ya, `skyforms:*` (bütün formları o
 tohumlanır (bilet 03, S4); ikisi de Forms'un rolüdür, oluşturulmaz. SkyCloud'un yönetici rolü `skycloud`
 `admin` (Yusuf, 2026-10-24) yalnız `core-roles` adımında ADMIN ve YK'ya aynı biçimde bir kez tohumlanır;
 istemci production'da elle kuruludur, ne o ne rolü oluşturulur, istemci yoksa uyarıyla atlanır (runbook
-§33.6).
+§33.6). Yönetim panelinin istemcisindeki (`admin`, sandbox'ta `superadmin`) inscribed rolleri de yalnız
+`core-roles` adımında aynı biçimde bir kez tohumlanır: `content:read` ADMIN, YK ve DK'ya, `content:write`
+ADMIN ve YK'ya (panelin Duyurular sayfası bunlarla yazar; DK okur). Rolleri `inscribed-cms-roles.sh`
+yapar, burada oluşturulmaz (runbook §33.7).
 
 DK salt okurdur (grup-yonetimi 08; Entra'nın Global Reader + Reports Reader'ı: `global:read` +
 `audit:read`). Uzlaştırıcı bir eşlemeyi hiç geri almadığı için DK'nın eskiden aldığı yazma rollerini

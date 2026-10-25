@@ -661,8 +661,9 @@ o rol) uzlaştırıcı her koşuda `core` istemcisinde var eder;
 `forms`'un `fullScopeAllowed`'ı kapalıysa rolleri onun kapsam eşlemesine ekler ve `aud: core`'u
 veren varsayılan `roles` kapsamını doğrular, yoksa ekler (ikinci audience mapper eklenmez).
 `place-service`'i (gizli, yalnız client credentials, `fullScopeAllowed=false`, redirect yok; sırrı
-Keycloak üretir, uzlaştırıcı okumaz) uzlaştırıcı oluşturur; Place'in giriş istemcisi `place` dar
-kalır (runbook §20.2). Roller `service-account-forms`'ta bulunur; servis hesabına rol vermek kullanıcı yetkisi istediği için bunu
+Keycloak üretir, uzlaştırıcı okumaz) uzlaştırıcı kimliği tam uzlaştırmada oluşturur; bu yalnız
+production'dadır, sandbox'ta uzlaştırıcı kimliği ve `place-service` yoktur. Place'in giriş istemcisi
+`place` dar kalır (runbook §20.2). Roller `service-account-forms`'ta bulunur; servis hesabına rol vermek kullanıcı yetkisi istediği için bunu
 operatör yapar (`KEYCLOAK_RECONCILE_KCADM_CONFIG` + `KEYCLOAK_RECONCILE_ONLY=service-roles`; eski adı
 `media-attach` de çalışır). `KEYCLOAK_RECONCILE_CHECK=true` aynı adımı kuru koşar: yalnız eksikleri
 `would …` diye yazar, hiçbir şey yazmaz. Adım önce her şeyi okur, okuma hatasında hiçbir şey vermez

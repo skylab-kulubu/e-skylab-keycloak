@@ -2973,9 +2973,11 @@ kişilere ve gruplara **verilmez**. core bu uçlarda kişi token'ını rol taş�
 
 **Place'in servis istemcisi `place-service`** (Yusuf, 2026-10-25). `place` Place'in BFF giriş
 istemcisidir ve servis hesabı kapalı kalır (`config/create-place-client.sh` kapalı tutar); Place'in
-rıza kaydı ayrı bir istemciyle yapılır. Uzlaştırıcı (`reconcile_place_service_client`, servis
-rolleri adımından hemen önce) her realm'de (sandbox ve production) istemciyi yoksa oluşturur ve her
-koşuda alanlarını geri koyar:
+rıza kaydı ayrı bir istemciyle yapılır. Uzlaştırıcı kimliğinin tam uzlaştırması
+(`reconcile_place_service_client`, servis rolleri adımından hemen önce) istemciyi yoksa oluşturur ve
+her koşuda alanlarını geri koyar. Tam uzlaştırma yalnız production'da (`e-skylab`) koşar: sandbox
+realm'inde uzlaştırıcı kimliği yoktur, operatörün `service-roles` adımı da istemciyi oluşturmaz.
+Sandbox'ta `place-service` yoktur (Place'in sandbox'ı da yok); gerekirse elle kurulur:
 
 | Alan | Değer |
 | --- | --- |
@@ -2992,7 +2994,7 @@ koşuda alanlarını geri koyar:
 repoya ya da log'a girmez (harness bunu sınar). Place'e taşımak ayrı bir operatör adımıdır, bu
 sürüm yapmaz. Kalıp, `place` istemcisinin sırrını taşıyan sky_lab_genel
 `ops/wizards/place-keycloak-client-wizard.sh`'dir; yalnız **production** (`e-skylab`;
-Place'in sandbox'ı yok, sandbox realm'deki istemcinin tüketicisi yoktur):
+Place'in sandbox'ı yok, sandbox realm'de `place-service` de yok):
 
 1. Production sunucusunda Keycloak konteynerinde operatörün kcadm oturumu; sır
    `kcadm.sh get clients/<place-service uuid>/client-secret -r e-skylab` ile okunur ve **yalnız
@@ -3020,8 +3022,8 @@ taşıdığı için token'larında `aud ∋ core` vardır (varsayılan `roles` k
 kapsamı doğrular, yoksa ekler). İstemci `fullScopeAllowed=false` ise adım rolü rol kapsamına ekler.
 
 **Sıra.** Roller zararsızdır: `CONTACT_CONSENT_KEY` ayarlı değilken uçlar 503 döner, rol yokken 403.
-Keycloak yayını → yayının tam uzlaştırması iki rolü ve `place-service` istemcisini oluşturur
-(`client place-service: created`, `client place-service: updated (…)`, `role scope of place-service:
+Keycloak yayını → yayının tam uzlaştırması (yalnız production) iki rolü ve `place-service`
+istemcisini oluşturur (`client place-service: created`, `client place-service: updated (…)`, `role scope of place-service:
 updated (+core/consent:record; fullScopeAllowed is false)`) ve `WARNING: consent:record is not yet
 granted to service account service-account-forms by the operator step`, aynısı
 `service-account-place-service` için, `WARNING: consent:audience:read is not yet granted to service
@@ -3031,15 +3033,21 @@ service account service-account-forms`, `would grant consent:record to service a
 service-account-place-service`, `would grant consent:audience:read to service account
 service-account-skymail-backend`, `would record the grant of consent:record
 (skylab.granted-service-accounts=<now> service-account-forms,service-account-place-service)` ve
-`would record the grant of consent:audience:read (…)`; tam uzlaştırma koştuysa toplam `check: 5
-change(s) pending`. `forms` ya da
+`would record the grant of consent:audience:read (…)`; production'da tam uzlaştırma koştuysa toplam
+`check: 5 change(s) pending`. Sandbox'ta tam uzlaştırma ve `place-service` olmadığı için beklenen
+satırlar farklıdır ve DUR sayılmaz: `WARNING: client place-service does not exist in realm
+e-skylab-sandbox; its core service roles are not granted to its service account`, `forms`'a ve
+`skymail-backend`'e iki `would grant`, `consent:record` kaydı yalnız `service-account-forms`'u
+adlandırır (`would record the grant of consent:record (skylab.granted-service-accounts=<now>
+service-account-forms)`), roller henüz yoksa iki `would create client role … of core`, tam kapsam
+kapalıysa `would map …`; rolleri sandbox'ta uygulayan operatör koşusu oluşturur. `forms` ya da
 `skymail-backend`'de `fullScopeAllowed=false` ise rol kapsamı eşlemesini uzlaştırıcı kimliği de
 yazar: yayının tam uzlaştırması koştuysa eşleme orada `role scope of <istemci>: updated
-(+core/<rol>; fullScopeAllowed is false)` olarak çıkar ve operatör kuru koşusunda görünmez. Realm'de
+(+core/<rol>; fullScopeAllowed is false)` olarak çıkar ve operatör kuru koşusunda görünmez. Production'da
 tam uzlaştırma koşmadıysa `place-service` yoktur: kuru koşu iki `would create client role …`
 satırı, `WARNING: client place-service does not exist in realm …` ve (tam kapsam kapalıysa) `would
 map core/<rol> in the role scope of … (fullScopeAllowed is false)` gösterir; önce tam uzlaştırma
-koşulur.
+koşulur (production'da bu uyarı DUR'dur, sandbox'ta beklenen).
 Başka bir `would grant` ya da bir kişi, grup, bileşik rol uyarısı çıkarsa uygulamadan önce durulur.
 Uygulayan koşu, ardından kuru koşu `check: 0 change(s) pending`. Bütün bunlar rıza anahtarından
 (`CONTACT_CONSENT_KEY` sihirbazı) önce yapılır; açılış sırası data-lifecycle 10'dadır.
@@ -3056,7 +3064,14 @@ scopes → Evaluate → kullanıcı `service-account-forms` (`service-account-sk
 `consent:record`'u taşır (başka `resource_access` ve realm rolü yok).
 
 Geri dönüş: §20 ile aynı (rol servis hesabından kaldırılır, `skylab.granted-service-accounts`
-özniteliği silinir; kalıcı geri dönüş satırı listeden çıkaran sürüm).
+özniteliği silinir; kalıcı geri dönüş satırı listeden çıkaran sürüm). `place-service` istemcisi
+silinmez: uzlaştırıcı istemci silmez ve `reconcile_place_service_client` kodda kaldıkça sonraki tam
+uzlaştırma silinen istemciyi yeniden oluşturur. Hemen geri dönüş Admin Console → Clients →
+`place-service` → Enabled kapalı (`enabled=false`): istemci token alamaz. Bu kapatma bir sonraki tam
+uzlaştırmaya kadar sürer; istenen alanlar `enabled=true` içerdiği için o koşu istemciyi yeniden açar
+(`client place-service: updated (enabled)`). Bu yüzden kapatmayla birlikte yukarıdaki rol geri
+dönüşü de yapılır: istemci yeniden açılsa da token'ında core rolü olmaz (uzlaştırıcı rolü vermez). Kalıcısı fonksiyonu çıkaran sürümdür; istemci ondan sonra
+elle silinebilir.
 
 Harness (`tests/core-service-roles.sh`): ilk tam koşu iki rolü açıklamasıyla ve `place-service`'i
 (bayraklar, servis hesabı, rol kapsamında tam olarak `core/consent:record`, realm rolü yok; sırrı

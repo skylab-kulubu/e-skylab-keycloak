@@ -196,9 +196,75 @@ class RabbitMqEventListenerProviderTest {
     }
 
     @Test
+    void aGroupDeleteCarriesTheGroupPathOnly() throws Exception {
+        RabbitMqEventListenerProvider provider = provider();
+        AdminEvent event = groupAdminEvent(OperationType.DELETE);
+
+        provider.onEvent(event, true);
+        commit();
+
+        assertEquals(List.of("KK.EVENT.ADMIN.e-skylab.SUCCESS.GROUP.DELETE"), routingKeys());
+        Published message = published.get(0);
+        Map<?, ?> body = JsonSerialization.readValue(message.body(), Map.class);
+        assertEquals(List.of("id", "realmId", "resourceType", "operationType", "resourcePath", "time"),
+                List.copyOf(body.keySet()));
+        assertEquals("GROUP", body.get("resourceType"));
+        assertEquals("DELETE", body.get("operationType"));
+        assertEquals("groups/group-uuid", body.get("resourcePath"));
+        assertEquals(event.getId(), message.properties().getMessageId());
+        assertNoPersonalData(message.body());
+        assertFalse(message.body().contains("Ekip"), "the group's name");
+        assertFalse(message.body().contains("admin-uuid"), "the author of the change");
+    }
+
+    @Test
+    void onlyTheDeleteOfAGroupIsPublished() {
+        RabbitMqEventListenerProvider provider = provider();
+        provider.onEvent(groupAdminEvent(OperationType.CREATE), true);
+        provider.onEvent(groupAdminEvent(OperationType.UPDATE), true);
+        provider.onEvent(groupAdminEvent(OperationType.ACTION), true);
+        AdminEvent membership = groupAdminEvent(OperationType.DELETE);
+        membership.setResourceTypeAsString("GROUP_MEMBERSHIP");
+        membership.setResourcePath("users/user-uuid/groups/group-uuid");
+        provider.onEvent(membership, true);
+        AdminEvent failed = groupAdminEvent(OperationType.DELETE);
+        failed.setError("unknown_error");
+        provider.onEvent(failed, true);
+        provider.onEvent(groupAdminEvent(OperationType.DELETE), true);
+
+        commit();
+
+        assertEquals(List.of("KK.EVENT.ADMIN.e-skylab.SUCCESS.GROUP.DELETE"), routingKeys());
+    }
+
+    @Test
+    void aUserOnlyResourceListPublishesNoGroupDelete() {
+        RabbitMqEventListenerProvider provider = provider(Map.of("admin_resources", "USER"));
+        provider.onEvent(groupAdminEvent(OperationType.DELETE), true);
+        provider.onEvent(userAdminEvent(OperationType.DELETE), true);
+
+        commit();
+
+        assertEquals(List.of("KK.EVENT.ADMIN.e-skylab.SUCCESS.USER.DELETE"), routingKeys());
+    }
+
+    @Test
+    void theUserOperationsAreNotTheGroupOnes() {
+        RabbitMqEventListenerProvider provider = provider(Map.of("admin_resources", "GROUP"));
+        provider.onEvent(userAdminEvent(OperationType.DELETE), true);
+        provider.onEvent(userAdminEvent(OperationType.UPDATE), true);
+        provider.onEvent(groupAdminEvent(OperationType.DELETE), true);
+
+        commit();
+
+        assertEquals(List.of("KK.EVENT.ADMIN.e-skylab.SUCCESS.GROUP.DELETE"), routingKeys());
+    }
+
+    @Test
     void anEmptyAdminResourceListPublishesNoAdminEvent() {
         RabbitMqEventListenerProvider provider = provider(Map.of("admin_resources", ""));
         provider.onEvent(userAdminEvent(OperationType.DELETE), true);
+        provider.onEvent(groupAdminEvent(OperationType.DELETE), true);
         provider.onEvent(userEvent(EventType.DELETE_ACCOUNT));
 
         commit();
@@ -319,6 +385,16 @@ class RabbitMqEventListenerProviderTest {
         author.setUserId("admin-uuid");
         author.setIpAddress(IP);
         event.setAuthDetails(author);
+        return event;
+    }
+
+    /** A group admin event as AdminEventBuilder sends it with admin event details on. */
+    private static AdminEvent groupAdminEvent(OperationType operation) {
+        AdminEvent event = userAdminEvent(operation);
+        event.setResourceTypeAsString("GROUP");
+        event.setResourcePath("groups/group-uuid");
+        event.setRepresentation("{\"id\":\"group-uuid\",\"name\":\"Ekip\",\"path\":\"/Ekipler/Ekip\"}");
+        event.setDetails(null);
         return event;
     }
 

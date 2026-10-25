@@ -3776,6 +3776,18 @@ reconcile_core_service_roles() {
 #                                  A reading role, so DK holds it too; the sender sees their own send
 #                                  without it (SkyMail checks sent_by, skymail-backend
 #                                  internal/handlers/tracking_read.go).
+#   skymail:suppressions:manage    ADMIN and YK: the suppression list (addresses), removing a
+#                                  permanent failure (bounce) from it and the bounce rate
+#                                  (skymail-backend internal/handlers/suppressions.go,
+#                                  SuppressionsManageRole; e-skylab ADR 0073; hub ticket
+#                                  skymail-bounce-isleme 06). A write role: DK none of it.
+#   skymail:unsubscribes:reactivate
+#                                  ADMIN and YK: reverses an address's own unsubscribe, only when the
+#                                  person asks or after a mistake, with a recorded reason (ADR 0072
+#                                  decision 7, UnsubscribesReactivateRole; hub ticket abonelik-cikisi
+#                                  10). A write role. Both have a description: SkyMail checks them and
+#                                  nothing else makes them. Until they exist and are seeded, nobody
+#                                  reads the list or reverses an unsubscribe in production.
 #   skymail:access, skymail:templates:read, skymail:lists:read, skymail:mails:read,
 #   skymail:mails:send, skymail:mails:write
 #                                  ADMIN and YK (ekip-yetkileri ticket 03; ADR 0067: YK sends directly,
@@ -3791,6 +3803,8 @@ reconcile_core_service_roles() {
 SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS=(
   'skymail:system-mails:read|ADMIN YK DK|Tekil sistem postalarının (doğrulama, bildirim) içeriğini görür (skymail-backend #61)'
   'skymail:mails:tracking:read|ADMIN YK DK|Her gönderimin kişi bazındaki açılma ve tıklama raporunu görür (iletisim-servisi 14b/17, T2; gönderen kendi gönderimini rolsüz görür)'
+  'skymail:suppressions:manage|ADMIN YK|SkyMail: bastırma listesini görür, kalıcı ret (bounce) kaydını kaldırır, bounce oranını okur (ADR 0073)'
+  'skymail:unsubscribes:reactivate|ADMIN YK|SkyMail: kimliği olmayan adresin kendi çıkışını, kişi isteyince ya da hata olunca, gerekçeyle geri alır (ADR 0072)'
   'skymail:access|ADMIN YK|-'
   'skymail:templates:read|ADMIN YK|-'
   'skymail:lists:read|ADMIN YK|-'

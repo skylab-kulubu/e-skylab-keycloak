@@ -681,10 +681,13 @@ haber ve duyuru kitlesi), `communication-preferences:read` rolünü (core #256, 
 edilebileceği) ve `consent:audience:read` rolünü (rıza kaydının davet ve tanıtım kitlesi, runbook §20.2) ile `realm-management`'ın `view-users` ve `view-clients` rollerini (Admin REST'ten kişi okuma; production'da 2026-09-23'ten beri elle verilmişti), core'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`,
 `skymail:lists:read`, `skymail:lists:write`, `skymail:notifications:send` (skymail-backend #79, `POST /v1/notifications`;
 yalnız `service-account-core`) ve `skymail:tracking:withdraw` (skymail-backend #75, takibi
-geri alma; yalnız `service-account-core`) rollerini, Template seed'in servis hesabına
+geri alma; yalnız `service-account-core`) rollerini ve Forms'un `skyforms:responses:read-service`
+rolünü (core Forms'un iç okuma uçlarını okur: form, yanıtlar, yanıtlayanlar, gecikmiş
+değerlendirmeler; ADR 0071, ADR 0075; yalnız `service-account-core`, `aud forms` varsayılan `roles`
+kapsamından; runbook §20.1), Template seed'in servis hesabına
 (`skymail-seed`) `skymail:templates:system`'ı (yalnız o bir şablonu sistem şablonu yapar ya da
 işareti kaldırır; skymail-backend README) verir; SkyMail'in rollerinden yalnız
-`skymail:notifications:send`'i, `skymail:tracking:withdraw`'u ve `skymail:templates:system`'ı oluşturur, öbürleri eksikse uyarır (runbook §20.1); listelenen servis istemcisinde varsayılan `roles` kapsamı yoksa ekler (runbook §20.1). SkyMail'in kendi
+`skymail:notifications:send`'i, `skymail:tracking:withdraw`'u ve `skymail:templates:system`'ı, Forms'un rollerinden yalnız `skyforms:responses:read-service`'i oluşturur, öbürleri eksikse uyarır (runbook §20.1); listelenen servis istemcisinde varsayılan `roles` kapsamı yoksa ekler (runbook §20.1). SkyMail'in kendi
 rolleri `skymail:access`, `skymail:templates:read`, `skymail:lists:read`, `skymail:mails:read`,
 `skymail:mails:send`, `skymail:mails:write` ADMIN ve YK'ya, `skymail:mails:approve` yalnız YK'ya
 (onaycı YK kökü) aynı biçimde bir kez tohumlanır; uzlaştırıcı onları oluşturmaz, realm'de olanı

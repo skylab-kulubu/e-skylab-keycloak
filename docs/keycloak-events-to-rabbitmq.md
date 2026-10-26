@@ -139,7 +139,7 @@ yayımlayacağını bir satırda söyler.
 | `KK_TO_RMQ_TRUST_STORE`, `KK_TO_RMQ_TRUST_STORE_PASS` | boş | — | Yalnız TLS ile (JKS) |
 | `KK_TO_RMQ_KEY_STORE`, `KK_TO_RMQ_KEY_STORE_PASS` | boş | — | Yalnız TLS istemci sertifikasıyla (PKCS12) |
 | `KK_TO_RMQ_EVENT_TYPES` | katalog: `REGISTER,UPDATE_EMAIL,UPDATE_PROFILE,DELETE_ACCOUNT` | ayarlanmaz | Virgüllü liste katalogu **daraltır**; boş değer hiçbir kullanıcı olayı göndermez; katalog dışı ad hata satırıyla yok sayılır |
-| `KK_TO_RMQ_ADMIN_RESOURCES` | katalog: `USER,GROUP` | ayarlanmaz | Aynı kural (`USER`: yalnız kullanıcı olayları); işlemler kaynağın katalogdaki kümesidir, ayarlanmaz |
+| `KK_TO_RMQ_ADMIN_RESOURCES` | katalog: `USER,GROUP` | RabbitMQ olayları bilet 07'ye kadar `USER`, sonra `USER,GROUP` | Aynı kural (`USER`: yalnız kullanıcı olayları); işlemler kaynağın katalogdaki kümesidir, ayarlanmaz. Varsayılan `USER,GROUP` olduğu için ayarsız açılan dinleyici `GROUP.DELETE` de yayımlar; bilet 04'ün bağı yokken o mesaj `unrouted`'a düşer (R06 alarmı) |
 
 Production Keycloak bir Dokploy Application'dır: değerler env sekmesine
 `${{vault.bao-prod.…}}` referansıyla birebir yazılır, repo compose'unun
@@ -171,7 +171,8 @@ açılan dinleyici sürüklenir.
 
 1. Production broker ve `keycloak_a`/`keycloak_b` kullanıcıları hazır (R04, R05);
    `keycloak.events` exchange'i ve `core.keycloak` bağları topolojide.
-2. Keycloak env sekmesine yukarıdaki `KK_TO_RMQ_*` referansları, Keycloak
+2. Keycloak env sekmesine yukarıdaki `KK_TO_RMQ_*` referansları
+   (`KK_TO_RMQ_ADMIN_RESOURCES=USER`; `USER,GROUP` yalnız bilet 07'de), Keycloak
    `sky-lab-production-events` ağında, bu imaj (3.3.0 ya da sonrası) yayında. Keycloak
    sürümü Touch ID kapısından geçer.
 3. Reconciler `e-skylab` realm'i için bir kez, koşu başına

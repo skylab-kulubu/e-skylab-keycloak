@@ -64,7 +64,11 @@
 #   KEYCLOAK_REALM=<realm> dk-read-only.sh --admin-user <admin>                       # --check (default)
 #   KEYCLOAK_REALM=<realm> dk-read-only.sh --kcadm-config <file> [--forms] --apply [--backup-file <file>]
 #   KEYCLOAK_REALM=<realm> dk-read-only.sh --kcadm-config <file> --restore <backup> [--apply]
+#   dk-read-only.sh --print-write-roles                                             # no realm, no login
 #
+# --print-write-roles prints WRITE_ROLES, one "client|role" a line ("*": any client), for
+# config/app-assignments.sh: a write role on a DK root is drift there even when the panel gave it
+# (ekip-yetkileri ticket 17). It reads and needs nothing else.
 # Environment: KEYCLOAK_ADMIN_URL (default http://keycloak:8080), KEYCLOAK_REALM (required),
 # KEYCLOAK_ADMIN_REALM (default master), KEYCLOAK_DK_READ_ONLY_ADMIN_USERNAME (or --admin-user).
 # Output: "[dk-read-only] ..." lines (group paths and role names, never a person), then "check: N
@@ -134,7 +138,7 @@ FORMS_READ=skyforms:read-all
 SITE_READ_ROLE=content:read
 
 usage() {
-  printf 'usage: KEYCLOAK_REALM=(e-skylab|e-skylab-sandbox) %s (--admin-user <administrator> | --kcadm-config <file>) [--check | --apply] [--forms] [--backup-file <file>] | --restore <backup> [--check | --apply]\n' \
+  printf 'usage: KEYCLOAK_REALM=(e-skylab|e-skylab-sandbox) %s (--admin-user <administrator> | --kcadm-config <file>) [--check | --apply] [--forms] [--backup-file <file>] | --restore <backup> [--check | --apply] | --print-write-roles\n' \
     "${BASH_SOURCE[0]##*/}" >&2
   exit 2
 }
@@ -172,6 +176,11 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 && -n $2 ]] || usage
       RESTORE_FILE=$2
       shift 2
+      ;;
+    --print-write-roles)
+      [[ $# -eq 1 ]] || usage
+      printf '%s\n' "${WRITE_ROLES[@]}"
+      exit 0
       ;;
     *)
       usage

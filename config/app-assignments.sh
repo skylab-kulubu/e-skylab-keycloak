@@ -44,17 +44,22 @@
 # panel area (PANEL lines) is never drift; geçici and karar-bekliyor neither. Only what the code owns
 # counts: a Privileged role the reconciler seeds once (--privileged-file, marked on the role) is the
 # panel's after its seed (seeded once, then the panel's: Yusuf's groups-only role model, Entra's
-# model), so its mapping missing from or added on a Privileged root is one line
+# model), so its mapping missing from or added on a root of its own seed set (the Privileged names
+# --privileged-file gives it, at /<NAME>, /UYELER/<NAME> and under them) is one line
 # "BILGI|S2-tohum|<group path>|<client>|<role>|eksik|fazla" and never counts towards the alarm; before
-# the seed (no mark) the missing mapping is the code's own and S2-eksik.
+# the seed (no mark) the missing mapping is the code's own and S2-eksik. Given to a Privileged root
+# outside its seed set (YK's skymail:mails:approve on ADMIN), or a write role of config/dk-read-only.sh
+# (--print-write-roles) given to DK or under it at all (DK reads and does not write), it is S2-fazla
+# (ekip-yetkileri ticket 17).
 #   S1        an admin or unclassified client role held by people directly (one line a role);
 #   S1-realm  a realm role held by people directly: the old Java era's (rol-temizligi ticket 19 takes
 #             them away in its own window), so it counts towards the alarm only with
 #             --realm-roles alarm (KEYCLOAK_APP_ASSIGNMENTS_REALM_ROLES); the default is bilgi;
 #   S2-eksik  a mapping the code expects and the realm lacks (KOD|…|evet|yok), but for a seeded
-#             Privileged role on a Privileged root (S2-tohum);
+#             Privileged role on a root of its seed set (S2-tohum);
 #   S2-fazla  a code area mapping the code does not expect: on a Privileged root (a role of no seed
-#             there: not in --privileged-file, or not yet seeded), on /ROLLER or a
+#             there: not in --privileged-file, not yet seeded, a root outside its seed set, or a
+#             write role on DK), on /ROLLER or a
 #             leaf config/role-groups.json names, on /UYELER, an area or any other group, an app role
 #             on a target that reaches every member;
 #   S2b       an admin, unclassified or realm role on a panel target (a team, a Sub-team, a Leader
@@ -386,6 +391,15 @@ privileged_root() {
   return 1
 }
 
+# in_roots PATH NAMES: true at or under /<NAME> or /UYELER/<NAME> of one of the space separated NAMES.
+in_roots() {
+  local name
+  for name in $2; do
+    [[ $1 == "/$name" || $1 == "/$name"/* || $1 == "/UYELER/$name" || $1 == "/UYELER/$name"/* ]] && return 0
+  done
+  return 1
+}
+
 # reaches_everyone PATH: /UYELER, an area, or a group at or above a default group.
 reaches_everyone() {
   local default
@@ -514,15 +528,17 @@ run_check() {
     done
   }
   # seeded["client|role"] = 1: a role of --privileged-file the reconciler has seeded once (its mark,
-  # PRIVILEGED_SEED_ATTRIBUTE). Its mappings on the Privileged roots are the panel's since (seeded once,
-  # then the panel's: runbook §19, §25): missing or more there is a BILGI line, never drift.
-  declare -A seeded=() privileged_role=() privileged_client=()
+  # PRIVILEGED_SEED_ATTRIBUTE). Its mappings on the roots of its seed set (seed_names["client|role"],
+  # the Privileged names of --privileged-file) are the panel's since (seeded once, then the panel's:
+  # runbook §19, §25): missing or more there is a BILGI line, never drift.
+  declare -A seeded=() privileged_role=() privileged_client=() seed_names=()
   if [[ -n $PRIVILEGED_FILE ]]; then
     [[ -r $PRIVILEGED_FILE ]] || { printf '[app-assignments] %s is not readable\n' "$PRIVILEGED_FILE" >&2; exit 2; }
     while IFS=$'\t' read -r kind names client role; do
       [[ $kind == privileged ]] || continue
       add_privileged "$names" "$client" "$role" evet
       privileged_role[$client|$role]=1
+      seed_names[$client|$role]="${seed_names[$client|$role]:-} $names"
       privileged_client[$client]=1
     done <"$PRIVILEGED_FILE"
     local marks mark_role mark
@@ -543,7 +559,13 @@ run_check() {
     add_privileged DK "${entry%%|*}" "${entry#*|}" geçici
   done
   # Every list into a variable first: a failed read or script must stop the run, not pass as "none".
-  local role_groups leader_roles site_roles
+  local role_groups leader_roles site_roles dk_write_roles
+  # DK's write roles (config/dk-read-only.sh, "client|role", "*": any client): never the panel's on DK.
+  dk_write_roles=$(bash "$CONFIG_DIR/dk-read-only.sh" --print-write-roles)
+  declare -A dk_write=()
+  while IFS= read -r entry; do
+    if [[ -n $entry ]]; then dk_write[$entry]=1; fi
+  done <<<"$dk_write_roles"
   # /ROLLER: config/role-groups.json.
   role_groups=$(json_tool role-groups "$CONFIG_DIR/role-groups.json")
   declare -A known_leaf=()
@@ -582,10 +604,16 @@ run_check() {
   drift() { # CLASS TARGET CLIENT ROLE
     drift_lines+=("SAPMA|$1|$2|$3|$4")
   }
-  # panel_changed PATH CLIENT ROLE: true for a seeded Privileged role on a Privileged root (the
-  # panel's since the seed); one BILGI line (S2-tohum) instead of drift.
+  # panel_changed PATH CLIENT ROLE eksik|fazla: true for a seeded Privileged role on a root of its
+  # own seed set (the panel's since the seed), but never for a DK write role given to DK (DK reads and
+  # does not write: config/dk-read-only.sh); one BILGI line (S2-tohum) instead of drift.
   panel_changed() {
-    [[ -n ${seeded[$2|$3]:-} ]] && privileged_root "$1"
+    [[ -n ${seeded[$2|$3]:-} ]] && in_roots "$1" "${seed_names[$2|$3]}" || return 1
+    if [[ $4 == fazla ]] && in_roots "$1" DK \
+      && [[ -n ${dk_write["$2|$3"]:-} || -n ${dk_write["*|$3"]:-} ]]; then
+      return 1
+    fi
+    return 0
   }
   note() { # TARGET CLIENT ROLE eksik|fazla
     note_lines+=("BILGI|S2-tohum|$1|$2|$3|$4")
@@ -654,7 +682,7 @@ run_check() {
         *)
           value=hayır
           kod_extra=$((kod_extra + 1))
-          if panel_changed "$path" "$client" "$role"; then
+          if panel_changed "$path" "$client" "$role" fazla; then
             note "$path" "$client" "$role" fazla
           else
             drift "$(drift_class "$path" "$client" "$role")" "$path" "$client" "$role"
@@ -699,7 +727,7 @@ run_check() {
     [[ -n ${existing_role[$client|$role]:-} ]] || continue
     log "KOD|$path|$client|$role|${expect[$entry]}|yok"
     kod_missing=$((kod_missing + 1))
-    if panel_changed "$path" "$client" "$role"; then
+    if panel_changed "$path" "$client" "$role" eksik; then
       note "$path" "$client" "$role" eksik
     else
       drift S2-eksik "$path" "$client" "$role"

@@ -661,8 +661,9 @@ o rol) uzlaştırıcı her koşuda `core` istemcisinde var eder;
 `forms`'un `fullScopeAllowed`'ı kapalıysa rolleri onun kapsam eşlemesine ekler ve `aud: core`'u
 veren varsayılan `roles` kapsamını doğrular, yoksa ekler (ikinci audience mapper eklenmez).
 `place-service`'i (gizli, yalnız client credentials, `fullScopeAllowed=false`, redirect yok; sırrı
-Keycloak üretir, uzlaştırıcı okumaz) uzlaştırıcı oluşturur; Place'in giriş istemcisi `place` dar
-kalır (runbook §20.2). Roller `service-account-forms`'ta bulunur; servis hesabına rol vermek kullanıcı yetkisi istediği için bunu
+Keycloak üretir, uzlaştırıcı okumaz) uzlaştırıcı kimliği tam uzlaştırmada oluşturur; bu yalnız
+production'dadır, sandbox'ta uzlaştırıcı kimliği ve `place-service` yoktur. Place'in giriş istemcisi
+`place` dar kalır (runbook §20.2). Roller `service-account-forms`'ta bulunur; servis hesabına rol vermek kullanıcı yetkisi istediği için bunu
 operatör yapar (`KEYCLOAK_RECONCILE_KCADM_CONFIG` + `KEYCLOAK_RECONCILE_ONLY=service-roles`; eski adı
 `media-attach` de çalışır). `KEYCLOAK_RECONCILE_CHECK=true` aynı adımı kuru koşar: yalnız eksikleri
 `would …` diye yazar, hiçbir şey yazmaz. Adım önce her şeyi okur, okuma hatasında hiçbir şey vermez
@@ -696,7 +697,10 @@ koltuğu `skyforms:access` ADMIN, YK ve DK'ya, `skyforms:*` (bütün formları o
 tohumlanır (bilet 03, S4); ikisi de Forms'un rolüdür, oluşturulmaz. SkyCloud'un yönetici rolü `skycloud`
 `admin` (Yusuf, 2026-10-24) yalnız `core-roles` adımında ADMIN ve YK'ya aynı biçimde bir kez tohumlanır;
 istemci production'da elle kuruludur, ne o ne rolü oluşturulur, istemci yoksa uyarıyla atlanır (runbook
-§33.6).
+§33.6). Yönetim panelinin istemcisindeki (`admin`, sandbox'ta `superadmin`) inscribed rolleri de yalnız
+`core-roles` adımında aynı biçimde bir kez tohumlanır: `content:read` ADMIN, YK ve DK'ya, `content:write`
+ADMIN ve YK'ya (panelin Duyurular sayfası bunlarla yazar; DK okur). Rolleri `inscribed-cms-roles.sh`
+yapar, burada oluşturulmaz (runbook §33.7).
 
 DK salt okurdur (grup-yonetimi 08; Entra'nın Global Reader + Reports Reader'ı: `global:read` +
 `audit:read`). Uzlaştırıcı bir eşlemeyi hiç geri almadığı için DK'nın eskiden aldığı yazma rollerini
@@ -1065,18 +1069,27 @@ INTEGRATION_GROUP=login KEYCLOAK_TEST_IMAGE=account-keycloak:test bash tests/run
 bağlantıları, tema sözleşmeleri, imaj derlemesi ve içindeki SPI/RabbitMQ Maven testleri,
 operatör betiklerinin statik denetimleri), `theme` ve kısa sözleşme işleri; her biri yalnız
 okuduğu yollar değiştiyse (`theme/`, `spi/`, ya da `theme/`, `spi/`, `docs/`, `*.md`
-dışındaki her şey). Uzun Keycloak işleri ve `integration (<grup>)` grupları PR'da koşmaz;
-ancak `main`'e açılan PR bir işin kendi test betiğine ya da onun (doğrudan veya dolaylı, yorum
-satırları hariç) okuduğu ya da çalıştırdığı bir `tests/`, `config/` veya harness Playwright
-dosyasına (`theme/tests/`) dokunuyorsa o iş hızlı koşuda da koşar (`tests/affected-jobs.sh`;
-entegrasyon harness'ına ya da tam uzlaştırmaya dokunmak `candidate` imajını derletip bütün grupları
-koşturur). Hiçbir iş akışının ulaşmadığı bir `tests/` ya da `config/` dosyası bütün tam takım
-işlerini koşturur; izlenen her dosya ya bir işe ulaşır ya da `LOCAL_ONLY` listesindedir
-(`check-fresh-runner.sh` denetler). Hızlı `production` koşusu (terfi) etkilenen iş koşturmaz:
-ağacı zaten tam test edildi. Bu koşuların makbuzları yayın kanıtı sayılmaz (bulucu yalnız tam
-push, gece ve elle koşularına bakar).
+dışındaki her şey). Uzun Keycloak işleri ve `integration (<grup>)` grupları PR'da koşmaz.
+`main`'e açılan PR'da `tests/` ve `config/` yolları "her şey" sayılmaz: yalnız o yolu
+(doğrudan veya dolaylı, yorum satırları hariç) okuyan ya da çalıştıran işler koşar
+(`tests/affected-jobs.sh --pull-request`; harness Playwright dosyaları `theme/tests/` de). Bu,
+hızlı kümenin kısa işleri ve PR süresine (15 dk) sığan tam takım işleri (`dk-read-only`,
+`sandbox-admin-local-client`, `after-sign-up-native`) içindir. 15 dakikayı aşan tam takım işleri
+(`PR_DEFERRED`: `integration (<grup>)` grupları, `role-groups`, `site-clients`, `login-clients`,
+`skyapp-cms-editor`, `ytu-first-login`, `inscribed-cms-roles`) PR etkilese de PR'da koşmaz; adları
+`scope` günlüğüne, koşu özetine ve PR'ın kontrol sayfasına uyarı (`::warning::`) olarak yazılır,
+`main` push'unun tam koşusunda koşarlar (yayından önce).
+PR'da da koşsunlar istenirse PR'a `full-ci` etiketi konur. Hiçbir iş akışının ulaşmadığı bir
+`tests/` ya da `config/` dosyası PR'ın koşabileceği bütün işleri koşturur; izlenen her dosya ya
+bir işe ulaşır ya da `LOCAL_ONLY` listesindedir (`check-fresh-runner.sh` denetler). Hızlı
+`production` koşusu (terfi) tam takım işi koşturmaz: ağacı zaten tam test edildi. Bu koşuların
+makbuzları yayın kanıtı sayılmaz (bulucu yalnız tam push, gece ve elle koşularına bakar).
 *Tam takım* `main` push'unda, her gece (01:23 UTC), elle (`gh workflow run ci.yml --ref <dal>`)
-ve `full-ci` etiketli PR'larda (etiket PR açılırken/push'ta okunur) koşar. `production`'a açılan
+ve `full-ci` etiketli PR'larda (etiket PR açılırken/push'ta okunur; etiket eklenince
+`full-ci.yml` dalın başında hemen elle bir tam koşu başlatır; bu koşunun `gate`'i aynı commit'teki
+en yeni `gate` olur ve PR'ın birleşim (merge) commit'ini değil dalın başını test eder) koşar. `ci.yml` `labeled` olayında
+koşmaz: başka bir etiketin koşusu atlanmış (`skipped`) bir `gate` bırakırdı, GitHub atlanan zorunlu
+kontrolü geçmiş sayar ve aynı commit'in kırmızı `gate`'ini örterdi. `production`'a açılan
 PR'lar ve `production` push'u, ağaçlarını tamamen yeşil bir tam koşu zaten test ettiyse (yayın
 PR'ı ve yayın push'u, `main` push koşusundan sonra) hızlı kümeyi koşar; etmediyse (hotfix) tam
 takımı. Kanıtı `tests/find-green-full-ci-run.sh` bulur: yalnız push, gece ya da elle koşuları

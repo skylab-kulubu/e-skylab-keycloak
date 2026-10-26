@@ -24,7 +24,12 @@
 #   forms  Forms' admin roles (FORMS_ROLES: skyforms:*, skyforms:feedback:*, as core's AdminRoles):
 #          kept until forms-backend reads skyforms:read-all (Fatih); --forms takes them away then;
 #   read   kept (READ_ROLES): core global:read, audit:read, users:read; SkyMail's reading roles;
-#          content:read of any client; forms skyforms:read-all;
+#          content:read of any client; forms skyforms:read-all. "Kept" means this step never takes
+#          them away, not that the code expects them on DK: that is config/app-assignments.sh's (the
+#          reconciler's Privileged lists and config/site-editor-grants.sh). core users:read (the Forms
+#          service account's role, a Java era leftover on people; DK reads people through global:read)
+#          and SkyMail's skymail:access, templates:read, lists:read and mails:read are not expected on
+#          DK, so the reset window (ekip-yetkileri ticket 06 c2) takes them away;
 #   app    kept (APP_ROLES, core's app roles bound to the holder; Yusuf 2026-10-14, Y1 and Y5): core's
 #          own short link roles (url:access and url:create/get/update/delete: a DK member keeps their
 #          own links) and Forms' seat and screens (skyforms:access, form:manage, response:manage,

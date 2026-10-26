@@ -6,7 +6,10 @@
 #
 # The script CREATES roles and composites and makes the claims. It never grants a role to a group
 # or to a person: group -> client-role mappings are made in the SKY LAB admin panel (Groups ->
-# client roles; CONTEXT.md "Client role"). Its only grants go to the clients' own service accounts.
+# client roles; CONTEXT.md "Client role"), except the admin panel client's content:read and
+# content:write on the Privileged roots, which the reconciler's core-roles step seeds once
+# (ADMIN_PANEL_PRIVILEGED_ROLE_DEFINITIONS, runbook §33.7). Its only grants go to the clients' own
+# service accounts.
 # It reports, read-only, who holds each CMS role, so the panel's grants can be checked.
 #
 # Clients: frontend-main, frontend-arge and the admin panel's client (admin; superadmin in the realm

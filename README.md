@@ -679,11 +679,12 @@ core'un `MEDIA_SERVICE_CLIENTS`'ıyla aynı tutulur (runbook §20).
 Aynı adım SkyMail'in servis hesabına (`skymail-backend`) core'un `audience:read` rolünü (core #242,
 haber ve duyuru kitlesi), `communication-preferences:read` rolünü (core #256, kimin takip
 edilebileceği) ve `consent:audience:read` rolünü (rıza kaydının davet ve tanıtım kitlesi, runbook §20.2) ile `realm-management`'ın `view-users` ve `view-clients` rollerini (Admin REST'ten kişi okuma; production'da 2026-09-23'ten beri elle verilmişti), core'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`,
-`skymail:lists:read`, `skymail:lists:write` ve `skymail:tracking:withdraw` (skymail-backend #75, takibi
+`skymail:lists:read`, `skymail:lists:write`, `skymail:notifications:send` (skymail-backend #79, `POST /v1/notifications`;
+yalnız `service-account-core`) ve `skymail:tracking:withdraw` (skymail-backend #75, takibi
 geri alma; yalnız `service-account-core`) rollerini, Template seed'in servis hesabına
 (`skymail-seed`) `skymail:templates:system`'ı (yalnız o bir şablonu sistem şablonu yapar ya da
 işareti kaldırır; skymail-backend README) verir; SkyMail'in rollerinden yalnız
-`skymail:tracking:withdraw`'u ve `skymail:templates:system`'ı oluşturur, öbürleri eksikse uyarır (runbook §20.1); listelenen servis istemcisinde varsayılan `roles` kapsamı yoksa ekler (runbook §20.1). SkyMail'in kendi
+`skymail:notifications:send`'i, `skymail:tracking:withdraw`'u ve `skymail:templates:system`'ı oluşturur, öbürleri eksikse uyarır (runbook §20.1); listelenen servis istemcisinde varsayılan `roles` kapsamı yoksa ekler (runbook §20.1). SkyMail'in kendi
 rolleri `skymail:access`, `skymail:templates:read`, `skymail:lists:read`, `skymail:mails:read`,
 `skymail:mails:send`, `skymail:mails:write` ADMIN ve YK'ya, `skymail:mails:approve` yalnız YK'ya
 (onaycı YK kökü) aynı biçimde bir kez tohumlanır; uzlaştırıcı onları oluşturmaz, realm'de olanı

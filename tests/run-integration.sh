@@ -553,6 +553,11 @@ stage_v2_assert_account_api_scope() {
   json_assert "$mappers" \
     '[.[] | select(.name == "account-api-core-audience" and .protocolMapper == "oidc-audience-mapper" and .config["included.client.audience"] == "core" and .config["access.token.claim"] == "true" and .config["id.token.claim"] == "false")] | length == 1' \
     'core audience mapper differs'
+  # The person's own SkyMail endpoints (the in-app inbox, iletisim-servisi 04 and 07): aud skymail in
+  # the access token and introspection, not the ID token or userinfo.
+  json_assert "$mappers" \
+    '[.[] | select(.name == "account-api-skymail-audience" and .protocolMapper == "oidc-audience-mapper" and .config["included.client.audience"] == "skymail" and .config["access.token.claim"] == "true" and .config["id.token.claim"] == "false" and .config["userinfo.token.claim"] == "false" and .config["introspection.token.claim"] == "true")] | length == 1' \
+    'skymail audience mapper differs'
   json_assert "$mappers" \
     '[.[] | select(.name == "account-api-manage-account-links" and .protocolMapper == "oidc-hardcoded-role-mapper" and .config.role == "account.manage-account-links")] | length == 1' \
     'manage-account-links role mapper differs'
@@ -864,8 +869,8 @@ stage_v2_assert_token_contract() {
   CURRENT_STAGE='v2 access token audience and sky_authorization contract'
   local payload=$1
   json_assert "$payload" \
-    '((.aud | if type == "array" then . else [.] end) | sort) == ["account", "core"]' \
-    'access token audience is not exactly account and core'
+    '((.aud | if type == "array" then . else [.] end) | sort) == ["account", "core", "skymail"]' \
+    'access token audience is not exactly account, core and skymail'
   json_assert "$payload" \
     '.sky_authorization.core.roles == ["url:create"]' \
     'sky_authorization does not carry the fixture client role'
@@ -875,6 +880,9 @@ stage_v2_assert_token_contract() {
   json_assert "$payload" \
     '((.resource_access.account.roles | index("manage-account")) != null) and ((.resource_access.account.roles | index("view-profile")) != null) and ((.resource_access.account.roles | index("manage-account-links")) != null)' \
     'access token lacks the account roles'
+  # SkyMail's person endpoints refuse a token carrying client_id (a service account's, azp =
+  # client_id: 403 auth.person_required); a person's token must not carry one.
+  json_assert "$payload" 'has("client_id") | not' 'the person access token carries client_id'
 }
 
 # fullScopeAllowed=false is what keeps a my. token out of Keycloak Admin REST: AdminAuth
@@ -911,7 +919,7 @@ stage_v2_admin_rest_is_not_reachable_with_account_center_tokens() {
     '.sky_authorization == {"core": {"roles": ["url:create"]}} and (.sky_authorization | has("realm-management") | not)' \
     'sky_authorization must list the core roles and never the realm-management client'
   json_assert "$V2_ACCESS_PAYLOAD" \
-    '((.aud | if type == "array" then . else [.] end) | sort) == ["account", "core"] and (.resource_access | keys) == ["account"] and .realm_access == null' \
+    '((.aud | if type == "array" then . else [.] end) | sort) == ["account", "core", "skymail"] and (.resource_access | keys) == ["account"] and .realm_access == null' \
     'the view-users holder token widened its audience or roles'
   kcadm delete "users/$V2_FIXTURE_USER_UUID/role-mappings/clients/$realm_management_uuid" \
     -r "$V2_REALM" -b "$role_body" >/dev/null
@@ -2028,7 +2036,7 @@ while IFS= read -r built_in_scope_uuid; do
     "client-scopes/$built_in_scope_uuid/protocol-mappers/models" \
     -r e-skylab-test -c)
   json_assert "$built_in_mappers" \
-    '[.[] | select(.name == "account-api-audience" or .name == "account-api-core-audience" or .name == "account-api-manage-account" or .name == "account-api-view-profile" or .name == "account-api-manage-account-links" or .name == "account-api-roles" or .name == "account-api-sky-authorization" or .name == "account-center-audience" or .name == "sky_session_lifetime" or .name == "sky_embed")] | length == 0' \
+    '[.[] | select(.name == "account-api-audience" or .name == "account-api-core-audience" or .name == "account-api-skymail-audience" or .name == "account-api-manage-account" or .name == "account-api-view-profile" or .name == "account-api-manage-account-links" or .name == "account-api-roles" or .name == "account-api-sky-authorization" or .name == "account-center-audience" or .name == "sky_session_lifetime" or .name == "sky_embed")] | length == 0' \
     "an Account Center mapper was injected into built-in scope $built_in_scope_uuid"
 done < <(jq -r '.[].id' <<<"$built_in_scope_snapshot")
 
@@ -2037,7 +2045,7 @@ scope_uuid=$(kcadm get client-scopes -r e-skylab-test -c \
 scope=$(kcadm get "client-scopes/$scope_uuid" -r e-skylab-test -c)
 json_assert "$scope" '.protocol == "openid-connect" and .attributes["include.in.token.scope"] == "false"' 'Account API scope drift was not repaired'
 mappers=$(kcadm get "client-scopes/$scope_uuid/protocol-mappers/models" -r e-skylab-test -c)
-json_assert "$mappers" 'length == 7' 'unexpected or duplicate Account API mappers remain'
+json_assert "$mappers" 'length == 8' 'unexpected or duplicate Account API mappers remain'
 json_assert "$mappers" '[.[] | select(.name == "account-api-audience" and .config["included.client.audience"] == "account")] | length == 1' 'Account API audience mapper differs'
 json_assert "$mappers" '[.[] | select(.name == "account-api-manage-account" and .protocolMapper == "oidc-hardcoded-role-mapper" and .config.role == "account.manage-account")] | length == 1' 'Account API manage-account role mapper differs'
 json_assert "$mappers" '[.[] | select(.name == "account-api-view-profile" and .protocolMapper == "oidc-hardcoded-role-mapper" and .config.role == "account.view-profile")] | length == 1' 'Account API view-profile role mapper differs'
@@ -2098,6 +2106,20 @@ json_assert "$skyapp_default_scopes" \
   '[.[] | select(.id == $scope and .name == "skyapp-account-center-audience")] | length == 1' \
   'skyapp audience scope is not attached as a default scope' \
   --arg scope "$skyapp_scope_uuid"
+# The in-app inbox (iletisim-servisi 04, 08): sky-app's access token also names skymail, from the
+# SkyMail UI's own audience scope, kept among sky-app's default scopes.
+skyapp_skymail_scope_uuid=$(kcadm get client-scopes -r e-skylab-test -c \
+  | jq -r '.[] | select(.name == "skymail-api-audience") | .id')
+[[ -n $skyapp_skymail_scope_uuid && $skyapp_skymail_scope_uuid != *$'\n'* ]] \
+  || fail 'the skymail-api-audience scope is missing or duplicated'
+json_assert "$skyapp_default_scopes" \
+  '[.[] | select(.id == $scope)] | length == 1' \
+  'skymail-api-audience is not a default scope of skyapp' \
+  --arg scope "$skyapp_skymail_scope_uuid"
+json_assert "$(kcadm get "clients/$skyapp_client_uuid/optional-client-scopes" -r e-skylab-test -c)" \
+  '[.[] | select(.id == $scope)] | length == 0' \
+  'skymail-api-audience is an optional scope of skyapp' \
+  --arg scope "$skyapp_skymail_scope_uuid"
 stage_login_audiences_after_second_reconciliation
 stage_admin_panel_after_second_reconciliation
 
@@ -2473,7 +2495,7 @@ case $((${#token_payload_segment} % 4)) in
 esac
 token_payload=$(tr '_-' '/+' <<<"$token_payload_segment" | base64 --decode)
 json_assert "$token_payload" \
-  '((.aud | if type == "array" then . else [.] end) | sort) == ["account", "core"] and .azp == "account-center" and .scope == "openid" and ((.resource_access.account.roles | index("manage-account")) != null) and ((.resource_access.account.roles | index("view-profile")) != null)' \
+  '((.aud | if type == "array" then . else [.] end) | sort) == ["account", "core", "skymail"] and .azp == "account-center" and .scope == "openid" and ((.resource_access.account.roles | index("manage-account")) != null) and ((.resource_access.account.roles | index("view-profile")) != null)' \
   'issued token differs from the exact audience, authorized-party, scope or required-role contract'
 stage_v2_assert_token_contract "$token_payload"
 

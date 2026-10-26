@@ -41,6 +41,8 @@ LCA_SKYFORMS_REDIRECT=https://forms.yildizskylab.com/api/auth/callback/keycloak
 LCA_FRONTEND_MAIN_REDIRECT=https://yildizskylab.com/api/auth/callback/keycloak
 LCA_FRONTEND_ARGE_REDIRECT=https://arge.yildizskylab.com/api/auth/callback/keycloak
 LCA_SKYMAIL_REDIRECT=https://mail.yildizskylab.com/api/auth/callback/keycloak
+# sky-app's public client signs in with its own scheme (fixture realm); the inbox needs aud skymail (iletisim-servisi 04).
+LCA_SKYAPP_REDIRECT=com.yildizskylab.skyapp:/oauth/callback
 LCA_HAND_MADE_SCOPE_UUID=''
 LCA_HAND_MADE_MAPPER_UUID=''
 LCA_ACCESS_TOKEN=''
@@ -308,6 +310,22 @@ stage_login_audiences_after_second_reconciliation() {
   json_assert "$LCA_ACCESS_PAYLOAD" \
     '(.aud | if type == "array" then . else [.] end) == ["skymail"] and .resource_access == {"skymail": {"roles": ["skymail:access"]}} and (has("realm_access") | not) and (has("groups") | not)' \
     'the skymail token is not narrowed to aud skymail and its own roles without groups'
+
+  # The in-app inbox (iletisim-servisi 04 and 08): a person's sky-app access token names skymail beside
+  # account-center (skymail-api-audience, a default scope of skyapp), carries no client_id (SkyMail's person
+  # endpoints refuse a token with one: 403 auth.person_required), and the ID token does not name skymail. The
+  # audience fixture person holds no skymail role: the audience comes from the scope, not audience-resolve.
+  lca_login skyapp "$LCA_SKYAPP_REDIRECT"
+  json_assert "$LCA_ACCESS_PAYLOAD" \
+    '.azp == "skyapp" and ((.aud | if type == "array" then . else [.] end) | (index("skymail") != null and index("account-center") != null)) and (has("client_id") | not)' \
+    'the skyapp access token does not name skymail and account-center, or carries client_id'
+  json_assert "$LCA_ID_PAYLOAD" '((.aud | if type == "array" then . else [.] end) | index("skymail")) == null' \
+    'the skyapp ID token names skymail'
+  # Another login client's person token does not get it: frontend-main's is exactly core and skycms (above),
+  # and with the audience fixture person (no skymail role) neither does skyforms'.
+  lca_login skyforms "$LCA_SKYFORMS_REDIRECT"
+  json_assert "$LCA_ACCESS_PAYLOAD" '((.aud | if type == "array" then . else [.] end) | index("skymail")) == null' \
+    'the skyforms access token names skymail'
 }
 
 # Part of v2_state_snapshot: what the no-op reconciliation must leave byte for byte.

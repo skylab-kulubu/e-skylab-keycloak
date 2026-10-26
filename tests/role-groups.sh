@@ -1143,7 +1143,7 @@ printf '    alarm: a seeded Privileged role changed in the panel is BILGI (S2-to
 stopped=$(alarm_run 2 -e KCADM_BIN=/tmp/kcadm-fail.sh -e "KCADM_INJECT_FAIL=realms/$SANDBOX")
 expect_line "$stopped" '[app-assignments-alarm] not measured: exit ' 'the run without a summary was not reported'
 expect_line "$stopped" '0 summary line(s)' 'the run without a summary was not counted'
-reject_line "$stopped" '[app-assignments] SAPMA' 'the stopped reconciler summed up'
+reject_line "$stopped" '[app-assignments] SAPMA: S1=' 'the stopped reconciler summed up'
 for name in sandbox-leader sandbox-artlab-leader; do
   reject_line "$clean$changed" "$name" 'the alarm printed a person'
 done

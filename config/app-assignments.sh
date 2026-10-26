@@ -40,14 +40,21 @@
 #
 # The drift summary (ekip-yetkileri ticket 07: Entra PIM's "roles assigned outside PIM"): after the
 # counts, one line per drift "SAPMA|<class>|<group path or kişi:<n>>|<client or realm>|<role>" and
-# "SAPMA: S1=… S1-realm=… S2-eksik=… S2-fazla=… S2b=… S3=… S5=…, alarm=<n>". The panel area (PANEL
-# lines) is never drift; geçici and karar-bekliyor neither.
+# "SAPMA: S1=… S1-realm=… S2-eksik=… S2-fazla=… S2b=… S3=… S5=… S2-tohum=… (bilgi), alarm=<n>". The
+# panel area (PANEL lines) is never drift; geçici and karar-bekliyor neither. Only what the code owns
+# counts: a Privileged role the reconciler seeds once (--privileged-file, marked on the role) is the
+# panel's after its seed (seeded once, then the panel's: Yusuf's groups-only role model, Entra's
+# model), so its mapping missing from or added on a Privileged root is one line
+# "BILGI|S2-tohum|<group path>|<client>|<role>|eksik|fazla" and never counts towards the alarm; before
+# the seed (no mark) the missing mapping is the code's own and S2-eksik.
 #   S1        an admin or unclassified client role held by people directly (one line a role);
 #   S1-realm  a realm role held by people directly: the old Java era's (rol-temizligi ticket 19 takes
 #             them away in its own window), so it counts towards the alarm only with
 #             --realm-roles alarm (KEYCLOAK_APP_ASSIGNMENTS_REALM_ROLES); the default is bilgi;
-#   S2-eksik  a mapping the code expects and the realm lacks (KOD|…|evet|yok);
-#   S2-fazla  a code area mapping the code does not expect: on a Privileged root, on /ROLLER or a
+#   S2-eksik  a mapping the code expects and the realm lacks (KOD|…|evet|yok), but for a seeded
+#             Privileged role on a Privileged root (S2-tohum);
+#   S2-fazla  a code area mapping the code does not expect: on a Privileged root (a role of no seed
+#             there: not in --privileged-file, or not yet seeded), on /ROLLER or a
 #             leaf config/role-groups.json names, on /UYELER, an area or any other group, an app role
 #             on a target that reaches every member;
 #   S2b       an admin, unclassified or realm role on a panel target (a team, a Sub-team, a Leader
@@ -61,7 +68,9 @@
 # tests/check-app-assignments.sh: none of them is read here.
 # --alarm (KEYCLOAK_APP_ASSIGNMENTS_ALARM=true; --check only, with --privileged-file, since without it
 # every Privileged mapping would read as drift): exit 0 when alarm=0, 1 when there is drift, 2 when
-# anything could not be measured (a failed read included).
+# anything could not be measured (a failed read included). The nightly alarm runs it through
+# config/app-assignments-alarm.sh, which also counts a run without the summary line as 2 (the
+# reconciler may stop before it starts this script).
 #
 # --seed: the one-time initial assignment (YETKI-MATRISI §6.3, Yusuf's K1 of 2026-10-23), the
 # catalogue's initialAssignments: forms skyforms:access to every top team /UYELER/<area>/<team> (its
@@ -123,6 +132,9 @@ PRIVILEGED_FILE=''
 BACKUP_FILE=''
 RESTORE_FILE=''
 SEED_MARK_ATTRIBUTE=skylab.app-assignments-seeded
+# The reconciler's mark on a Privileged role it has seeded once (CORE_ROLE_SEED_ATTRIBUTE): from then
+# on that role's mappings on the Privileged roots are the SKY LAB admin panel's.
+PRIVILEGED_SEED_ATTRIBUTE=skylab.seeded-group-mappings
 PRIVILEGED_NAMES=(ADMIN YK DK)
 LEADER_GROUPS=(LIDERLER KOORDINATORLER)
 ROLE_GROUP_ROOT=ROLLER
@@ -301,6 +313,18 @@ csv() {
     exit 1
   fi
   tr -d '\r' <<<"$out" | sed '/^$/d'
+}
+
+# role_marks PATH: "name<TAB>mark" per role of PATH (a client's roles), the mark the reconciler's
+# PRIVILEGED_SEED_ATTRIBUTE (empty when unmarked); a failed read stops the run (exit 1), as csv.
+role_marks() {
+  local out
+  if ! out=$(kcadm get "$1" -r "$TARGET_REALM" -q briefRepresentation=false -q first=0 -q max=10000); then
+    printf '[app-assignments] %s could not be read in realm %s; stopped (a failed read is never taken for "none")\n' \
+      "$1" "$TARGET_REALM" >&2
+    exit 1
+  fi
+  json_tool role-attribute "$PRIVILEGED_SEED_ATTRIBUTE" <<<"$out"
 }
 
 # The in-image JSON helper (config/ReconcileJson.java, the reconciler's): the image has a JDK and
@@ -489,12 +513,29 @@ run_check() {
       done
     done
   }
+  # seeded["client|role"] = 1: a role of --privileged-file the reconciler has seeded once (its mark,
+  # PRIVILEGED_SEED_ATTRIBUTE). Its mappings on the Privileged roots are the panel's since (seeded once,
+  # then the panel's: runbook §19, §25): missing or more there is a BILGI line, never drift.
+  declare -A seeded=() privileged_role=() privileged_client=()
   if [[ -n $PRIVILEGED_FILE ]]; then
     [[ -r $PRIVILEGED_FILE ]] || { printf '[app-assignments] %s is not readable\n' "$PRIVILEGED_FILE" >&2; exit 2; }
     while IFS=$'\t' read -r kind names client role; do
       [[ $kind == privileged ]] || continue
       add_privileged "$names" "$client" "$role" evet
+      privileged_role[$client|$role]=1
+      privileged_client[$client]=1
     done <"$PRIVILEGED_FILE"
+    local marks mark_role mark
+    for client in "${!privileged_client[@]}"; do
+      uuid=${client_uuid_of[$client]:-}
+      [[ -n $uuid ]] || continue
+      marks=$(role_marks "clients/$uuid/roles")
+      while IFS=$'\t' read -r mark_role mark; do
+        if [[ -n $mark && -n ${privileged_role[$client|$mark_role]:-} ]]; then
+          seeded[$client|$mark_role]=1
+        fi
+      done <<<"$marks"
+    done
   else
     log 'NOTE: no --privileged-file: the Privileged roots'"'"' own expectations are unknown here (run KEYCLOAK_RECONCILE_ONLY=app-assignments); only their other mappings are compared'
   fi
@@ -537,8 +578,17 @@ run_check() {
   local kod_ok=0 kod_missing=0 kod_extra=0 kod_temporary=0 kod_pending=0 service_held=0
   # The drift summary (ticket 07): one SAPMA line an item, kept for after the counts.
   local drift_lines=() s1=0 s1_realm=0 s2_missing=0 s2_extra=0 s2b=0 s3=0 s5=0
+  local note_lines=() s2_seeded=0
   drift() { # CLASS TARGET CLIENT ROLE
     drift_lines+=("SAPMA|$1|$2|$3|$4")
+  }
+  # panel_changed PATH CLIENT ROLE: true for a seeded Privileged role on a Privileged root (the
+  # panel's since the seed); one BILGI line (S2-tohum) instead of drift.
+  panel_changed() {
+    [[ -n ${seeded[$2|$3]:-} ]] && privileged_root "$1"
+  }
+  note() { # TARGET CLIENT ROLE eksik|fazla
+    note_lines+=("BILGI|S2-tohum|$1|$2|$3|$4")
   }
   # drift_class PATH CLIENT ROLE: the class of a group mapping the code does not expect.
   drift_class() {
@@ -604,7 +654,11 @@ run_check() {
         *)
           value=hayır
           kod_extra=$((kod_extra + 1))
-          drift "$(drift_class "$path" "$client" "$role")" "$path" "$client" "$role"
+          if panel_changed "$path" "$client" "$role"; then
+            note "$path" "$client" "$role" fazla
+          else
+            drift "$(drift_class "$path" "$client" "$role")" "$path" "$client" "$role"
+          fi
           if ! privileged_root "$path" && [[ $path != "/$ROLE_GROUP_ROOT" && $path != "/$ROLE_GROUP_ROOT"/* ]]; then
             if [[ $client != realm && -n ${app_role[$client/$role]:-} ]]; then
               problem "$client/$role (an app role) is mapped to $path, which is no panel target (no team group, or it reaches every member: a default role's job)"
@@ -645,7 +699,11 @@ run_check() {
     [[ -n ${existing_role[$client|$role]:-} ]] || continue
     log "KOD|$path|$client|$role|${expect[$entry]}|yok"
     kod_missing=$((kod_missing + 1))
-    drift S2-eksik "$path" "$client" "$role"
+    if panel_changed "$path" "$client" "$role"; then
+      note "$path" "$client" "$role" eksik
+    else
+      drift S2-eksik "$path" "$client" "$role"
+    fi
   done
 
   log "KOD: $kod_ok as expected, $kod_missing missing, $kod_extra not in code, $kod_temporary temporary (DK's Forms admin roles), $kod_pending pending a decision (frontend-arge: Fatih); service accounts: $service_held role(s) held (the service-roles step checks them); the default role and the identity providers: KEYCLOAK_RECONCILE_ONLY=default-roles"
@@ -679,9 +737,13 @@ run_check() {
       SAPMA\|S5\|*) s5=$((s5 + 1)) ;;
     esac
   done
+  for line in ${note_lines[@]+"${note_lines[@]}"}; do
+    log "$line"
+    s2_seeded=$((s2_seeded + 1))
+  done
   alarm=$((s1 + s2_missing + s2_extra + s2b + s3 + s5))
   if [[ $REALM_ROLES == alarm ]]; then alarm=$((alarm + s1_realm)); fi
-  log "SAPMA: S1=$s1 S1-realm=$s1_realm ($REALM_ROLES) S2-eksik=$s2_missing S2-fazla=$s2_extra S2b=$s2b S3=$s3 S5=$s5, alarm=$alarm"
+  log "SAPMA: S1=$s1 S1-realm=$s1_realm ($REALM_ROLES) S2-eksik=$s2_missing S2-fazla=$s2_extra S2b=$s2b S3=$s3 S5=$s5 S2-tohum=$s2_seeded (bilgi), alarm=$alarm"
   log "check: 0 change(s) pending, $warnings warning(s), $problems problem(s)"
   if [[ $ALARM == true && $alarm -gt 0 ]]; then
     DRIFT_EXIT=true

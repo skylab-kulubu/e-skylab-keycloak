@@ -1148,8 +1148,11 @@ kcadm add-roles -r "$SANDBOX" --gpath /ADMIN --cclientid skymail --rolename skym
 kcadm add-roles -r "$SANDBOX" --gpath /ADMIN --cclientid skymail --rolename skymail:templates:write >/dev/null
 create_group "$SANDBOX" /ADMIN ALT
 create_group "$SANDBOX" /UYELER/YK ALT
-kcadm add-roles -r "$SANDBOX" --gpath /ADMIN/ALT --cclientid skymail --rolename skymail:mails:approve >/dev/null
-kcadm add-roles -r "$SANDBOX" --gpath /UYELER/YK/ALT --cclientid skymail --rolename skymail:mails:approve >/dev/null
+# By id: kcadm's --gpath search refuses a sub-group path ("not an exact match").
+for path in /ADMIN/ALT /UYELER/YK/ALT; do
+  kcadm create "groups/$(group_id "$SANDBOX" "$path")/role-mappings/clients/$(client_uuid "$SANDBOX" skymail)" -r "$SANDBOX" \
+    -b "$(role_body "$SANDBOX" skymail skymail:mails:approve)" >/dev/null
+done
 sandbox_before=$(events "$SANDBOX")
 changed=$(alarm_run 1)
 expect_line "$changed" '[app-assignments] BILGI|S2-tohum|/ADMIN|skymail|skymail:mails:write|eksik' \

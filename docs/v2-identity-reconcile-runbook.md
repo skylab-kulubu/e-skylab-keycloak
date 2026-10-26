@@ -3152,6 +3152,23 @@ roles not yet granted to the Privileged groups: skymail:mails:tracking:read`. Op
 `skymail role skymail:mails:tracking:read: seeded once to <yollar> (granted to: …)`. Rol yokken
 SkyMail'in rapor ucu yalnız gönderene açıktır (zararsız).
 
+**`skymail:suppressions:manage` ve `skymail:unsubscribes:reactivate` (ADR 0073, ADR 0072 karar 7).**
+Aynı listede iki yazma rolü. `suppressions:manage` SkyMail'in bastırma listesini (adresler) okur,
+kalıcı ret (bounce) kaydını listeden kaldırır ve bounce oranını okur (skymail-backend
+`internal/handlers/suppressions.go`, `SuppressionsManageRole`; hub bileti skymail-bounce-isleme 06).
+`unsubscribes:reactivate` kimliği olmayan bir adresin kendi çıkışını yalnız kişi isteyince ya da bir
+hata olunca, gerekçeyle geri alır ve geri almaları okur (`UnsubscribesReactivateRole`; hub bileti
+abonelik-cikisi 10). İkisinin de açıklaması var: SkyMail onları yalnız denetler, başka bir şey
+oluşturmaz, bu yüzden her koşu yoksa açıklamasıyla oluşturur. `ADMIN` ve `YK`'ya (`/ADMIN`, `/YK`,
+`/UYELER/ADMIN`, `/UYELER/YK`; hangileri varsa) bir kez verilir, DK'ya verilmez (yazma rolleri;
+`config/dk-read-only.sh` onları yazma rolü sayar). Uzlaştırıcı kimliğinin uyarı satırı onları da
+sayar: `WARNING: skymail roles not yet granted to the Privileged groups: … skymail:suppressions:manage
+skymail:unsubscribes:reactivate …`; operatör çıktısı `skymail role skymail:suppressions:manage: seeded
+once to <yollar> (granted to: …)`. Rol yokken SkyMail'in bastırma listesi uçları kimseye açık
+değildir (zararsız: liste uygulanmaya devam eder, yalnız görülemez ve kaldırılamaz). Grup seçimi
+öneridir (bilet 06: Yönetim Kurulu ve ADMIN); başka bir küme istenirse eşlemeler tohumdan sonra SKY
+LAB admin panelinden değişir.
+
 **Kuru koşu (bilet 03'ten beri).** `KEYCLOAK_RECONCILE_CHECK=true` ile `core-roles` adımı hiçbir şey
 yazmaz: her yazma `[reconcile] would kcadm VERB YOL …` satırıdır, adımın kendi satırları gerçek
 koşunun yazacağını söyler (`skymail role …: seeded once to … (granted to: …)`), son satır `Core

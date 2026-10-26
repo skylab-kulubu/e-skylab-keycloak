@@ -691,7 +691,11 @@ rolleri `skymail:access`, `skymail:templates:read`, `skymail:lists:read`, `skyma
 tohumlar. `skymail:announcements:send` listeden çıktı (okuyan yok; ekip-yetkileri bilet 03), var olan
 eşlemeleri kalır (runbook §25).
 `skymail:mails:tracking:read` (gönderimlerin kişi bazındaki açılma ve tıklama raporu) aynı biçimde
-ADMIN, YK ve DK'ya bir kez tohumlanır; okuma rolüdür, DK'da kalır (runbook §25). Forms'un
+ADMIN, YK ve DK'ya bir kez tohumlanır; okuma rolüdür, DK'da kalır (runbook §25).
+`skymail:suppressions:manage` (bastırma listesi, kalıcı ret kaydını kaldırma, bounce oranı; ADR 0073)
+ve `skymail:unsubscribes:reactivate` (kimliği olmayan adresin çıkışını kişi isteyince ya da hata
+olunca gerekçeyle geri alma; ADR 0072 karar 7) aynı biçimde oluşturulur ve yalnız ADMIN ve YK'ya bir
+kez tohumlanır; yazma rolleridir, DK almaz (`config/dk-read-only.sh` onları yazma rolü sayar). Forms'un
 salt okur rolü `skyforms:read-all` (DK her formu ve cevabı okur, yazamaz; forms-backend henüz okumuyor)
 aynı biçimde `forms` istemcisinde var edilir ve yalnız DK'ya bir kez verilir (runbook §28). Forms
 koltuğu `skyforms:access` ADMIN, YK ve DK'ya, `skyforms:*` (bütün formları okuma) yalnız YK'ya bir kez

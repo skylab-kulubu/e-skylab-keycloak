@@ -106,6 +106,7 @@ WRITE_ROLES=(
   '*|cms:access' '*|content:write' '*|client:admin'
   'skymail|skymail:announcements:send' 'skymail|skymail:templates:write' 'skymail|skymail:lists:write'
   'skymail|skymail:mails:write' 'skymail|skymail:mails:send' 'skymail|skymail:mails:approve'
+  'skymail|skymail:suppressions:manage' 'skymail|skymail:unsubscribes:reactivate'
   'place|place:admin' 'place|place:moderator'
 )
 # Forms' admin roles (core-backend role_classes.go AdminRoles): kept until --forms.

@@ -458,7 +458,12 @@ jobs:
         working-directory: theme
         run: |
           npm ci --ignore-scripts
-          npx --no-install playwright install --with-deps chromium
+          # Chromium only, from Playwright's download host: the runner image already has its
+          # libraries, and --with-deps's apt mirror stalls (CI run 40311997516). apt only when a
+          # launch of both builds the tests use (headless shell, new headless) says one is missing.
+          npx --no-install playwright install chromium
+          node -e 'const { chromium } = require("@playwright/test"); (async () => { for (const channel of [undefined, "chromium"]) await (await chromium.launch({ channel })).close(); })();' \
+            || npx --no-install playwright install-deps chromium
 
       - name: LINK counter, native callback fault and alternate-login reset contract
         run: |
@@ -502,7 +507,12 @@ jobs:
           npm ci --ignore-scripts
           npm run build-keycloak-theme
           bash ../tests/check-theme-contract.sh
-          npx --no-install playwright install --with-deps chromium
+          # Chromium only, from Playwright's download host: the runner image already has its
+          # libraries, and --with-deps's apt mirror stalls (CI run 40311997516). apt only when a
+          # launch of both builds the tests use (headless shell, new headless) says one is missing.
+          npx --no-install playwright install chromium
+          node -e 'const { chromium } = require("@playwright/test"); (async () => { for (const channel of [undefined, "chromium"]) await (await chromium.launch({ channel })).close(); })();' \
+            || npx --no-install playwright install-deps chromium
       - name: Cache pinned disposable runtime images
         run: |
           docker pull "$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' Dockerfile)"
@@ -579,7 +589,12 @@ jobs:
         working-directory: theme
         run: |
           npm ci --ignore-scripts
-          npx --no-install playwright install --with-deps chromium
+          # Chromium only, from Playwright's download host: the runner image already has its
+          # libraries, and --with-deps's apt mirror stalls (CI run 40311997516). apt only when a
+          # launch of both builds the tests use (headless shell, new headless) says one is missing.
+          npx --no-install playwright install chromium
+          node -e 'const { chromium } = require("@playwright/test"); (async () => { for (const channel of [undefined, "chromium"]) await (await chromium.launch({ channel })).close(); })();' \
+            || npx --no-install playwright install-deps chromium
 
       - name: Cache the pinned disposable runtime images
         run: |
@@ -797,21 +812,30 @@ jobs:
         timeout-minutes: 20
         run: |
           npm ci --ignore-scripts
-          # The runner's apt mirror can hang (run 37664358276: 80 minutes in apt-get update until the
-          # job timeout): each attempt gets 5 minutes, three attempts.
-          # apt gives up on a stalled mirror itself (30 s a request, three tries) instead of hanging.
-          printf 'Acquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nAcquire::Retries "3";\n' \
-            | sudo tee /etc/apt/apt.conf.d/99-ci-timeouts >/dev/null
-          for attempt in 1 2 3; do
-            timeout -k 10 300 npx playwright install --with-deps chromium && break
-            if [ "$attempt" = 3 ]; then exit 1; fi
-            echo "playwright install attempt $attempt failed or timed out; retrying" >&2
-            # timeout stops npx, but the apt-get it started as root keeps the dpkg lock and the next
-            # attempt fails at once on /var/lib/dpkg/lock-frontend (run 39946385594): stop it first.
-            sudo pkill -KILL -x apt-get || true
-            sudo pkill -KILL -x dpkg || true
-            sudo dpkg --configure -a || true
-          done
+          # Chromium only, from Playwright's download host: the runner image already has its
+          # libraries, and the apt mirror --with-deps used stalls (run 37664358276: 80 minutes in
+          # apt-get update; run 40311997516: three 5-minute attempts on a few font packages).
+          npx --no-install playwright install chromium
+          chromium_launches() {
+            node -e 'const { chromium } = require("@playwright/test"); (async () => { for (const channel of [undefined, "chromium"]) await (await chromium.launch({ channel })).close(); })();'
+          }
+          # apt only when a launch of both builds the tests use (headless shell, new headless) says
+          # a library is missing: 30 s a request, three tries; each attempt 5 minutes, three attempts.
+          if ! chromium_launches; then
+            printf 'Acquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nAcquire::Retries "3";\n' \
+              | sudo tee /etc/apt/apt.conf.d/99-ci-timeouts >/dev/null
+            for attempt in 1 2 3; do
+              timeout -k 10 300 npx --no-install playwright install-deps chromium && break
+              if [ "$attempt" = 3 ]; then exit 1; fi
+              echo "playwright install-deps attempt $attempt failed or timed out; retrying" >&2
+              # timeout stops npx, but the apt-get it started as root keeps the dpkg lock and the next
+              # attempt fails at once on /var/lib/dpkg/lock-frontend (run 39946385594): stop it first.
+              sudo pkill -KILL -x apt-get || true
+              sudo pkill -KILL -x dpkg || true
+              sudo dpkg --configure -a || true
+            done
+            chromium_launches
+          fi
           npm run build-keycloak-theme
           bash ../tests/check-theme-contract.sh
           npm run build-welcome-theme

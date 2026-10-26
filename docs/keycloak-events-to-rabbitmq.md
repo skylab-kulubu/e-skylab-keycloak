@@ -3,9 +3,9 @@
 İmajdaki `keycloak-to-rabbitmq` olay dinleyicisi (`rabbitmq-provider/`,
 `keycloak-to-rabbit-3.3.0.jar`) Keycloak'ın kullanıcı ve yönetici olaylarından
 **yalnız olay kataloğundakileri**, **yalnız kimliklerle** RabbitMQ'ya yayımlar.
-Tüketici core'dur: her olayda `usersync.Wake()` çağırır, verinin kendisini
-Keycloak'tan okur (ADR-0008, core-backend #270). Olay yalnız eşitlemeyi
-hızlandırır; 5 dakikalık tur kaçanı yine yakalar.
+Tüketici core'dur: her kullanıcı olayında `usersync.Wake()` çağırır, verinin
+kendisini Keycloak'tan okur (ADR-0008, core-backend #270). Olay yalnız
+eşitlemeyi hızlandırır; 5 dakikalık tur kaçanı yine yakalar.
 
 ## Ne yayımlanır
 
@@ -16,9 +16,24 @@ hızlandırır; 5 dakikalık tur kaçanı yine yakalar.
 | `UPDATE_PROFILE` | `KK.EVENT.CLIENT.<realm>.SUCCESS.<clientId>.UPDATE_PROFILE` | Ad, soyad ya da profil alanı değişti |
 | `DELETE_ACCOUNT` | `KK.EVENT.CLIENT.<realm>.SUCCESS.<clientId>.DELETE_ACCOUNT` | Hesap konsolundan silme (bizde kapalı olmalı; gelirse core uyarı yazar) |
 | admin `USER` `CREATE`, `UPDATE`, `DELETE` | `KK.EVENT.ADMIN.<realm>.SUCCESS.USER.<CREATE\|UPDATE\|DELETE>` | Admin API'siyle kullanıcı yazımı |
+| admin `GROUP` yalnız `DELETE` | `KK.EVENT.ADMIN.<realm>.SUCCESS.GROUP.DELETE` | Konsoldan ya da Admin API'siyle grup (alt grup dahil) silindi |
+
+- **Katalog kaynak başına işlem kümesidir** (`RabbitMqConfig.CATALOG_ADMIN_OPERATIONS`):
+  `USER` → `CREATE`, `UPDATE`, `DELETE`; `GROUP` → yalnız `DELETE`. `GROUP`
+  `CREATE`/`UPDATE` çıkmaz: core her grup yazımında (öznitelik, rol, ad) `GROUP
+  UPDATE` üretir, bağı olmadığı için `unrouted`'a düşer ve R06 alarmı çalardı.
+- **core `GROUP.DELETE` ile ne yapar** (RabbitMQ olayları bilet 06): olayı
+  yalnız uyandırıcı olarak kullanır, silinen grubun (`resourcePath` =
+  `groups/<id>`) tercih satırlarını temizler; veri yine Keycloak'tan okunur,
+  24 saatlik tur kaçanı kapatır (ADR-0071 sapma 4). Bağ:
+  `KK.EVENT.ADMIN.{keycloak_realm}.SUCCESS.GROUP.DELETE` → `core.keycloak`
+  (bilet 04; production'da dinleyici açılmadan önce kurulu olmalı).
+- Keycloak admin olaylarını realm'in admin olay kaydı (`adminEventsEnabled`)
+  kapalıyken de dinleyicilere verir; entegrasyon testi silmeyi kayıt kapalıyken
+  yapıp mesajı ölçer.
 
 - Başka hiçbir tür çıkmaz: `LOGIN`, `CODE_TO_TOKEN`, `*_ERROR`, admin `REALM`,
-  `CLIENT`, `GROUP_MEMBERSHIP`, `USER ACTION` (eylem postası, parola sıfırlama)
+  `CLIENT`, `GROUP_MEMBERSHIP`, `GROUP` `CREATE`/`UPDATE`, `USER ACTION` (eylem postası, parola sıfırlama)
   dinleyicide, kanal açılmadan düşer. Katalog koddadır
   (`RabbitMqConfig.CATALOG_*`); genişletmek kod, inceleme ve ADR işidir.
 - Yalnız başarılı olaylar çıkar. Hatalı olayların türü zaten ayrıdır
@@ -42,6 +57,12 @@ Admin olayı:
 
 ```json
 {"id":"41aa…","realmId":"5b0e…","resourceType":"USER","operationType":"CREATE","resourcePath":"users/0d4a…","time":1792656000000}
+```
+
+Grup silme aynı biçimdedir; grubun adı ve yolu (`/Ekipler/…`) gitmez:
+
+```json
+{"id":"7d02…","realmId":"5b0e…","resourceType":"GROUP","operationType":"DELETE","resourcePath":"groups/9e3c…","time":1792656000000}
 ```
 
 - **Yayımlanmayanlar:** IP adresi, `sessionId`, `details` (kayıtta kullanıcı
@@ -118,7 +139,7 @@ yayımlayacağını bir satırda söyler.
 | `KK_TO_RMQ_TRUST_STORE`, `KK_TO_RMQ_TRUST_STORE_PASS` | boş | — | Yalnız TLS ile (JKS) |
 | `KK_TO_RMQ_KEY_STORE`, `KK_TO_RMQ_KEY_STORE_PASS` | boş | — | Yalnız TLS istemci sertifikasıyla (PKCS12) |
 | `KK_TO_RMQ_EVENT_TYPES` | katalog: `REGISTER,UPDATE_EMAIL,UPDATE_PROFILE,DELETE_ACCOUNT` | ayarlanmaz | Virgüllü liste katalogu **daraltır**; boş değer hiçbir kullanıcı olayı göndermez; katalog dışı ad hata satırıyla yok sayılır |
-| `KK_TO_RMQ_ADMIN_RESOURCES` | katalog: `USER` | ayarlanmaz | Aynı kural; işlemler her zaman `CREATE,UPDATE,DELETE` |
+| `KK_TO_RMQ_ADMIN_RESOURCES` | katalog: `USER,GROUP` | RabbitMQ olayları bilet 07'ye kadar `USER`, sonra `USER,GROUP` | Aynı kural (`USER`: yalnız kullanıcı olayları); işlemler kaynağın katalogdaki kümesidir, ayarlanmaz. Varsayılan `USER,GROUP` olduğu için ayarsız açılan dinleyici `GROUP.DELETE` de yayımlar; bilet 04'ün bağı yokken o mesaj `unrouted`'a düşer (R06 alarmı) |
 
 Production Keycloak bir Dokploy Application'dır: değerler env sekmesine
 `${{vault.bao-prod.…}}` referansıyla birebir yazılır, repo compose'unun
@@ -150,7 +171,8 @@ açılan dinleyici sürüklenir.
 
 1. Production broker ve `keycloak_a`/`keycloak_b` kullanıcıları hazır (R04, R05);
    `keycloak.events` exchange'i ve `core.keycloak` bağları topolojide.
-2. Keycloak env sekmesine yukarıdaki `KK_TO_RMQ_*` referansları, Keycloak
+2. Keycloak env sekmesine yukarıdaki `KK_TO_RMQ_*` referansları
+   (`KK_TO_RMQ_ADMIN_RESOURCES=USER`; `USER,GROUP` yalnız bilet 07'de), Keycloak
    `sky-lab-production-events` ağında, bu imaj (3.3.0 ya da sonrası) yayında. Keycloak
    sürümü Touch ID kapısından geçer.
 3. Reconciler `e-skylab` realm'i için bir kez, koşu başına
@@ -172,6 +194,9 @@ sağlayıcı bağlantı bile açmaz.
 - `rabbitmq-provider` birim testleri (imaj derlemesinde koşar): katalog,
   daraltma, boş liste, hata olayları, gövdenin alanları, `message-id`, admin
   temsilinin ve yazarının gitmemesi, geri alınan işlemde yayın olmaması;
+  `GROUP DELETE` yayımlanır, `GROUP` `CREATE`/`UPDATE`/`ACTION` ve
+  `GROUP_MEMBERSHIP` yayımlanmaz, `KK_TO_RMQ_ADMIN_RESOURCES=USER` grup
+  silmeyi kapatır;
   yayıncı: takılmış broker'a teklif beklemez ve dolu kuyruk düşürür, ulaşılamayan
   broker yeniden deneme aralığından önce denenmez, bloklu broker'a yayın yok,
   başarısız yayın kanalı yeniler, alarm sürerken kopan bağlantının yerine yenisi
@@ -180,7 +205,9 @@ sağlayıcı bağlantı bile açmaz.
 - `tests/run-integration.sh` RabbitMQ sözleşmesi (her grup): realm güncellemesi
   yayımlanmaz, Admin API'siyle açılan kullanıcı tek bir `USER CREATE` mesajı
   olarak gelir; gövde yalnız kimlik, `message-id` olay deposundaki kimlik,
-  adres/ad/IP yok; kanal sızıntısı yok.
+  adres/ad/IP yok; alt grup açılıp adı değiştirilince kuyruk boş kalır, realm'in
+  admin olay kaydı kapalıyken silinen alt grup tek bir `GROUP.DELETE`
+  (`resourcePath` = `groups/<silinen id>`) olarak gelir; kanal sızıntısı yok.
 - `tests/sign-up-by-email-code.sh`: e-posta koduyla kayıt (ADR-0063) tek bir
   `REGISTER` mesajı üretir (`KK.EVENT.CLIENT.e-skylab.SUCCESS.<istemci>.REGISTER`,
   `message-id` = depolanan `REGISTER` olayının kimliği); kayıttan sonraki

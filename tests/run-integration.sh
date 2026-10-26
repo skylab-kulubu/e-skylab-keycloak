@@ -1360,6 +1360,8 @@ stage_rabbitmq_provider_contract() {
   [[ -n $stored_id && $stored_id == "$(jq -r '.[0].properties.message_id' <<<"$messages")" ]] \
     || fail 'the message-id is not the id Keycloak stored for the admin event'
 
+  stage_rabbitmq_group_delete_contract
+
   channel_count=$(rabbit_api http://localhost:15673/api/channels | jq 'length')
   [[ $channel_count -le 10 ]] \
     || fail "the RabbitMQ provider holds $channel_count open channels after the run (leaked channels)"
@@ -1369,6 +1371,65 @@ stage_rabbitmq_provider_contract() {
   [[ $(grep -c '^e-skylab-spi-' <<<"$provider_names") == 1 ]] || fail "runtime does not contain exactly one SKY LAB SPI"
   [[ $(grep -c '^e-skylab-theme-' <<<"$provider_names") == 1 ]] || fail "runtime does not contain exactly one SKY LAB theme"
   [[ $(grep -c '^keycloak-to-rabbit-' <<<"$provider_names") == 1 ]] || fail "runtime does not contain exactly one RabbitMQ provider"
+}
+
+# rabbit_queue_get: takes (and acknowledges) every message of the contract queue.
+rabbit_queue_get() {
+  rabbit_api -X POST -H 'content-type: application/json' \
+    -d '{"count":50,"ackmode":"ack_requeue_false","encoding":"auto"}' \
+    http://localhost:15673/api/queues/%2F/keycloak-foundation-test/get
+}
+
+# RabbitMQ events ticket 05 (aday 2): of the group admin events only GROUP DELETE leaves Keycloak.
+# A parent and a child group are created and the child renamed (GROUP CREATE, GROUP UPDATE): the
+# queue stays empty. The child is deleted with the realm's admin event store switched off: Keycloak
+# hands admin events to its listeners whether or not it stores them, so exactly one GROUP.DELETE
+# with resourcePath groups/<child> and the identifiers-only body arrives; the group's name and its
+# representation do not. The store is switched back on and the parent's delete drained.
+stage_rabbitmq_group_delete_contract() {
+  CURRENT_STAGE='RabbitMQ provider contract: GROUP DELETE only'
+  local parent_uuid child_uuid messages attempt message_count
+  parent_uuid=$(kcadm create groups -r e-skylab-test -i -s name=rabbitmq-contract-parent)
+  child_uuid=$(kcadm create "groups/$parent_uuid/children" -r e-skylab-test -i -s name=rabbitmq-contract-child)
+  [[ -n $parent_uuid && -n $child_uuid ]] || fail 'the RabbitMQ contract groups were not created'
+  kcadm update "groups/$child_uuid" -r e-skylab-test -s name=rabbitmq-contract-renamed >/dev/null
+  # A GROUP CREATE or UPDATE would have arrived by now (the USER CREATE took well under this).
+  sleep 2
+  messages=$(rabbit_queue_get)
+  json_assert "$messages" 'length == 0' \
+    "the provider published a group create or rename: $(jq -c '[.[].routing_key]' <<<"$messages")"
+
+  kcadm update realms/e-skylab-test -s adminEventsEnabled=false >/dev/null
+  kcadm delete "groups/$child_uuid" -r e-skylab-test
+  kcadm update realms/e-skylab-test -s adminEventsEnabled=true >/dev/null
+  for attempt in $(seq 1 30); do
+    message_count=$(rabbit_api http://localhost:15673/api/queues/%2F/keycloak-foundation-test | jq -r '.messages // 0')
+    [[ ${message_count:-0} -gt 0 ]] && break
+    sleep 1
+  done
+  [[ ${message_count:-0} -gt 0 ]] \
+    || fail 'the provider did not publish the GROUP DELETE made while the realm stores no admin events'
+  sleep 2
+  messages=$(rabbit_queue_get)
+  json_assert "$messages" 'length == 1 and .[0].routing_key == "KK.EVENT.ADMIN.e-skylab-test.SUCCESS.GROUP.DELETE"' \
+    "the provider published other than the one GROUP DELETE: $(jq -c '[.[].routing_key]' <<<"$messages")"
+  json_assert "$messages" \
+    '.[0] as $m | ($m.payload | fromjson) as $b
+      | ($b | keys) == ["id", "operationType", "realmId", "resourcePath", "resourceType", "time"]
+      and $b.resourceType == "GROUP" and $b.operationType == "DELETE" and $b.resourcePath == ("groups/" + $group)
+      and $m.properties.message_id == $b.id and $m.properties.delivery_mode == 2' \
+    'the GROUP DELETE message is not the identifiers-only body of the deleted group' --arg group "$child_uuid"
+  if jq -r '.[0].payload' <<<"$messages" | grep -Fq -e rabbitmq-contract -e representation -e 172. -e 127.0.0.1; then
+    fail 'the GROUP DELETE message carries the group name, the representation or an IP'
+  fi
+  printf '    GROUP CREATE and UPDATE stayed in Keycloak; GROUP DELETE was published with the admin event store off\n'
+
+  kcadm delete "groups/$parent_uuid" -r e-skylab-test
+  for attempt in $(seq 1 30); do
+    messages=$(rabbit_queue_get)
+    jq -e 'any(.[]; .routing_key == "KK.EVENT.ADMIN.e-skylab-test.SUCCESS.GROUP.DELETE")' <<<"$messages" >/dev/null && break
+    sleep 1
+  done
 }
 
 # rabbit_timed_user_update USER_UUID NAME: one Admin API USER UPDATE (a catalog event, published after

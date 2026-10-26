@@ -3,6 +3,7 @@ package com.github.aznamier.keycloak.event.provider;
 import org.junit.jupiter.api.Test;
 import org.keycloak.events.Event;
 import org.keycloak.events.EventType;
+import org.keycloak.events.admin.OperationType;
 
 import java.util.List;
 import java.util.Map;
@@ -28,7 +29,17 @@ class RabbitMqConfigTest {
 
         assertEquals(List.of(EventType.REGISTER, EventType.UPDATE_EMAIL, EventType.UPDATE_PROFILE, EventType.DELETE_ACCOUNT),
                 List.copyOf(config.eventTypes()));
-        assertEquals(Set.of("USER"), config.adminResources());
+        assertEquals(List.of("USER", "GROUP"), List.copyOf(config.adminResources()));
+    }
+
+    @Test
+    void eachAdminResourceHasItsOwnOperations() {
+        assertEquals(Map.of(
+                        "USER", Set.of(OperationType.CREATE, OperationType.UPDATE, OperationType.DELETE),
+                        "GROUP", Set.of(OperationType.DELETE)),
+                RabbitMqConfig.CATALOG_ADMIN_OPERATIONS);
+        assertEquals(Map.of("USER", Set.of(OperationType.CREATE, OperationType.UPDATE, OperationType.DELETE)),
+                RabbitMqConfig.from(Map.of("admin_resources", "USER")::get).adminOperations());
     }
 
     @Test
@@ -36,6 +47,7 @@ class RabbitMqConfigTest {
         assertEquals(Set.of(EventType.REGISTER, EventType.UPDATE_EMAIL),
                 RabbitMqConfig.eventTypes(" register , UPDATE_EMAIL,LOGIN,REGISTER_ERROR,,NOT_A_TYPE "));
         assertEquals(Set.of("USER"), RabbitMqConfig.adminResources("user, REALM, CLIENT"));
+        assertEquals(Set.of("GROUP"), RabbitMqConfig.adminResources(" group ,GROUP_MEMBERSHIP"));
     }
 
     @Test

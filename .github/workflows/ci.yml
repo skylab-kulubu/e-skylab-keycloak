@@ -366,6 +366,15 @@ jobs:
       - name: Master console groups, hardening and passkey sign-in against a throwaway Keycloak
         run: bash tests/master-console.sh
 
+      - name: Keep the console sign-in screenshots when it fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: master-console-screenshots
+          path: theme/test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
   # config/sandbox-admin-local-client.sh (the admin panel's local-development client admin-local,
   # sandbox realm only) against the stock Keycloak image in dev mode, with real authorization code
   # flows (PKCE) through admin-local and the panel's client; needs no build of this repository's image.

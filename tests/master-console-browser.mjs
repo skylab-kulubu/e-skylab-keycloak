@@ -12,6 +12,7 @@
 //   4. The view-* reader (a group with e-skylab-realm's view roles only): registers and opens the
 //      console.
 import assert from "node:assert/strict";
+import { mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(new URL("../theme/package.json", import.meta.url));
@@ -80,15 +81,42 @@ async function authenticate(page) {
   await button.click();
 }
 
+// diagnose PAGE LABEL: on a failure, the page's address, title and visible text (Keycloak's own pages;
+// no secret is ever typed into a visible field) and a screenshot under theme/test-results.
+async function diagnose(page, label) {
+  try {
+    const text = (await page.locator("body").innerText({ timeout: 5_000 })).replace(/\s+/g, " ").slice(0, 800);
+    console.log(`browser: FAILED in ${label}: url=${page.url()} title=${await page.title()} text=${text}`);
+    const results = new URL("../theme/test-results/", import.meta.url).pathname;
+    mkdirSync(results, { recursive: true });
+    await page.screenshot({ path: `${results}master-console-${label}.png` });
+  } catch (error) {
+    console.log(`browser: FAILED in ${label}; no page details (${error.message})`);
+  }
+}
+
+// step LABEL PAGE FN: runs FN, prints the page's state when it throws.
+async function step(label, page, fn) {
+  try {
+    return await fn();
+  } catch (error) {
+    await diagnose(page, label);
+    throw error;
+  }
+}
+
 const browser = await chromium.launch();
 try {
   // 1. registration right after the password, then the console.
   const writer = await newPasskeyContext(browser);
-  let token = consoleToken(writer.page);
-  await writer.page.goto(consoleUrl);
-  await password_step(writer.page, "yazici-bir");
-  await register(writer.page);
-  assert.equal(await token, 200, "the console's token request after the registration failed");
+  let token;
+  await step("1-register", writer.page, async () => {
+    await writer.page.goto(consoleUrl);
+    await password_step(writer.page, "yazici-bir");
+    token = consoleToken(writer.page);
+    await register(writer.page);
+    assert.equal(await token, 200, "the console's token request after the registration failed");
+  });
   assert.equal(await credentialCount(writer.cdp, writer.authenticatorId), 1, "no passkey was registered");
   console.log("browser: 1 an account without a passkey is sent to register one right after the password and reaches the console");
 
@@ -103,11 +131,13 @@ try {
   const passiveLocation = passive.headers()["location"] ?? "";
   assert.match(passiveLocation, /error=login_required/, `prompt=none was not refused: ${passive.status()} ${passiveLocation}`);
   const second = await writer.context.newPage();
-  token = consoleToken(second);
-  await second.goto(consoleUrl);
-  await password_step(second, "yazici-bir");
-  await authenticate(second);
-  assert.equal(await token, 200, "the console's token request after the passkey failed");
+  await step("2-sso", second, async () => {
+    await second.goto(consoleUrl);
+    await password_step(second, "yazici-bir");
+    token = consoleToken(second);
+    await authenticate(second);
+    assert.equal(await token, 200, "the console's token request after the passkey failed");
+  });
   console.log("browser: 2 with the SSO session open the console asks for the password and the passkey again (prompt=none: login_required)");
   await writer.context.close();
 
@@ -119,9 +149,11 @@ try {
       reached = true;
     }
   });
-  await stranger.page.goto(consoleUrl);
-  await password_step(stranger.page, "yazici-bir");
-  await authenticate(stranger.page);
+  await step("3-stranger", stranger.page, async () => {
+    await stranger.page.goto(consoleUrl);
+    await password_step(stranger.page, "yazici-bir");
+    await authenticate(stranger.page);
+  });
   await stranger.page.locator("#kc-error-message, .pf-v5-c-alert, .alert-error, #input-error").first()
     .waitFor({ timeout: 30_000 })
     .catch(() => undefined);
@@ -134,11 +166,13 @@ try {
 
   // 4. the view-* reader opens the console.
   const reader = await newPasskeyContext(browser);
-  token = consoleToken(reader.page);
-  await reader.page.goto(consoleUrl);
-  await password_step(reader.page, "okuyucu");
-  await register(reader.page);
-  assert.equal(await token, 200, "the reader's console token request failed");
+  await step("4-reader", reader.page, async () => {
+    await reader.page.goto(consoleUrl);
+    await password_step(reader.page, "okuyucu");
+    token = consoleToken(reader.page);
+    await register(reader.page);
+    assert.equal(await token, 200, "the reader's console token request failed");
+  });
   console.log("browser: 4 the view-* reader registers a passkey and opens the console");
   await reader.context.close();
 } finally {

@@ -661,8 +661,9 @@ o rol) uzlaştırıcı her koşuda `core` istemcisinde var eder;
 `forms`'un `fullScopeAllowed`'ı kapalıysa rolleri onun kapsam eşlemesine ekler ve `aud: core`'u
 veren varsayılan `roles` kapsamını doğrular, yoksa ekler (ikinci audience mapper eklenmez).
 `place-service`'i (gizli, yalnız client credentials, `fullScopeAllowed=false`, redirect yok; sırrı
-Keycloak üretir, uzlaştırıcı okumaz) uzlaştırıcı oluşturur; Place'in giriş istemcisi `place` dar
-kalır (runbook §20.2). Roller `service-account-forms`'ta bulunur; servis hesabına rol vermek kullanıcı yetkisi istediği için bunu
+Keycloak üretir, uzlaştırıcı okumaz) uzlaştırıcı kimliği tam uzlaştırmada oluşturur; bu yalnız
+production'dadır, sandbox'ta uzlaştırıcı kimliği ve `place-service` yoktur. Place'in giriş istemcisi
+`place` dar kalır (runbook §20.2). Roller `service-account-forms`'ta bulunur; servis hesabına rol vermek kullanıcı yetkisi istediği için bunu
 operatör yapar (`KEYCLOAK_RECONCILE_KCADM_CONFIG` + `KEYCLOAK_RECONCILE_ONLY=service-roles`; eski adı
 `media-attach` de çalışır). `KEYCLOAK_RECONCILE_CHECK=true` aynı adımı kuru koşar: yalnız eksikleri
 `would …` diye yazar, hiçbir şey yazmaz. Adım önce her şeyi okur, okuma hatasında hiçbir şey vermez
@@ -678,18 +679,23 @@ core'un `MEDIA_SERVICE_CLIENTS`'ıyla aynı tutulur (runbook §20).
 Aynı adım SkyMail'in servis hesabına (`skymail-backend`) core'un `audience:read` rolünü (core #242,
 haber ve duyuru kitlesi), `communication-preferences:read` rolünü (core #256, kimin takip
 edilebileceği) ve `consent:audience:read` rolünü (rıza kaydının davet ve tanıtım kitlesi, runbook §20.2) ile `realm-management`'ın `view-users` ve `view-clients` rollerini (Admin REST'ten kişi okuma; production'da 2026-09-23'ten beri elle verilmişti), core'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`,
-`skymail:lists:read`, `skymail:lists:write` ve `skymail:tracking:withdraw` (skymail-backend #75, takibi
+`skymail:lists:read`, `skymail:lists:write`, `skymail:notifications:send` (skymail-backend #79, `POST /v1/notifications`;
+yalnız `service-account-core`) ve `skymail:tracking:withdraw` (skymail-backend #75, takibi
 geri alma; yalnız `service-account-core`) rollerini, Template seed'in servis hesabına
 (`skymail-seed`) `skymail:templates:system`'ı (yalnız o bir şablonu sistem şablonu yapar ya da
 işareti kaldırır; skymail-backend README) verir; SkyMail'in rollerinden yalnız
-`skymail:tracking:withdraw`'u ve `skymail:templates:system`'ı oluşturur, öbürleri eksikse uyarır (runbook §20.1); listelenen servis istemcisinde varsayılan `roles` kapsamı yoksa ekler (runbook §20.1). SkyMail'in kendi
+`skymail:notifications:send`'i, `skymail:tracking:withdraw`'u ve `skymail:templates:system`'ı oluşturur, öbürleri eksikse uyarır (runbook §20.1); listelenen servis istemcisinde varsayılan `roles` kapsamı yoksa ekler (runbook §20.1). SkyMail'in kendi
 rolleri `skymail:access`, `skymail:templates:read`, `skymail:lists:read`, `skymail:mails:read`,
 `skymail:mails:send`, `skymail:mails:write` ADMIN ve YK'ya, `skymail:mails:approve` yalnız YK'ya
 (onaycı YK kökü) aynı biçimde bir kez tohumlanır; uzlaştırıcı onları oluşturmaz, realm'de olanı
 tohumlar. `skymail:announcements:send` listeden çıktı (okuyan yok; ekip-yetkileri bilet 03), var olan
 eşlemeleri kalır (runbook §25).
 `skymail:mails:tracking:read` (gönderimlerin kişi bazındaki açılma ve tıklama raporu) aynı biçimde
-ADMIN, YK ve DK'ya bir kez tohumlanır; okuma rolüdür, DK'da kalır (runbook §25). Forms'un
+ADMIN, YK ve DK'ya bir kez tohumlanır; okuma rolüdür, DK'da kalır (runbook §25).
+`skymail:suppressions:manage` (bastırma listesi, kalıcı ret kaydını kaldırma, bounce oranı; ADR 0073)
+ve `skymail:unsubscribes:reactivate` (kimliği olmayan adresin çıkışını kişi isteyince ya da hata
+olunca gerekçeyle geri alma; ADR 0072 karar 7) aynı biçimde oluşturulur ve yalnız ADMIN ve YK'ya bir
+kez tohumlanır; yazma rolleridir, DK almaz (`config/dk-read-only.sh` onları yazma rolü sayar). Forms'un
 salt okur rolü `skyforms:read-all` (DK her formu ve cevabı okur, yazamaz; forms-backend henüz okumuyor)
 aynı biçimde `forms` istemcisinde var edilir ve yalnız DK'ya bir kez verilir (runbook §28). Forms
 koltuğu `skyforms:access` ADMIN, YK ve DK'ya, `skyforms:*` (bütün formları okuma) yalnız YK'ya bir kez
@@ -1068,18 +1074,27 @@ INTEGRATION_GROUP=login KEYCLOAK_TEST_IMAGE=account-keycloak:test bash tests/run
 bağlantıları, tema sözleşmeleri, imaj derlemesi ve içindeki SPI/RabbitMQ Maven testleri,
 operatör betiklerinin statik denetimleri), `theme` ve kısa sözleşme işleri; her biri yalnız
 okuduğu yollar değiştiyse (`theme/`, `spi/`, ya da `theme/`, `spi/`, `docs/`, `*.md`
-dışındaki her şey). Uzun Keycloak işleri ve `integration (<grup>)` grupları PR'da koşmaz;
-ancak `main`'e açılan PR bir işin kendi test betiğine ya da onun (doğrudan veya dolaylı, yorum
-satırları hariç) okuduğu ya da çalıştırdığı bir `tests/`, `config/` veya harness Playwright
-dosyasına (`theme/tests/`) dokunuyorsa o iş hızlı koşuda da koşar (`tests/affected-jobs.sh`;
-entegrasyon harness'ına ya da tam uzlaştırmaya dokunmak `candidate` imajını derletip bütün grupları
-koşturur). Hiçbir iş akışının ulaşmadığı bir `tests/` ya da `config/` dosyası bütün tam takım
-işlerini koşturur; izlenen her dosya ya bir işe ulaşır ya da `LOCAL_ONLY` listesindedir
-(`check-fresh-runner.sh` denetler). Hızlı `production` koşusu (terfi) etkilenen iş koşturmaz:
-ağacı zaten tam test edildi. Bu koşuların makbuzları yayın kanıtı sayılmaz (bulucu yalnız tam
-push, gece ve elle koşularına bakar).
+dışındaki her şey). Uzun Keycloak işleri ve `integration (<grup>)` grupları PR'da koşmaz.
+`main`'e açılan PR'da `tests/` ve `config/` yolları "her şey" sayılmaz: yalnız o yolu
+(doğrudan veya dolaylı, yorum satırları hariç) okuyan ya da çalıştıran işler koşar
+(`tests/affected-jobs.sh --pull-request`; harness Playwright dosyaları `theme/tests/` de). Bu,
+hızlı kümenin kısa işleri ve PR süresine (15 dk) sığan tam takım işleri (`dk-read-only`,
+`sandbox-admin-local-client`, `after-sign-up-native`) içindir. 15 dakikayı aşan tam takım işleri
+(`PR_DEFERRED`: `integration (<grup>)` grupları, `role-groups`, `site-clients`, `login-clients`,
+`skyapp-cms-editor`, `ytu-first-login`, `inscribed-cms-roles`) PR etkilese de PR'da koşmaz; adları
+`scope` günlüğüne, koşu özetine ve PR'ın kontrol sayfasına uyarı (`::warning::`) olarak yazılır,
+`main` push'unun tam koşusunda koşarlar (yayından önce).
+PR'da da koşsunlar istenirse PR'a `full-ci` etiketi konur. Hiçbir iş akışının ulaşmadığı bir
+`tests/` ya da `config/` dosyası PR'ın koşabileceği bütün işleri koşturur; izlenen her dosya ya
+bir işe ulaşır ya da `LOCAL_ONLY` listesindedir (`check-fresh-runner.sh` denetler). Hızlı
+`production` koşusu (terfi) tam takım işi koşturmaz: ağacı zaten tam test edildi. Bu koşuların
+makbuzları yayın kanıtı sayılmaz (bulucu yalnız tam push, gece ve elle koşularına bakar).
 *Tam takım* `main` push'unda, her gece (01:23 UTC), elle (`gh workflow run ci.yml --ref <dal>`)
-ve `full-ci` etiketli PR'larda (etiket PR açılırken/push'ta okunur) koşar. `production`'a açılan
+ve `full-ci` etiketli PR'larda (etiket PR açılırken/push'ta okunur; etiket eklenince
+`full-ci.yml` dalın başında hemen elle bir tam koşu başlatır; bu koşunun `gate`'i aynı commit'teki
+en yeni `gate` olur ve PR'ın birleşim (merge) commit'ini değil dalın başını test eder) koşar. `ci.yml` `labeled` olayında
+koşmaz: başka bir etiketin koşusu atlanmış (`skipped`) bir `gate` bırakırdı, GitHub atlanan zorunlu
+kontrolü geçmiş sayar ve aynı commit'in kırmızı `gate`'ini örterdi. `production`'a açılan
 PR'lar ve `production` push'u, ağaçlarını tamamen yeşil bir tam koşu zaten test ettiyse (yayın
 PR'ı ve yayın push'u, `main` push koşusundan sonra) hızlı kümeyi koşar; etmediyse (hotfix) tam
 takımı. Kanıtı `tests/find-green-full-ci-run.sh` bulur: yalnız push, gece ya da elle koşuları

@@ -10,9 +10,11 @@ import org.keycloak.models.KeycloakSession;
 import org.keycloak.util.JsonSerialization;
 
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.UnaryOperator;
 import java.util.regex.Pattern;
@@ -28,12 +30,24 @@ final class RabbitMqConfig {
     static final Set<EventType> CATALOG_EVENT_TYPES = Collections.unmodifiableSet(new LinkedHashSet<>(List.of(
             EventType.REGISTER, EventType.UPDATE_EMAIL, EventType.UPDATE_PROFILE, EventType.DELETE_ACCOUNT)));
 
-    /** The admin events of the catalog: these resource types (KK_TO_RMQ_ADMIN_RESOURCES narrows them)... */
-    static final Set<String> CATALOG_ADMIN_RESOURCES = Set.of("USER");
+    /**
+     * The admin events of the catalog: each resource type with its own operations. USER: every write
+     * (ACTION, an action e-mail or a credential reset, is not one). GROUP: only DELETE, core's wake-up
+     * for its group preferences (RabbitMQ events ticket 05); a GROUP CREATE or UPDATE (core writes
+     * group attributes, roles and names itself) has no binding and would only fill unrouted.
+     */
+    static final Map<String, Set<OperationType>> CATALOG_ADMIN_OPERATIONS = adminCatalog();
 
-    /** ...with these operations. ACTION (an action e-mail, a credential reset) is not one of them. */
-    static final Set<OperationType> CATALOG_ADMIN_OPERATIONS = Collections.unmodifiableSet(new LinkedHashSet<>(List.of(
-            OperationType.CREATE, OperationType.UPDATE, OperationType.DELETE)));
+    /** The catalog's admin resource types, which KK_TO_RMQ_ADMIN_RESOURCES narrows. */
+    static final Set<String> CATALOG_ADMIN_RESOURCES = CATALOG_ADMIN_OPERATIONS.keySet();
+
+    private static Map<String, Set<OperationType>> adminCatalog() {
+        Map<String, Set<OperationType>> catalog = new LinkedHashMap<>();
+        catalog.put("USER", Collections.unmodifiableSet(new LinkedHashSet<>(List.of(
+                OperationType.CREATE, OperationType.UPDATE, OperationType.DELETE))));
+        catalog.put("GROUP", Set.of(OperationType.DELETE));
+        return Collections.unmodifiableMap(catalog);
+    }
 
     private static final Logger LOG = Logger.getLogger(RabbitMqConfig.class);
     private static final Pattern SPECIAL_CHARACTERS = Pattern.compile("[^*#a-zA-Z0-9 _.-]");
@@ -78,8 +92,8 @@ final class RabbitMqConfig {
         config.exchange = value(lookup, "exchange", "amq.topic");
         config.eventTypes = eventTypes(lookup.apply("event_types"));
         config.adminResources = adminResources(lookup.apply("admin_resources"));
-        LOG.infof("keycloak-to-rabbitmq publishes user events %s and admin events %s %s",
-                config.eventTypes, config.adminResources, CATALOG_ADMIN_OPERATIONS);
+        LOG.infof("keycloak-to-rabbitmq publishes user events %s and admin events %s",
+                config.eventTypes, config.adminOperations());
         return config;
     }
 
@@ -140,12 +154,24 @@ final class RabbitMqConfig {
         return event.getType() != null && event.getError() == null && eventTypes.contains(event.getType());
     }
 
-    /** A successful admin event of a selected resource type with a catalog operation. */
+    /** A successful admin event of a selected resource type with one of that type's catalog operations. */
     boolean publishes(AdminEvent event) {
+        String resource = event.getResourceTypeAsString();
         return event.getError() == null
-                && event.getResourceTypeAsString() != null
-                && adminResources.contains(event.getResourceTypeAsString())
-                && CATALOG_ADMIN_OPERATIONS.contains(event.getOperationType());
+                && resource != null
+                && adminResources.contains(resource)
+                && CATALOG_ADMIN_OPERATIONS.get(resource).contains(event.getOperationType());
+    }
+
+    /** The selected admin resource types with their operations, for the start-up line. */
+    Map<String, Set<OperationType>> adminOperations() {
+        Map<String, Set<OperationType>> operations = new LinkedHashMap<>();
+        CATALOG_ADMIN_OPERATIONS.forEach((resource, types) -> {
+            if (adminResources.contains(resource)) {
+                operations.put(resource, types);
+            }
+        });
+        return operations;
     }
 
     static String routingKey(AdminEvent event, KeycloakSession session) {

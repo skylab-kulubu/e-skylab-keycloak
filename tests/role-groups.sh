@@ -718,6 +718,10 @@ expect_line "$sorted" '[app-assignments] BILGI|S2-tohum|/UYELER/DK/ALT|admin|con
 reject_line "$sorted" 'SAPMA|S2-fazla|/UYELER/DK/ALT' 'a seeded read role on a sub-group of DK was taken for drift'
 expect_line "$sorted" '[app-assignments] BILGI|S2-tohum|/UYELER/YK|admin|content:write|eksik' \
   'a seeded role missing from YK (its seed set) is no BILGI line'
+# DK's temporary Forms admin role missing is dk-read-only.sh --forms's goal: BILGI, never drift.
+expect_line "$sorted" '[app-assignments] BILGI|S2-geçici|/UYELER/DK|forms|skyforms:*|eksik' \
+  'DK'"'"'s missing temporary Forms role is no BILGI line'
+reject_line "$sorted" 'SAPMA|S2-eksik|/UYELER/DK|forms|skyforms:*' 'DK'"'"'s missing temporary Forms role was taken for drift'
 expect_line "$sorted" '[app-assignments] KOD|/ADMIN|frontend-arge|cms:access|karar-bekliyor|var' 'ADMIN'"'"'s frontend-arge role is not pending'
 expect_line "$sorted" '[app-assignments] KOD|/UYELER/ARGE/AIRLAB/LIDERLER|frontend-arge|cms:access|karar-bekliyor|var' 'the Leader group'"'"'s frontend-arge role is not pending'
 reject_line "$sorted" 'PROBLEM: frontend-arge' 'a pending frontend-arge role was a PROBLEM'

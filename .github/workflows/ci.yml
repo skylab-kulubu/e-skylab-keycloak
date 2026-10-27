@@ -204,6 +204,7 @@ jobs:
           bash tests/check-operator-login-prompts.sh
           bash tests/check-site-editor-grants-team.sh
           bash tests/check-app-assignments.sh
+          bash tests/check-app-assignments-drift.sh
 
   theme:
     needs: scope

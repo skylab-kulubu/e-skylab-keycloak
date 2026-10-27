@@ -50,7 +50,9 @@
 # the seed (no mark) the missing mapping is the code's own and S2-eksik. Given to a Privileged root
 # outside its seed set (YK's skymail:mails:approve on ADMIN), or a write role of config/dk-read-only.sh
 # (--print-write-roles) given to DK or under it at all (DK reads and does not write), it is S2-fazla
-# (ekip-yetkileri ticket 17).
+# (ekip-yetkileri ticket 17). DK's temporary Forms admin roles (geçici) missing is the goal of
+# dk-read-only.sh --forms: one line "BILGI|S2-geçici|<group path>|<client>|<role>|eksik", never counted
+# (not in the summary either).
 #   S1        an admin or unclassified client role held by people directly (one line a role);
 #   S1-realm  a realm role held by people directly: the old Java era's (rol-temizligi ticket 19 takes
 #             them away in its own window), so it counts towards the alarm only with
@@ -513,7 +515,7 @@ done <<<"$client_list"
 # --check: the code area and the panel area
 # ==================================================================================================
 run_check() {
-  local kind names client role path name leader entry holder
+  local kind names client role path name leader entry holder class
   local users groups uuid roles_read
   declare -A expect=() pending_client=() live=() existing_role=()
   # expect["path|client|role"] = evet | geçici; pending_client[client] = 1 (frontend-arge).
@@ -615,8 +617,21 @@ run_check() {
     fi
     return 0
   }
-  note() { # TARGET CLIENT ROLE eksik|fazla
-    note_lines+=("BILGI|S2-tohum|$1|$2|$3|$4")
+  note() { # CLASS TARGET CLIENT ROLE eksik|fazla
+    note_lines+=("BILGI|$1|$2|$3|$4|$5")
+  }
+  # missing_class PATH CLIENT ROLE VALUE: the class of an expected mapping the realm lacks. A
+  # temporary one (geçici: DK's Forms admin roles, DK_TEMPORARY_ROLES) missing is the goal
+  # (dk-read-only.sh --forms takes it away), S2-geçici; a seeded role's on its seed set S2-tohum
+  # (both BILGI, never counted); any other S2-eksik.
+  missing_class() {
+    if [[ $4 == geçici ]]; then
+      printf 'S2-geçici\n'
+    elif panel_changed "$1" "$2" "$3" eksik; then
+      printf 'S2-tohum\n'
+    else
+      printf 'S2-eksik\n'
+    fi
   }
   # drift_class PATH CLIENT ROLE: the class of a group mapping the code does not expect.
   drift_class() {
@@ -683,7 +698,7 @@ run_check() {
           value=hayır
           kod_extra=$((kod_extra + 1))
           if panel_changed "$path" "$client" "$role" fazla; then
-            note "$path" "$client" "$role" fazla
+            note S2-tohum "$path" "$client" "$role" fazla
           else
             drift "$(drift_class "$path" "$client" "$role")" "$path" "$client" "$role"
           fi
@@ -727,10 +742,11 @@ run_check() {
     [[ -n ${existing_role[$client|$role]:-} ]] || continue
     log "KOD|$path|$client|$role|${expect[$entry]}|yok"
     kod_missing=$((kod_missing + 1))
-    if panel_changed "$path" "$client" "$role" eksik; then
-      note "$path" "$client" "$role" eksik
-    else
+    class=$(missing_class "$path" "$client" "$role" "${expect[$entry]}")
+    if [[ $class == S2-eksik ]]; then
       drift S2-eksik "$path" "$client" "$role"
+    else
+      note "$class" "$path" "$client" "$role" eksik
     fi
   done
 
@@ -767,7 +783,9 @@ run_check() {
   done
   for line in ${note_lines[@]+"${note_lines[@]}"}; do
     log "$line"
-    s2_seeded=$((s2_seeded + 1))
+    case $line in
+      BILGI\|S2-tohum\|*) s2_seeded=$((s2_seeded + 1)) ;;
+    esac
   done
   alarm=$((s1 + s2_missing + s2_extra + s2b + s3 + s5))
   if [[ $REALM_ROLES == alarm ]]; then alarm=$((alarm + s1_realm)); fi

@@ -4083,7 +4083,10 @@ hiçbir listenin tohumlamadığı rol (`--privileged-file`'da olmayan istemci, y
 kodundur: `S2-fazla`. Tohumlanmış rol de kendi tohum kümesi dışındaki bir Privileged köke (ya da
 altındaki gruba) verilirse `S2-fazla`dır (ör. yalnız YK'ya tohumlanan `skymail:mails:approve` ADMIN'de);
 DK'ya ya da altındaki gruba verilen her yazma rolü (`config/dk-read-only.sh` `WRITE_ROLES`,
-`--print-write-roles`) de öyle: DK okur, yazmaz (ekip-yetkileri bilet 17).
+`--print-write-roles`) de öyle: DK okur, yazmaz (ekip-yetkileri bilet 17). DK'nın geçici Forms
+yönetici rollerinin (`geçici`, `dk-read-only.sh --forms`'un alacağı) yokluğu hedef durumdur: tek bir
+`BILGI|S2-geçici|<grup yolu>|<istemci>|<rol>|eksik` satırı, alarma ve özete katılmaz. Karar tablosu
+Keycloak'sız `tests/check-app-assignments-drift.sh`'ta (CI static işi).
 
 | Sınıf | Ne |
 |---|---|

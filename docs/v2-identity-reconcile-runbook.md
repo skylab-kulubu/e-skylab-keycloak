@@ -4349,7 +4349,7 @@ rm -f /tmp/kcadm-operator.config
 
 İlk kuru koşuda beklenen: brute force, passkey politikası ve olaylar için `would set …`; `would create
 the flow konsol-passkey …`; üç client için `would bind the browser sign-in of …`; `/KONSOL` ve iki yaprak
-için `would create …` ve `would map 17 role(s) …`. Sayımlar F1'den önce uyarı verir (master `admin`
+için `would create …` ve `would map 20 role(s) …`. Sayımlar F1'den önce uyarı verir (master `admin`
 sahibi eşiğin üstünde, konsol kişilerinin passkey'i yok); bunlar F1'in (rol-temizligi 04) işidir.
 Başka bir `WARNING` ya da `PROBLEM` `--apply`'dan önce incelenir. `--apply`'dan sonraki kuru koşu
 `check: 0 change(s) pending` der. `--apply`'dan sonra her konsol girişi parola ve passkey ister;
@@ -4373,7 +4373,7 @@ bekleyin; ya da hesap bozuk) §35'teki geçici yönetici yolu kullanılır.
 **Harness.** `tests/master-console.sh` (CI işi `master-console`, stok Keycloak, dev modu): eşik ve
 dosya hataları girişten önce 2; temiz master'da kuru koşu her değişikliği adlandırır ve yazmaz;
 `--apply` akışı, üç ezmeyi, brute force'u (e-skylab'ın değerleri), olayları, passkey politikasını ve iki
-yaprağı (17'şer rol, `impersonation` yok) kurar; kuru koşu 0 değişiklik, ikinci `--apply` admin olayı
+yaprağı (20'şer rol, `impersonation` yok) kurar; kuru koşu 0 değişiklik, ikinci `--apply` admin olayı
 bırakmaz; akışa eklenen Cookie adımı, `DISABLED` passkey adımı, kalkan ezme, kapatılan
 `webauthn-register` ve silinen parola adımı geri kurulur, fazlalar yalnız uyarılır, `/KONSOL` altında
 varsayılan grup 1 ile durur; sayımlar kişi adı basmaz; kişilerin kendi token'larıyla yazıcı e-skylab'ı

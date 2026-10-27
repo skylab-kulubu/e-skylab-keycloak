@@ -16,7 +16,7 @@
 #   - --apply creates the flow konsol-passkey (auth-username-password-form, webauthn-authenticator,
 #     both REQUIRED, nothing else), binds it to security-admin-console, account-console and account,
 #     sets brute force to e-skylab's values, the passkey policy, events (30 days, details on) and
-#     enables webauthn-register, creates /KONSOL and its two leaves with the 17 roles each (no
+#     enables webauthn-register, creates /KONSOL and its two leaves with the 20 roles each (no
 #     impersonation); --check then has 0 changes, and a second --apply writes nothing (no admin event);
 #   - drift is put back: a Cookie step and a DISABLED passkey step in the flow, a missing override, a
 #     disabled webauthn-register, a missing password step (rebuilt in order); extra roles on a leaf
@@ -57,7 +57,7 @@ IN_CONTAINER_CONFIG=/tmp/config
 MASTER=master
 WRITERS=/KONSOL/E-SKYLAB-YAZICILAR
 SANDBOX_WRITERS=/KONSOL/SANDBOX-YAZICILAR
-WRITER_ROLES='["create-client","manage-authorization","manage-clients","manage-events","manage-identity-providers","manage-realm","manage-users","query-clients","query-groups","query-realms","query-users","view-authorization","view-clients","view-events","view-identity-providers","view-realm","view-users"]'
+WRITER_ROLES='["create-client","manage-authorization","manage-clients","manage-events","manage-identity-providers","manage-organizations","manage-realm","manage-users","query-clients","query-groups","query-organizations","query-realms","query-users","view-authorization","view-clients","view-events","view-identity-providers","view-organizations","view-realm","view-users"]'
 CURRENT_STAGE=startup
 STATE_DIR=$(mktemp -d)
 
@@ -226,8 +226,8 @@ kcadm create users -r e-skylab -s username=member -s enabled=true >/dev/null
 [[ -n $(client_uuid "$MASTER" e-skylab-realm) ]] || fail 'master has no client e-skylab-realm'
 all_roles=$(kcadm get "clients/$(client_uuid "$MASTER" e-skylab-realm)/roles" -r "$MASTER" | jq -c '[.[].name] | sort')
 [[ $(jq -c '. - ["impersonation"]' <<<"$all_roles") == "$WRITER_ROLES" ]] \
-  || fail "e-skylab-realm's roles are not the 17 of the file plus impersonation: $all_roles"
-printf '    e-skylab-realm in master: the 17 roles of config/master-console.json and impersonation\n'
+  || fail "e-skylab-realm's roles are not the 20 of the file plus impersonation: $all_roles"
+printf '    e-skylab-realm in master: the 20 roles of config/master-console.json and impersonation\n'
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='--check on a fresh master'
@@ -242,7 +242,7 @@ for line in 'would set brute force detection (the values of e-skylab)' 'would se
   'would create the group /KONSOL (no role, no member)' \
   'would create the console group /KONSOL/E-SKYLAB-YAZICILAR (e-skylab-realm: every role but impersonation; no member)' \
   'would create the console group /KONSOL/SANDBOX-YAZICILAR' \
-  'would map 17 role(s) of e-skylab-realm to /KONSOL/E-SKYLAB-YAZICILAR' \
+  'would map 20 role(s) of e-skylab-realm to /KONSOL/E-SKYLAB-YAZICILAR' \
   'count: 1 person(s) hold master'"'"'s realm role admin (at most 3' \
   'count: 1 console person(s) (admin or a console group), 1 of them without a passkey'; do
   expect_line "$checked" "$line" 'the dry run did not name it'
@@ -258,7 +258,7 @@ printf '    --check names every change and writes nothing\n'
 CURRENT_STAGE='--apply'
 applied=$(run_expecting 0 --apply)
 expect_line "$applied" 'create the flow konsol-passkey' 'the flow was not created'
-expect_line "$applied" 'map 17 role(s) of e-skylab-sandbox-realm to /KONSOL/SANDBOX-YAZICILAR' 'the sandbox leaf was not mapped'
+expect_line "$applied" 'map 20 role(s) of e-skylab-sandbox-realm to /KONSOL/SANDBOX-YAZICILAR' 'the sandbox leaf was not mapped'
 [[ $(flow_shape | paste -sd' ' -) == '0:auth-username-password-form:REQUIRED 0:webauthn-authenticator:REQUIRED' ]] \
   || fail "the flow is not password then passkey: $(flow_shape | paste -sd' ' -)"
 flow=$(flow_id)
@@ -277,7 +277,7 @@ jq -e '.eventsEnabled and .adminEventsEnabled and .adminEventsDetailsEnabled and
   || fail "master events or passkey policy: $(jq -c '{eventsEnabled, adminEventsEnabled, adminEventsDetailsEnabled, eventsExpiration, webAuthnPolicyUserVerificationRequirement, webAuthnPolicyResidentKey, webAuthnPolicyRpEntityName}' <<<"$realm")"
 [[ $(jq -c '(.passwordPolicy // "")' <<<"$realm") == '""' ]] || fail 'the script set a password policy on master'
 for leaf in "$WRITERS:e-skylab-realm" "$SANDBOX_WRITERS:e-skylab-sandbox-realm"; do
-  [[ $(leaf_roles "${leaf%%:*}" "${leaf#*:}") == "$WRITER_ROLES" ]] || fail "${leaf%%:*} does not hold the 17 roles"
+  [[ $(leaf_roles "${leaf%%:*}" "${leaf#*:}") == "$WRITER_ROLES" ]] || fail "${leaf%%:*} does not hold the 20 roles"
 done
 [[ $(kcadm get "groups/$(group_id /KONSOL)/role-mappings" -r "$MASTER" | jq -c '[.realmMappings // [], (.clientMappings // {} | to_entries)] | flatten | length') == 0 ]] \
   || fail '/KONSOL holds a role'

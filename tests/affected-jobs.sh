@@ -46,6 +46,7 @@ JOB_ENTRIES=(
   'inscribed-cms-roles tests/inscribed-cms-roles.sh'
   'role-groups tests/role-groups.sh'
   'dk-read-only tests/dk-read-only.sh'
+  'master-console tests/master-console.sh'
   'sandbox-admin-local-client tests/sandbox-admin-local-client.sh'
   'ytu-first-login tests/ytu-first-login.sh'
   'after-sign-up-native tests/after-sign-up.sh'

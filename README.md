@@ -729,6 +729,18 @@ yazar, ikinci koşu 0 değişiklik; uzlaştırıcıda `KEYCLOAK_RECONCILE_ONLY=r
 sahiplerini ve izinli yerler dışındaki grup eşlemelerini kişi adı basmadan sayar (runbook §26, §27).
 Harness `tests/role-groups.sh` tek başına çalışır.
 
+Keycloak konsolu master realm'dedir: her kişi orada kendi ayrı hesabıyla girer (rol-temizligi 03;
+Entra'nın ayrı yönetici hesabı). Operatör betiği `config/master-console.sh` (kuru koşu varsayılan,
+`--apply` yazar, ikinci koşu admin olayı bırakmaz; master uzlaştırıcının dışındadır) `/KONSOL`
+gruplarını (`config/master-console.json`: `e-skylab-realm` ve `e-skylab-sandbox-realm`'in bütün
+rolleri, `impersonation` hariç), Cookie adımı olmayan `konsol-passkey` akışını (parola, sonra
+passkey; `security-admin-console`, `account-console` ve `account`'a client ezmesiyle bağlı), passkey
+politikasını, e-skylab'ın brute force değerlerini ve 30 günlük kullanıcı ve admin olaylarını kurar.
+Üyeliğe dokunmaz; `admin` sahiplerini, yaprak üyelerini, `/KONSOL` dışından `<realm>-realm` rolü
+taşıyanları ve passkey'i olmayan konsol kişilerini kişi adı basmadan sayar. `--remove-override` akış
+ezmesini geri alır. Konsol politikası ve acil erişimin genel kuralı runbook §34 ve §35'te. Harness
+`tests/master-console.sh` tek başına çalışır (Chromium'da sanal authenticator).
+
 Kod alanı ve panel alanı (ekip-yetkileri bilet 03; Microsoft Entra'nın Enterprise app modeli): rol
 tanımları, "atama gerekli" (`config/app-assignments.json`, tam olarak core'un uygulama rolleri;
 `tests/check-app-assignments.sh` core'un kopyasıyla karşılaştırır), Privileged kökler, `/ROLLER`,

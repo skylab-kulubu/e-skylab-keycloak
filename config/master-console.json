@@ -1,0 +1,58 @@
+{
+  "root": "KONSOL",
+  "root_display_name_tr": "Keycloak konsolu",
+  "root_description_tr": "Master realm'deki kişisel konsol hesaplarının yetki grupları (rol-temizligi S1, S2). Kökün kendisi rol taşımaz. Üyeliği yalnız master yöneticisi değiştirir; core ve panel bu realm'e erişemez.",
+  "excluded_roles": ["impersonation"],
+  "groups": [
+    {
+      "name": "E-SKYLAB-YAZICILAR",
+      "client": "e-skylab-realm",
+      "roles": [
+        "create-client",
+        "manage-authorization",
+        "manage-clients",
+        "manage-events",
+        "manage-identity-providers",
+        "manage-realm",
+        "manage-users",
+        "query-clients",
+        "query-groups",
+        "query-realms",
+        "query-users",
+        "view-authorization",
+        "view-clients",
+        "view-events",
+        "view-identity-providers",
+        "view-realm",
+        "view-users"
+      ],
+      "display_name_tr": "e-skylab: konsoldan yazanlar",
+      "description_tr": "e-skylab realm'ini konsoldan yönetir: e-skylab-realm client'ının bütün rolleri, impersonation hariç. Konsol yalnız IdP, client, token ayarları ve acil durum içindir; kişi ve grup işleri panelden."
+    },
+    {
+      "name": "SANDBOX-YAZICILAR",
+      "client": "e-skylab-sandbox-realm",
+      "roles": [
+        "create-client",
+        "manage-authorization",
+        "manage-clients",
+        "manage-events",
+        "manage-identity-providers",
+        "manage-realm",
+        "manage-users",
+        "query-clients",
+        "query-groups",
+        "query-realms",
+        "query-users",
+        "view-authorization",
+        "view-clients",
+        "view-events",
+        "view-identity-providers",
+        "view-realm",
+        "view-users"
+      ],
+      "display_name_tr": "e-skylab-sandbox: konsoldan yazanlar",
+      "description_tr": "e-skylab-sandbox realm'ini konsoldan yönetir: e-skylab-sandbox-realm client'ının bütün rolleri, impersonation hariç."
+    }
+  ]
+}

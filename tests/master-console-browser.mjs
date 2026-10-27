@@ -123,8 +123,10 @@ try {
   console.log("browser: 1 an account without a passkey is sent to register one right after the password and reaches the console");
 
   // 2. the open SSO session does not stand in for the two factors.
-  const cookies = await writer.context.cookies(base);
-  assert.ok(cookies.some(cookie => cookie.name === "KEYCLOAK_IDENTITY"), "no SSO session cookie after the first sign-in");
+  // Keycloak scopes its session cookies to the realm path.
+  const cookies = await writer.context.cookies(`${base}/realms/master/`);
+  assert.ok(cookies.some(cookie => cookie.name === "KEYCLOAK_IDENTITY"),
+    `no SSO session cookie after the first sign-in (cookies: ${cookies.map(cookie => cookie.name).join(", ")})`);
   const passive = await writer.page.request.get(
     `${base}/realms/master/protocol/openid-connect/auth?client_id=security-admin-console&response_type=code&scope=openid` +
       `&redirect_uri=${encodeURIComponent(consoleUrl)}&prompt=none&state=harness`,

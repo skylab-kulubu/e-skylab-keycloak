@@ -9,7 +9,8 @@
 # Fixtures: realm e-skylab in production's shape before this change: core's 14 roles of the contract
 # table (13 write roles and url:access) seeded once (marked) to /ADMIN, /UYELER/YK and /UYELER/DK;
 # SkyMail's three Privileged roles seeded (system-mails:read and mails:tracking:read to the three,
-# announcements:send to ADMIN and YK) and skymail:mails:approve on DK by hand; the event site client frontend-artlab with
+# announcements:send to ADMIN and YK), the suppression list's two write roles marked as seeded to
+# ADMIN and YK, and skymail:mails:approve on DK by hand; the event site client frontend-artlab with
 # cms:access (a composite of content:read and content:write) on the three and client:admin on ADMIN and
 # YK; forms with skyforms:* on /ADMIN and /UYELER/DK and the Forms seat skyforms:access on DK; the Java
 # era's realm role DK on /UYELER/DK; a subgroup /UYELER/DK/ALT; a YK person, a DK person, a person in
@@ -283,7 +284,8 @@ kcadm create clients -r "$REALM" -s clientId=skymail -s publicClient=true >/dev/
 for role in "${CORE_SEEDED_ROLES[@]}" url:create; do
   kcadm create "clients/$(client_uuid "$REALM" core)/roles" -r "$REALM" -s "name=$role" >/dev/null
 done
-for role in skymail:access skymail:system-mails:read skymail:mails:tracking:read skymail:announcements:send skymail:mails:approve; do
+for role in skymail:access skymail:system-mails:read skymail:mails:tracking:read skymail:announcements:send skymail:mails:approve \
+  skymail:suppressions:manage skymail:unsubscribes:reactivate; do
   kcadm create "clients/$(client_uuid "$REALM" skymail)/roles" -r "$REALM" -s "name=$role" >/dev/null
 done
 for role in 'skyforms:*' skyforms:access; do
@@ -324,6 +326,8 @@ mark skymail skymail:announcements:send '2026-10-13T09:00:00Z /ADMIN,/UYELER/YK'
 # stage proves DK's read roles; tests/role-groups.sh and the integration harness prove those seeds).
 mark skymail skymail:access '2026-10-24T09:00:00Z /ADMIN,/UYELER/YK'
 mark skymail skymail:mails:approve '2026-10-24T09:00:00Z /UYELER/YK'
+mark skymail skymail:suppressions:manage '2026-10-25T09:00:00Z /ADMIN,/UYELER/YK'
+mark skymail skymail:unsubscribes:reactivate '2026-10-25T09:00:00Z /ADMIN,/UYELER/YK'
 mark forms skyforms:access "$OLD_MARK"
 # skyforms:* by id, as the reconciler marks it (a "*" never goes into an admin path).
 kcadm update "roles-by-id/$(kcadm get "clients/$(client_uuid "$REALM" forms)/roles" -r "$REALM" | jq -r '.[] | select(.name == "skyforms:*") | .id')" \

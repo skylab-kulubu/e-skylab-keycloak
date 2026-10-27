@@ -40,6 +40,15 @@
 #     realm role outside the Privileged roots are PROBLEMs; the role groups' and the Leader groups'
 #     code area roles are as expected; through the reconciler's step the Privileged roots' own
 #     expectations come in (present and missing); nothing is written and no person is named;
+#   - its drift summary (ekip-yetkileri ticket 07): each drift is one SAPMA line of its class (S1 a
+#     person's admin role, S1-realm a person's realm role, S2-eksik, S2-fazla, S2b an admin role on a
+#     team or a Leader group, S5 a top team without a Leader), panel assignments and pending or
+#     temporary roles none; with KEYCLOAK_APP_ASSIGNMENTS_ALARM=true the step exits 1 on drift,
+#     --alarm without --privileged-file is refused (exit 2) and a failed read is exit 2;
+#   - the nightly alarm's run (config/app-assignments-alarm.sh) on the sandbox, seeded and every top
+#     team with a Leader: no drift (exit 0, alarm=0); a seeded role taken from or given to a
+#     Privileged root in the panel is a BILGI line (S2-tohum), never counted; a role no seed covers
+#     there is S2-fazla (exit 1); a reconciler that stops before the check prints no summary: exit 2;
 #   - app-assignments --seed: a dry run plans exactly the missing initial assignments (every top
 #     team's Forms seat, the Leader groups' and ALGOLAB's SkyMail pair) with enabled member counts and
 #     writes nothing; the reconciler's step tohum-atamalar applies them with a 0600 backup and marks
@@ -654,8 +663,9 @@ before=$(events "$REALM")
 output=$(reconcile_step 2 app-assignments)
 expect_line "$output" 'KEYCLOAK_RECONCILE_ONLY=app-assignments is an operator step' 'the check ran without an operator session'
 # One run (every role's holders are read: minutes), through the reconciler's step, which passes the
-# Privileged roots' expectations.
-sorted=$(reconcile_step 0 app-assignments -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KCADM_CONFIG")
+# Privileged roots' expectations; as the nightly drift alarm runs it (ticket 07): drift is exit 1.
+sorted=$(reconcile_step 1 app-assignments -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KCADM_CONFIG" \
+  -e KEYCLOAK_APP_ASSIGNMENTS_ALARM=true)
 reject_line "$sorted" 'NOTE: no --privileged-file' 'the reconciler'"'"'s step did not pass its expectations'
 expect_line "$sorted" '[app-assignments] PANEL|/UYELER/ARGE/AIRLAB|forms|skyforms:access' 'the top team'"'"'s Forms seat is not the panel'"'"'s'
 expect_line "$sorted" '[app-assignments] PANEL|/UYELER/ARGE/AIRLAB/SUB|skymail|skymail:access' 'the Sub-team'"'"'s SkyMail is not the panel'"'"'s'
@@ -696,6 +706,23 @@ expect_line "$sorted" 'PANEL: SkyMail (skymail): 1 group assignment(s), 0 person
 reject_line "$sorted" 'PANEL|/ROLLER' 'a role group was taken for the panel area'
 reject_line "$sorted" 'PANEL|/ADMIN' 'a Privileged root was taken for the panel area'
 expect_line "$sorted" 'check: 0 change(s) pending' 'the check planned a change'
+# The drift summary: one SAPMA line a drift, of its class.
+expect_line "$sorted" '[app-assignments] SAPMA|S1|kişi:1|skymail|skymail:mails:write' 'the person'"'"'s admin role is no S1'
+expect_line "$sorted" '[app-assignments] SAPMA|S1-realm|kişi:' 'the person'"'"'s realm role is no S1-realm'
+expect_line "$sorted" '[app-assignments] SAPMA|S2b|/UYELER/ARGE/AIRLAB|skymail|skymail:mails:write' 'the admin role on a team is no S2b'
+expect_line "$sorted" '[app-assignments] SAPMA|S2b|/UYELER/ARGE/AIRLAB/SUB/LIDERLER|skycloud|skycloud:access' 'SkyCloud on a Sub-team'"'"'s Leader group is no S2b'
+expect_line "$sorted" '[app-assignments] SAPMA|S2-fazla|/UYELER/ARGE|skymail|skymail:access' 'the app role on an area is no S2-fazla'
+expect_line "$sorted" '[app-assignments] SAPMA|S2-fazla|/UYELER|realm|USER' 'the realm role on /UYELER is no S2-fazla'
+expect_line "$sorted" '[app-assignments] SAPMA|S2-eksik|/UYELER/YK|forms|skyforms:access' 'the missing Forms seat of YK is no S2-eksik'
+expect_line "$sorted" '[app-assignments] SAPMA|S5|/UYELER/ORGANIZASYON/ARTLAB|-|-' 'the top team without a Leader group is no S5'
+reject_line "$sorted" 'SAPMA|S5|/UYELER/ARGE/AIRLAB|' 'a top team with an enabled Leader was taken for one without'
+reject_line "$sorted" 'SAPMA|S1|kişi:1|forms' 'a person'"'"'s panel seat was taken for drift'
+reject_line "$sorted" 'SAPMA|S2-fazla|/UYELER/ARGE/AIRLAB|forms' 'a team'"'"'s panel seat was taken for drift'
+reject_line "$sorted" 'SAPMA|S2b|/UYELER/ARGE/AIRLAB/SUB|skymail' 'a Sub-team'"'"'s panel SkyMail was taken for drift'
+reject_line "$(grep -F 'SAPMA|' <<<"$sorted")" '|frontend-arge|' 'a pending frontend-arge role was taken for drift'
+reject_line "$(grep -F 'SAPMA|' <<<"$sorted")" 'SAPMA|S2-fazla|/ROLLER/SKYMAIL-ACCESS' 'a role group'"'"'s expected role was taken for drift'
+expect_line "$sorted" '[app-assignments] SAPMA: S1=1 S1-realm=' 'the drift summary is missing'
+expect_line "$sorted" '(bilgi) S2-eksik=' 'a person'"'"'s realm role counts towards the alarm by default'
 for name in direct-person leader-person role-group-person sub-leader-person; do
   reject_line "$sorted" "$name" 'the check printed a person'
 done
@@ -709,6 +736,24 @@ kcadm delete "clients/$(client_uuid "$REALM" frontend-arge)" -r "$REALM" >/dev/n
 kcadm delete "clients/$(client_uuid "$REALM" admin)" -r "$REALM" >/dev/null
 kcadm delete "groups/$(group_id "$REALM" /UYELER/DK)" -r "$REALM" >/dev/null
 printf '    --check: panel assignments counted, code area compared (expected, missing, not in code), PROBLEMs named, nothing written, nobody named\n'
+printf '    drift summary: SAPMA lines by class, the alarm step exits 1 on drift\n'
+
+CURRENT_STAGE='app-assignments: the drift alarm'"'"'s refusals and a failed read'
+refused=$(run_expecting 2 app-assignments.sh "$REALM" --check --alarm)
+expect_line "$refused" '--alarm belongs to --check with --privileged-file' 'the alarm without the Privileged expectations was not refused'
+refused=$(run_expecting 2 app-assignments.sh "$REALM" --check --realm-roles hepsi)
+expect_line "$refused" '--realm-roles bilgi or alarm' 'an unknown --realm-roles was not refused'
+docker exec "$CONTAINER" sh -c ': > /tmp/no-privileged.tsv'
+trap - ERR
+failed=$(docker exec -e KEYCLOAK_ADMIN_URL=http://localhost:8080 -e KEYCLOAK_REALM="$REALM" \
+  -e KCADM_BIN=/tmp/kcadm-fail.sh -e KCADM_INJECT_FAIL=group-by-path/UYELER "$CONTAINER" \
+  bash "$IN_CONTAINER_CONFIG/app-assignments.sh" --kcadm-config "$KCADM_CONFIG" --check --alarm \
+  --privileged-file /tmp/no-privileged.tsv 2>&1) && status=0 || status=$?
+trap 'on_error "$LINENO"' ERR
+[[ $status == 2 ]] || { printf '%s\n' "$failed" >&2; fail "a failed read under --alarm did not exit 2 (exit $status)"; }
+expect_line "$failed" 'the group /UYELER could not be read in realm e-skylab; stopped' 'the failed read was not reported'
+reject_line "$failed" 'SAPMA:' 'the alarm summed up after a failed read'
+printf '    --alarm: refused without --privileged-file and with an unknown --realm-roles (exit 2); a failed read is exit 2\n'
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='app-assignments: the one-time initial assignment'
@@ -1035,5 +1080,73 @@ reject_line "$planned" '[reconcile] admin role content:' 'the sandbox seeded the
 reject_line "$checked$seeded$again" 'dk-person' 'the step printed a person'
 reject_line "$checked$seeded$again" 'yk-person' 'the step printed a person'
 printf '    core-roles: the panel'"'"'s content:read to ADMIN, YK and DK and content:write to ADMIN and YK once (dry run first), marked, in the tokens; the sandbox seeds superadmin'"'"'s\n'
+
+# ---------------------------------------------------------------------------------------------------
+CURRENT_STAGE='app-assignments: the alarm on a realm without drift, the panel'"'"'s seeded Privileged mappings'
+# The nightly alarm's run (config/app-assignments-alarm.sh) on the sandbox once its Privileged roles
+# are seeded and every top team has a Leader: no drift (exit 0, alarm=0). After the seed a seeded
+# role's Privileged mappings are the panel's: one taken away and one added in the panel are BILGI
+# lines (S2-tohum) that never count, while a role no seed covers on a Privileged root is the code's
+# (S2-fazla, exit 1, alarm=1). A not yet seeded role's missing mapping is S2-eksik (the stage above,
+# YK's Forms seat). A reconciler that stops before the check prints no summary: exit 2. Every check
+# reads every role's holders (minutes), so two runs.
+alarm_run() { # alarm_run STATUS [docker exec -e options...]: the wrapper on the sandbox; prints the output
+  local wanted=$1 output status=0
+  shift
+  trap - ERR
+  output=$(docker exec -e KEYCLOAK_ADMIN_URL=http://localhost:8080 -e KEYCLOAK_REALM=$SANDBOX \
+    -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KCADM_CONFIG" "$@" "$CONTAINER" \
+    bash "$IN_CONTAINER_CONFIG/app-assignments-alarm.sh" 2>&1) || status=$?
+  trap 'on_error "$LINENO"' ERR
+  [[ $status == "$wanted" ]] || { printf '%s\n' "$output" >&2; fail "the alarm did not exit $wanted (exit $status)"; }
+  printf '%s\n' "$output"
+}
+trap - ERR
+seeded=$(docker exec -e KEYCLOAK_ADMIN_URL=http://localhost:8080 -e KEYCLOAK_REALM=$SANDBOX \
+  -e KEYCLOAK_RECONCILE_ONLY=core-roles -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KCADM_CONFIG" \
+  "$CONTAINER" bash "$IN_CONTAINER_CONFIG/reconcile-account-center.sh" 2>&1) && status=0 || status=$?
+trap 'on_error "$LINENO"' ERR
+[[ $status == 0 ]] || { printf '%s\n' "$seeded" >&2; fail "the sandbox core-roles step failed (exit $status)"; }
+expect_line "$seeded" '[reconcile] skymail role skymail:access: seeded once to /ADMIN,/UYELER/YK' 'the sandbox did not seed SkyMail'"'"'s access'
+make_person "$SANDBOX" sandbox-leader /UYELER/ARGE/AIRLAB/LIDERLER
+create_group "$SANDBOX" /UYELER/ORGANIZASYON/ARTLAB LIDERLER
+make_person "$SANDBOX" sandbox-artlab-leader /UYELER/ORGANIZASYON/ARTLAB/LIDERLER
+sandbox_before=$(events "$SANDBOX")
+clean=$(alarm_run 0)
+expect_line "$clean" 'S2-eksik=0 S2-fazla=0 S2b=0 S3=0 S5=0 S2-tohum=0 (bilgi), alarm=0' 'the realm without drift is no alarm=0'
+reject_line "$clean" 'SAPMA|' 'the realm without drift has a SAPMA line'
+reject_line "$clean" 'not measured' 'the clean run was taken for one not measured'
+expect_line "$clean" 'check: 0 change(s) pending' 'the check planned a change'
+[[ $(events "$SANDBOX") == "$sandbox_before" ]] || fail 'the alarm wrote something'
+printf '    alarm: the sandbox without drift exits 0 (alarm=0), writes nothing\n'
+# The panel takes skymail:mails:write from ADMIN and gives ADMIN skymail:mails:approve (YK's seed);
+# skymail:templates:write is in no Privileged list: on ADMIN it is the code area's drift.
+kcadm remove-roles -r "$SANDBOX" --gpath /ADMIN --cclientid skymail --rolename skymail:mails:write >/dev/null
+kcadm add-roles -r "$SANDBOX" --gpath /ADMIN --cclientid skymail --rolename skymail:mails:approve >/dev/null
+kcadm add-roles -r "$SANDBOX" --gpath /ADMIN --cclientid skymail --rolename skymail:templates:write >/dev/null
+sandbox_before=$(events "$SANDBOX")
+changed=$(alarm_run 1)
+expect_line "$changed" '[app-assignments] BILGI|S2-tohum|/ADMIN|skymail|skymail:mails:write|eksik' \
+  'a seeded role the panel took from a Privileged root is no BILGI line'
+expect_line "$changed" '[app-assignments] BILGI|S2-tohum|/ADMIN|skymail|skymail:mails:approve|fazla' \
+  'a seeded role the panel gave a Privileged root is no BILGI line'
+reject_line "$changed" 'SAPMA|S2-eksik|/ADMIN|skymail|skymail:mails:write' 'a panel change on a seeded Privileged role was taken for drift'
+reject_line "$changed" 'SAPMA|S2-fazla|/ADMIN|skymail|skymail:mails:approve' 'a panel change on a seeded Privileged role was taken for drift'
+expect_line "$changed" '[app-assignments] SAPMA|S2-fazla|/ADMIN|skymail|skymail:templates:write' \
+  'a role no seed covers on a Privileged root is no S2-fazla'
+expect_line "$changed" 'S2-eksik=0 S2-fazla=1 S2b=0 S3=0 S5=0 S2-tohum=2 (bilgi), alarm=1' \
+  'the panel'"'"'s changes counted towards the alarm, or the code area'"'"'s did not'
+[[ $(events "$SANDBOX") == "$sandbox_before" ]] || fail 'the alarm wrote something'
+kcadm remove-roles -r "$SANDBOX" --gpath /ADMIN --cclientid skymail --rolename skymail:templates:write >/dev/null
+printf '    alarm: a seeded Privileged role changed in the panel is BILGI (S2-tohum), never counted; a role no seed covers there is S2-fazla (exit 1)\n'
+# The reconciler stops at its realm read, before the check: no summary line, never drift.
+stopped=$(alarm_run 2 -e KCADM_BIN=/tmp/kcadm-fail.sh -e "KCADM_INJECT_FAIL=realms/$SANDBOX")
+expect_line "$stopped" '[app-assignments-alarm] not measured: exit ' 'the run without a summary was not reported'
+expect_line "$stopped" '0 summary line(s)' 'the run without a summary was not counted'
+reject_line "$stopped" '[app-assignments] SAPMA: S1=' 'the stopped reconciler summed up'
+for name in sandbox-leader sandbox-artlab-leader; do
+  reject_line "$clean$changed" "$name" 'the alarm printed a person'
+done
+printf '    alarm: a reconciler stopped before the check (no summary line) exits 2\n'
 
 printf 'role-groups, leader-app-roles, app-assignments and default-roles contract passed.\n'

@@ -3,14 +3,17 @@ name: CI
 # Two sizes of the same workflow (job "scope (full|fast)" says which one a run is; mode decides):
 # - full: every job below. Pushes to main, the nightly schedule, a manual run (workflow_dispatch,
 #   also on a PR branch: gh workflow run ci.yml --ref <branch>), pull requests into main labelled
-#   full-ci (the label is read when the PR is opened or pushed to), and pull requests into and
+#   full-ci (the label is read when the PR is opened or pushed to; adding it starts a manual run of
+#   the branch at once, full-ci.yml), and pull requests into and
 #   pushes to production whose tree no fully green full run has tested yet (a hotfix).
 # - fast: pull requests into main, and pull requests into and pushes to production whose tree a
 #   fully green full push, schedule or workflow_dispatch run already tested (the release PR and
 #   the release push after main's push run; tests/find-green-full-ci-run.sh). Static checks, the
 #   image build and the short contract jobs, each only when the paths it reads changed (scope);
-#   in a pull request into main also the whole suite's jobs its diff affects (tests/affected-
-#   jobs.sh). A fast production run runs none of them.
+#   in a pull request into main a tests/ or config/ path runs only the jobs that read it, and also
+#   the whole suite's jobs its diff affects that fit a pull request's 15 minutes (tests/affected-
+#   jobs.sh --pull-request; the longer ones, PR_DEFERRED there, run on main's push). A fast
+#   production run runs none of the whole suite's jobs.
 # A full run builds the candidate image once (candidate); every integration group tests those
 # bytes and leaves a receipt, and release.yml promotes them instead of building and testing again.
 # One required check: gate. It fails when any job fails or is cancelled, and in a full run also
@@ -70,11 +73,13 @@ jobs:
           printf 'full=%s\npromoted-from=%s\n' "$full" "$promoted_from" >> "$GITHUB_OUTPUT"
 
   # Which areas a fast run touches: theme/, spi/, and other (anything outside theme/, spi/, docs/
-  # and *.md). A full run, or a diff that cannot be read, selects everything.
-  # affected (pull requests into main only): the whole suite's jobs whose own tests a fast run's
-  # diff touches (tests/affected-jobs.sh); they run in that fast run too (integration-group: every
-  # group, on candidate's image). A fast production run promotes a tree a full run already tested,
-  # so it runs none of them (affected is empty).
+  # and *.md; in a pull request into main also outside tests/ and config/). A full run, or a diff
+  # that cannot be read, selects everything (a pull request: every job it may run).
+  # affected (pull requests into main only): the jobs whose own tests a fast run's diff touches
+  # (tests/affected-jobs.sh --pull-request): the fast set's jobs a tests/ or config/ path reaches,
+  # and the whole suite's but PR_DEFERRED (their names go to the log and the run's summary; main's
+  # push run is full). A fast production run promotes a tree a full run already tested, so it runs
+  # none of the whole suite's jobs (affected is empty).
   scope:
     name: scope (${{ needs.mode.outputs.full == 'true' && 'full' || 'fast' }})
     needs: mode
@@ -103,8 +108,10 @@ jobs:
         run: |
           everything() {
             all=' '
-            if [[ $FULL == true || $AFFECTED_RUN == true ]]; then
+            if [[ $FULL == true ]]; then
               all=" $(bash tests/affected-jobs.sh --entries | cut -d' ' -f1 | tr '\n' ' ')"
+            elif [[ $AFFECTED_RUN == true ]]; then
+              all=$(bash tests/affected-jobs.sh --pull-request-all)
             fi
             printf 'full=%s\ntheme=true\nspi=true\nother=true\naffected=%s\n' "$FULL" "$all" >> "$GITHUB_OUTPUT"
             exit 0
@@ -123,12 +130,26 @@ jobs:
               theme/*) theme=true ;;
               spi/*) spi=true ;;
               docs/* | *.md) ;;
+              # A pull request into main runs only the jobs that read the path (affected).
+              tests/* | config/*) [[ $AFFECTED_RUN == true ]] || other=true ;;
               *) other=true ;;
             esac
           done <<<"$changed"
           affected=' '
           if [[ $AFFECTED_RUN == true ]]; then
-            affected=$(bash tests/affected-jobs.sh <<<"$changed")
+            later="$RUNNER_TEMP/affected-later"
+            if ! affected=$(bash tests/affected-jobs.sh --pull-request <<<"$changed" 2>"$later"); then
+              cat "$later" >&2
+              exit 1
+            fi
+            if [[ -s $later ]]; then
+              cat "$later"
+              # An annotation, so the pull request's checks page shows it too.
+              while IFS= read -r line; do
+                echo "::warning title=Long jobs left to main's push run::$line"
+              done <"$later"
+              { echo "### Long jobs left to main's push run"; echo; cat "$later"; } >> "$GITHUB_STEP_SUMMARY"
+            fi
           fi
           printf 'fast run: theme=%s spi=%s other=%s affected=[%s]\n' "$theme" "$spi" "$other" "$affected"
           printf 'full=false\ntheme=%s\nspi=%s\nother=%s\naffected=%s\n' "$theme" "$spi" "$other" "$affected" >> "$GITHUB_OUTPUT"
@@ -245,7 +266,7 @@ jobs:
   # image in dev mode, with a real authorization code flow; needs no build of this repository's image.
   sandbox-site-clients:
     needs: scope
-    if: needs.scope.outputs.other == 'true'
+    if: needs.scope.outputs.other == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' sandbox-site-clients ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -258,7 +279,7 @@ jobs:
   # in dev mode, with a real authorization code flow (PKCE); needs no build of this repository's image.
   place-client:
     needs: scope
-    if: needs.scope.outputs.other == 'true'
+    if: needs.scope.outputs.other == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' place-client ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -272,7 +293,7 @@ jobs:
   # of this repository's image.
   forms-skymail-grants:
     needs: scope
-    if: needs.scope.outputs.other == 'true'
+    if: needs.scope.outputs.other == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' forms-skymail-grants ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -289,8 +310,9 @@ jobs:
     needs: [mode, scope]
     if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' role-groups ')
     runs-on: ubuntu-latest
-    # app-assignments.sh --check reads every role's holders (two kcadm reads a role): minutes.
-    timeout-minutes: 55
+    # app-assignments.sh --check reads every role's holders (two kcadm reads a role): minutes a run,
+    # the drift alarm's runs on the sandbox (ekip-yetkileri ticket 07) included.
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@v7
 
@@ -331,7 +353,7 @@ jobs:
   # User Profile and one account per case; needs no build of this repository's image.
   fill-missing-primary-from-school:
     needs: scope
-    if: needs.scope.outputs.other == 'true'
+    if: needs.scope.outputs.other == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' fill-missing-primary-from-school ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -368,7 +390,7 @@ jobs:
   # The login theme is built too, so the last stage proves its contract with the step (08b).
   login-by-email-code:
     needs: scope
-    if: needs.scope.outputs.spi == 'true' || needs.scope.outputs.theme == 'true' || needs.scope.outputs.other == 'true'
+    if: needs.scope.outputs.spi == 'true' || needs.scope.outputs.theme == 'true' || needs.scope.outputs.other == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' login-by-email-code ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -394,7 +416,7 @@ jobs:
   # The targeted baseline took 149s / 70 assertions on the developer Mac; no old login gate is removed.
   email-code-persistent-counter:
     needs: scope
-    if: needs.scope.outputs.spi == 'true' || needs.scope.outputs.theme == 'true' || needs.scope.outputs.other == 'true'
+    if: needs.scope.outputs.spi == 'true' || needs.scope.outputs.theme == 'true' || needs.scope.outputs.other == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' email-code-persistent-counter ')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -436,7 +458,12 @@ jobs:
         working-directory: theme
         run: |
           npm ci --ignore-scripts
-          npx --no-install playwright install --with-deps chromium
+          # Chromium only, from Playwright's download host: the runner image already has its
+          # libraries, and --with-deps's apt mirror stalls (CI run 40311997516). apt only when a
+          # launch of both builds the tests use (headless shell, new headless) says one is missing.
+          npx --no-install playwright install chromium
+          node -e 'const { chromium } = require("@playwright/test"); (async () => { for (const channel of [undefined, "chromium"]) await (await chromium.launch({ channel })).close(); })();' \
+            || npx --no-install playwright install-deps chromium
 
       - name: LINK counter, native callback fault and alternate-login reset contract
         run: |
@@ -480,7 +507,12 @@ jobs:
           npm ci --ignore-scripts
           npm run build-keycloak-theme
           bash ../tests/check-theme-contract.sh
-          npx --no-install playwright install --with-deps chromium
+          # Chromium only, from Playwright's download host: the runner image already has its
+          # libraries, and --with-deps's apt mirror stalls (CI run 40311997516). apt only when a
+          # launch of both builds the tests use (headless shell, new headless) says one is missing.
+          npx --no-install playwright install chromium
+          node -e 'const { chromium } = require("@playwright/test"); (async () => { for (const channel of [undefined, "chromium"]) await (await chromium.launch({ channel })).close(); })();' \
+            || npx --no-install playwright install-deps chromium
       - name: Cache pinned disposable runtime images
         run: |
           docker pull "$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' Dockerfile)"
@@ -499,7 +531,7 @@ jobs:
   # redirect is read, Microsoft is never called.
   microsoft-reauthentication:
     needs: scope
-    if: needs.scope.outputs.spi == 'true' || needs.scope.outputs.other == 'true'
+    if: needs.scope.outputs.spi == 'true' || needs.scope.outputs.other == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' microsoft-reauthentication ')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -516,7 +548,7 @@ jobs:
   # this repository's image.
   sign-up-by-email-code:
     needs: scope
-    if: needs.scope.outputs.spi == 'true' || needs.scope.outputs.other == 'true'
+    if: needs.scope.outputs.spi == 'true' || needs.scope.outputs.other == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' sign-up-by-email-code ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -530,7 +562,7 @@ jobs:
   # The Microsoft transport/barrier fixtures are compiled into a separate test-only JAR.
   existing-account-link:
     needs: scope
-    if: needs.scope.outputs.spi == 'true' || needs.scope.outputs.theme == 'true' || needs.scope.outputs.other == 'true'
+    if: needs.scope.outputs.spi == 'true' || needs.scope.outputs.theme == 'true' || needs.scope.outputs.other == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' existing-account-link ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -557,7 +589,12 @@ jobs:
         working-directory: theme
         run: |
           npm ci --ignore-scripts
-          npx --no-install playwright install --with-deps chromium
+          # Chromium only, from Playwright's download host: the runner image already has its
+          # libraries, and --with-deps's apt mirror stalls (CI run 40311997516). apt only when a
+          # launch of both builds the tests use (headless shell, new headless) says one is missing.
+          npx --no-install playwright install chromium
+          node -e 'const { chromium } = require("@playwright/test"); (async () => { for (const channel of [undefined, "chromium"]) await (await chromium.launch({ channel })).close(); })();' \
+            || npx --no-install playwright install-deps chromium
 
       - name: Cache the pinned disposable runtime images
         run: |
@@ -632,7 +669,7 @@ jobs:
   # repository's image.
   welcome-page:
     needs: scope
-    if: needs.scope.outputs.theme == 'true' || needs.scope.outputs.other == 'true'
+    if: needs.scope.outputs.theme == 'true' || needs.scope.outputs.other == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' welcome-page ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -653,8 +690,8 @@ jobs:
       - name: Landing page at / against a throwaway Keycloak
         run: bash tests/welcome-page.sh
 
-  # Full runs, and fast pull requests into main whose diff affects the harness (scope's affected):
-  # the candidate image is built once. Every integration group loads these bytes
+  # Full runs: the candidate image is built once. (integration-group is PR_DEFERRED in
+  # tests/affected-jobs.sh, so scope's affected never names it in a pull request into main.) Every integration group loads these bytes
   # (SHA-256 and image ID checked) and uploads a receipt naming them; release.yml (keycloak-build)
   # promotes this artifact of the run that tested its tree, so the published bytes are the tested
   # bytes (only a full push, schedule or manual run counts; never a pull request's). Kept 14 days,
@@ -726,8 +763,8 @@ jobs:
   # takes about 20-28 minutes; timeouts are about 1.5 times that. The groups do not wait for the
   # theme job: they are the longest jobs of a full run, and behind the theme job they queued after
   # the short jobs (run 39262199516: 31 minutes before the first group started).
-  # Full runs and affected fast runs (as candidate); every group tests candidate's bytes and
-  # records them in a receipt that release.yml requires (of a full push, schedule or manual run).
+  # Full runs (as candidate); every group tests candidate's bytes and records them in a receipt
+  # that release.yml requires (of a full push, schedule or manual run).
   integration-group:
     name: integration (${{ matrix.group }})
     runs-on: ubuntu-latest
@@ -775,21 +812,30 @@ jobs:
         timeout-minutes: 20
         run: |
           npm ci --ignore-scripts
-          # The runner's apt mirror can hang (run 37664358276: 80 minutes in apt-get update until the
-          # job timeout): each attempt gets 5 minutes, three attempts.
-          # apt gives up on a stalled mirror itself (30 s a request, three tries) instead of hanging.
-          printf 'Acquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nAcquire::Retries "3";\n' \
-            | sudo tee /etc/apt/apt.conf.d/99-ci-timeouts >/dev/null
-          for attempt in 1 2 3; do
-            timeout -k 10 300 npx playwright install --with-deps chromium && break
-            if [ "$attempt" = 3 ]; then exit 1; fi
-            echo "playwright install attempt $attempt failed or timed out; retrying" >&2
-            # timeout stops npx, but the apt-get it started as root keeps the dpkg lock and the next
-            # attempt fails at once on /var/lib/dpkg/lock-frontend (run 39946385594): stop it first.
-            sudo pkill -KILL -x apt-get || true
-            sudo pkill -KILL -x dpkg || true
-            sudo dpkg --configure -a || true
-          done
+          # Chromium only, from Playwright's download host: the runner image already has its
+          # libraries, and the apt mirror --with-deps used stalls (run 37664358276: 80 minutes in
+          # apt-get update; run 40311997516: three 5-minute attempts on a few font packages).
+          npx --no-install playwright install chromium
+          chromium_launches() {
+            node -e 'const { chromium } = require("@playwright/test"); (async () => { for (const channel of [undefined, "chromium"]) await (await chromium.launch({ channel })).close(); })();'
+          }
+          # apt only when a launch of both builds the tests use (headless shell, new headless) says
+          # a library is missing: 30 s a request, three tries; each attempt 5 minutes, three attempts.
+          if ! chromium_launches; then
+            printf 'Acquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nAcquire::Retries "3";\n' \
+              | sudo tee /etc/apt/apt.conf.d/99-ci-timeouts >/dev/null
+            for attempt in 1 2 3; do
+              timeout -k 10 300 npx --no-install playwright install-deps chromium && break
+              if [ "$attempt" = 3 ]; then exit 1; fi
+              echo "playwright install-deps attempt $attempt failed or timed out; retrying" >&2
+              # timeout stops npx, but the apt-get it started as root keeps the dpkg lock and the next
+              # attempt fails at once on /var/lib/dpkg/lock-frontend (run 39946385594): stop it first.
+              sudo pkill -KILL -x apt-get || true
+              sudo pkill -KILL -x dpkg || true
+              sudo dpkg --configure -a || true
+            done
+            chromium_launches
+          fi
           npm run build-keycloak-theme
           bash ../tests/check-theme-contract.sh
           npm run build-welcome-theme

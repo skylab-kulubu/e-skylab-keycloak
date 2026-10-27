@@ -2500,6 +2500,14 @@ reconcile_skyapp_audience() {
     "$CONFIG_DIR/skyapp-account-center-audience-mappers.json"
   skyapp_scope_uuid=$ENSURED_SCOPE_ID
   ensure_default_client_scope "$skyapp_client_uuid" "$skyapp_scope_uuid" "$SKYAPP_SCOPE_NAME"
+  # The person's own SkyMail endpoints (the in-app inbox, GET /v1/me/inbox; iletisim-servisi 04 and
+  # 08) take a person's token with aud skymail and no role. sky-app's access token gets it from the
+  # same scope the SkyMail UI's does (skymail-api-audience: one Audience mapper, access token and
+  # introspection only), kept among sky-app's default scopes. The scope is shared by skymail and
+  # skyapp from here on: a mapper added to config/skymail-api-audience-mappers.json reaches sky-app's
+  # token too, so that file must stay the skymail audience alone.
+  ensure_default_audience_scope "$SKYAPP_CLIENT_ID" "$skyapp_client_uuid" "$SKYMAIL_SCOPE_NAME" \
+    "$CONFIG_DIR/skymail-api-audience-mappers.json"
 }
 
 # A login client whose access token must carry the audience of the API it calls, for every
@@ -3355,6 +3363,12 @@ CORE_SERVICE_ROLE_DEFINITIONS=(
 # composite role or the default role holding it is reported (review condition B2). It and
 # skymail:templates:system are the lines with a description: nothing else makes them, so the step
 # creates them like core's roles.
+# skymail:notifications:send (iletisim-servisi ticket 04, ADR 0070): core posts a Notification, what
+# happened and to whom, and SkyMail picks the channels (POST /v1/notifications, skymail-backend #79;
+# core's new Ticket's Notification, iletisim-servisi 06). SkyMail takes it from a service account's
+# token only (client_id = azp), so the role is core's service account's only (services), made by the
+# step like tracking:withdraw (its line has a description). Forms and keycloak-mailer keep
+# /v1/mail_tasks/single and do not get it.
 # skymail:templates:system: the Template seed (skymail-frontend seed-templates.yml, client
 # skymail-seed) marks a template as a system template or takes the mark away (PUT
 # /v1/templates/by-key/{key}, skymail-backend README "Keycloak"). An account.* or keycloak.* system
@@ -3367,6 +3381,7 @@ SKYMAIL_SERVICE_ROLE_DEFINITIONS=(
   "skymail:mails:send|core|shared|"
   "skymail:lists:read|core|shared|"
   "skymail:lists:write|core|shared|"
+  "skymail:notifications:send|core|services|core tells SkyMail what happened and to whom (POST /v1/notifications, skymail-backend docs/notifications.md). core's service account only; never a person, a group, a composite or the default role."
   "skymail:tracking:withdraw|core|services|core withdraws a person's mail tracking (PUT /internal/v1/tracking-withdrawals/{sub}, skymail-backend README). core's service account only; never a person, a group, a composite or the default role."
   "skymail:templates:system|skymail-seed|services|The Template seed marks a template as a system template or takes the mark away (PUT /v1/templates/by-key/{key}, skymail-backend README). skymail-seed's service account only; never a person, a group, a composite or the default role."
 )
@@ -3776,6 +3791,18 @@ reconcile_core_service_roles() {
 #                                  A reading role, so DK holds it too; the sender sees their own send
 #                                  without it (SkyMail checks sent_by, skymail-backend
 #                                  internal/handlers/tracking_read.go).
+#   skymail:suppressions:manage    ADMIN and YK: the suppression list (addresses), removing a
+#                                  permanent failure (bounce) from it and the bounce rate
+#                                  (skymail-backend internal/handlers/suppressions.go,
+#                                  SuppressionsManageRole; e-skylab ADR 0073; hub ticket
+#                                  skymail-bounce-isleme 06). A write role: DK none of it.
+#   skymail:unsubscribes:reactivate
+#                                  ADMIN and YK: reverses an address's own unsubscribe, only when the
+#                                  person asks or after a mistake, with a recorded reason (ADR 0072
+#                                  decision 7, UnsubscribesReactivateRole; hub ticket abonelik-cikisi
+#                                  10). A write role. Both have a description: SkyMail checks them and
+#                                  nothing else makes them. Until they exist and are seeded, nobody
+#                                  reads the list or reverses an unsubscribe in production.
 #   skymail:access, skymail:templates:read, skymail:lists:read, skymail:mails:read,
 #   skymail:mails:send, skymail:mails:write
 #                                  ADMIN and YK (ekip-yetkileri ticket 03; ADR 0067: YK sends directly,
@@ -3791,6 +3818,8 @@ reconcile_core_service_roles() {
 SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS=(
   'skymail:system-mails:read|ADMIN YK DK|Tekil sistem postalarının (doğrulama, bildirim) içeriğini görür (skymail-backend #61)'
   'skymail:mails:tracking:read|ADMIN YK DK|Her gönderimin kişi bazındaki açılma ve tıklama raporunu görür (iletisim-servisi 14b/17, T2; gönderen kendi gönderimini rolsüz görür)'
+  'skymail:suppressions:manage|ADMIN YK|SkyMail: bastırma listesini görür, kalıcı ret (bounce) kaydını kaldırır, bounce oranını okur (ADR 0073)'
+  'skymail:unsubscribes:reactivate|ADMIN YK|SkyMail: kimliği olmayan adresin kendi çıkışını, kişi isteyince ya da hata olunca, gerekçeyle geri alır (ADR 0072)'
   'skymail:access|ADMIN YK|-'
   'skymail:templates:read|ADMIN YK|-'
   'skymail:lists:read|ADMIN YK|-'

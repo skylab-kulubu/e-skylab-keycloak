@@ -112,7 +112,7 @@ fi
 while IFS= read -r link; do
   case $link in
     'href="https://my.yildizskylab.com/"' | 'href="https://forms.yildizskylab.com/"' | \
-      'href="https://admin.yildizskylab.com/"' | 'href="https://mail.yildizskylab.com/"' | \
+      'href="https://admin.yildizskylab.com/"' | 'href="https://iletisim.yildizskylab.com/"' | \
       'href="https://place.yildizskylab.com/"' | 'href="https://yildizskylab.com/"' | \
       'href="https://yildizskylab.com/kvkk-metni.pdf"' | 'href="#'*'"') ;;
     'href="resources/'*'/welcome/e-skylab-welcome/'*'"') ;;

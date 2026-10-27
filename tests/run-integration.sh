@@ -553,6 +553,11 @@ stage_v2_assert_account_api_scope() {
   json_assert "$mappers" \
     '[.[] | select(.name == "account-api-core-audience" and .protocolMapper == "oidc-audience-mapper" and .config["included.client.audience"] == "core" and .config["access.token.claim"] == "true" and .config["id.token.claim"] == "false")] | length == 1' \
     'core audience mapper differs'
+  # The person's own SkyMail endpoints (the in-app inbox, iletisim-servisi 04 and 07): aud skymail in
+  # the access token and introspection, not the ID token or userinfo.
+  json_assert "$mappers" \
+    '[.[] | select(.name == "account-api-skymail-audience" and .protocolMapper == "oidc-audience-mapper" and .config["included.client.audience"] == "skymail" and .config["access.token.claim"] == "true" and .config["id.token.claim"] == "false" and .config["userinfo.token.claim"] == "false" and .config["introspection.token.claim"] == "true")] | length == 1' \
+    'skymail audience mapper differs'
   json_assert "$mappers" \
     '[.[] | select(.name == "account-api-manage-account-links" and .protocolMapper == "oidc-hardcoded-role-mapper" and .config.role == "account.manage-account-links")] | length == 1' \
     'manage-account-links role mapper differs'
@@ -864,8 +869,8 @@ stage_v2_assert_token_contract() {
   CURRENT_STAGE='v2 access token audience and sky_authorization contract'
   local payload=$1
   json_assert "$payload" \
-    '((.aud | if type == "array" then . else [.] end) | sort) == ["account", "core"]' \
-    'access token audience is not exactly account and core'
+    '((.aud | if type == "array" then . else [.] end) | sort) == ["account", "core", "skymail"]' \
+    'access token audience is not exactly account, core and skymail'
   json_assert "$payload" \
     '.sky_authorization.core.roles == ["url:create"]' \
     'sky_authorization does not carry the fixture client role'
@@ -875,6 +880,9 @@ stage_v2_assert_token_contract() {
   json_assert "$payload" \
     '((.resource_access.account.roles | index("manage-account")) != null) and ((.resource_access.account.roles | index("view-profile")) != null) and ((.resource_access.account.roles | index("manage-account-links")) != null)' \
     'access token lacks the account roles'
+  # SkyMail's person endpoints refuse a token carrying client_id (a service account's, azp =
+  # client_id: 403 auth.person_required); a person's token must not carry one.
+  json_assert "$payload" 'has("client_id") | not' 'the person access token carries client_id'
 }
 
 # fullScopeAllowed=false is what keeps a my. token out of Keycloak Admin REST: AdminAuth
@@ -911,7 +919,7 @@ stage_v2_admin_rest_is_not_reachable_with_account_center_tokens() {
     '.sky_authorization == {"core": {"roles": ["url:create"]}} and (.sky_authorization | has("realm-management") | not)' \
     'sky_authorization must list the core roles and never the realm-management client'
   json_assert "$V2_ACCESS_PAYLOAD" \
-    '((.aud | if type == "array" then . else [.] end) | sort) == ["account", "core"] and (.resource_access | keys) == ["account"] and .realm_access == null' \
+    '((.aud | if type == "array" then . else [.] end) | sort) == ["account", "core", "skymail"] and (.resource_access | keys) == ["account"] and .realm_access == null' \
     'the view-users holder token widened its audience or roles'
   kcadm delete "users/$V2_FIXTURE_USER_UUID/role-mappings/clients/$realm_management_uuid" \
     -r "$V2_REALM" -b "$role_body" >/dev/null
@@ -1352,6 +1360,8 @@ stage_rabbitmq_provider_contract() {
   [[ -n $stored_id && $stored_id == "$(jq -r '.[0].properties.message_id' <<<"$messages")" ]] \
     || fail 'the message-id is not the id Keycloak stored for the admin event'
 
+  stage_rabbitmq_group_delete_contract
+
   channel_count=$(rabbit_api http://localhost:15673/api/channels | jq 'length')
   [[ $channel_count -le 10 ]] \
     || fail "the RabbitMQ provider holds $channel_count open channels after the run (leaked channels)"
@@ -1361,6 +1371,65 @@ stage_rabbitmq_provider_contract() {
   [[ $(grep -c '^e-skylab-spi-' <<<"$provider_names") == 1 ]] || fail "runtime does not contain exactly one SKY LAB SPI"
   [[ $(grep -c '^e-skylab-theme-' <<<"$provider_names") == 1 ]] || fail "runtime does not contain exactly one SKY LAB theme"
   [[ $(grep -c '^keycloak-to-rabbit-' <<<"$provider_names") == 1 ]] || fail "runtime does not contain exactly one RabbitMQ provider"
+}
+
+# rabbit_queue_get: takes (and acknowledges) every message of the contract queue.
+rabbit_queue_get() {
+  rabbit_api -X POST -H 'content-type: application/json' \
+    -d '{"count":50,"ackmode":"ack_requeue_false","encoding":"auto"}' \
+    http://localhost:15673/api/queues/%2F/keycloak-foundation-test/get
+}
+
+# RabbitMQ events ticket 05 (aday 2): of the group admin events only GROUP DELETE leaves Keycloak.
+# A parent and a child group are created and the child renamed (GROUP CREATE, GROUP UPDATE): the
+# queue stays empty. The child is deleted with the realm's admin event store switched off: Keycloak
+# hands admin events to its listeners whether or not it stores them, so exactly one GROUP.DELETE
+# with resourcePath groups/<child> and the identifiers-only body arrives; the group's name and its
+# representation do not. The store is switched back on and the parent's delete drained.
+stage_rabbitmq_group_delete_contract() {
+  CURRENT_STAGE='RabbitMQ provider contract: GROUP DELETE only'
+  local parent_uuid child_uuid messages attempt message_count
+  parent_uuid=$(kcadm create groups -r e-skylab-test -i -s name=rabbitmq-contract-parent)
+  child_uuid=$(kcadm create "groups/$parent_uuid/children" -r e-skylab-test -i -s name=rabbitmq-contract-child)
+  [[ -n $parent_uuid && -n $child_uuid ]] || fail 'the RabbitMQ contract groups were not created'
+  kcadm update "groups/$child_uuid" -r e-skylab-test -s name=rabbitmq-contract-renamed >/dev/null
+  # A GROUP CREATE or UPDATE would have arrived by now (the USER CREATE took well under this).
+  sleep 2
+  messages=$(rabbit_queue_get)
+  json_assert "$messages" 'length == 0' \
+    "the provider published a group create or rename: $(jq -c '[.[].routing_key]' <<<"$messages")"
+
+  kcadm update realms/e-skylab-test -s adminEventsEnabled=false >/dev/null
+  kcadm delete "groups/$child_uuid" -r e-skylab-test
+  kcadm update realms/e-skylab-test -s adminEventsEnabled=true >/dev/null
+  for attempt in $(seq 1 30); do
+    message_count=$(rabbit_api http://localhost:15673/api/queues/%2F/keycloak-foundation-test | jq -r '.messages // 0')
+    [[ ${message_count:-0} -gt 0 ]] && break
+    sleep 1
+  done
+  [[ ${message_count:-0} -gt 0 ]] \
+    || fail 'the provider did not publish the GROUP DELETE made while the realm stores no admin events'
+  sleep 2
+  messages=$(rabbit_queue_get)
+  json_assert "$messages" 'length == 1 and .[0].routing_key == "KK.EVENT.ADMIN.e-skylab-test.SUCCESS.GROUP.DELETE"' \
+    "the provider published other than the one GROUP DELETE: $(jq -c '[.[].routing_key]' <<<"$messages")"
+  json_assert "$messages" \
+    '.[0] as $m | ($m.payload | fromjson) as $b
+      | ($b | keys) == ["id", "operationType", "realmId", "resourcePath", "resourceType", "time"]
+      and $b.resourceType == "GROUP" and $b.operationType == "DELETE" and $b.resourcePath == ("groups/" + $group)
+      and $m.properties.message_id == $b.id and $m.properties.delivery_mode == 2' \
+    'the GROUP DELETE message is not the identifiers-only body of the deleted group' --arg group "$child_uuid"
+  if jq -r '.[0].payload' <<<"$messages" | grep -Fq -e rabbitmq-contract -e representation -e 172. -e 127.0.0.1; then
+    fail 'the GROUP DELETE message carries the group name, the representation or an IP'
+  fi
+  printf '    GROUP CREATE and UPDATE stayed in Keycloak; GROUP DELETE was published with the admin event store off\n'
+
+  kcadm delete "groups/$parent_uuid" -r e-skylab-test
+  for attempt in $(seq 1 30); do
+    messages=$(rabbit_queue_get)
+    jq -e 'any(.[]; .routing_key == "KK.EVENT.ADMIN.e-skylab-test.SUCCESS.GROUP.DELETE")' <<<"$messages" >/dev/null && break
+    sleep 1
+  done
 }
 
 # rabbit_timed_user_update USER_UUID NAME: one Admin API USER UPDATE (a catalog event, published after
@@ -1967,7 +2036,7 @@ while IFS= read -r built_in_scope_uuid; do
     "client-scopes/$built_in_scope_uuid/protocol-mappers/models" \
     -r e-skylab-test -c)
   json_assert "$built_in_mappers" \
-    '[.[] | select(.name == "account-api-audience" or .name == "account-api-core-audience" or .name == "account-api-manage-account" or .name == "account-api-view-profile" or .name == "account-api-manage-account-links" or .name == "account-api-roles" or .name == "account-api-sky-authorization" or .name == "account-center-audience" or .name == "sky_session_lifetime" or .name == "sky_embed")] | length == 0' \
+    '[.[] | select(.name == "account-api-audience" or .name == "account-api-core-audience" or .name == "account-api-skymail-audience" or .name == "account-api-manage-account" or .name == "account-api-view-profile" or .name == "account-api-manage-account-links" or .name == "account-api-roles" or .name == "account-api-sky-authorization" or .name == "account-center-audience" or .name == "sky_session_lifetime" or .name == "sky_embed")] | length == 0' \
     "an Account Center mapper was injected into built-in scope $built_in_scope_uuid"
 done < <(jq -r '.[].id' <<<"$built_in_scope_snapshot")
 
@@ -1976,7 +2045,7 @@ scope_uuid=$(kcadm get client-scopes -r e-skylab-test -c \
 scope=$(kcadm get "client-scopes/$scope_uuid" -r e-skylab-test -c)
 json_assert "$scope" '.protocol == "openid-connect" and .attributes["include.in.token.scope"] == "false"' 'Account API scope drift was not repaired'
 mappers=$(kcadm get "client-scopes/$scope_uuid/protocol-mappers/models" -r e-skylab-test -c)
-json_assert "$mappers" 'length == 7' 'unexpected or duplicate Account API mappers remain'
+json_assert "$mappers" 'length == 8' 'unexpected or duplicate Account API mappers remain'
 json_assert "$mappers" '[.[] | select(.name == "account-api-audience" and .config["included.client.audience"] == "account")] | length == 1' 'Account API audience mapper differs'
 json_assert "$mappers" '[.[] | select(.name == "account-api-manage-account" and .protocolMapper == "oidc-hardcoded-role-mapper" and .config.role == "account.manage-account")] | length == 1' 'Account API manage-account role mapper differs'
 json_assert "$mappers" '[.[] | select(.name == "account-api-view-profile" and .protocolMapper == "oidc-hardcoded-role-mapper" and .config.role == "account.view-profile")] | length == 1' 'Account API view-profile role mapper differs'
@@ -2037,6 +2106,20 @@ json_assert "$skyapp_default_scopes" \
   '[.[] | select(.id == $scope and .name == "skyapp-account-center-audience")] | length == 1' \
   'skyapp audience scope is not attached as a default scope' \
   --arg scope "$skyapp_scope_uuid"
+# The in-app inbox (iletisim-servisi 04, 08): sky-app's access token also names skymail, from the
+# SkyMail UI's own audience scope, kept among sky-app's default scopes.
+skyapp_skymail_scope_uuid=$(kcadm get client-scopes -r e-skylab-test -c \
+  | jq -r '.[] | select(.name == "skymail-api-audience") | .id')
+[[ -n $skyapp_skymail_scope_uuid && $skyapp_skymail_scope_uuid != *$'\n'* ]] \
+  || fail 'the skymail-api-audience scope is missing or duplicated'
+json_assert "$skyapp_default_scopes" \
+  '[.[] | select(.id == $scope)] | length == 1' \
+  'skymail-api-audience is not a default scope of skyapp' \
+  --arg scope "$skyapp_skymail_scope_uuid"
+json_assert "$(kcadm get "clients/$skyapp_client_uuid/optional-client-scopes" -r e-skylab-test -c)" \
+  '[.[] | select(.id == $scope)] | length == 0' \
+  'skymail-api-audience is an optional scope of skyapp' \
+  --arg scope "$skyapp_skymail_scope_uuid"
 stage_login_audiences_after_second_reconciliation
 stage_admin_panel_after_second_reconciliation
 
@@ -2412,7 +2495,7 @@ case $((${#token_payload_segment} % 4)) in
 esac
 token_payload=$(tr '_-' '/+' <<<"$token_payload_segment" | base64 --decode)
 json_assert "$token_payload" \
-  '((.aud | if type == "array" then . else [.] end) | sort) == ["account", "core"] and .azp == "account-center" and .scope == "openid" and ((.resource_access.account.roles | index("manage-account")) != null) and ((.resource_access.account.roles | index("view-profile")) != null)' \
+  '((.aud | if type == "array" then . else [.] end) | sort) == ["account", "core", "skymail"] and .azp == "account-center" and .scope == "openid" and ((.resource_access.account.roles | index("manage-account")) != null) and ((.resource_access.account.roles | index("view-profile")) != null)' \
   'issued token differs from the exact audience, authorized-party, scope or required-role contract'
 stage_v2_assert_token_contract "$token_payload"
 

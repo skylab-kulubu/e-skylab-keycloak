@@ -129,7 +129,8 @@ try {
     `no SSO session cookie after the first sign-in (cookies: ${cookies.map(cookie => cookie.name).join(", ")})`);
   const passive = await writer.page.request.get(
     `${base}/realms/master/protocol/openid-connect/auth?client_id=security-admin-console&response_type=code&scope=openid` +
-      `&redirect_uri=${encodeURIComponent(consoleUrl)}&prompt=none&state=harness`,
+      `&redirect_uri=${encodeURIComponent(consoleUrl)}&prompt=none&state=harness` +
+      "&code_challenge=QWxhZGRpbjpPcGVuU2VzYW1lMTIzNDU2Nzg5MDEyMzQ1Njc&code_challenge_method=S256",
     { maxRedirects: 0 }
   );
   const passiveLocation = passive.headers()["location"] ?? "";

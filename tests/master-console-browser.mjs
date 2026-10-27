@@ -18,9 +18,11 @@ import { createRequire } from "node:module";
 const require = createRequire(new URL("../theme/package.json", import.meta.url));
 const { chromium } = require("@playwright/test");
 
-const base = process.env.MASTER_CONSOLE_BASE_URL;
 const password = process.env.MASTER_CONSOLE_PASSWORD;
-assert.match(base ?? "", /^http:\/\/127\.0\.0\.1:[0-9]+$/);
+assert.match(process.env.MASTER_CONSOLE_BASE_URL ?? "", /^http:\/\/127\.0\.0\.1:[0-9]+$/);
+// The browser opens Keycloak as localhost: a WebAuthn relying party id is a domain name, never an IP
+// address ("SecurityError: This is an invalid domain"), and localhost is a secure context.
+const base = process.env.MASTER_CONSOLE_BASE_URL.replace("127.0.0.1", "localhost");
 assert.ok(password, "MASTER_CONSOLE_PASSWORD is required");
 const consoleUrl = `${base}/admin/master/console/`;
 const tokenPath = "/realms/master/protocol/openid-connect/token";

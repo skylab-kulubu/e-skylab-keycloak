@@ -4294,3 +4294,178 @@ Bir kök rolü taşımıyorsa önce onun `would kcadm create groups/<kök kimli�
 kimliği> (body)` satırı çıkar ve `granted to:` onu sayar. İkinci koşu: `group mappings of the admin
 Privileged roles: unchanged`. Harness `tests/role-groups.sh` (denetimde `evet`/`hayır`, kuru → uygula →
 ikinci koşu tohumsuz, YK ve DK üyesinin token'ı, sandbox'ta `superadmin`).
+
+## 34. Master konsolu: konsol grupları, sertleştirme ve passkey girişi (rol-temizligi 03)
+
+Karar (rol-temizligi S1–S3, 2026-10-12; konsol listesi 2026-10-13): Keycloak konsoluna her kişi
+**master realm'deki kendi ayrı hesabıyla** girer (Microsoft Entra'nın "yönetim işi için ayrı hesap"
+önerisi). Yetki master'daki `/KONSOL` gruplarından gelir; master'ın `admin` realm rolü yalnız işletme
+hesabında ve kişiye bağlı olmayan iki acil hesapta kalır (§35). e-skylab'da hiçbir kişi ve grup
+`realm-management` rolü taşımaz (K3). Neden ayrı realm: Keycloak 26.7.4'te `manage-users` taşıyan biri
+(core'un servis hesabı dahil) yönetim rolü taşıyan bir gruba istediği kişiyi üye ekleyebilir; e-skylab
+içindeki bir konsol grubu, panel ya da core'un sırrı üzerinden herkese yöneticilik verdirebilirdi. core
+ve panel master'a erişemez. master uzlaştırıcının dışındadır; ayarı operatör betiği yapar.
+
+### 34.1 Konsol politikası (grup-yonetimi 04)
+
+- Konsol yalnız kimlik sağlayıcı (IdP), client ve token ayarları ile acil durum (§35) içindir.
+- Kişi, üyelik, grup açma, silme, adlandırma ve grup rol eşlemesi SKY LAB yönetim panelinden yapılır:
+  core bunları denetim kaydına ve yetki postasına yazar. Konsoldan yapılan aynı değişiklik core'un
+  kaydına girmez; yalnız Keycloak admin olaylarında (30 gün) görünür.
+- Acil durumda konsoldan yapılan her üyelik ya da grup değişikliği aynı gün devir notuna ve ekip
+  sohbetine yazılır (grup-yonetimi 10 konsol değişikliklerini kendiliğinden kaydedene kadar).
+- Konsol hesabı kişiseldir, paylaşılmaz. e-skylab'daki günlük hesap konsol yetkisi taşımaz.
+
+### 34.2 `config/master-console.sh` ne yapar
+
+Kuru koşu varsayılan (`--check`), `--apply` yazar; her yazma yalnız canlı değer farklıysa yapılır,
+ikinci `--apply` hiçbir şey yazmaz (admin olayı yok). Realm ayarlarında kuru koşu her alanı canlı ve
+yeni değeriyle basar (`bruteForceProtected false -> true`). Realm yazmaları canlı realm temsilinin
+üstüne birleştirilip tam gönderilir (kcadm `--merge`): Keycloak, kısmi bir realm PUT'unda olmayan CIBA,
+PAR ve cihaz kodu ayarlarını varsayılana döndürür. Yalnız master'a yazar; e-skylab realm'lerine
+dokunmaz. **Üyeliğe dokunmaz**: kimin hangi grupta olduğu veridir (rol-temizligi 04, F1).
+
+| Kalem | Uygulanan durum |
+| --- | --- |
+| Gruplar (`config/master-console.json`, `/ROLLER` dosyasının biçimi) | `/KONSOL` (rol taşımaz) ve yaprakları: `E-SKYLAB-YAZICILAR` = `e-skylab-realm` client'ının bütün rolleri, `SANDBOX-YAZICILAR` = `e-skylab-sandbox-realm`'in bütün rolleri; ikisinde de `impersonation` yok (`excluded_roles`): yazanlar başkasının yerine geçemez. Okuyucu grubu yok (S2: konsoldakilerin hepsi yazar). Yapraktaki fazla rol, `/KONSOL`'un kendi rolü, yaprak altındaki alt grup, dosyada olmayan `/KONSOL/*` grubu ve client'ın dosyada ne listelenen ne hariç tutulan rolü (Keycloak'ın yeni bir sürümle eklediği rol) `WARNING` olur, alınmaz. client yoksa (o realm o sunucuda yoksa) yaprak uyarıyla atlanır. `/KONSOL` ya da altı master'ın varsayılan grubuysa `PROBLEM`, hiçbir şey yazılmaz. |
+| Giriş akışı `konsol-passkey` | Üst düzey akış: `auth-username-password-form`, ardından `webauthn-authenticator`, ikisi de `REQUIRED`. **Cookie adımı yok**: açık bir SSO oturumu iki faktörün yerine geçmez, konsol her girişte parola ve passkey ister. **Koşullu rol akışı yok** (spec §4.4): rol adı değişirse ikinci faktör sessizce atlanırdı. Elle değiştirilmiş akış geri kurulur (fazla adım ya da alt akış silinir, eksik adım sırasıyla yeniden eklenir, gereklilik `REQUIRED` yapılır). |
+| Akışın bağlandığı client'lar | `security-admin-console`, `account-console` ve `account` (client akış ezmesi, `browser`). Hesap konsolları da bağlıdır: yalnız parolayla açılmış bir master Hesap Konsolu oturumu kişinin passkey'ini silebilirdi (Account REST, adım yükseltme yok); sonraki konsol girişinde parolayı bilen kendi passkey'ini kaydederdi. Master'da tarayıcıyla giriş yapılan (standard ya da implicit akış, yönlendirme adresi var, bearer-only değil) başka bir client bağlı değilse `WARNING` (client kimliğiyle). master'ın kendi tarayıcı akışı değişmez. |
+| Passkey politikası ve kaydı | master'ın iki faktörlü WebAuthn politikası: `webAuthnPolicyResidentKey=required`, `webAuthnPolicyUserVerificationRequirement=required` (keşfedilebilir kimlik bilgisi + kullanıcı doğrulaması: passkey; e-skylab'ın passkey politikasıyla aynı iki değer). Keycloak bu politikayı yalnız tam haliyle yazar; betik onu canlı realm temsilinin üstüne birleştirip gönderir. Zorunlu eylem `webauthn-register` açık: passkey'i olmayan hesap parolasından hemen sonra bir tane kaydeder (bir kez). Eylem kayıtlı değilse `PROBLEM`, hiçbir şey yazılmaz: akış bağlansaydı passkey'i olmayan herkes konsoldan geri çevrilirdi. |
+| Brute force | e-skylab'ınkiyle aynı değerler: `config/account-center-realm-security.json`'un brute force alanları (`bruteForceProtected=true`, `failureFactor=10`, `waitIncrementSeconds=60`, `maxFailureWaitSeconds=900`, `maxDeltaTimeSeconds=43200`, `quickLoginCheckMilliSeconds=1000`, `minimumQuickLoginWaitSeconds=60`, `permanentLockout=false`). Parola politikası master'a yazılmaz. |
+| Olaylar | Kullanıcı ve admin olayları açık, ikisi de 30 gün (`eventsExpiration`, realm özniteliği `adminEventsExpiration`), admin olay ayrıntıları açık; uzlaştırıcının e-skylab'daki ayarıyla aynı (§0). Acil hesap postası (rol-temizligi 18) master'ın `LOGIN` olaylarını okur. Dinleyiciler ve olay türleri yazılmaz. |
+
+`--check` ayrıca **kişi adı basmadan** sayar (servis hesapları sayılmaz):
+
+- master `admin` taşıyan kişi (doğrudan, grup ya da kompozit yoluyla); `KEYCLOAK_MASTER_ADMIN_MAX`'ı
+  (varsayılan 3: işletme hesabı + iki acil hesap) geçerse `WARNING`;
+- her yaprağın üyesi (doğrudan ya da alt gruptan); `KEYCLOAK_CONSOLE_WRITERS_MAX`'ı (varsayılan 6:
+  13 Ekim'in konsol listesi) geçerse `WARNING`;
+- bir `<realm>-realm` rolünü doğrudan ya da `/KONSOL/*` dışındaki bir gruptan taşıyan kişi; varsa
+  `WARNING`;
+- konsol kişileri (`admin` sahipleri ve yaprak üyeleri) ve aralarında passkey'i olmayanlar; varsa
+  `WARNING` (bir sonraki girişte kaydederler). Kapatılmış (`enabled=false`) hesap giriş yapamaz;
+  ayrı sayılır, passkey sayımına girmez; `admin` ve yaprak sayımlarına girmeye devam eder.
+
+e-skylab tarafının sayımı (K3: `realm-management` taşıyan kişi ve grup 0) `KEYCLOAK_REALM=e-skylab
+config/role-groups.sh --audit`'in `audit K3` satırıdır (§26); master oturumuyla aynı konteynerde koşar.
+
+**Bilinen sınır: kcadm'in parola girişi.** Operatör betikleri ve wizard'lar master'a `admin-cli`'nin
+parola girişiyle (direct grant) girer; o akış tarayıcı akışı değildir, passkey istemez. Bu bilinçlidir
+(geri dönüş konsol açılmasa da çalışır), ama konsol yazıcısının parolası Admin REST'e passkey'siz
+token alır. Telafi: master'ın uçları kenarda kapalıdır; yalnız konteynerin içinden ve erişimi
+Cloudflare Access ile kısıtlı yönetim adından ulaşılır.
+
+### 34.3 Konsol kişi listesinin değiştirilmesi
+
+Liste master yöneticisinin elindedir; core ve panel değiştiremez.
+
+**Ekleme.**
+1. master'da kişiye ayrı bir hesap açılır (Users → Add user; master `admin` verilmez), geçici parola
+   ve "Update Password" zorunlu eylemi.
+2. Hesap `/KONSOL/E-SKYLAB-YAZICILAR`'a (gerekiyorsa `/KONSOL/SANDBOX-YAZICILAR`'a da) eklenir: Users
+   → kişi → Groups → Join group (ya da rol-temizligi F1 wizard'ının konsol üyesi adımı).
+3. Cloudflare Access'te yönetim adının politikasına kişinin e-postası eklenir.
+4. Kişi ilk girişte parolasını değiştirir ve passkey kaydeder. Kayıt, parolayı bilen herkese açık
+   bir ilk kullanım adımıdır: master yöneticisi kaydı kişinin kendisinin yaptığını aynı anda
+   (yüz yüze ya da görüntülü) doğrular.
+5. `master-console.sh --check`: yaprak üye sayısı bir artar, `without a passkey` sayısı yerinde kalır.
+
+**Çıkarma.** Hesap gruptan çıkarılır ve kapatılır (`enabled=false`); Cloudflare Access'ten e-postası
+çıkarılır; hesap 30 gün sonra silinir. **Passkey kaybı:** master yöneticisi kişinin `webauthn`
+kimlik bilgisini siler (Users → kişi → Credentials); kişi sonraki girişte yenisini kaydeder (aynı
+doğrulamayla). **Eşikler** büyüyen listeyle bilerek değiştirilir (`KEYCLOAK_CONSOLE_WRITERS_MAX`,
+`KEYCLOAK_MASTER_ADMIN_MAX`); gerekçesi devir notuna yazılır.
+
+### 34.4 Operatör sırası
+
+Bu değişikliği taşıyan Keycloak sürümü yayımlandıktan sonra (Touch ID kapısı), konteynerde
+(`docker exec -it "$(docker ps -q -f name=sky-lab-production-keycloak | head -n 1)" bash`):
+
+```bash
+read -r -p 'master realm yöneticisi: ' OPERATOR_USER
+/opt/keycloak/bin/kcadm.sh config credentials --config /tmp/kcadm-operator.config \
+  --server http://localhost:8080 --realm master --user "$OPERATOR_USER"
+/opt/keycloak/config/master-console.sh --kcadm-config /tmp/kcadm-operator.config
+/opt/keycloak/config/master-console.sh --kcadm-config /tmp/kcadm-operator.config --apply
+/opt/keycloak/config/master-console.sh --kcadm-config /tmp/kcadm-operator.config
+rm -f /tmp/kcadm-operator.config
+```
+
+İlk kuru koşuda beklenen: brute force, passkey politikası ve olaylar için `would set …`; `would create
+the flow konsol-passkey …`; üç client için `would bind the browser sign-in of …`; `/KONSOL` ve iki yaprak
+için `would create …` ve `would map 20 role(s) …`. Sayımlar F1'den önce uyarı verir (master `admin`
+sahibi eşiğin üstünde, konsol kişilerinin passkey'i yok); bunlar F1'in (rol-temizligi 04) işidir.
+Başka bir `WARNING` ya da `PROBLEM` `--apply`'dan önce incelenir. `--apply`'dan sonraki kuru koşu
+`check: 0 change(s) pending` der. `--apply`'dan sonra her konsol girişi parola ve passkey ister;
+passkey'i olmayan hesap (işletme hesabı dahil) ilk girişte kaydeder.
+
+### 34.5 Geri dönüş
+
+Konsola kimse giremiyorsa (ör. passkey töreni yönetim adının arkasında bozuldu) aynı konteynerde,
+kcadm girişinden sonra önce kuru, sonra yazarak:
+
+```bash
+/opt/keycloak/config/master-console.sh --kcadm-config /tmp/kcadm-operator.config --remove-override
+/opt/keycloak/config/master-console.sh --kcadm-config /tmp/kcadm-operator.config --remove-override --apply
+```
+
+Üç client'ın akış ezmesi kalkar (yalnız `konsol-passkey`'i gösteriyorsa), konsol master'ın kendi
+tarayıcı akışıyla (yalnız parola) açılır. Akış, gruplar ve realm ayarları kalır; `--apply` (seçeneksiz)
+ezmeyi geri koyar. kcadm girişi de olmuyorsa (operatör hesabı brute force kilidinde: en çok 15 dakika
+bekleyin; ya da hesap bozuk) §35'teki geçici yönetici yolu kullanılır.
+
+**Harness.** `tests/master-console.sh` (CI işi `master-console`, stok Keycloak, dev modu): eşik ve
+dosya hataları girişten önce 2; temiz master'da kuru koşu her değişikliği adlandırır ve yazmaz;
+`--apply` akışı, üç ezmeyi, brute force'u (e-skylab'ın değerleri), olayları, passkey politikasını ve iki
+yaprağı (20'şer rol, `impersonation` yok) kurar; kuru koşu 0 değişiklik, ikinci `--apply` admin olayı
+bırakmaz; master'ın CIBA, PAR ve cihaz kodu ayarları korunur; akışa eklenen Cookie adımı, `DISABLED`
+passkey adımı, kalkan ezme, kapatılan `webauthn-register` ve silinen parola adımı geri kurulur,
+fazlalar yalnız uyarılır, `/KONSOL` altında varsayılan grup ve kayıtlı olmayan `webauthn-register` 1
+ile durur, hiçbir şey yazılmaz; sayımlar kişi adı basmaz, kapatılmış hesap passkey sayımına girmez;
+kişilerin kendi token'larıyla yazıcı e-skylab'ı okur ve yazar, `impersonation` ve master'ı okuyamaz,
+`view-*` okuyucu okur ve yazamaz; Chromium'da sanal authenticator'la (fiziksel anahtar yok) passkey'siz
+hesap parolasından sonra kayda gider ve konsola ulaşır, açık SSO oturumunda konsol parola ve passkey'i
+yeniden ister (`prompt=none` → `login_required`; aynı istek ezmesiz bir client'ta kod alır, oturum
+canlıdır), kayıtlı passkey olmadan giriş reddedilir (`LOGIN_ERROR`), `view-*` okuyucu konsolu açar;
+`--remove-override` önce kuru, sonra üç ezmeyi kaldırır, akış kalır, `--apply` geri bağlar.
+
+## 35. Acil erişim (break-glass): genel kural (grup-yonetimi 06)
+
+Bu bölüm kuralın kendisidir. Sunucu, kullanıcı adları ve kimlik bilgisinin saklandığı yer kulübün iç
+runbook'undadır; bu herkese açık depoya yazılmaz.
+
+**Ne zaman acil sayılır.**
+- Panel ya da core çalışmıyor ve bekleyemeyecek bir üyelik ya da rol değişikliği gerekiyor (ör. ele
+  geçirilmiş bir hesabın yetkisini almak).
+- Keycloak'ın kendisi bozuk ya da konsol hesaplarıyla girilemiyor (passkey akışının bozulması dahil).
+
+Sıradan iş acil değildir: panel beklenir.
+
+**Kim.**
+- Konsoldan yazanlar: `/KONSOL/E-SKYLAB-YAZICILAR` üyeleri, kendi konsol hesaplarıyla (§34).
+- Sunucudan kurtarma yalnız sunucu yöneticisinin işidir: Keycloak konteynerinde `kc.sh
+  bootstrap-admin` ile geçici bir yönetici açılır, iş bitince silinir. Master'da geçici yönetici
+  kalmadığı (konsolun "temporary admin" uyarısı yok, `is_temporary_admin` taşıyan hesap yok) doğrulanır.
+
+**Acil hesaplar.** master'da kişiye bağlı olmayan iki hesap, master `admin` rolüyle. İkisi de
+passkey'le korunur (§34'teki akış). Parola ve passkey'i taşıyan anahtar mühürlü zarfta saklanır,
+parolanın bir kopyası OpenBao'dadır. Değer elle kopyalanmaz; gerekiyorsa değeri taşıyan bir betik
+kullanılır. OpenBao'ya insan girişi Keycloak'a bağlıdır: Keycloak bozukken OpenBao'daki kopyaya da
+ulaşılamayabilir, asıl yedek zarftır.
+
+**Kullanılınca.**
+- Acil hesabın master'daki her girişi ADMIN'e posta olarak gider (rol-temizligi 18; master'ın `LOGIN`
+  olaylarından okunur, bu yüzden master'da olaylar açıktır, §34).
+- Aynı gün devir notuna ve ekip sohbetine ne yapıldığı yazılır.
+- İş bitince kullanılan hesabın parolası değiştirilir ve yeni bir zarf hazırlanır; açılan zarf yenisi
+  hazır olunca imha edilir.
+
+**Yılda bir deneme.** Dönem devri haftasında her acil hesapla bir kez girilir (passkey dahil), salt
+okur bir bakış yapılır, çıkılır; ADMIN'e postanın geldiği doğrulanır. Denemenin tarihi iç runbook'a
+yazılır.
+
+**Bilinçli sapmalar.**
+- Microsoft Entra en az iki acil hesap ister (bizde iki) ve 90 günde bir deneme önerir; bizde deneme
+  yılda bir, dönem devriyle.
+- Sunucuda tek kişi vardır: Keycloak'ın kendisi bozulursa onarım sunucu yöneticisini bekler. Panel ve
+  konsol üzerinden yapılabilen işleri konsol yazıcıları yürütür.

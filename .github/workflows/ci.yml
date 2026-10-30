@@ -335,6 +335,47 @@ jobs:
       - name: DK read-only roles against a throwaway Keycloak
         run: bash tests/dk-read-only.sh
 
+  # The master realm's console (rol-temizligi 03): config/master-console.sh (console groups,
+  # brute force, events, the passkey flow of the console) against the stock Keycloak image in dev
+  # mode, with people's own Admin REST tokens and the real console in Chromium with a virtual
+  # authenticator; needs no build of this repository's image.
+  master-console:
+    needs: [mode, scope]
+    if: needs.mode.outputs.full == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' master-console ')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.22.1
+          cache: npm
+          cache-dependency-path: theme/package-lock.json
+
+      - name: Install the passkey test browser
+        working-directory: theme
+        run: |
+          npm ci --ignore-scripts
+          # Chromium only, from Playwright's download host: the runner image already has its
+          # libraries, and --with-deps's apt mirror stalls (CI run 40311997516). apt only when a
+          # launch of both builds the tests use (headless shell, new headless) says one is missing.
+          npx --no-install playwright install chromium
+          node -e 'const { chromium } = require("@playwright/test"); (async () => { for (const channel of [undefined, "chromium"]) await (await chromium.launch({ channel })).close(); })();' \
+            || npx --no-install playwright install-deps chromium
+
+      - name: Master console groups, hardening and passkey sign-in against a throwaway Keycloak
+        run: bash tests/master-console.sh
+
+      - name: Keep the console sign-in screenshots when it fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: master-console-screenshots
+          path: theme/test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
   # config/sandbox-admin-local-client.sh (the admin panel's local-development client admin-local,
   # sandbox realm only) against the stock Keycloak image in dev mode, with real authorization code
   # flows (PKCE) through admin-local and the panel's client; needs no build of this repository's image.
@@ -926,6 +967,7 @@ jobs:
       - forms-skymail-grants
       - role-groups
       - dk-read-only
+      - master-console
       - sandbox-admin-local-client
       - fill-missing-primary-from-school
       - ytu-first-login

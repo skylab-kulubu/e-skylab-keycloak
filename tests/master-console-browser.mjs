@@ -5,7 +5,7 @@
 // "browser: all cases passed".
 //   1. A console account without a passkey: the password, then Keycloak's registration page
 //      (webauthn-register), then the console (its token request succeeds).
-//   2. The same browser, its SSO session open: the console asks for the password and the passkey
+//   2. The same page, its SSO session open: the console asks for the password and the passkey
 //      again (prompt=none is refused with login_required; the Cookie step is not in the flow).
 //   3. Another browser whose authenticator holds no passkey of the account: the password is
 //      accepted, the passkey step fails, the console is never reached.
@@ -135,14 +135,16 @@ try {
   );
   const passiveLocation = passive.headers()["location"] ?? "";
   assert.match(passiveLocation, /error=login_required/, `prompt=none was not refused: ${passive.status()} ${passiveLocation}`);
-  const second = await writer.context.newPage();
-  await step("2-sso", second, async () => {
-    await second.goto(consoleUrl);
-    await password_step(second, "yazici-bir");
-    token = consoleToken(second);
-    await authenticate(second);
+  // The same page opens the console again: the virtual authenticator belongs to the page's CDP
+  // session, a new page of the context has none (navigator.credentials.get would wait forever).
+  await step("2-sso", writer.page, async () => {
+    await writer.page.goto(consoleUrl);
+    await password_step(writer.page, "yazici-bir");
+    token = consoleToken(writer.page);
+    await authenticate(writer.page);
     assert.equal(await token, 200, "the console's token request after the passkey failed");
   });
+  assert.equal(await credentialCount(writer.cdp, writer.authenticatorId), 1, "the second sign-in registered another passkey");
   console.log("browser: 2 with the SSO session open the console asks for the password and the passkey again (prompt=none: login_required)");
   await writer.context.close();
 

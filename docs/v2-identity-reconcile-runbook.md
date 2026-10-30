@@ -4100,22 +4100,29 @@ Panel alanı, `geçici` ve `karar-bekliyor` sapma değildir.
 Yalnız kodun sahibi olduğu alan sapma sayılır (groups-only rol modeli, Microsoft Entra kalıbı: tohum bir
 kez, sonra panelin). Uzlaştırıcının Privileged kökler için bir kez tohumladığı roller (§19, §25, §28,
 §33.6, §33.7 listeleri; rolde `skylab.seeded-group-mappings` işareti) tohumdan sonra SKY LAB admin
-panelinindir: böyle bir rolün bir Privileged kökten (ya da altındaki gruptan) alınması ya da oraya
-verilmesi sapma değil, tek bir bilgi satırıdır, `BILGI|S2-tohum|<grup yolu>|<istemci>|<rol>|<eksik|fazla>`;
-alarma katılmaz. Tohumlanmamış (işaretsiz) rolün eksik eşlemesi kodun bekleyen işidir: `S2-eksik`.
-Privileged kökte hiçbir listenin tohumlamadığı rol (`--privileged-file`'da olmayan istemci, yönetici ya da
-realm rolü) kodundur: `S2-fazla`.
+panelinindir: böyle bir rolün kendi tohum kümesindeki bir kökten (listenin adladığı Privileged adlar,
+`/<AD>` ve `/UYELER/<AD>`, ya da altlarındaki grup) alınması ya da oraya verilmesi sapma değil, tek bir
+bilgi satırıdır, `BILGI|S2-tohum|<grup yolu>|<istemci>|<rol>|<eksik|fazla>`; alarma katılmaz.
+Tohumlanmamış (işaretsiz) rolün eksik eşlemesi kodun bekleyen işidir: `S2-eksik`. Privileged kökte
+hiçbir listenin tohumlamadığı rol (`--privileged-file`'da olmayan istemci, yönetici ya da realm rolü)
+kodundur: `S2-fazla`. Tohumlanmış rol de kendi tohum kümesi dışındaki bir Privileged köke (ya da
+altındaki gruba) verilirse `S2-fazla`dır (ör. yalnız YK'ya tohumlanan `skymail:mails:approve` ADMIN'de);
+DK'ya ya da altındaki gruba verilen her yazma rolü (`config/dk-read-only.sh` `WRITE_ROLES`,
+`--print-write-roles`) de öyle: DK okur, yazmaz (ekip-yetkileri bilet 17). DK'nın geçici Forms
+yönetici rollerinin (`geçici`, `dk-read-only.sh --forms`'un alacağı) yokluğu hedef durumdur: tek bir
+`BILGI|S2-geçici|<grup yolu>|<istemci>|<rol>|eksik` satırı, alarma ve özete katılmaz. Karar tablosu
+Keycloak'sız `tests/check-app-assignments-drift.sh`'ta (CI static işi).
 
 | Sınıf | Ne |
 |---|---|
 | S1 | kişide doğrudan yönetici ya da sınıfsız client rolü (rol başına bir satır, `kişi:<n>`) |
 | S1-realm | kişide doğrudan realm rolü: Java dönemi rolleri, rol-temizligi bilet 19'un penceresine kadar yalnız bilgi; `KEYCLOAK_APP_ASSIGNMENTS_REALM_ROLES=alarm` (`--realm-roles alarm`) alarma katar |
-| S2-eksik | kodun beklediği, realm'de olmayan eşleme (beklenen `evet`, canlı `yok`); tohumlanmış Privileged rolün Privileged kökteki eksiği hariç (`S2-tohum`) |
-| S2-fazla | kodun beklemediği kod alanı eşlemesi: Privileged kök, `/ROLLER` ve `role-groups.json`'daki yapraklar, `/UYELER`, alan ve öbür gruplar; herkese giden hedefteki uygulama rolü |
+| S2-eksik | kodun beklediği, realm'de olmayan eşleme (beklenen `evet`, canlı `yok`); tohumlanmış Privileged rolün kendi tohum kümesindeki eksiği hariç (`S2-tohum`) |
+| S2-fazla | kodun beklemediği kod alanı eşlemesi: Privileged kök (tohumlanmamış rol, tohum kümesi dışındaki kök, DK'da yazma rolü), `/ROLLER` ve `role-groups.json`'daki yapraklar, `/UYELER`, alan ve öbür gruplar; herkese giden hedefteki uygulama rolü |
 | S2b | panel hedefinde (ekip, alt ekip, Leader grubu) yönetici, sınıfsız ya da realm rolü |
 | S3 | `/ROLLER` altında `role-groups.json`'ın adlamadığı yaprakta ya da yaprağın altındaki grupta eşleme |
 | S5 | Leader gruplarının (LIDERLER, KOORDINATORLER) hiçbirinde etkin üye olmayan en üst ekip |
-| S2-tohum (bilgi) | tohumlanmış Privileged rolün Privileged kökte panelden alınan (`eksik`) ya da verilen (`fazla`) eşlemesi; alarma katılmaz |
+| S2-tohum (bilgi) | tohumlanmış Privileged rolün kendi tohum kümesindeki kökte (ya da altındaki grupta) panelden alınan (`eksik`) ya da verilen (`fazla`) eşlemesi; DK'da yazma rolü hiçbir zaman; alarma katılmaz |
 
 Varsayılan rol ve IdP ayarları (S4, S7) §33.2'nin, konsol yazımları (S6) Keycloak yönetici
 olaylarının, katalog-core karşılaştırması (S8) `tests/check-app-assignments.sh`'ın; bu adım okumaz.
@@ -4129,7 +4136,9 @@ alarm (bilet 07, sunucu zamanlayıcısı ve ADMIN postası hub `ops/`'ta) bu ad�
 tek bir `[app-assignments] SAPMA: …, alarm=<n>` satırı varsa ve çıkış onunla uyuşuyorsa (0 ile `alarm=0`,
 1 ile `alarm>0`) geçirir. Özet satırı yoksa (uzlaştırıcı `app-assignments.sh`'ı çağırmadan, girişte ya da
 realm okumasında durduysa, ki orada düşüş de 1 olabilir), birden çoksa ya da çıkış uymuyorsa sonuç 2'dir
-(`[app-assignments-alarm] not measured: …`): ölçülemedi, sapma sayılmaz.
+(`[app-assignments-alarm] not measured: …`): ölçülemedi, sapma sayılmaz. Zamanlayıcı sarmalayıcının
+yalnız 0 ve 1'ini sonuç sayar; öbür her çıkış (2, zaman aşımının 124'ü, sinyalin 143'ü ya da başka) ölçülemedi
+demektir (bilet 17, F3).
 
 İlk geceler (bilinen gürültü, bilet 07): üretimde ilk girişte `broker/read-token`'ı doğrudan almış kişiler
 (§33.2'nin `NOTE`'u) `S1` (kişide sınıfsız client rolü), Java dönemi grup eşlemeleri `S2-fazla` olarak

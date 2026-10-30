@@ -29,12 +29,17 @@
 #     WebAuthn (two-factor) policy of master asks for a discoverable credential with user verification
 #     (a passkey), and the required action webauthn-register is enabled: an account without a passkey
 #     registers one right after its password, once (the --check count below says how many have none).
+#     webauthn-register not registered in master is a PROBLEM and nothing is written: Keycloak would
+#     refuse every console account without a passkey (the flow is never bound without it).
 #     Another master client with a browser sign-in (standard or implicit flow, redirect URIs, not
 #     bearer-only) that is not bound is a WARNING with its client id.
 #   - realm settings: brute force detection with e-skylab's values (the brute force fields of
 #     config/account-center-realm-security.json, the reconciler's file); user and admin events on,
 #     both kept 30 days (adminEventsExpiration), admin event details on (ticket 18's mail reads master's
 #     LOGIN events). Listeners and enabled event types are never sent.
+#   Every realm settings write goes on the whole live realm (kcadm --merge): Keycloak's realm update
+#   resets the CIBA, PAR and device code settings to their defaults when a PUT leaves them out. The
+#   dry run names each field with its live and its new value.
 # Every write is made only when the live value differs, so a second --apply writes nothing and leaves
 # no admin event.
 #
@@ -47,7 +52,8 @@
 #   - people holding a role of a "<realm>-realm" client directly or through a group outside /KONSOL/*;
 #     a WARNING when any;
 #   - console people (admin holders and leaf members) without a WebAuthn credential; a WARNING when
-#     any (they register one at their next sign-in, rol-temizligi F1).
+#     any (they register one at their next sign-in, rol-temizligi F1). A disabled account cannot sign
+#     in: it is counted apart and left out of the passkey count.
 # e-skylab's own side (K3: no person and no group holds a realm-management role) is counted by
 # KEYCLOAK_REALM=e-skylab config/role-groups.sh --audit.
 #
@@ -424,33 +430,74 @@ while IFS= read -r default; do
     problem "the default group $default is at or under /$ROOT: every new account would get its roles; nothing was changed (remove it from master's default groups first)"
   fi
 done <<<"$default_groups"
+
+# --- the passkey registration must exist before anything is written ---------------------------------
+# Without webauthn-register Keycloak refuses every account without a passkey at the passkey step: the
+# bound console would be closed to everyone who has not registered one yet.
+required_actions=$(csv authentication/required-actions alias,enabled)
+register_enabled=''
+while IFS=, read -r action_alias enabled; do
+  if [[ $action_alias == "$REGISTER_ACTION" ]]; then register_enabled=$enabled; fi
+done <<<"$required_actions"
+if [[ $register_enabled != true && $register_enabled != false ]]; then
+  problem "the required action $REGISTER_ACTION is not registered in $REALM: an account without a passkey could not sign in to the console; nothing was changed (register it in the console: Authentication, Required actions; then run again)"
+fi
 if [[ $problems != 0 ]]; then
   summary
   exit 1
 fi
 
 # --- realm settings ---------------------------------------------------------------------------------
-# apply_fields LABEL DESIRED_FILE [whole]: writes the fields of DESIRED_FILE to the realm only when one
-# of them differs (objects compare as subsets, arrays as multisets); with "whole" kcadm sends them on
-# the whole live realm (read, merged, written back) instead of alone.
+# Every write goes on the whole live realm (kcadm --merge: read, merged, written back): Keycloak's realm
+# update resets the CIBA, PAR and device code settings to their defaults when a PUT leaves them out, and
+# writes the two-factor WebAuthn policy only whole.
+
+# shown FILE FIELD: FIELD's value in the JSON of FILE for a change line, quotes off; "(none)" when the
+# field is absent. The realm settings here are booleans, numbers and short words, never a secret.
+shown() {
+  local text value
+  text=$(<"$1")
+  if [[ $text =~ \"$2\"[[:space:]]*:[[:space:]]*(\"[^\"]*\"|[^,}[:space:]]+) ]]; then
+    value=${BASH_REMATCH[1]}
+    value=${value#\"}
+    value=${value%\"}
+    printf '%s\n' "${value:-(empty)}"
+  else
+    printf '(none)\n'
+  fi
+}
+
+# field_changes LIVE_FILE DESIRED_FILE FIELDS: "field live -> desired, ..." for the changed fields (one
+# per line; "attributes.NAME" reads the attribute NAME).
+field_changes() {
+  local field name listed=''
+  while IFS= read -r field; do
+    [[ -n $field ]] || continue
+    name=${field#attributes.}
+    listed+=", $field $(shown "$1" "$name") -> $(shown "$2" "$name")"
+  done <<<"$3"
+  printf '%s\n' "${listed#, }"
+}
+
+# apply_fields LABEL DESIRED_FILE: writes the fields of DESIRED_FILE to the realm only when one of them
+# differs (objects compare as subsets, arrays as multisets).
 apply_fields() {
-  local label=$1 desired=$2 changed merge=-n
+  local label=$1 desired=$2 changed
   json "realms/$REALM" >"$WORK_DIR/realm-live.json"
   changed=$(json_tool diff-fields "$desired" <"$WORK_DIR/realm-live.json")
   if [[ -z $changed ]]; then
     log "$label: unchanged"
     return 0
   fi
-  change "set $label ($(tr '\n' ' ' <<<"$changed" | sed 's/ $//'))"
+  change "set $label ($(field_changes "$WORK_DIR/realm-live.json" "$desired" "$changed"))"
   if [[ $MODE == apply ]]; then
-    [[ ${3:-} != whole ]] || merge=--merge
-    kcadm_write update "realms/$REALM" "$merge" -f "$desired"
+    kcadm_write update "realms/$REALM" --merge -f "$desired"
   fi
 }
 
 apply_fields 'brute force detection (the values of e-skylab)' "$WORK_DIR/brute-force.json"
 printf '%s\n' "$WEBAUTHN_POLICY" >"$WORK_DIR/webauthn-policy.json"
-apply_fields 'WebAuthn policy (a discoverable credential with user verification: a passkey)' "$WORK_DIR/webauthn-policy.json" whole
+apply_fields 'WebAuthn policy (a discoverable credential with user verification: a passkey)' "$WORK_DIR/webauthn-policy.json"
 
 # User and admin event retention, as the reconciler keeps e-skylab's: the four settings are realm
 # fields, the admin event expiration a realm attribute sent with the complete live attribute map
@@ -460,7 +507,10 @@ printf '%s\n' "$EVENT_RETENTION_SETTINGS" >"$WORK_DIR/events.json"
 printf '{"attributes":{"%s":"%s"}}\n' "$ADMIN_EVENTS_EXPIRATION_ATTRIBUTE" "$EVENT_RETENTION_SECONDS" >"$WORK_DIR/events-attribute.json"
 json "realms/$REALM" >"$WORK_DIR/realm-live.json"
 event_changed=$(json_tool diff-fields "$WORK_DIR/events.json" <"$WORK_DIR/realm-live.json")
+event_shown=$(field_changes "$WORK_DIR/realm-live.json" "$WORK_DIR/events.json" "$event_changed")
 if [[ -n $(json_tool diff-fields "$WORK_DIR/events-attribute.json" <"$WORK_DIR/realm-live.json") ]]; then
+  event_shown=$(printf '%s, %s' "$event_shown" \
+    "$(field_changes "$WORK_DIR/realm-live.json" "$WORK_DIR/events-attribute.json" "attributes.$ADMIN_EVENTS_EXPIRATION_ATTRIBUTE")")
   json_tool realm-attribute "$ADMIN_EVENTS_EXPIRATION_ATTRIBUTE" "$EVENT_RETENTION_SECONDS" \
     <"$WORK_DIR/realm-live.json" >"$WORK_DIR/events-attribute.json"
   json_tool merge "$WORK_DIR/events.json" "$WORK_DIR/events-attribute.json" >"$WORK_DIR/events-write.json"
@@ -471,28 +521,21 @@ fi
 if [[ -z $event_changed ]]; then
   log "$event_label: unchanged"
 else
-  change "set $event_label ($(sed '/^$/d' <<<"$event_changed" | tr '\n' ' ' | sed 's/ $//'))"
+  change "set $event_label (${event_shown#, })"
   if [[ $MODE == apply ]]; then
-    kcadm_write update "realms/$REALM" -n -f "$WORK_DIR/events-write.json"
+    kcadm_write update "realms/$REALM" --merge -f "$WORK_DIR/events-write.json"
   fi
 fi
 
-# --- the passkey registration ----------------------------------------------------------------------
-register=$(csv authentication/required-actions alias,enabled | grep "^$REGISTER_ACTION," || true)
-case $register in
-  "$REGISTER_ACTION,true")
-    log "required action $REGISTER_ACTION: unchanged (enabled)"
-    ;;
-  "$REGISTER_ACTION,false")
-    change "enable the required action $REGISTER_ACTION (an account without a passkey registers one right after its password)"
-    if [[ $MODE == apply ]]; then
-      kcadm_write update "authentication/required-actions/$REGISTER_ACTION" -r "$REALM" -s enabled=true
-    fi
-    ;;
-  *)
-    problem "the required action $REGISTER_ACTION is not registered in $REALM: an account without a passkey could not sign in to the console; register it in the console (Authentication, Required actions) and run again"
-    ;;
-esac
+# --- the passkey registration (registered: checked before the first write) --------------------------
+if [[ $register_enabled == true ]]; then
+  log "required action $REGISTER_ACTION: unchanged (enabled)"
+else
+  change "enable the required action $REGISTER_ACTION (an account without a passkey registers one right after its password)"
+  if [[ $MODE == apply ]]; then
+    kcadm_write update "authentication/required-actions/$REGISTER_ACTION" -r "$REALM" -s enabled=true
+  fi
+fi
 
 # --- the flow ---------------------------------------------------------------------------------------
 # add_step PROVIDER: appends the step to the flow and makes it REQUIRED.
@@ -731,12 +774,13 @@ group_chain() {
   done
 }
 
-people=$(csv users id,username -q briefRepresentation=true -q first=0 -q max=100000)
+people=$(csv users id,username,enabled -q briefRepresentation=true -q first=0 -q max=100000)
 admin_people=0
 outside_people=0
 console_people=0
+disabled_console_people=0
 without_passkey=0
-while IFS=, read -r user_id username; do
+while IFS=, read -r user_id username user_enabled; do
   [[ -n $user_id && $username != service-account-* ]] || continue
   effective=$(csv "users/$user_id/role-mappings/realm/composite" name)
   holds_admin=false
@@ -769,9 +813,14 @@ while IFS=, read -r user_id username; do
   [[ $outside == false ]] || outside_people=$((outside_people + 1))
   if [[ $holds_admin == true || $in_leaf == true ]]; then
     console_people=$((console_people + 1))
-    credential_types=$(csv "users/$user_id/credentials" type)
-    if ! grep -Fxq webauthn <<<"$credential_types"; then
-      without_passkey=$((without_passkey + 1))
+    # A disabled account cannot sign in: it is not waiting for a passkey.
+    if [[ $user_enabled == false ]]; then
+      disabled_console_people=$((disabled_console_people + 1))
+    else
+      credential_types=$(csv "users/$user_id/credentials" type)
+      if ! grep -Fxq webauthn <<<"$credential_types"; then
+        without_passkey=$((without_passkey + 1))
+      fi
     fi
   fi
 done <<<"$people"
@@ -785,7 +834,7 @@ for path in "${!leaf_ids[@]}"; do
 done
 log "count: $outside_people person(s) hold a <realm>-realm role directly or through a group outside /$ROOT/*"
 [[ $outside_people == 0 ]] || warning "$outside_people person(s) hold a <realm>-realm role outside /$ROOT/* (directly or through another group); move them to a console group (rol-temizligi F1)"
-log "count: $console_people console person(s) (admin or a console group), $without_passkey of them without a passkey"
+log "count: $console_people console person(s) (admin or a console group), $without_passkey of them without a passkey ($disabled_console_people disabled, left out of the passkey count)"
 [[ $without_passkey == 0 ]] || warning "$without_passkey console person(s) have no passkey yet: each registers one right after the password at the next console sign-in (rol-temizligi F1: confirm that the person did it)"
 
 summary

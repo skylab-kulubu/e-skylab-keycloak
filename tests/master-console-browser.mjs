@@ -6,7 +6,9 @@
 //   1. A console account without a passkey: the password, then Keycloak's registration page
 //      (webauthn-register), then the console (its token request succeeds).
 //   2. The same page, its SSO session open: the console asks for the password and the passkey
-//      again (prompt=none is refused with login_required; the Cookie step is not in the flow).
+//      again (prompt=none is refused with login_required; the Cookie step is not in the flow), while
+//      the same prompt=none request gets a code through a client without the override (the session
+//      is live).
 //   3. Another browser whose authenticator holds no passkey of the account: the password is
 //      accepted, the passkey step fails, the console is never reached.
 //   4. The view-* reader (a group with e-skylab-realm's view roles only): registers and opens the
@@ -24,6 +26,10 @@ assert.match(process.env.MASTER_CONSOLE_BASE_URL ?? "", /^http:\/\/127\.0\.0\.1:
 // address ("SecurityError: This is an invalid domain"), and localhost is a secure context.
 const base = process.env.MASTER_CONSOLE_BASE_URL.replace("127.0.0.1", "localhost");
 assert.ok(password, "MASTER_CONSOLE_PASSWORD is required");
+// A public master client without the console's flow override (tests/master-console.sh creates it): the
+// positive control of case 2.
+const ssoClient = process.env.MASTER_CONSOLE_SSO_CLIENT;
+assert.ok(ssoClient, "MASTER_CONSOLE_SSO_CLIENT is required");
 const consoleUrl = `${base}/admin/master/console/`;
 const tokenPath = "/realms/master/protocol/openid-connect/token";
 
@@ -62,6 +68,18 @@ async function password_step(page, username) {
   await page.locator("#username").fill(username);
   await page.locator("#password").fill(password);
   await page.locator("#kc-login").click();
+}
+
+// passiveSignIn PAGE CLIENT REDIRECT: a prompt=none authorization request (PKCE) with the page's
+// cookies; resolves with Keycloak's status and redirect location (not followed).
+async function passiveSignIn(page, clientId, redirectUri) {
+  const response = await page.request.get(
+    `${base}/realms/master/protocol/openid-connect/auth?client_id=${encodeURIComponent(clientId)}&response_type=code&scope=openid` +
+      `&redirect_uri=${encodeURIComponent(redirectUri)}&prompt=none&state=harness` +
+      "&code_challenge=QWxhZGRpbjpPcGVuU2VzYW1lMTIzNDU2Nzg5MDEyMzQ1Njc&code_challenge_method=S256",
+    { maxRedirects: 0 }
+  );
+  return { status: response.status(), location: response.headers()["location"] ?? "" };
 }
 
 async function credentialCount(cdp, authenticatorId) {
@@ -127,14 +145,13 @@ try {
   const cookies = await writer.context.cookies(`${base}/realms/master/`);
   assert.ok(cookies.some(cookie => cookie.name === "KEYCLOAK_IDENTITY"),
     `no SSO session cookie after the first sign-in (cookies: ${cookies.map(cookie => cookie.name).join(", ")})`);
-  const passive = await writer.page.request.get(
-    `${base}/realms/master/protocol/openid-connect/auth?client_id=security-admin-console&response_type=code&scope=openid` +
-      `&redirect_uri=${encodeURIComponent(consoleUrl)}&prompt=none&state=harness` +
-      "&code_challenge=QWxhZGRpbjpPcGVuU2VzYW1lMTIzNDU2Nzg5MDEyMzQ1Njc&code_challenge_method=S256",
-    { maxRedirects: 0 }
-  );
-  const passiveLocation = passive.headers()["location"] ?? "";
-  assert.match(passiveLocation, /error=login_required/, `prompt=none was not refused: ${passive.status()} ${passiveLocation}`);
+  // The session is live: the same prompt=none request, with the same cookies, signs in silently through
+  // a client without the override (master's own browser flow, its Cookie step) ...
+  const control = await passiveSignIn(writer.page, ssoClient, `${base}/harness-sso`);
+  assert.match(control.location, /[?&]code=/, `the SSO session is not live: prompt=none of ${ssoClient} got ${control.status} ${control.location}`);
+  // ... and the console refuses it.
+  const passive = await passiveSignIn(writer.page, "security-admin-console", consoleUrl);
+  assert.match(passive.location, /error=login_required/, `prompt=none was not refused: ${passive.status} ${passive.location}`);
   // The same page opens the console again: the virtual authenticator belongs to the page's CDP
   // session, a new page of the context has none (navigator.credentials.get would wait forever).
   await step("2-sso", writer.page, async () => {

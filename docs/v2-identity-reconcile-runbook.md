@@ -4313,7 +4313,10 @@ ve panel master'a erişemez. master uzlaştırıcının dışındadır; ayarı o
 ### 34.2 `config/master-console.sh` ne yapar
 
 Kuru koşu varsayılan (`--check`), `--apply` yazar; her yazma yalnız canlı değer farklıysa yapılır,
-ikinci `--apply` hiçbir şey yazmaz (admin olayı yok). Yalnız master'a yazar; e-skylab realm'lerine
+ikinci `--apply` hiçbir şey yazmaz (admin olayı yok). Realm ayarlarında kuru koşu her alanı canlı ve
+yeni değeriyle basar (`bruteForceProtected false -> true`). Realm yazmaları canlı realm temsilinin
+üstüne birleştirilip tam gönderilir (kcadm `--merge`): Keycloak, kısmi bir realm PUT'unda olmayan CIBA,
+PAR ve cihaz kodu ayarlarını varsayılana döndürür. Yalnız master'a yazar; e-skylab realm'lerine
 dokunmaz. **Üyeliğe dokunmaz**: kimin hangi grupta olduğu veridir (rol-temizligi 04, F1).
 
 | Kalem | Uygulanan durum |
@@ -4321,7 +4324,7 @@ dokunmaz. **Üyeliğe dokunmaz**: kimin hangi grupta olduğu veridir (rol-temizl
 | Gruplar (`config/master-console.json`, `/ROLLER` dosyasının biçimi) | `/KONSOL` (rol taşımaz) ve yaprakları: `E-SKYLAB-YAZICILAR` = `e-skylab-realm` client'ının bütün rolleri, `SANDBOX-YAZICILAR` = `e-skylab-sandbox-realm`'in bütün rolleri; ikisinde de `impersonation` yok (`excluded_roles`): yazanlar başkasının yerine geçemez. Okuyucu grubu yok (S2: konsoldakilerin hepsi yazar). Yapraktaki fazla rol, `/KONSOL`'un kendi rolü, yaprak altındaki alt grup, dosyada olmayan `/KONSOL/*` grubu ve client'ın dosyada ne listelenen ne hariç tutulan rolü (Keycloak'ın yeni bir sürümle eklediği rol) `WARNING` olur, alınmaz. client yoksa (o realm o sunucuda yoksa) yaprak uyarıyla atlanır. `/KONSOL` ya da altı master'ın varsayılan grubuysa `PROBLEM`, hiçbir şey yazılmaz. |
 | Giriş akışı `konsol-passkey` | Üst düzey akış: `auth-username-password-form`, ardından `webauthn-authenticator`, ikisi de `REQUIRED`. **Cookie adımı yok**: açık bir SSO oturumu iki faktörün yerine geçmez, konsol her girişte parola ve passkey ister. **Koşullu rol akışı yok** (spec §4.4): rol adı değişirse ikinci faktör sessizce atlanırdı. Elle değiştirilmiş akış geri kurulur (fazla adım ya da alt akış silinir, eksik adım sırasıyla yeniden eklenir, gereklilik `REQUIRED` yapılır). |
 | Akışın bağlandığı client'lar | `security-admin-console`, `account-console` ve `account` (client akış ezmesi, `browser`). Hesap konsolları da bağlıdır: yalnız parolayla açılmış bir master Hesap Konsolu oturumu kişinin passkey'ini silebilirdi (Account REST, adım yükseltme yok); sonraki konsol girişinde parolayı bilen kendi passkey'ini kaydederdi. Master'da tarayıcıyla giriş yapılan (standard ya da implicit akış, yönlendirme adresi var, bearer-only değil) başka bir client bağlı değilse `WARNING` (client kimliğiyle). master'ın kendi tarayıcı akışı değişmez. |
-| Passkey politikası ve kaydı | master'ın iki faktörlü WebAuthn politikası: `webAuthnPolicyResidentKey=required`, `webAuthnPolicyUserVerificationRequirement=required` (keşfedilebilir kimlik bilgisi + kullanıcı doğrulaması: passkey; e-skylab'ın passkey politikasıyla aynı iki değer). Keycloak bu politikayı yalnız tam haliyle yazar; betik onu canlı realm temsilinin üstüne birleştirip gönderir. Zorunlu eylem `webauthn-register` açık: passkey'i olmayan hesap parolasından hemen sonra bir tane kaydeder (bir kez). Eylem kayıtlı değilse `PROBLEM`. |
+| Passkey politikası ve kaydı | master'ın iki faktörlü WebAuthn politikası: `webAuthnPolicyResidentKey=required`, `webAuthnPolicyUserVerificationRequirement=required` (keşfedilebilir kimlik bilgisi + kullanıcı doğrulaması: passkey; e-skylab'ın passkey politikasıyla aynı iki değer). Keycloak bu politikayı yalnız tam haliyle yazar; betik onu canlı realm temsilinin üstüne birleştirip gönderir. Zorunlu eylem `webauthn-register` açık: passkey'i olmayan hesap parolasından hemen sonra bir tane kaydeder (bir kez). Eylem kayıtlı değilse `PROBLEM`, hiçbir şey yazılmaz: akış bağlansaydı passkey'i olmayan herkes konsoldan geri çevrilirdi. |
 | Brute force | e-skylab'ınkiyle aynı değerler: `config/account-center-realm-security.json`'un brute force alanları (`bruteForceProtected=true`, `failureFactor=10`, `waitIncrementSeconds=60`, `maxFailureWaitSeconds=900`, `maxDeltaTimeSeconds=43200`, `quickLoginCheckMilliSeconds=1000`, `minimumQuickLoginWaitSeconds=60`, `permanentLockout=false`). Parola politikası master'a yazılmaz. |
 | Olaylar | Kullanıcı ve admin olayları açık, ikisi de 30 gün (`eventsExpiration`, realm özniteliği `adminEventsExpiration`), admin olay ayrıntıları açık; uzlaştırıcının e-skylab'daki ayarıyla aynı (§0). Acil hesap postası (rol-temizligi 18) master'ın `LOGIN` olaylarını okur. Dinleyiciler ve olay türleri yazılmaz. |
 
@@ -4334,7 +4337,8 @@ dokunmaz. **Üyeliğe dokunmaz**: kimin hangi grupta olduğu veridir (rol-temizl
 - bir `<realm>-realm` rolünü doğrudan ya da `/KONSOL/*` dışındaki bir gruptan taşıyan kişi; varsa
   `WARNING`;
 - konsol kişileri (`admin` sahipleri ve yaprak üyeleri) ve aralarında passkey'i olmayanlar; varsa
-  `WARNING` (bir sonraki girişte kaydederler).
+  `WARNING` (bir sonraki girişte kaydederler). Kapatılmış (`enabled=false`) hesap giriş yapamaz;
+  ayrı sayılır, passkey sayımına girmez; `admin` ve yaprak sayımlarına girmeye devam eder.
 
 e-skylab tarafının sayımı (K3: `realm-management` taşıyan kişi ve grup 0) `KEYCLOAK_REALM=e-skylab
 config/role-groups.sh --audit`'in `audit K3` satırıdır (§26); master oturumuyla aynı konteynerde koşar.
@@ -4408,14 +4412,16 @@ bekleyin; ya da hesap bozuk) §35'teki geçici yönetici yolu kullanılır.
 dosya hataları girişten önce 2; temiz master'da kuru koşu her değişikliği adlandırır ve yazmaz;
 `--apply` akışı, üç ezmeyi, brute force'u (e-skylab'ın değerleri), olayları, passkey politikasını ve iki
 yaprağı (20'şer rol, `impersonation` yok) kurar; kuru koşu 0 değişiklik, ikinci `--apply` admin olayı
-bırakmaz; akışa eklenen Cookie adımı, `DISABLED` passkey adımı, kalkan ezme, kapatılan
-`webauthn-register` ve silinen parola adımı geri kurulur, fazlalar yalnız uyarılır, `/KONSOL` altında
-varsayılan grup 1 ile durur; sayımlar kişi adı basmaz; kişilerin kendi token'larıyla yazıcı e-skylab'ı
-okur ve yazar, `impersonation` ve master'ı okuyamaz, `view-*` okuyucu okur ve yazamaz; Chromium'da
-sanal authenticator'la (fiziksel anahtar yok) passkey'siz hesap parolasından sonra kayda gider ve
-konsola ulaşır, açık SSO oturumunda konsol parola ve passkey'i yeniden ister (`prompt=none` →
-`login_required`), kayıtlı passkey olmadan giriş reddedilir (`LOGIN_ERROR`), `view-*` okuyucu konsolu
-açar; `--remove-override` önce kuru, sonra üç ezmeyi kaldırır, akış kalır, `--apply` geri bağlar.
+bırakmaz; master'ın CIBA, PAR ve cihaz kodu ayarları korunur; akışa eklenen Cookie adımı, `DISABLED`
+passkey adımı, kalkan ezme, kapatılan `webauthn-register` ve silinen parola adımı geri kurulur,
+fazlalar yalnız uyarılır, `/KONSOL` altında varsayılan grup ve kayıtlı olmayan `webauthn-register` 1
+ile durur, hiçbir şey yazılmaz; sayımlar kişi adı basmaz, kapatılmış hesap passkey sayımına girmez;
+kişilerin kendi token'larıyla yazıcı e-skylab'ı okur ve yazar, `impersonation` ve master'ı okuyamaz,
+`view-*` okuyucu okur ve yazamaz; Chromium'da sanal authenticator'la (fiziksel anahtar yok) passkey'siz
+hesap parolasından sonra kayda gider ve konsola ulaşır, açık SSO oturumunda konsol parola ve passkey'i
+yeniden ister (`prompt=none` → `login_required`; aynı istek ezmesiz bir client'ta kod alır, oturum
+canlıdır), kayıtlı passkey olmadan giriş reddedilir (`LOGIN_ERROR`), `view-*` okuyucu konsolu açar;
+`--remove-override` önce kuru, sonra üç ezmeyi kaldırır, akış kalır, `--apply` geri bağlar.
 
 ## 35. Acil erişim (break-glass): genel kural (grup-yonetimi 06)
 

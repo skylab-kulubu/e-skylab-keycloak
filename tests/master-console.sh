@@ -12,26 +12,29 @@
 #
 # What it proves:
 #   - a bad threshold and a file that lists an excluded role are refused before a login (exit 2);
-#   - --check on a fresh master names every change and writes nothing;
+#   - --check on a fresh master names every change (realm settings with their live and new value) and
+#     writes nothing;
 #   - --apply creates the flow konsol-passkey (auth-username-password-form, webauthn-authenticator,
 #     both REQUIRED, nothing else), binds it to security-admin-console, account-console and account,
 #     sets brute force to e-skylab's values, the passkey policy, events (30 days, details on) and
 #     enables webauthn-register, creates /KONSOL and its two leaves with the 20 roles each (no
-#     impersonation); --check then has 0 changes, and a second --apply writes nothing (no admin event);
+#     impersonation); master's CIBA, PAR and device code settings stay (the realm writes go on the whole
+#     live realm); --check then has 0 changes, and a second --apply writes nothing (no admin event);
 #   - drift is put back: a Cookie step and a DISABLED passkey step in the flow, a missing override, a
 #     disabled webauthn-register, a missing password step (rebuilt in order); extra roles on a leaf
 #     (impersonation), a role on /KONSOL, a subgroup and an unlisted group are WARNINGs, never taken
-#     away; a default group under /KONSOL is a PROBLEM (exit 1, nothing written);
+#     away; a default group under /KONSOL and a webauthn-register that is not registered are PROBLEMs
+#     (exit 1, nothing written, the console not bound);
 #   - the counts never name a person: admin holders against KEYCLOAK_MASTER_ADMIN_MAX, leaf members
 #     against KEYCLOAK_CONSOLE_WRITERS_MAX, people with a <realm>-realm role outside /KONSOL (a service
-#     account is not counted), console people without a passkey;
+#     account is not counted), console people without a passkey (a disabled account apart);
 #   - Admin REST with the people's own tokens: a writer reads and writes e-skylab, cannot impersonate
 #     and cannot read master; the view-* reader reads e-skylab and cannot write;
 #   - in Chromium with a virtual authenticator (tests/master-console-browser.mjs): a console account
 #     without a passkey is sent to register one right after its password and reaches the console; with
 #     the SSO session open the console asks for the password and the passkey again (prompt=none gets
-#     login_required); a sign-in without the registered passkey is refused; the view-* reader opens the
-#     console;
+#     login_required, while a client without the override gets a code: the session is live); a sign-in
+#     without the registered passkey is refused; the view-* reader opens the console;
 #   - --remove-override takes the three overrides away (dry run first) and --apply puts them back.
 # Requirements on the host: docker, curl, jq, node with theme/node_modules (npm ci) and Playwright's
 # Chromium. MASTER_CONSOLE_TEST_PORT (default 18098), MASTER_CONSOLE_TEST_CONTAINER (default
@@ -227,6 +230,12 @@ kcadm create users -r e-skylab -s username=member -s enabled=true >/dev/null
 all_roles=$(kcadm get "clients/$(client_uuid "$MASTER" e-skylab-realm)/roles" -r "$MASTER" | jq -c '[.[].name] | sort')
 [[ $(jq -c '. - ["impersonation"]' <<<"$all_roles") == "$WRITER_ROLES" ]] \
   || fail "e-skylab-realm's roles are not the 20 of the file plus impersonation: $all_roles"
+# Settings a partial realm PUT resets to Keycloak's defaults (CIBA, PAR, device code): every realm write
+# of the script goes on the whole live realm, so --apply keeps them.
+kcadm update "realms/$MASTER" -s 'attributes.cibaExpiresIn="333"' -s 'attributes.parRequestUriLifespan="77"' \
+  -s oauth2DeviceCodeLifespan=444 >/dev/null
+KEPT_SETTINGS='.attributes.cibaExpiresIn == "333" and .attributes.parRequestUriLifespan == "77" and .oauth2DeviceCodeLifespan == 444'
+jq -e "$KEPT_SETTINGS" <<<"$(kcadm get "realms/$MASTER")" >/dev/null || fail 'the CIBA, PAR and device code markers were not set'
 printf '    e-skylab-realm in master: the 20 roles of config/master-console.json and impersonation\n'
 
 # ---------------------------------------------------------------------------------------------------
@@ -244,7 +253,8 @@ for line in 'would set brute force detection (the values of e-skylab)' 'would se
   'would create the console group /KONSOL/SANDBOX-YAZICILAR' \
   'would map 20 role(s) of e-skylab-realm to /KONSOL/E-SKYLAB-YAZICILAR' \
   'count: 1 person(s) hold master'"'"'s realm role admin (at most 3' \
-  'count: 1 console person(s) (admin or a console group), 1 of them without a passkey'; do
+  'count: 1 console person(s) (admin or a console group), 1 of them without a passkey' \
+  'bruteForceProtected false -> true'; do
   expect_line "$checked" "$line" 'the dry run did not name it'
 done
 reject_line "$checked" 'would enable the required action' 'webauthn-register is enabled in a fresh master'
@@ -276,6 +286,8 @@ jq -e '.eventsEnabled and .adminEventsEnabled and .adminEventsDetailsEnabled and
   and .webAuthnPolicyRpEntityName == "keycloak"' <<<"$realm" >/dev/null \
   || fail "master events or passkey policy: $(jq -c '{eventsEnabled, adminEventsEnabled, adminEventsDetailsEnabled, eventsExpiration, webAuthnPolicyUserVerificationRequirement, webAuthnPolicyResidentKey, webAuthnPolicyRpEntityName}' <<<"$realm")"
 [[ $(jq -c '(.passwordPolicy // "")' <<<"$realm") == '""' ]] || fail 'the script set a password policy on master'
+jq -e "$KEPT_SETTINGS" <<<"$realm" >/dev/null \
+  || fail "--apply reset CIBA, PAR or device code settings: $(jq -c '{ciba: .attributes.cibaExpiresIn, par: .attributes.parRequestUriLifespan, device: .oauth2DeviceCodeLifespan}' <<<"$realm")"
 for leaf in "$WRITERS:e-skylab-realm" "$SANDBOX_WRITERS:e-skylab-sandbox-realm"; do
   [[ $(leaf_roles "${leaf%%:*}" "${leaf#*:}") == "$WRITER_ROLES" ]] || fail "${leaf%%:*} does not hold the 20 roles"
 done
@@ -349,9 +361,24 @@ refused=$(run_expecting 1 --apply)
 expect_line "$refused" 'PROBLEM: the default group /KONSOL/E-SKYLAB-YAZICILAR is at or under /KONSOL' 'a default group under /KONSOL was not refused'
 [[ $(events) == "$events_before" ]] || fail 'the refused run wrote something'
 kcadm delete "default-groups/$(group_id "$WRITERS")" -r "$MASTER" >/dev/null
+# webauthn-register not registered: a PROBLEM before any write; the console is never bound without it.
+kcadm update "clients/$(client_uuid "$MASTER" account)" -r "$MASTER" -s 'authenticationFlowBindingOverrides.browser=' >/dev/null
+kcadm delete authentication/required-actions/webauthn-register -r "$MASTER" >/dev/null
+events_before=$(events)
+refused=$(run_expecting 1 --apply)
+expect_line "$refused" 'PROBLEM: the required action webauthn-register is not registered in master' 'a missing webauthn-register was not refused'
+reject_line "$refused" 'bind the browser sign-in' 'the console was bound without webauthn-register'
+[[ $(events) == "$events_before" ]] || fail 'the run without webauthn-register wrote something'
+[[ -z $(override_of account) ]] || fail 'account was bound without webauthn-register'
+kcadm create authentication/register-required-action -r "$MASTER" \
+  -b '{"providerId":"webauthn-register","name":"Webauthn Register"}' >/dev/null
+kcadm update authentication/required-actions/webauthn-register -r "$MASTER" -s enabled=false >/dev/null
 clean=$(run_expecting 0 --apply)
-expect_line "$clean" 'applied 1 change(s), 1 warning(s), 0 problem(s)' 'the realm is not back to one change'
-printf '    drift put back (Cookie step, DISABLED passkey, missing override, disabled registration, missing password step); extras only warned; a default group under /KONSOL refused\n'
+for line in 'enable the required action webauthn-register' 'bind the browser sign-in of account to konsol-passkey' \
+  'applied 2 change(s), 1 warning(s), 0 problem(s)'; do
+  expect_line "$clean" "$line" 'the realm is not back after webauthn-register was registered again'
+done
+printf '    drift put back (Cookie step, DISABLED passkey, missing override, disabled registration, missing password step); extras only warned; a default group under /KONSOL and a missing webauthn-register refused before any write\n'
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='people and counts'
@@ -386,10 +413,14 @@ for person in yazici-bir yazici-iki okuyucu yonetici-bir dogrudan harness-servic
   reject_line "$counted" "$person" 'the counts named a person'
 done
 kcadm remove-roles -r "$MASTER" --uusername yonetici-uc --rolename admin >/dev/null
+# A disabled console account cannot sign in: left out of the passkey count.
+kcadm update "users/$(user_id "$MASTER" yonetici-iki)" -r "$MASTER" -s enabled=false >/dev/null
 counted=$(run_expecting 0 --check)
 expect_line "$counted" 'count: 3 person(s) hold master'"'"'s realm role admin (at most 3' 'the admin count did not drop'
+expect_line "$counted" 'count: 5 console person(s) (admin or a console group), 4 of them without a passkey (1 disabled, left out of the passkey count)' \
+  'a disabled console account was counted as waiting for a passkey'
 reject_line "$counted" "more than 3 (KEYCLOAK_MASTER_ADMIN_MAX)" 'three admin holders were warned'
-printf '    counts: admin holders, leaf members, <realm>-realm roles outside /KONSOL (service account left out), console people without a passkey; no name printed\n'
+printf '    counts: admin holders, leaf members, <realm>-realm roles outside /KONSOL (service account left out), console people without a passkey (disabled accounts apart); no name printed\n'
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='Admin REST with the people'"'"'s own tokens'
@@ -411,9 +442,13 @@ CURRENT_STAGE='the console sign-in in Chromium (virtual authenticator)'
 if [[ ${MASTER_CONSOLE_TEST_BROWSER:-1} != 0 ]]; then
   command -v node >/dev/null || fail 'node is required for the browser stage (MASTER_CONSOLE_TEST_BROWSER=0 skips it)'
   user_events_before=$(kcadm get events -r "$MASTER" -q max=100000 | jq length)
-  MASTER_CONSOLE_BASE_URL=$BASE_URL MASTER_CONSOLE_PASSWORD=$PEOPLE_PASSWORD \
+  # The positive control of case 2: a public client on master's own browser flow (Cookie step).
+  kcadm create clients -r "$MASTER" -s clientId=harness-sso -s publicClient=true -s standardFlowEnabled=true \
+    -s "redirectUris=[\"${BASE_URL/127.0.0.1/localhost}/*\"]" >/dev/null
+  MASTER_CONSOLE_BASE_URL=$BASE_URL MASTER_CONSOLE_PASSWORD=$PEOPLE_PASSWORD MASTER_CONSOLE_SSO_CLIENT=harness-sso \
     node "$SCRIPT_DIR/master-console-browser.mjs" | tee "$STATE_DIR/browser.log"
   expect_line "$(cat "$STATE_DIR/browser.log")" 'browser: all cases passed' 'the browser stage did not finish'
+  kcadm delete "clients/$(client_uuid "$MASTER" harness-sso)" -r "$MASTER" >/dev/null
   events_json=$(kcadm get events -r "$MASTER" -q max=100000)
   [[ $(jq length <<<"$events_json") -gt $user_events_before ]] || fail 'master stored no user event of the sign-ins'
   jq -e '[.[] | select(.type == "LOGIN" and .clientId == "security-admin-console")] | length >= 3' <<<"$events_json" >/dev/null \
@@ -421,9 +456,9 @@ if [[ ${MASTER_CONSOLE_TEST_BROWSER:-1} != 0 ]]; then
   jq -e '[.[] | select(.type == "LOGIN_ERROR" and .clientId == "security-admin-console")] | length >= 1' <<<"$events_json" >/dev/null \
     || fail 'the refused sign-in left no LOGIN_ERROR'
   counted=$(run_expecting 0 --check)
-  expect_line "$counted" 'count: 5 console person(s) (admin or a console group), 4 of them without a passkey' \
+  expect_line "$counted" 'count: 5 console person(s) (admin or a console group), 3 of them without a passkey (1 disabled' \
     'the passkeys registered in the browser are not counted'
-  printf '    Chromium: registration on first sign-in, passkey again with an open SSO session, refusal without the passkey, view-* console; LOGIN and LOGIN_ERROR events stored\n'
+  printf '    Chromium: registration on first sign-in, passkey again with an open (live) SSO session, refusal without the passkey, view-* console; LOGIN and LOGIN_ERROR events stored\n'
 else
   printf '    SKIPPED: the browser stage (MASTER_CONSOLE_TEST_BROWSER=0)\n'
 fi

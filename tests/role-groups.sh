@@ -46,9 +46,12 @@
 #     temporary roles none; with KEYCLOAK_APP_ASSIGNMENTS_ALARM=true the step exits 1 on drift,
 #     --alarm without --privileged-file is refused (exit 2) and a failed read is exit 2;
 #   - the nightly alarm's run (config/app-assignments-alarm.sh) on the sandbox, seeded and every top
-#     team with a Leader: no drift (exit 0, alarm=0); a seeded role taken from or given to a
-#     Privileged root in the panel is a BILGI line (S2-tohum), never counted; a role no seed covers
-#     there is S2-fazla (exit 1); a reconciler that stops before the check prints no summary: exit 2;
+#     team with a Leader: no drift (exit 0, alarm=0); a seeded role taken from or given to a root of
+#     its own seed set (/<NAME>, /UYELER/<NAME> or a sub-group) in the panel is a BILGI line
+#     (S2-tohum), never counted; given to a Privileged root or its sub-group outside its seed set, or
+#     a role no seed covers there, it is S2-fazla (exit 1); a seeded DK write role on DK is S2-fazla, a
+#     seeded read role on DK's sub-group BILGI; a reconciler that stops before the check prints no
+#     summary: exit 2;
 #   - app-assignments --seed: a dry run plans exactly the missing initial assignments (every top
 #     team's Forms seat, the Leader groups' and ALGOLAB's SkyMail pair) with enabled member counts and
 #     writes nothing; the reconciler's step tohum-atamalar applies them with a 0600 backup and marks
@@ -659,6 +662,16 @@ grant_group /ADMIN admin content:read
 grant_group /ADMIN admin content:write
 grant_group /UYELER/DK admin content:read
 grant_group /UYELER/DK admin content:write
+# The panel's roles as seeded once (the reconciler's mark: content:read to ADMIN, YK and DK,
+# content:write to ADMIN and YK): DK's content:write is a write role on DK, never the panel's (S2-fazla);
+# content:read on a sub-group of DK is in its seed set (BILGI, ekip-yetkileri ticket 17).
+for role in content:read content:write; do
+  role_id=$(kcadm get "clients/$(client_uuid "$REALM" admin)/roles/$role" -r "$REALM" | jq -r .id)
+  kcadm update "roles-by-id/$role_id" -r "$REALM" \
+    -s 'attributes."skylab.seeded-group-mappings"=["2026-10-26T00:00:00Z test"]' >/dev/null
+done
+create_group "$REALM" /UYELER/DK ALT
+grant_group /UYELER/DK/ALT admin content:read
 before=$(events "$REALM")
 output=$(reconcile_step 2 app-assignments)
 expect_line "$output" 'KEYCLOAK_RECONCILE_ONLY=app-assignments is an operator step' 'the check ran without an operator session'
@@ -698,6 +711,17 @@ expect_line "$sorted" '[app-assignments] KOD|/UYELER/YK|admin|content:write|evet
 expect_line "$sorted" '[app-assignments] KOD|/UYELER/DK|admin|content:read|evet|var' 'the reconciler does not expect the panel'"'"'s content:read on DK'
 expect_line "$sorted" '[app-assignments] KOD|/UYELER/DK|admin|content:write|hayır|var' 'DK'"'"'s panel content:write was expected (DK reads, GY1)'
 reject_line "$sorted" 'PROBLEM: admin/content' 'the panel'"'"'s inscribed roles on a Privileged root were a PROBLEM'
+expect_line "$sorted" '[app-assignments] SAPMA|S2-fazla|/UYELER/DK|admin|content:write' 'a seeded write role on DK is no S2-fazla (DK reads)'
+reject_line "$sorted" 'BILGI|S2-tohum|/UYELER/DK|admin|content:write' 'a seeded write role on DK was taken for the panel'"'"'s'
+expect_line "$sorted" '[app-assignments] BILGI|S2-tohum|/UYELER/DK/ALT|admin|content:read|fazla' \
+  'a seeded read role on a sub-group of DK (its seed set) is no BILGI line'
+reject_line "$sorted" 'SAPMA|S2-fazla|/UYELER/DK/ALT' 'a seeded read role on a sub-group of DK was taken for drift'
+expect_line "$sorted" '[app-assignments] BILGI|S2-tohum|/UYELER/YK|admin|content:write|eksik' \
+  'a seeded role missing from YK (its seed set) is no BILGI line'
+# DK's temporary Forms admin role missing is dk-read-only.sh --forms's goal: BILGI, never drift.
+expect_line "$sorted" '[app-assignments] BILGI|S2-geçici|/UYELER/DK|forms|skyforms:*|eksik' \
+  'DK'"'"'s missing temporary Forms role is no BILGI line'
+reject_line "$sorted" 'SAPMA|S2-eksik|/UYELER/DK|forms|skyforms:*' 'DK'"'"'s missing temporary Forms role was taken for drift'
 expect_line "$sorted" '[app-assignments] KOD|/ADMIN|frontend-arge|cms:access|karar-bekliyor|var' 'ADMIN'"'"'s frontend-arge role is not pending'
 expect_line "$sorted" '[app-assignments] KOD|/UYELER/ARGE/AIRLAB/LIDERLER|frontend-arge|cms:access|karar-bekliyor|var' 'the Leader group'"'"'s frontend-arge role is not pending'
 reject_line "$sorted" 'PROBLEM: frontend-arge' 'a pending frontend-arge role was a PROBLEM'
@@ -1119,26 +1143,44 @@ reject_line "$clean" 'not measured' 'the clean run was taken for one not measure
 expect_line "$clean" 'check: 0 change(s) pending' 'the check planned a change'
 [[ $(events "$SANDBOX") == "$sandbox_before" ]] || fail 'the alarm wrote something'
 printf '    alarm: the sandbox without drift exits 0 (alarm=0), writes nothing\n'
-# The panel takes skymail:mails:write from ADMIN and gives ADMIN skymail:mails:approve (YK's seed);
-# skymail:templates:write is in no Privileged list: on ADMIN it is the code area's drift.
+# The panel takes skymail:mails:write from ADMIN (its seed set ADMIN and YK): BILGI. skymail:mails:approve
+# is seeded to YK alone: on a sub-group of /UYELER/YK it is the panel's (BILGI), on ADMIN and on a
+# sub-group of ADMIN outside its seed set (ekip-yetkileri ticket 17: S2-fazla). skymail:templates:write is
+# in no Privileged list: on ADMIN it is the code area's drift.
 kcadm remove-roles -r "$SANDBOX" --gpath /ADMIN --cclientid skymail --rolename skymail:mails:write >/dev/null
 kcadm add-roles -r "$SANDBOX" --gpath /ADMIN --cclientid skymail --rolename skymail:mails:approve >/dev/null
 kcadm add-roles -r "$SANDBOX" --gpath /ADMIN --cclientid skymail --rolename skymail:templates:write >/dev/null
+create_group "$SANDBOX" /ADMIN ALT
+create_group "$SANDBOX" /UYELER/YK ALT
+# By id: kcadm's --gpath search refuses a sub-group path ("not an exact match").
+for path in /ADMIN/ALT /UYELER/YK/ALT; do
+  kcadm create "groups/$(group_id "$SANDBOX" "$path")/role-mappings/clients/$(client_uuid "$SANDBOX" skymail)" -r "$SANDBOX" \
+    -b "$(role_body "$SANDBOX" skymail skymail:mails:approve)" >/dev/null
+done
 sandbox_before=$(events "$SANDBOX")
 changed=$(alarm_run 1)
 expect_line "$changed" '[app-assignments] BILGI|S2-tohum|/ADMIN|skymail|skymail:mails:write|eksik' \
   'a seeded role the panel took from a Privileged root is no BILGI line'
-expect_line "$changed" '[app-assignments] BILGI|S2-tohum|/ADMIN|skymail|skymail:mails:approve|fazla' \
-  'a seeded role the panel gave a Privileged root is no BILGI line'
+expect_line "$changed" '[app-assignments] BILGI|S2-tohum|/UYELER/YK/ALT|skymail|skymail:mails:approve|fazla' \
+  'a seeded role the panel gave a sub-group of its seed set is no BILGI line'
 reject_line "$changed" 'SAPMA|S2-eksik|/ADMIN|skymail|skymail:mails:write' 'a panel change on a seeded Privileged role was taken for drift'
-reject_line "$changed" 'SAPMA|S2-fazla|/ADMIN|skymail|skymail:mails:approve' 'a panel change on a seeded Privileged role was taken for drift'
+reject_line "$changed" 'SAPMA|S2-fazla|/UYELER/YK/ALT|' 'a panel change in a seed set was taken for drift'
+expect_line "$changed" '[app-assignments] SAPMA|S2-fazla|/ADMIN|skymail|skymail:mails:approve' \
+  'a seeded role on a Privileged root outside its seed set is no S2-fazla'
+expect_line "$changed" '[app-assignments] SAPMA|S2-fazla|/ADMIN/ALT|skymail|skymail:mails:approve' \
+  'a seeded role on a sub-group outside its seed set is no S2-fazla'
+reject_line "$changed" 'BILGI|S2-tohum|/ADMIN|skymail|skymail:mails:approve' 'a seeded role outside its seed set was taken for the panel'"'"'s'
+reject_line "$changed" 'BILGI|S2-tohum|/ADMIN/ALT|' 'a seeded role outside its seed set was taken for the panel'"'"'s'
 expect_line "$changed" '[app-assignments] SAPMA|S2-fazla|/ADMIN|skymail|skymail:templates:write' \
   'a role no seed covers on a Privileged root is no S2-fazla'
-expect_line "$changed" 'S2-eksik=0 S2-fazla=1 S2b=0 S3=0 S5=0 S2-tohum=2 (bilgi), alarm=1' \
+reject_line "$changed" 'PROBLEM: skymail/skymail:mails:approve' 'a Privileged sub-group'"'"'s role was a PROBLEM'
+expect_line "$changed" 'S2-eksik=0 S2-fazla=3 S2b=0 S3=0 S5=0 S2-tohum=2 (bilgi), alarm=3' \
   'the panel'"'"'s changes counted towards the alarm, or the code area'"'"'s did not'
 [[ $(events "$SANDBOX") == "$sandbox_before" ]] || fail 'the alarm wrote something'
 kcadm remove-roles -r "$SANDBOX" --gpath /ADMIN --cclientid skymail --rolename skymail:templates:write >/dev/null
-printf '    alarm: a seeded Privileged role changed in the panel is BILGI (S2-tohum), never counted; a role no seed covers there is S2-fazla (exit 1)\n'
+kcadm delete "groups/$(group_id "$SANDBOX" /ADMIN/ALT)" -r "$SANDBOX" >/dev/null
+kcadm delete "groups/$(group_id "$SANDBOX" /UYELER/YK/ALT)" -r "$SANDBOX" >/dev/null
+printf '    alarm: a seeded Privileged role changed in its seed set (/<NAME>, /UYELER/<NAME>, a sub-group) is BILGI (S2-tohum), never counted; outside its seed set or with no seed it is S2-fazla (exit 1)\n'
 # The reconciler stops at its realm read, before the check: no summary line, never drift.
 stopped=$(alarm_run 2 -e KCADM_BIN=/tmp/kcadm-fail.sh -e "KCADM_INJECT_FAIL=realms/$SANDBOX")
 expect_line "$stopped" '[app-assignments-alarm] not measured: exit ' 'the run without a summary was not reported'

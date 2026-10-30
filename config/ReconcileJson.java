@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.function.IntConsumer;
 
 /**
  * JSON helper for reconcile-account-center.sh. The Keycloak image ships no jq, but it does
@@ -142,7 +143,18 @@ public final class ReconcileJson {
     private static final String ADMIN = "admin";
     private static final String USER = "user";
 
+    /**
+     * How main ends with a status (System.exit). ReconcileSession, which runs main for many calls in
+     * one JVM, replaces it with one that throws, so that a call ends without ending that JVM.
+     */
+    public static IntConsumer exitHook = System::exit;
+
     private ReconcileJson() {
+    }
+
+    private static void exit(int status) {
+        exitHook.accept(status);
+        throw new IllegalStateException("exitHook returned");
     }
 
     public static void main(String[] args) throws IOException {
@@ -159,18 +171,18 @@ public final class ReconcileJson {
             case "field" -> field(args, readStdin(), out);
             case "role-attribute" -> roleAttribute(args, readStdin(), out);
             case "realm-attribute" -> realmAttribute(args, readStdin(), out);
-            case "user-profile" -> System.exit(userProfile(requireFile(args), readStdin(), out));
-            case "password-form" -> System.exit(passwordForm(args, readStdin(), out));
-            case "first-broker-login" -> System.exit(firstBrokerLogin(args, readStdin(), out));
-            case "existing-account-flow" -> System.exit(existingAccountFlow(args, readStdin(), out));
-            case "existing-account-providers" -> System.exit(existingAccountProviders(readStdin()));
+            case "user-profile" -> exit(userProfile(requireFile(args), readStdin(), out));
+            case "password-form" -> exit(passwordForm(args, readStdin(), out));
+            case "first-broker-login" -> exit(firstBrokerLogin(args, readStdin(), out));
+            case "existing-account-flow" -> exit(existingAccountFlow(args, readStdin(), out));
+            case "existing-account-providers" -> exit(existingAccountProviders(readStdin()));
             case "copy-broker-review-config" -> copyBrokerReviewConfig(args, readStdin(), out);
-            case "email-code-flow" -> System.exit(emailCodeFlow(args, readStdin(), out));
-            case "config-value" -> System.exit(configValue(args, readStdin(), out));
+            case "email-code-flow" -> exit(emailCodeFlow(args, readStdin(), out));
+            case "config-value" -> exit(configValue(args, readStdin(), out));
             case "role-groups" -> roleGroups(requireFile(args), out);
             case "app-assignments" -> appAssignments(requireFile(args), out);
-            case "same-shape" -> System.exit(sameShape(args, readStdin()));
-            case "otp-guard" -> System.exit(otpGuard(args, readStdin(), out));
+            case "same-shape" -> exit(sameShape(args, readStdin()));
+            case "otp-guard" -> exit(otpGuard(args, readStdin(), out));
             default -> usage();
         }
     }
@@ -185,7 +197,7 @@ public final class ReconcileJson {
                 + "  |  ReconcileJson config-value NAME VALUE  |  ReconcileJson same-shape OTHER [STEP]"
                 + "  |  ReconcileJson otp-guard STEP  |  ReconcileJson role-groups FILE"
                 + "  |  ReconcileJson app-assignments FILE");
-        System.exit(1);
+        exit(1);
     }
 
     private static JsonNode requireFile(String[] args) throws IOException {

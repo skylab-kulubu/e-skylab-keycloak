@@ -6,6 +6,18 @@ umask 077
 
 KCADM=${KCADM_BIN:-/opt/keycloak/bin/kcadm.sh}
 JAVA_BIN=${JAVA_BIN:-java}
+# The session (config/ReconcileSession.java; start_session below): every kcadm read and every
+# ReconcileJson call of the run in one JVM. A kcadm.sh call starts a JVM of its own, and a whole
+# reconciliation made some two hundred of them (about 8.5 minutes in production, 2026-10-27). The
+# session runs each call as that JVM's main would, and session_call gives back the same bytes on
+# stdout and stderr, in the same order, and the same exit status, so every line, warning, dry run
+# line and exit status of the run stays the same (tests/run-integration.sh compares whole runs both
+# ways). Writes (create, update, delete) still start kcadm.sh. KEYCLOAK_RECONCILE_SESSION: on (the
+# default; a JVM per call when the session cannot start), off (a JVM per call: as before, the
+# rollback and the comparison base) or required (on, but the run stops when the session cannot
+# start; the tests). With a KCADM_BIN (the tests' injected kcadm failures) every call keeps its own
+# JVM, whatever this says.
+SESSION_MODE=${KEYCLOAK_RECONCILE_SESSION:-on}
 KEYCLOAK_LIB_DIR=${KEYCLOAK_LIB_DIR:-/opt/keycloak/lib/lib/main}
 CONFIG_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ADMIN_URL=${KEYCLOAK_ADMIN_URL:-http://keycloak:8080}
@@ -296,6 +308,10 @@ if [[ $RECONCILE_ONLY == role-groups || $RECONCILE_ONLY == leader-app-roles ]]; 
 fi
 WORK_DIR=$(mktemp -d /tmp/account-center-reconcile.XXXXXX)
 JSON_TOOL_CLASSPATH=''
+SESSION_DIR="$WORK_DIR/session"
+SESSION_PID=''
+SESSION_FD=''
+SESSION_PWD=''
 ENSURED_SCOPE_ID=''
 ACCOUNT_CENTER_UUID=''
 PASSKEY_EXTRA_ORIGIN_LIST=()
@@ -307,7 +323,21 @@ source "$CONFIG_DIR/mailer-client-contract.sh"
 # shellcheck source=erasure-client-contract.sh
 source "$CONFIG_DIR/erasure-client-contract.sh"
 
+# Stops the session JVM (start_session), if one runs; the EXIT trap and session_unavailable.
+stop_session() {
+  if [[ -n $SESSION_FD ]]; then
+    exec {SESSION_FD}>&-
+    SESSION_FD=''
+  fi
+  if [[ -n $SESSION_PID ]]; then
+    kill "$SESSION_PID" 2>/dev/null || true
+    wait "$SESSION_PID" 2>/dev/null || true
+    SESSION_PID=''
+  fi
+}
+
 cleanup() {
+  stop_session
   if [[ -z $OPERATOR_KCADM_CONFIG ]]; then
     rm -f "$KCADM_CONFIG"
   fi
@@ -404,6 +434,10 @@ case $AFTER_SIGN_UP in
   keep | on | off) ;;
   *) printf 'KEYCLOAK_AFTER_SIGN_UP must be keep (default), on or off, not %s\n' "$AFTER_SIGN_UP" >&2; exit 1 ;;
 esac
+case $SESSION_MODE in
+  on | off | required) ;;
+  *) printf 'KEYCLOAK_RECONCILE_SESSION must be on (default), off or required, not %s\n' "$SESSION_MODE" >&2; exit 1 ;;
+esac
 
 BASE_URL=$(normalize_account_center_base_url \
   "$BASE_URL" \
@@ -480,6 +514,10 @@ kcadm() {
         ;;
     esac
   fi
+  if [[ $command == get ]] && session_takes kcadm "$@"; then
+    session_call kcadm "$command" --config "$KCADM_CONFIG" "$@"
+    return
+  fi
   "$KCADM" "$command" --config "$KCADM_CONFIG" "$@"
 }
 
@@ -513,7 +551,7 @@ authenticate() {
 # that ships in the image and gives every comparison real JSON semantics.
 compile_json_tool() {
   local jackson_jars=("$KEYCLOAK_LIB_DIR"/com.fasterxml.jackson.core.jackson-*.jar)
-  local classpath jar
+  local classpath jar sources=("$CONFIG_DIR/ReconcileJson.java")
   if [[ ! -f ${jackson_jars[0]} ]]; then
     printf 'Jackson libraries were not found under %s\n' "$KEYCLOAK_LIB_DIR" >&2
     return 1
@@ -523,17 +561,186 @@ compile_json_tool() {
     classpath="$classpath$jar:"
   done
   mkdir -p "$WORK_DIR/classes"
+  if session_wanted; then
+    sources+=("$CONFIG_DIR/ReconcileSession.java")
+  fi
   "$JAVA_BIN" -XX:TieredStopAtLevel=1 -XX:+UseSerialGC \
     -m jdk.compiler/com.sun.tools.javac.Main \
     -d "$WORK_DIR/classes" \
     -cp "$classpath" \
-    "$CONFIG_DIR/ReconcileJson.java" >/dev/null
+    "${sources[@]}" >/dev/null
   JSON_TOOL_CLASSPATH="$WORK_DIR/classes:$classpath"
 }
 
 json_tool() {
+  if session_takes json "$@"; then
+    session_call json "$@"
+    return
+  fi
   "$JAVA_BIN" -XX:TieredStopAtLevel=1 -XX:+UseSerialGC \
     -cp "$JSON_TOOL_CLASSPATH" ReconcileJson "$@"
+}
+
+# Whether this run starts the session (see SESSION_MODE at the top; a KCADM_BIN is not the image's
+# own kcadm.sh, whose classes the session runs).
+session_wanted() {
+  [[ $SESSION_MODE != off && -z ${KCADM_BIN:-} ]]
+}
+
+# session_unavailable REASON: the session does not run; with required, the run stops here.
+session_unavailable() {
+  stop_session
+  if [[ $SESSION_MODE == required ]]; then
+    printf 'KEYCLOAK_RECONCILE_SESSION=required, but the session cannot start: %s\n' "$1" >&2
+    if [[ -s $SESSION_DIR/log ]]; then
+      cat -- "$SESSION_DIR/log" >&2
+    fi
+    exit 1
+  fi
+}
+
+# Starts the session JVM as kcadm.sh starts its own (its java, KC_OPTS, class path and options, with
+# the compiled classes after the kcadm jar) and waits until it is ready. kcadm.sh's own launch line
+# must be one this function knows; otherwise, or when the session cannot start, every call starts
+# its own JVM (SESSION_MODE on) or the run stops (required).
+start_session() {
+  local kcadm_path kcadm_dir launch jar java native=() ready_fd line='' waited=0
+  if ! session_wanted; then
+    return 0
+  fi
+  kcadm_path=$(readlink -f -- "$KCADM")
+  kcadm_dir=$(dirname -- "$kcadm_path")
+  launch=$(grep -E '^exec "\$JAVA" ' "$kcadm_path" || true)
+  # The patterns are kcadm.sh's own line, its variables unexpanded.
+  # shellcheck disable=SC2016
+  case $launch in
+    'exec "$JAVA" $KC_OPTS -cp $DIRNAME/client/keycloak-admin-cli-'*'.jar --add-opens=java.base/java.security=ALL-UNNAMED -Dkc.lib.dir=$DIRNAME/client/lib org.keycloak.client.admin.cli.KcAdmMain "$@"') ;;
+    'exec "$JAVA" $KC_OPTS -cp $DIRNAME/client/keycloak-admin-cli-'*'.jar --add-opens=java.base/java.security=ALL-UNNAMED --enable-native-access=ALL-UNNAMED -Dkc.lib.dir=$DIRNAME/client/lib org.keycloak.client.admin.cli.KcAdmMain "$@"')
+      native=(--enable-native-access=ALL-UNNAMED)
+      ;;
+    *)
+      session_unavailable "$kcadm_path starts its JVM in a way this script does not know"
+      return 0
+      ;;
+  esac
+  # shellcheck disable=SC2016
+  jar=${launch#*' -cp $DIRNAME/'}
+  jar="$kcadm_dir/${jar%%' '*}"
+  if [[ ! -f $jar ]]; then
+    session_unavailable "the kcadm jar $jar does not exist"
+    return 0
+  fi
+  if [[ -n ${JAVA:-} ]]; then
+    java=$JAVA
+  elif [[ -n ${JAVA_HOME:-} ]]; then
+    java="$JAVA_HOME/bin/java"
+  else
+    java=java
+  fi
+  mkdir "$SESSION_DIR"
+  mkfifo "$SESSION_DIR/requests" "$SESSION_DIR/ready"
+  exec {SESSION_FD}<>"$SESSION_DIR/requests" {ready_fd}<>"$SESSION_DIR/ready"
+  # KC_OPTS is split into options as kcadm.sh splits it. The JVM keeps none of this shell's other
+  # files open (CHECK_FD 8 is this run's stderr).
+  # shellcheck disable=SC2086
+  "$java" ${KC_OPTS:-} -cp "$jar:$WORK_DIR/classes" --add-opens=java.base/java.security=ALL-UNNAMED "${native[@]}" \
+    "-Dkc.lib.dir=$kcadm_dir/client/lib" ReconcileSession "$SESSION_DIR" "$JSON_TOOL_CLASSPATH" \
+    </dev/null >"$SESSION_DIR/log" 2>&1 8>&- {SESSION_FD}>&- {ready_fd}>&- &
+  SESSION_PID=$!
+  until IFS= read -r -t 1 -u "$ready_fd" line; do
+    if ! kill -0 "$SESSION_PID" 2>/dev/null || ((++waited >= 120)); then
+      break
+    fi
+  done
+  exec {ready_fd}<&-
+  if [[ $line != ready ]]; then
+    session_unavailable "${line:-the session JVM did not answer}"
+    return 0
+  fi
+  SESSION_PWD=$PWD
+  # session_lost stops the run from a command substitution through this signal.
+  trap 'exit 1' USR1
+}
+
+# session_takes kcadm|json ARG...: whether the session runs this call (status 1: a JVM of its own).
+# kcadm's own help ends its JVM (System.exit), -x prints the session's stack, and --v2 is another
+# command line; the session takes paths relative to the directory it started in.
+session_takes() {
+  local tool=$1 argument
+  shift
+  [[ -n $SESSION_PID && $PWD == "$SESSION_PWD" ]] || return 1
+  if [[ $tool == kcadm ]]; then
+    for argument in "$@"; do
+      case ${argument,,} in
+        --v2 | --help | -h | -x) return 1 ;;
+      esac
+    done
+  fi
+  return 0
+}
+
+# session_reads_stdin kcadm|json ARG...: whether the call reads stdin (kcadm: -f -; ReconcileJson:
+# every sub-command but these three, which read files). Only then does session_call pass it on.
+session_reads_stdin() {
+  local tool=$1 previous='' argument
+  shift
+  if [[ $tool == json ]]; then
+    case ${1:-} in
+      '' | merge | role-groups | app-assignments) return 1 ;;
+    esac
+    return 0
+  fi
+  for argument in "$@"; do
+    if [[ $argument == --file=- ]] || [[ $argument == - && ( $previous == -f || $previous == --file ) ]]; then
+      return 0
+    fi
+    previous=$argument
+  done
+  return 1
+}
+
+# session_call kcadm|json ARG...: runs the call in the session (protocol: config/ReconcileSession.java),
+# then prints what it printed (each segment on stdout or stderr, in order) and returns its status.
+session_call() {
+  local tool=$1 request done_fd status='' segment
+  shift
+  kill -0 "$SESSION_PID" 2>/dev/null || session_lost 'the session JVM is gone'
+  request=$(mktemp -d "$SESSION_DIR/call.XXXXXX")
+  if (($#)); then
+    printf '%s\0' "$@" >"$request/args"
+  else
+    : >"$request/args"
+  fi
+  if session_reads_stdin "$tool" "$@"; then
+    cat >"$request/stdin"
+  fi
+  mkfifo "$request/done" || session_lost 'mkfifo failed'
+  exec {done_fd}<>"$request/done"
+  printf '%s %s\n' "$tool" "$request" >&"$SESSION_FD"
+  until IFS= read -r -t 1 -u "$done_fd" status; do
+    kill -0 "$SESSION_PID" 2>/dev/null || session_lost 'the session JVM exited during the call'
+  done
+  exec {done_fd}<&-
+  [[ $status =~ ^[0-9]+$ ]] || session_lost "$status"
+  for segment in "$request"/[0-9]*; do
+    case $segment in
+      *.o) cat -- "$segment" ;;
+      *.e) cat -- "$segment" >&2 ;;
+    esac
+  done
+  rm -rf -- "$request"
+  return "$status"
+}
+
+# session_lost REASON: the session can no longer answer; whether its last call reached Keycloak is
+# not known, so nothing more is sent and the run stops (status 1), from a command substitution too.
+session_lost() {
+  printf 'The reconciliation session stopped during a kcadm or ReconcileJson call (%s); the run stops here. Session log:\n' "$1" >&2
+  cat -- "$SESSION_DIR/log" >&2 || true
+  if [[ $BASHPID != "$$" ]]; then
+    kill -USR1 "$$" 2>/dev/null || true
+  fi
+  exit 1
 }
 
 # kcadm prints informational lines on stderr ("Created new model with id ...", an empty line
@@ -4442,6 +4649,7 @@ if [[ -z $OPERATOR_KCADM_CONFIG ]]; then
 fi
 kcadm_json "realms/$TARGET_REALM" >/dev/null
 compile_json_tool
+start_session
 
 if [[ $RECONCILE_ONLY == admin-panel-client ]]; then
   reconcile_admin_panel_client

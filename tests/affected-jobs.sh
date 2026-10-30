@@ -39,6 +39,7 @@ STATIC_SCRIPTS=(
   tests/check-operator-login-prompts.sh
   tests/check-site-editor-grants-team.sh
   tests/check-app-assignments.sh
+  tests/check-app-assignments-drift.sh
 )
 
 # The whole suite: job, then the tests/ scripts its steps run (less STATIC_SCRIPTS).

@@ -40,7 +40,7 @@ entegrasyon testi bunu doğrular.
 | Kimlik korumaları: core sertifika rolleri, OBS `department mapper`, core'un `manage-clients` rolü | Uzlaştırıcı **dokunmaz**: kimliğinin kullanıcı ve kimlik sağlayıcısı yetkisi yoktur. Operatör `config/identity-guardrails.sh` ile uygular (§8). |
 | Forms'un Privileged rolü (§28) | `forms` istemcisinde `skyforms:read-all` (DK'nın Forms okuması; forms-backend henüz okumuyor) her koşuda var edilir; SkyMail'inkiler gibi yalnız `DK`'ya **bir kez** verilir (operatörün `core-roles` koşusu). |
 | SkyMail'in Privileged rolleri (§25) | `skymail` istemcisinde `skymail:system-mails:read` ve `skymail:mails:tracking:read` (ADMIN, YK, DK; kişi bazındaki takip raporu, iletisim-servisi 17) her koşuda var edilir (yoksa açıklamasıyla oluşturulur); SkyMail'in kendi rolleri `skymail:access`, `templates:read`, `lists:read`, `mails:read`, `mails:send`, `mails:write` (ADMIN, YK) ve `mails:approve` (yalnız YK) oluşturulmaz, varsa tohumlanır (ekip-yetkileri 03; `announcements:send` listeden çıktı). core'un kaynak rolleri gibi kendi Privileged gruplarına **bir kez** verilir ve `skylab.seeded-group-mappings` ile işaretlenir; tohumlamayı operatörün `KEYCLOAK_RECONCILE_ONLY=core-roles` koşusu yapar. Kişilerin diğer `skymail:*` rolleri `/ROLLER` rol gruplarına taşınır (§26). |
-| Servis hesaplarının rolleri (§20, §20.1, §20.2) | `place-service` istemcisini oluşturur (gizli, yalnız client credentials, §20.2); `forms`'a core'un beş servis rolü (`consent:record` dahil), `place-service`'e yalnız `consent:record`, `skymail-backend`'e core'un `audience:read`'i, `communication-preferences:read`'i ve `consent:audience:read`'i ile `realm-management`'ın `view-users` ve `view-clients`'ı, `core`'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`, `skymail:lists:read`, `skymail:lists:write`, `skymail:tracking:withdraw` rolleri, `skymail-seed`'in servis hesabına `skymail:templates:system`. Uzlaştırıcı kimliği core rollerini, `skymail:tracking:withdraw`'u ve `skymail:templates:system`'ı oluşturur ve raporlar; vermeyi operatör `KEYCLOAK_RECONCILE_ONLY=service-roles` ile yapar. SkyMail'in öbür rolleri oluşturulmaz. Yalnız servis hesaplarının rolünü taşıyan kişi, grup, varsayılan rol ve bileşik rol bildirilir. |
+| Servis hesaplarının rolleri (§20, §20.1, §20.2) | `place-service` istemcisini oluşturur (gizli, yalnız client credentials, §20.2); `forms`'a core'un beş servis rolü (`consent:record` dahil), `place-service`'e yalnız `consent:record`, `skymail-backend`'e core'un `audience:read`'i, `communication-preferences:read`'i ve `consent:audience:read`'i ile `realm-management`'ın `view-users` ve `view-clients`'ı, `core`'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`, `skymail:lists:read`, `skymail:lists:write`, `skymail:tracking:withdraw` rolleri ile Forms'un `skyforms:responses:read-service`'i, `skymail-seed`'in servis hesabına `skymail:templates:system`. Uzlaştırıcı kimliği core rollerini, `skymail:tracking:withdraw`'u, `skymail:templates:system`'ı ve `skyforms:responses:read-service`'i oluşturur ve raporlar; vermeyi operatör `KEYCLOAK_RECONCILE_ONLY=service-roles` ile yapar. SkyMail'in öbür rolleri oluşturulmaz. Yalnız servis hesaplarının rolünü taşıyan kişi, grup, varsayılan rol ve bileşik rol bildirilir. |
 | Rol grupları `/ROLLER/<UYGULAMA>-<ROL>` (§26) ve Leader gruplarının uygulama rolleri (§27) | Uzlaştırıcı **dokunmaz** (gruba rol eşlemek kullanıcı yetkisi ister). Operatör `config/role-groups.sh` ve `config/leader-app-roles.sh` (ya da `KEYCLOAK_RECONCILE_ONLY=role-groups` / `leader-app-roles`) ile kurar; kuru koşu varsayılandır, `--apply` yazar; üye hiç eklenmez. |
 
 Ortam değişkenleri: `KEYCLOAK_PASSKEY_RP_ID` (varsayılan `yildizskylab.com`) ve
@@ -2869,10 +2869,12 @@ Aynı adım iki servis hesabını daha yönetir:
 | `view-users`, `view-clients` | `realm-management` (Keycloak'ın; oluşturulmaz) | `skymail-backend`'in servis hesabı (kişiler ve gruplar da taşır) | SkyMail kişileri Admin REST'ten okur: grup üyeleri, onay rollerinin sahipleri ve tekil postada takip için adresin tek Keycloak hesabı (`GET /users?email=…&exact=true`, skymail-backend #85). `view-users` gerekir (yalnız `query-users` kullanıcıları döndürmez), `view-clients` istemciyi ve rollerini okur. Production'da 2026-09-23'te elle verildi; burada kodlandı |
 | `skymail:tracking:withdraw` | `skymail` (**adım oluşturur**; açıklamalı SkyMail satırı) | yalnız `core`'un servis hesabı (`service-account-core`) | `PUT /internal/v1/tracking-withdrawals/{sub}`: kişi takibi kapatınca core SkyMail'deki olaylarını sildirir (skymail-backend #75, core #256). SkyMail `azp=core`, `aud ∋ skymail` ve bu rolü ister, token'ın servis hesabınınki olduğuna bakmaz: rol hiçbir kişiye, gruba, bileşik role ya da varsayılan role girmez (B2) |
 | `skymail:notifications:send` | `skymail` (**adım oluşturur**; açıklamalı SkyMail satırı) | yalnız `core`'un servis hesabı (`service-account-core`) | `POST /v1/notifications`: core ne olduğunu ve kime olduğunu söyler, SkyMail kanalı ve metni seçer (ADR 0070; skymail-backend #79, `docs/notifications.md`; core'un yeni bilet bildirimi, iletisim-servisi 06). SkyMail bu ucu yalnız servis hesabı token'ından (`client_id` = `azp`) kabul eder; Forms ve `keycloak-mailer` almaz, `/v1/mail_tasks/single` ile devam eder. Rol hiçbir kişiye, gruba, bileşik role ya da varsayılan role girmez |
+| `skyforms:responses:read-service` | `forms` (**adım oluşturur**; açıklamalı Forms satırı, `FORMS_SERVICE_ROLE_DEFINITIONS`) | yalnız `core`'un servis hesabı (`service-account-core`) | Forms'un iç okuma uçları (ADR 0071'deki dar rol, ADR 0075; forms-posta-core 04): form, yanıtlar, tek yanıt, gecikmiş değerlendirmeler ve gönderenin rolüyle yanıtlayanlar. Forms bu uçları yalnız iç ağdan sunar. `aud ∋ forms` varsayılan `roles` kapsamının audience resolve'undan gelir, yeni eşleyici yok. Rol hiçbir kişiye, gruba, bileşik role ya da varsayılan role girmez. core bir kişinin `forms` etkin rollerini (`skyforms:*`, ADR 0075 karar 6) zaten taşıdığı `realm-management` rolleriyle okur (site istemcilerindeki gibi, core `docs/keycloak-admin-permissions.md`); burada ek yetki verilmez |
 | `skymail:templates:system` | `skymail` (**adım oluşturur**; açıklamalı SkyMail satırı) | yalnız `skymail-seed`'in servis hesabı (`service-account-skymail-seed`) | `PUT /v1/templates/by-key/{key}`: bir şablonu sistem şablonu yapmak ya da işareti kaldırmak (skymail-backend README "Keycloak"). `account.*`/`keycloak.*` sistem şablonu bastırma listesini atladığı için `skymail:templates:write` artık işareti değiştirmez (Yusuf, 2026-10-21). `skymail-seed` istemcisini ve öbür üç SkyMail rolünü sky_lab_genel `ops/wizards/skymail-seed-github-wizard.sh` kurar; adım o istemci yoksa uyarır. Rol hiçbir kişiye, gruba, bileşik role ya da varsayılan role girmez |
 
-Liste `CORE_SERVICE_ROLE_DEFINITIONS` (core), `SKYMAIL_SERVICE_ROLE_DEFINITIONS` (SkyMail) ve
-`REALM_MANAGEMENT_SERVICE_ROLE_DEFINITIONS` (realm-management) dizilerindedir; üçü aynı gövdeyle (`reconcile_service_roles`) yürür ve operatör adımının sonunda tek
+Liste `CORE_SERVICE_ROLE_DEFINITIONS` (core), `SKYMAIL_SERVICE_ROLE_DEFINITIONS` (SkyMail),
+`FORMS_SERVICE_ROLE_DEFINITIONS` (Forms) ve `REALM_MANAGEMENT_SERVICE_ROLE_DEFINITIONS`
+(realm-management) dizilerindedir; dördü aynı gövdeyle (`reconcile_service_roles`) yürür ve operatör adımının sonunda tek
 toplam yazılır (`check: N change(s) pending…` / `applied N change(s)`). SkyMail'in rolleri SkyMail'in
 kataloğudur: yoksa `WARNING: client role <rol> of skymail does not exist in realm …; it is not granted
 to core` yazılır ve o rol atlanır. Bunlar bugüne kadar elle verilmişti; kuru koşu production'daki
@@ -2938,6 +2940,26 @@ SkyMail'in `SKYMAIL_TRACKING=on`'undan önce yapılır. Geri dönüş: Admin Con
 hesabından kaldırılır ve `skylab.granted-service-accounts` özniteliği silinir; kalıcı geri dönüş
 satırı listeden çıkaran sürümdür.
 
+**Forms'un iç okuma rolü (`skyforms:responses:read-service`, forms-posta-core 04).** Yayından
+sonraki tam uzlaştırma rolü `forms` istemcisinde açıklamasıyla oluşturur (`client role
+skyforms:responses:read-service of forms: created`), `default client scope roles of core: verified
+(… aud forms in the token)` yazar ve `WARNING: skyforms:responses:read-service is not yet granted to
+service account service-account-core by the operator step` ile uyarır. `forms` istemcisi olmayan
+realm'de `WARNING: client forms does not exist in realm …; skipped its service roles` yazılır. Operatör
+`service-roles` kuru koşusunda (önce sandbox, sonra production) bu rol için beklenen satırlar:
+`would grant skyforms:responses:read-service to service account service-account-core` ve `would record
+the grant of skyforms:responses:read-service (skylab.granted-service-accounts=<now>
+service-account-core)`. `core`'da `fullScopeAllowed=false` ise `would map
+forms/skyforms:responses:read-service in the role scope of core …` da gelir. Realm'de rol henüz yoksa
+(tam uzlaştırma koşmadıysa) `would create client role skyforms:responses:read-service of forms` görünür.
+Kişi, grup ya da bileşik rol uyarısı çıkarsa uygulamadan önce Admin Console'dan kaldırılır. Admin
+panelinin rol kapsamı `forms`'un her rolünü aldığı için (§16) sonraki tam uzlaştırma rolü panelin
+kapsamına da ekler; rolü kimse taşımadığı için panel token'ına girmez. Sıra: rol zararsızdır (Forms'un
+iç uçları ve core'un okuyucusu açılmadan kimse kullanmaz); Keycloak yayını ve operatör adımı, core'un
+Forms'tan okuyan sürümü (forms-posta-core 05–07) açılmadan önce yapılır. Geri dönüş: Admin
+Console'dan rol `service-account-core`'dan kaldırılır ve rolün `skylab.granted-service-accounts`
+özniteliği silinir; kalıcı geri dönüş satırı listeden çıkaran sürümdür.
+
 **`realm-management` rolleri.** Production'da `service-account-skymail-backend` iki rolü 2026-09-23'ten
 beri taşıdığı için operatör kuru koşusu bunlar için yalnız `service account
 service-account-skymail-backend: view-users unchanged (held)` (ve `view-clients`) ile ilk kez bir
@@ -2959,7 +2981,10 @@ uygulayan koşusu bunu uyarır ve silmez (bileşik okuması düşerse koşu yazm
 `communication-preferences:read`, `core`'unkinde `azp=core`, `aud ∋ skymail` ve
 `skymail:tracking:withdraw` var, `core-erasure`'ınkinde ikisi de yok; her rolü yalnız kendi servis
 hesabı taşır: başka kullanıcı, grup, bileşik rol (realm'in ve her istemcinin rolleri taranır) ve
-varsayılan rol yok (B2).
+varsayılan rol yok (B2). `skyforms:responses:read-service`'i `forms`'u ilk gören tam uzlaştırma
+oluşturur (ilk koşu `forms` yokken adımı atladığını yazar); operatör adımından sonra `core`'un gerçek
+token'ında `azp=core`, `aud ∋ forms` ve `forms` rolü olarak yalnız o vardır, `core-erasure`'ın ve
+`forms`'un kendi token'ında yoktur; rolü yalnız `service-account-core` taşır (B2).
 
 ### 20.2 Rıza kaydının rolleri: `consent:record`, `consent:audience:read` (data-lifecycle 10)
 

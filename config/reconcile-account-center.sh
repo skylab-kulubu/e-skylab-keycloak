@@ -3385,6 +3385,21 @@ SKYMAIL_SERVICE_ROLE_DEFINITIONS=(
   "skymail:tracking:withdraw|core|services|core withdraws a person's mail tracking (PUT /internal/v1/tracking-withdrawals/{sub}, skymail-backend README). core's service account only; never a person, a group, a composite or the default role."
   "skymail:templates:system|skymail-seed|services|The Template seed marks a template as a system template or takes the mark away (PUT /v1/templates/by-key/{key}, skymail-backend README). skymail-seed's service account only; never a person, a group, a composite or the default role."
 )
+# Forms' client roles that core's service account (client core) holds:
+# skyforms:responses:read-service (forms-posta-core ticket 04; ADR 0071's internal read role, ADR
+#                     0075): core reads Forms' internal endpoints (GET /internal/v1/forms/{id}, its
+#                     responses, a response, the overdue reviews and the respondents with the
+#                     sender's role), which Forms serves from the internal network only. The line has
+#                     a description: Forms does not make the role, so the step creates it on forms
+#                     like skymail:tracking:withdraw. core's service account only (services): a person,
+#                     a group, a composite role or the default role holding it is reported. aud forms
+#                     comes from the default scope roles (audience resolve), verified by the step, no
+#                     new audience mapper. core reads a person's effective forms roles (skyforms:*,
+#                     ADR 0075 decision 6) with the view-users and view-clients it already holds, as
+#                     for the site clients (core docs/keycloak-admin-permissions.md): nothing more here.
+FORMS_SERVICE_ROLE_DEFINITIONS=(
+  "skyforms:responses:read-service|core|services|core reads Forms' internal endpoints: a form, its responses and respondents, the overdue reviews (internal network only; ADR 0071, ADR 0075). core's service account only; never a person, a group, a composite or the default role."
+)
 # realm-management roles of SkyMail's service account (client skymail-backend): SkyMail reads
 # people through the Admin REST API: group members and the holders of its approver roles, and the
 # one Keycloak account of a single mail's address for tracking (GET /users?email=…&exact=true,
@@ -3751,13 +3766,14 @@ reconcile_service_roles() {
   done
 }
 
-# The service-roles step: core's service roles, then SkyMail's roles of core's service account, then
-# the realm-management roles of SkyMail's service account, and for the operator one total of the
-# changes.
+# The service-roles step: core's service roles, then SkyMail's and Forms' roles of core's service
+# account, then the realm-management roles of SkyMail's service account, and for the operator one
+# total of the changes.
 reconcile_core_service_roles() {
   SERVICE_ROLE_CHANGES=0
   reconcile_service_roles "$CORE_CLIENT_ID" CORE_SERVICE_ROLE_DEFINITIONS create
   reconcile_service_roles "$SKYMAIL_CLIENT_ID" SKYMAIL_SERVICE_ROLE_DEFINITIONS existing
+  reconcile_service_roles "$FORMS_CLIENT_ID" FORMS_SERVICE_ROLE_DEFINITIONS existing
   reconcile_service_roles realm-management REALM_MANAGEMENT_SERVICE_ROLE_DEFINITIONS existing
   [[ -n $OPERATOR_KCADM_CONFIG ]] || return 0
   if [[ $RECONCILE_CHECK == true ]]; then

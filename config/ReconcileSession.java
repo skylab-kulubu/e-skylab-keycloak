@@ -29,13 +29,15 @@ import java.util.Set;
 import java.util.function.IntConsumer;
 
 /**
- * One JVM for the kcadm reads and the ReconcileJson calls of a reconcile-account-center.sh run.
+ * One JVM for the kcadm reads and the ReconcileJson calls of a run of reconcile-account-center.sh
+ * or of an operator script that sources reconcile-session.sh (app-assignments.sh, role-groups.sh,
+ * dk-read-only.sh, master-console.sh).
  *
  * Every kcadm.sh call and every ReconcileJson call used to start a JVM of its own, some two hundred
  * of them for a whole reconciliation (about 8.5 minutes in production, 2026-10-27). The script starts
  * this process once instead, the way kcadm.sh starts its JVM (the same class path, options and
- * kc.lib.dir; config/reconcile-account-center.sh start_session), and this process runs each call the
- * way that JVM's main would have run it:
+ * kc.lib.dir; config/reconcile-session.sh start_session), and this process runs each call the way
+ * that JVM's main would have run it:
  *
  * - kcadm: KcAdmMain.main without --v2 is Globals.main(args, new KcAdmCmd(), CMD,
  *   DEFAULT_CONFIG_FILE_STRING). Its set-up (the crypto class loader of kc.lib.dir, CryptoIntegration,

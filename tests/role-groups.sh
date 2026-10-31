@@ -73,6 +73,10 @@
 #     nowhere on them), and the core-roles step seeds it once (dry run first, a group that holds it
 #     is left alone), marks it, creates no skycloud role; a YK sub-group's member carries it; a realm
 #     without the client skycloud is skipped with a WARNING;
+#   - the reconciliation session (config/reconcile-session.sh): every script run here uses it (the
+#     container's KEYCLOAK_RECONCILE_SESSION=required); app-assignments --check through the
+#     reconciler's step, app-assignments --seed, role-groups --audit and a role-groups --apply that
+#     repairs a drift print the same bytes and status with a JVM per call (off) as with the session;
 #   - the admin panel's inscribed roles (ADR-0056: News is written in the panel; grup-yonetimi GY1: DK
 #     reads and does not write): app-assignments --check expects the panel client's content:read on
 #     ADMIN, YK and DK and its content:write on ADMIN and YK, never DK's content:write; the core-roles
@@ -90,6 +94,8 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$SCRIPT_DIR/kcadm-jvm.sh"
 # shellcheck source=kcadm-rest.sh
 source "$SCRIPT_DIR/kcadm-rest.sh"
+# shellcheck source=session-parity.sh
+source "$SCRIPT_DIR/session-parity.sh"
 REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 IMAGE=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' "$REPOSITORY_ROOT/Dockerfile")
 PORT=${ROLE_GROUPS_TEST_PORT:-18096}
@@ -106,6 +112,7 @@ LEAVES=(FORMS-ACCESS FORMS-ALL PLACE-ADMIN PLACE-MODERATOR SKYMAIL-ACCESS SKYMAI
   SKYMAIL-MAILS-APPROVE CF-ZERO-TRUST-ACCESS SKYCLOUD-ACCESS SKYCLOUD-ADMIN)
 LEADER_ROLES='["skycloud/skycloud:access"]'
 CURRENT_STAGE=startup
+SESSION_PARITY_DIR=$(mktemp -d)
 
 fail() {
   printf 'role-groups failure during %s: %s\n' "$CURRENT_STAGE" "$1" >&2
@@ -114,6 +121,7 @@ fail() {
 cleanup() {
   kcadm_rest_cleanup
   docker rm -fv "$CONTAINER" >/dev/null 2>&1 || true
+  rm -rf "$SESSION_PARITY_DIR"
 }
 trap 'status=$?; trap - EXIT; cleanup; exit "$status"' EXIT
 on_error() {
@@ -303,7 +311,7 @@ for code in AIRLAB ALGOLAB BIZBIZE GECEKODU MOBILAB SKYDEVOPS SKYSEC WEBLAB CHAI
     || fail "a role group name contains the team code $code"
 done
 docker run --rm -d --name "$CONTAINER" -p "127.0.0.1:$PORT:8080" \
-  -e KC_OPTS="$KCADM_JVM_OPTS" \
+  -e KC_OPTS="$KCADM_JVM_OPTS" -e KEYCLOAK_RECONCILE_SESSION=required \
   -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
   "$IMAGE" start-dev >/dev/null
 for _ in $(seq 1 90); do
@@ -1190,5 +1198,33 @@ for name in sandbox-leader sandbox-artlab-leader; do
   reject_line "$clean$changed" "$name" 'the alarm printed a person'
 done
 printf '    alarm: a reconciler stopped before the check (no summary line) exits 2\n'
+
+# ---------------------------------------------------------------------------------------------------
+CURRENT_STAGE='the reconciliation session: the same bytes and status as a JVM per call'
+# Every run above used the session (the container's KEYCLOAK_RECONCILE_SESSION=required). Here whole
+# runs on the realm the stages above left (panel assignments, PROBLEMs and SAPMA lines, the audit's
+# findings), once with a JVM per call and once with the session; the apply gets the same drift both
+# times.
+role_groups_parity_drift() {
+  kcadm delete "groups/$(group_id "$REALM" /ROLLER/FORMS-ACCESS)/role-mappings/clients/$(client_uuid "$REALM" forms)" -r "$REALM" \
+    -b "$(role_body "$REALM" forms skyforms:access)" >/dev/null
+  kcadm update "groups/$(group_id "$REALM" /ROLLER/PLACE-ADMIN)" -r "$REALM" -s 'attributes.display_name_tr=["eski"]' >/dev/null
+}
+parity_options=(-e KEYCLOAK_ADMIN_URL=http://localhost:8080 -e "KEYCLOAK_REALM=$REALM")
+session_parity 'app-assignments --check (KEYCLOAK_RECONCILE_ONLY=app-assignments)' : "${parity_options[@]}" \
+  -e KEYCLOAK_RECONCILE_ONLY=app-assignments -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KCADM_CONFIG" -- \
+  bash "$IN_CONTAINER_CONFIG/reconcile-account-center.sh"
+expect_line "$(cat "$SESSION_PARITY_LOG")" '[app-assignments] SAPMA: S1=' 'the compared check did not reach its drift summary'
+session_parity 'app-assignments --seed (dry run)' : "${parity_options[@]}" -- \
+  bash "$IN_CONTAINER_CONFIG/app-assignments.sh" --kcadm-config "$KCADM_CONFIG" --seed
+expect_line "$(cat "$SESSION_PARITY_LOG")" 'YENI ATAMA ' 'the compared seed planned nothing'
+session_parity 'role-groups --audit' : "${parity_options[@]}" -- \
+  bash "$IN_CONTAINER_CONFIG/role-groups.sh" --kcadm-config "$KCADM_CONFIG" --audit
+expect_line "$(cat "$SESSION_PARITY_LOG")" 'audit K1: ' 'the compared audit did not count'
+session_parity 'role-groups --apply (a mapping and an attribute repaired)' role_groups_parity_drift "${parity_options[@]}" -- \
+  bash "$IN_CONTAINER_CONFIG/role-groups.sh" --kcadm-config "$KCADM_CONFIG" --apply
+expect_line "$(cat "$SESSION_PARITY_LOG")" 'applied 2 change(s), ' 'the compared apply did not repair the drift'
+[[ $(group_roles "$REALM" /ROLLER/FORMS-ACCESS) == '["forms/skyforms:access"]' ]] \
+  || fail "the apply with the session did not repair /ROLLER/FORMS-ACCESS: $(group_roles "$REALM" /ROLLER/FORMS-ACCESS)"
 
 printf 'role-groups, leader-app-roles, app-assignments and default-roles contract passed.\n'

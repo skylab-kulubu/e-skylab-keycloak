@@ -740,7 +740,7 @@ def assert_affected_jobs(root, helper)
     end
   end
   pr_reaches = {
-    "config/" "reconcile-account-center.sh" => %w[dk-read-only login-by-email-code sign-up-by-email-code login-clients -integration-group -role-groups],
+    "config/" "reconcile-account-center.sh" => %w[dk-read-only login-by-email-code sign-up-by-email-code login-clients role-groups -integration-group],
     "config/" "not-read-by-any-job.sh" => all_pull_request + deferred.map { |name| "-#{name}" },
   }
   pr_exactly = {
@@ -748,7 +748,7 @@ def assert_affected_jobs(root, helper)
     "tests/" "microsoft-reauthentication.sh" => %w[microsoft-reauthentication],
     "tests/" "welcome-page.sh" => %w[welcome-page],
     "tests/" "run-integration.sh" => %w[-integration-group],
-    "config/" "role-groups.json" => %w[-role-groups],
+    "config/" "role-groups.json" => %w[role-groups],
     "tests/" "dk-read-only.sh" => %w[dk-read-only],
     "docs/x.md" => [], "tests/" "check-fresh-runner.sh" => [], "tests/" "sudo-email-code.sh" => [],
     "theme/src/login/x.tsx" => [],

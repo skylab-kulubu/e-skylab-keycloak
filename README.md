@@ -1115,10 +1115,10 @@ dışındaki her şey). Uzun Keycloak işleri ve `integration (<grup>)` gruplar�
 (doğrudan veya dolaylı, yorum satırları hariç) okuyan ya da çalıştıran işler koşar
 (`tests/affected-jobs.sh --pull-request`; harness Playwright dosyaları `theme/tests/` de). Bu,
 hızlı kümenin kısa işleri ve PR süresine (15 dk) sığan tam takım işleri (`dk-read-only`,
-`sandbox-admin-local-client`, `after-sign-up-native`, `site-clients`, `login-clients`,
+`sandbox-admin-local-client`, `after-sign-up-native`, `role-groups`, `site-clients`, `login-clients`,
 `skyapp-cms-editor`, `ytu-first-login`, `inscribed-cms-roles`; uzlaştırma oturumundan sonra 3-11 dk)
-içindir. 15 dakikayı aşan tam takım işleri (`PR_DEFERRED`: `integration (<grup>)` grupları ve
-`role-groups`) PR etkilese de PR'da koşmaz; adları
+içindir. 15 dakikayı aşan tam takım işleri (`PR_DEFERRED`: `integration (<grup>)` grupları) PR
+etkilese de PR'da koşmaz; adları
 `scope` günlüğüne, koşu özetine ve PR'ın kontrol sayfasına uyarı (`::warning::`) olarak yazılır,
 `main` push'unun tam koşusunda koşarlar (yayından önce).
 PR'da da koşsunlar istenirse PR'a `full-ci` etiketi konur. Hiçbir iş akışının ulaşmadığı bir

@@ -841,8 +841,13 @@ yüzden kcadm okumaları (`get`) ve ReconcileJson çağrıları koşu başına b
 stdout/stderr baytları, sıraları ve çıkış kodu aynı kalır (harness tam kuru koşuyu ve gerçek koşuyu
 iki yolla da koşturup bayt bayt karşılaştırır). Yazmalar (`create`, `update`, `delete`) ve
 `KCADM_BIN` ile verilen kcadm her çağrıda kendi JVM'ini açar. `KEYCLOAK_RECONCILE_SESSION`: `on`
-(varsayılan; oturum başlayamazsa çağrı başına JVM), `off` (çağrı başına JVM, eski davranış ve geri
-dönüş, runbook §7) ya da `required` (oturum başlayamazsa koşu durur; harness). Passkey relying party id geçişinden
+(varsayılan; oturum başlayamazsa çağrı başına JVM, stderr'de `[reconcile] ` öneki olmayan tek
+`Reconciliation session not started (…)` satırıyla), `off` (çağrı başına JVM, eski davranış ve geri
+dönüş, runbook §7) ya da `required` (oturum başlayamazsa koşu durur; harness). Oturum yalnız
+sınıfları denetlenmiş kcadm sürümlerinde açılır (26.4 ve 26.7, betikte `SESSION_KCADM_VERSIONS`);
+Keycloak yükseltmesinde harness'in `required` koşusu durur ve liste denetimden sonra genişletilir.
+Oturum koşu ortasında durursa (JVM ölümü, yazılamayan çıktı) koşu yeni istek göndermeden exit 1 ile
+biter; son satır nedeni söyler. Passkey relying party id geçişinden
 önce kayıtlı passkey'ler bir daha doğrulanamaz; `config/cleanup-legacy-passkeys.sh`
 (varsayılan kuru koşu, yalnız sayı basar) geçiş anından önce oluşturulmuş
 `webauthn-passwordless` kimlik bilgilerini `--apply` ile siler. Geçiş anını

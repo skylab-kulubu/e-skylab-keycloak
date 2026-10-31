@@ -61,7 +61,8 @@ import java.util.function.IntConsumer;
  * Calls run one at a time, in the order their lines arrive. This process writes what the call printed
  * into DIR as numbered segments (000001.o for stdout, 000002.e for stderr, a new one whenever the call
  * switches stream), then one line into the FIFO DIR/done: the exit status, or "failed REASON" when
- * the call could not be run at all. It ends when every writer of REQUESTS is gone.
+ * the call could not be run at all or its output could not be written whole (a full disk; the script
+ * then stops the run). It ends when every writer of REQUESTS is gone.
  */
 public final class ReconcileSession {
 
@@ -203,8 +204,9 @@ public final class ReconcileSession {
         System.setIn(stdin);
         System.setOut(out);
         System.setErr(err);
+        int status;
         try {
-            return tool.equals("kcadm") ? kcadm(args) : json(args);
+            status = tool.equals("kcadm") ? kcadm(args) : json(args);
         } finally {
             System.setIn(savedIn);
             System.setOut(savedOut);
@@ -216,6 +218,12 @@ public final class ReconcileSession {
             // Not flushed: a JVM drops what is left in these buffers at exit.
             segments.close();
         }
+        // PrintStream swallows a failed write (a full disk): a call whose output was not kept whole
+        // fails, so that the script stops instead of reading a cut answer.
+        if (segments.error != null) {
+            throw new IOException("the call's output could not be written", segments.error);
+        }
+        return status;
     }
 
     private int kcadm(String[] args) throws Exception {
@@ -317,6 +325,8 @@ public final class ReconcileSession {
         private int count;
         private char current;
         private OutputStream file;
+        /** The first failed write, open or close of a segment file. */
+        private IOException error;
 
         private Segments(Path directory) {
             this.directory = directory;
@@ -326,13 +336,21 @@ public final class ReconcileSession {
             return new OutputStream() {
                 @Override
                 public void write(int b) throws IOException {
-                    to(kind).write(b);
+                    try {
+                        to(kind).write(b);
+                    } catch (IOException e) {
+                        throw failed(e);
+                    }
                 }
 
                 @Override
                 public void write(byte[] b, int off, int len) throws IOException {
                     if (len > 0) {
-                        to(kind).write(b, off, len);
+                        try {
+                            to(kind).write(b, off, len);
+                        } catch (IOException e) {
+                            throw failed(e);
+                        }
                     }
                 }
             };
@@ -348,10 +366,22 @@ public final class ReconcileSession {
             return file;
         }
 
-        private void close() throws IOException {
+        private IOException failed(IOException e) {
+            if (error == null) {
+                error = e;
+            }
+            return e;
+        }
+
+        private void close() {
             if (file != null) {
-                file.close();
-                file = null;
+                try {
+                    file.close();
+                } catch (IOException e) {
+                    failed(e);
+                } finally {
+                    file = null;
+                }
             }
         }
     }

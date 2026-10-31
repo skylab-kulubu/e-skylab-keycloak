@@ -587,7 +587,10 @@ session_wanted() {
   [[ $SESSION_MODE != off && -z ${KCADM_BIN:-} ]]
 }
 
-# session_unavailable REASON: the session does not run; with required, the run stops here.
+# session_unavailable REASON: the session does not run; with required, the run stops here. With on,
+# one line on stderr says so and every call starts its own JVM (the same output, slower). The line has
+# no "[reconcile] " prefix, so that the lines the release wizards count stay the same; it comes before
+# every write and is never the last line of a run.
 session_unavailable() {
   stop_session
   if [[ $SESSION_MODE == required ]]; then
@@ -597,14 +600,22 @@ session_unavailable() {
     fi
     exit 1
   fi
+  printf 'Reconciliation session not started (%s); every kcadm and ReconcileJson call starts its own JVM (the same output, slower)\n' "$1" >&2
 }
+
+# The kcadm versions whose classes the session was checked against (Globals.main, the static state of
+# Globals, HttpUtil and FileConfigHandler, the System.exit paths; config/ReconcileSession.java): 26.4
+# (a whole dry run compared byte for byte) and 26.7 (the image; tests/run-integration.sh compares
+# whole runs). Another version runs without the session until it is checked and added here; the
+# harness (required) stops on it.
+SESSION_KCADM_VERSIONS='26.4.* | 26.7.*'
 
 # Starts the session JVM as kcadm.sh starts its own (its java, KC_OPTS, class path and options, with
 # the compiled classes after the kcadm jar) and waits until it is ready. kcadm.sh's own launch line
 # must be one this function knows; otherwise, or when the session cannot start, every call starts
 # its own JVM (SESSION_MODE on) or the run stops (required).
 start_session() {
-  local kcadm_path kcadm_dir launch jar java native=() ready_fd line='' waited=0
+  local kcadm_path kcadm_dir launch jar version java native=() ready_fd line='' waited=0
   if ! session_wanted; then
     return 0
   fi
@@ -630,6 +641,15 @@ start_session() {
     session_unavailable "the kcadm jar $jar does not exist"
     return 0
   fi
+  version=${jar##*/keycloak-admin-cli-}
+  version=${version%.jar}
+  case $version in
+    26.4.* | 26.7.*) ;;
+    *)
+      session_unavailable "kcadm $version is not a version the session was checked against ($SESSION_KCADM_VERSIONS)"
+      return 0
+      ;;
+  esac
   if [[ -n ${JAVA:-} ]]; then
     java=$JAVA
   elif [[ -n ${JAVA_HOME:-} ]]; then
@@ -705,14 +725,15 @@ session_call() {
   local tool=$1 request done_fd status='' segment
   shift
   kill -0 "$SESSION_PID" 2>/dev/null || session_lost 'the session JVM is gone'
-  request=$(mktemp -d "$SESSION_DIR/call.XXXXXX")
+  # A call written in part (a full disk) is never sent.
+  request=$(mktemp -d "$SESSION_DIR/call.XXXXXX") || session_lost 'the call directory could not be made'
   if (($#)); then
-    printf '%s\0' "$@" >"$request/args"
+    printf '%s\0' "$@" >"$request/args" || session_lost 'the arguments could not be written'
   else
-    : >"$request/args"
+    : >"$request/args" || session_lost 'the arguments could not be written'
   fi
   if session_reads_stdin "$tool" "$@"; then
-    cat >"$request/stdin"
+    cat >"$request/stdin" || session_lost 'stdin could not be written'
   fi
   mkfifo "$request/done" || session_lost 'mkfifo failed'
   exec {done_fd}<>"$request/done"
@@ -734,9 +755,14 @@ session_call() {
 
 # session_lost REASON: the session can no longer answer; whether its last call reached Keycloak is
 # not known, so nothing more is sent and the run stops (status 1), from a command substitution too.
+# It writes on the run's own stderr (CHECK_FD), which a call's redirection does not reach: the
+# session JVM's log first, then the reason as the run's last line (the release wizards show it).
 session_lost() {
-  printf 'The reconciliation session stopped during a kcadm or ReconcileJson call (%s); the run stops here. Session log:\n' "$1" >&2
-  cat -- "$SESSION_DIR/log" >&2 || true
+  {
+    printf 'Reconciliation session log:\n'
+    cat -- "$SESSION_DIR/log" || true
+    printf 'The reconciliation session stopped during a kcadm or ReconcileJson call (%s); the run stops here. KEYCLOAK_RECONCILE_SESSION=off runs it without the session.\n' "$1"
+  } >&"$CHECK_FD"
   if [[ $BASHPID != "$$" ]]; then
     kill -USR1 "$$" 2>/dev/null || true
   fi

@@ -43,6 +43,8 @@ import org.keycloak.sessions.AuthenticationSessionModel;
  * the request, in the background ({@link LoginCodeMail}), so the answer takes the same time. The
  * page never says that an address has no account: the right code of a code nobody was mailed (a
  * guess) gets a dead code's sentence; only the event, for the administrators, says {@code no_account}.
+ * A disabled account whose Account erasure is running gets the same page and code; it is mailed,
+ * after the request, that the account is being deleted ({@link AccountErasureNotice}).
  *
  * <p>Self-registration (ticket 09, ADR-0063 decision 1, CONTEXT "Self-registration"; off unless the
  * execution's {@value EmailCodeSignUp#CONFIG} setting is {@code true}, {@link EmailCodeSignUp}): an
@@ -384,6 +386,12 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
             countTowardTheDailyBudget(context);
         } else {
             authSession.setAuthNote(HANDLE_NOTE, newHandle(codes, "", ""));
+            if (withinBudget && user != null && !user.isEnabled()) {
+                // Whether the person is being erased, and the notice, are decided after the
+                // request (AccountErasureNotice): the page and its time stay those of any code
+                // that is never mailed, and a person an administrator disabled still gets nothing.
+                mail.sendErasureNotice(context, user);
+            }
         }
         remember(authSession, identifier);
         context.challenge(codePage(context, null, null));
@@ -418,12 +426,20 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
         if (!user.isEnabled() || user.getServiceAccountClientLink() != null) {
             return null;
         }
+        return mailbox(session, realm, user, settings.ytuIdpAlias());
+    }
+
+    /**
+     * The address a person's mail from this step goes to, whether or not they may sign in: the
+     * Primary e-mail, or the School e-mail of a Verified YTÜ account; null when there is neither.
+     */
+    static String mailbox(KeycloakSession session, RealmModel realm, UserModel user, String ytuIdpAlias) {
         String primary = trimmed(user.getEmail());
         if (primary != null) {
             return primary;
         }
         String school = trimmed(user.getFirstAttribute(IdentityResource.SCHOOL_EMAIL_ATTRIBUTE));
-        if (school != null && session.users().getFederatedIdentity(realm, user, settings.ytuIdpAlias()) != null) {
+        if (school != null && session.users().getFederatedIdentity(realm, user, ytuIdpAlias) != null) {
             return school;
         }
         return null;

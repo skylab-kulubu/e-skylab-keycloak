@@ -107,6 +107,19 @@ final class BackgroundLoginCodeMail implements LoginCodeMail {
         });
     }
 
+    /**
+     * The Account erasure notice: the same background session as a code, so the page that asked
+     * answers in the same time whether or not the person is being erased. The failure line names
+     * no person: their id is not written to a log while they are being erased.
+     */
+    @Override
+    public void sendErasureNotice(AuthenticationFlowContext context, UserModel user) {
+        String userId = user.getId();
+        String ytuIdpAlias = settings.ytuIdpAlias();
+        run(context, "sky_account_erasure_notice_failed", (session, realm) ->
+                AccountErasureNotice.deliver(session, realm, userId, ytuIdpAlias));
+    }
+
     /** The id of the in-memory stand-in a sign-up code is rendered for; never a stored account. */
     static final String SIGN_UP_RECIPIENT_ID = "sky-email-code-sign-up";
 

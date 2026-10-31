@@ -45,6 +45,7 @@ postanın kapsamıdır, istekle birlikte atılır ve birim testinde sunucu
 | `sendConfirmIdentityBrokerLink` | `identity-provider-link.ftl` | `keycloak.idp-link` | `identityProviderLinkSubject` |
 | `send(...)` | `sky-personal-email-confirm.ftl` (`EmailResource.TEMPLATE`) | `keycloak.personal-email-confirm` | çağıranın konu anahtarı (`skyPersonalEmailConfirmSubject`) |
 | `send(...)` | `sky-login-code.ftl` (`EmailCodeAuthenticator.MAIL_TEMPLATE`) | `keycloak.login-code` | `skyLoginCodeSubject` (kayıt kodunda `skySignUpCodeSubject`) |
+| `send(...)` | `sky-account-erasure-notice.ftl` (`AccountErasureNotice.MAIL_TEMPLATE`) | `account.deletion-in-progress` | `skyAccountErasureNoticeSubject` |
 | `SkyMailNotice.sendLoginCodeAlarm` (şablon sağlayıcısız, düz metin yedekli) | — | `keycloak.login-code-alarm` | `skyLoginCodeAlarmHalfSubject` / `skyLoginCodeAlarmFullSubject` / `skyLoginCodeAlarmCeilingSubject` |
 | `sendExecuteActions` | `executeActions.ftl` | `keycloak.generic` | `executeActionsSubject` |
 | `sendEvent`, `sendOrgInviteEmail`, `sendVerifiableCredentialOffer`, eşlenmemiş her `send(...)` | ilgili `.ftl` | `keycloak.generic` | Keycloak'ın konu anahtarı |

@@ -13,7 +13,7 @@ MAIL="$NAME-mail"
 SKYMAIL="$NAME-skymail"
 NETWORK="$NAME-net"
 STATE=$(mktemp -d "$ROOT/.sudo-email-runtime-XXXXXX")
-SPI_JAR=${SUDO_EMAIL_SPI_JAR:-$ROOT/spi/target/e-skylab-spi-1.27.0.jar}
+SPI_JAR=${SUDO_EMAIL_SPI_JAR:-$ROOT/spi/target/e-skylab-spi-1.28.0.jar}
 cleanup() {
   docker rm -fv "$NAME" "$MAIL" "$SKYMAIL" >/dev/null 2>&1 || true
   docker network rm "$NETWORK" >/dev/null 2>&1 || true
@@ -21,7 +21,7 @@ cleanup() {
 }
 trap 'status=$?; trap - EXIT; cleanup; exit "$status"' EXIT
 for image in "$IMAGE" "$NODE_IMAGE" "$MAIL_IMAGE"; do docker image inspect "$image" >/dev/null; done
-[[ -f $SPI_JAR ]] || { printf 'Build spi 1.27.0 first.\n' >&2; exit 1; }
+[[ -f $SPI_JAR ]] || { printf 'Build spi 1.28.0 first.\n' >&2; exit 1; }
 if unzip -l "$SPI_JAR" | grep -E 'SudoEmailClockProbe|EmailAddressOwnershipProbe' >/dev/null; then
   printf 'Test-only provider leaked into the production jar.\n' >&2
   exit 1

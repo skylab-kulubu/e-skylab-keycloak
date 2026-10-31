@@ -1,5 +1,6 @@
 package com.skylab.mail;
 
+import com.skylab.account.AccountErasureNotice;
 import com.skylab.account.EmailCodeAuthenticator;
 import com.skylab.account.EmailResource;
 import org.junit.jupiter.api.Test;
@@ -37,6 +38,15 @@ class SkyMailTemplatesTest {
         assertEquals("keycloak.login-code", SkyMailTemplates.forBodyTemplate(EmailCodeAuthenticator.MAIL_TEMPLATE));
         assertEquals("keycloak.login-code",
                 SkyMailTemplates.forBodyTemplate("html/" + EmailCodeAuthenticator.MAIL_TEMPLATE));
+    }
+
+    // The notice to a person whose Account erasure runs: SkyMail's key named as its other account
+    // deletion mails are (account.deletion-requested, account.deletion-completed).
+    @Test
+    void routesTheAccountErasureNoticeByTheNameItIsSentWith() {
+        assertEquals("account.deletion-in-progress", SkyMailTemplates.forBodyTemplate(AccountErasureNotice.MAIL_TEMPLATE));
+        assertEquals("account.deletion-in-progress",
+                SkyMailTemplates.forBodyTemplate("text/" + AccountErasureNotice.MAIL_TEMPLATE));
     }
 
     @Test

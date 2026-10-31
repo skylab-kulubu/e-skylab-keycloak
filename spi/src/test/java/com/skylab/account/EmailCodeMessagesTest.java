@@ -71,6 +71,27 @@ class EmailCodeMessagesTest {
         }
     }
 
+    // Account erasure: the notice says only that the account is being deleted and that the address
+    // can sign up again afterwards, in both languages; no code, link or name.
+    @Test
+    void theErasureNoticeHasItsSentencesInBothLanguages() throws IOException {
+        for (String locale : new String[] {"tr", "en"}) {
+            Properties properties = messages(locale);
+            for (String key : new String[] {AccountErasureNotice.SUBJECT_KEY, "skyAccountErasureNoticeText"}) {
+                assertFalse(properties.getProperty(key, "").isBlank(), locale + ": " + key);
+            }
+        }
+        assertTrue(messages("tr").getProperty("skyAccountErasureNoticeText").equals(
+                "Bu adresin hesabı silinme sürecinde. Silme bitince aynı adresle yeniden kayıt olabilirsin."),
+                "the agreed sentence (Yusuf, 2026-10-31)");
+        for (String mail : new String[] {"/theme-resources/templates/text/" + AccountErasureNotice.MAIL_TEMPLATE,
+                "/theme-resources/templates/html/" + AccountErasureNotice.MAIL_TEMPLATE}) {
+            String template = resource(mail);
+            assertTrue(template.contains("skyAccountErasureNoticeText"), mail);
+            assertFalse(template.contains("${code}") || template.contains("${link}") || template.contains("firstName"), mail);
+        }
+    }
+
     private static String resource(String path) throws IOException {
         try (InputStream in = EmailCodeMessagesTest.class.getResourceAsStream(path)) {
             assertNotNull(in, path);

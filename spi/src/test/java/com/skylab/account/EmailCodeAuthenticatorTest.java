@@ -139,6 +139,8 @@ class EmailCodeAuthenticatorTest {
     private static final class RecordingMail implements LoginCodeMail {
         final List<Sent> sent = new ArrayList<>();
         final List<String> alarms = new ArrayList<>();
+        /** The disabled people handed to the Account erasure notice, by id. */
+        final List<String> erasureNotices = new ArrayList<>();
 
         @Override
         public void sendCode(AuthenticationFlowContext context, UserModel user, String address, String code,
@@ -149,6 +151,11 @@ class EmailCodeAuthenticatorTest {
         @Override
         public void sendSignUpCode(AuthenticationFlowContext context, String address, String code) {
             sent.add(new Sent(null, address, code, "signup"));
+        }
+
+        @Override
+        public void sendErasureNotice(AuthenticationFlowContext context, UserModel user) {
+            erasureNotices.add(user.getId());
         }
 
         @Override
@@ -618,6 +625,58 @@ class EmailCodeAuthenticatorTest {
             assertEquals("code", tab.stage(), typed);
             assertNull(tab.error(), typed);
         }
+        assertTrue(mail.sent.isEmpty());
+        assertEquals(List.of("off"), mail.erasureNotices, "a disabled person goes on to the erasure notice's own check");
+    }
+
+    // Account erasure (ADR-0051): core closed the identity and marked it (AccountErasureMarkListener).
+    // The page and the work of the request are those of any code that is never mailed; whether the
+    // person is being erased, where the notice goes and how often are decided after the request
+    // (AccountErasureNoticeTest), so neither the page nor its time tells the cases apart.
+    @Test
+    void anAccountBeingErasedADisabledOneAnActiveOneAndNobodyGetTheSamePage() {
+        person("ada", "ada", "ada@example.com");
+        UserModel erased = person("erased", "erased", "erased@example.com",
+                AccountErasureMarkListener.ATTRIBUTE + "=2026-10-31T20:00:00Z");
+        when(erased.isEnabled()).thenReturn(false);
+        UserModel closed = person("closed", "closed", "closed@example.com");
+        when(closed.isEnabled()).thenReturn(false);
+
+        List<Map<String, Object>> pages = new ArrayList<>();
+        for (String typed : List.of("ada@example.com", "erased@example.com", "closed@example.com", "nobody@example.com")) {
+            Browser tab = new Browser("root-" + typed, "203.0.113.7");
+            tab.send(typed);
+            assertEquals("code", tab.stage(), typed);
+            assertNull(tab.error(), typed);
+            assertTrue(tab.failures.isEmpty(), typed + ": asking for a code is not a failure");
+            Map<String, Object> page = new HashMap<>(tab.page);
+            assertEquals(typed, page.remove(EmailCodeAuthenticator.IDENTIFIER_ATTRIBUTE), typed);
+            pages.add(page);
+        }
+        for (Map<String, Object> page : pages) {
+            assertEquals(pages.get(0), page, "the code page must not tell the four apart");
+        }
+        assertEquals(List.of(new Sent("ada", "ada@example.com", mail.last().code(), "login")), mail.sent,
+                "a code goes only to the active account");
+        assertEquals(List.of("erased", "closed"), mail.erasureNotices,
+                "every disabled person is handed on, so the request does the same work for both");
+    }
+
+    @Test
+    void pastTheAddressBudgetNoErasureNoticeIsHandedOn() {
+        UserModel erased = person("erased", "erased", "erased@example.com",
+                AccountErasureMarkListener.ATTRIBUTE + "=2026-10-31T20:00:00Z");
+        when(erased.isEnabled()).thenReturn(false);
+        Time.setOffset(-(Time.currentTime() % (15 * 60)));
+
+        for (int request = 1; request <= 4; request++) {
+            Browser tab = new Browser("root-" + request, "203.0.113.7");
+            tab.send("erased@example.com");
+            assertEquals("code", tab.stage(), "request " + request);
+            assertNull(tab.error(), "request " + request);
+        }
+        assertEquals(List.of("erased", "erased", "erased"), mail.erasureNotices,
+                "the fourth request of the quarter hour is past the address budget, as a code would be");
         assertTrue(mail.sent.isEmpty());
     }
 

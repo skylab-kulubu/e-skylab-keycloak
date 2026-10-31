@@ -40,7 +40,7 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.27.0`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.28.0`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.3.0`; yalnız olay kataloğu, kişisel verisiz gövde, arka planda yayın:
   [`docs/keycloak-events-to-rabbitmq.md`](docs/keycloak-events-to-rabbitmq.md)) bulunur.
@@ -500,6 +500,18 @@ böylece bir servise giden token başka bir servisin erase rolünü taşımaz.
 Varsayılan kapsamlar `basic` (`sub`) ve `roles`'tür. Uzlaştırıcı istemciyi yalnız
 doğrular. Secret'ı OpenBao'ya ve core'un ortamına sky_lab_genel'deki
 `ops/wizards/core-erasure-client-wizard.sh` taşır (runbook §11).
+
+Silme sürerken giriş (SPI 1.28.0): core'un `disable_identity` adımı kişiyi yine yalnız
+`{"enabled":false}` gövdesiyle kapatır ve isteğe `X-Sky-Account-Erasure: disable_identity`
+başlığını ekler. Global olay dinleyicisi `sky-account-erasure-mark` aynı istek ve işlemde kapalı
+kişiye yönetilmeyen `skyAccountErasureDisabledAt` özniteliğini (kapatma anı) yazar; başlıksız
+kapatma (yönetici, Admin Console, kcadm) işaret koymaz, kişiyi yeniden açan güncelleme işareti
+siler, işaret `delete_identity` ile kişiyle birlikte gider. "E-postayla devam et" her kapalı kişiye
+aynı kod sayfasını gösterir; kişi işaretliyse istekten sonra, arka planda, giriş kodunun gideceği
+adrese SkyMail'in `account.deletion-in-progress` şablonuyla "hesap silinme sürecinde" postası
+gider, aynı adrese saatte en çok bir kez. Posta ad taşımaz ve `erase_after_send: true` ile gider:
+kişinin SkyMail'deki silme komutu çoktan koşmuş olabilir, SkyMail satırı gönderince siler. Yönetici kapattığı hesapta davranış aynıdır (posta yok).
+Başlığı göndermeyen core'da hiçbir şey değişmez. Harness: `tests/login-by-email-code.sh`.
 
 CMS inscribed'a geçerken (ADR-0056) operatör site istemcilerinde (`frontend-main`,
 `frontend-arge` ve admin panelinin istemcisi: `admin`, sandbox'ta `superadmin`)

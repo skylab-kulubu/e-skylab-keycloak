@@ -23,7 +23,7 @@ ADMIN_CONFIG=/tmp/integration-kcadm.config
 #                   Privileged roles, group overage mapper
 #   roles-noop      (core-erasure fixture, operator state without core's service roles) core
 #                   service roles, exchange claims, no-op reconciliation, identity guardrails, the
-#                   whole reconciliation's dry run
+#                   whole reconciliation's dry run, the reconciliation session's byte equality
 #   login           (core-erasure fixture, operator state) OIDC/PAR basics, K4 sign-in by e-mail,
 #                   the K4 reconciler's refusal and interrupted swap, re-authentication forwarded
 #                   to Microsoft (PR #89)
@@ -833,6 +833,69 @@ stage_v2_reconcile_check() {
     | jq --argjson since "$newest_before" '[.[] | select(.time > $since)] | length')
   [[ $new_events == 0 ]] || fail "the dry run produced $new_events admin event(s)"
   kcadm update "client-scopes/$scope_uuid" -r "$V2_REALM" -s 'attributes."include.in.token.scope"=false' >/dev/null
+}
+
+# The reconciliation session (KEYCLOAK_RECONCILE_SESSION, config/ReconcileSession.java) runs every
+# kcadm read and every ReconcileJson call of a run in one JVM; it must not change one byte of what a
+# run prints (the release wizards read these lines) nor its status. On a reconciled realm with three
+# drifts (a realm setting, a client scope attribute, a missing protocol mapper) the whole dry run
+# prints the same bytes with a JVM per call (off) and with the session (required); so does the real
+# run that repairs them, each from the same drifts. Every other reconciliation of the harness runs
+# with the session too (the compose default, required). The times are the before and after of the
+# change.
+stage_reconcile_session_parity() {
+  CURRENT_STAGE='reconciliation session: the same bytes and status as a JVM per call'
+  local dir="$TEST_STATE_DIR/session-parity" check
+  mkdir -p "$dir"
+  reconcile_session_parity_drift
+  for check in true false; do
+    reconcile_session_run off "$check" "$dir/check-$check-off.log"
+    # The dry runs leave the drifts; the real run with a JVM per call repaired them.
+    [[ $check == true ]] || reconcile_session_parity_drift
+    reconcile_session_run required "$check" "$dir/check-$check-session.log"
+    if ! cmp -s "$dir/check-$check-off.log" "$dir/check-$check-session.log"; then
+      diff "$dir/check-$check-off.log" "$dir/check-$check-session.log" >&2 || true
+      fail "the reconciliation (KEYCLOAK_RECONCILE_CHECK=$check) printed other bytes with the session than with a JVM per call"
+    fi
+    [[ $(tail -n 1 "$dir/check-$check-off.log") == 'exit 0' ]] \
+      || { cat "$dir/check-$check-off.log" >&2; fail "the reconciliation (KEYCLOAK_RECONCILE_CHECK=$check) of the drifted realm failed"; }
+  done
+  # The dry run named the drifts and the real run repaired them, so the runs compared are whole ones.
+  [[ $(grep -Ec '^\[reconcile\] would kcadm ' "$dir/check-true-off.log") -ge 3 ]] \
+    || { cat "$dir/check-true-off.log" >&2; fail 'the dry run of the drifted realm did not withhold the three repairs'; }
+  grep -Fq '[reconcile] realm session, login and theme settings: updated (ssoSessionIdleTimeout)' "$dir/check-false-off.log" \
+    || { cat "$dir/check-false-off.log" >&2; fail 'the real run did not repair the realm setting'; }
+  [[ $(kcadm get "realms/$V2_REALM" -c | jq -r .ssoSessionIdleTimeout) == 7200 ]] \
+    || fail 'the real run with the session left the realm setting drifted'
+}
+
+# The three drifts of stage_reconcile_session_parity.
+reconcile_session_parity_drift() {
+  local scope_uuid mapper_uuid
+  kcadm update "realms/$V2_REALM" -s ssoSessionIdleTimeout=1800 >/dev/null
+  scope_uuid=$(v2_scope_uuid account-center-account-api)
+  kcadm update "client-scopes/$scope_uuid" -r "$V2_REALM" -s 'attributes."include.in.token.scope"=true' >/dev/null
+  scope_uuid=$(v2_scope_uuid account-center-core-claims)
+  mapper_uuid=$(kcadm get "client-scopes/$scope_uuid/protocol-mappers/models" -r "$V2_REALM" -c \
+    | jq -r '.[] | select(.name == "sky_embed") | .id')
+  [[ -n $mapper_uuid ]] || fail 'the sky_embed mapper of account-center-core-claims is missing before the drift'
+  kcadm delete "client-scopes/$scope_uuid/protocol-mappers/models/$mapper_uuid" -r "$V2_REALM" >/dev/null
+}
+
+# reconcile_session_run MODE CHECK LOG: one whole reconciliation with KEYCLOAK_RECONCILE_SESSION=MODE
+# and KEYCLOAK_RECONCILE_CHECK=CHECK. LOG gets what it printed (stdout and stderr in one stream, in
+# the order written) and a last line "exit STATUS"; Compose's own messages go elsewhere. Logs the
+# time it took.
+reconcile_session_run() {
+  local mode=$1 check=$2 log=$3 started=$SECONDS
+  "${COMPOSE[@]}" run --rm --no-deps -T \
+    -e "KEYCLOAK_RECONCILE_SESSION=$mode" -e "KEYCLOAK_RECONCILE_CHECK=$check" \
+    --entrypoint bash keycloak-config \
+    -c '/opt/keycloak/config/reconcile-account-center.sh 2>&1; printf "exit %s\n" "$?"' \
+    >"$log" 2>"$log.compose"
+  printf '[harness %s +%dm%02ds] reconciliation KEYCLOAK_RECONCILE_SESSION=%s KEYCLOAK_RECONCILE_CHECK=%s: %ds, %s\n' \
+    "$INTEGRATION_GROUP" $((SECONDS / 60)) $((SECONDS % 60)) "$mode" "$check" $((SECONDS - started)) \
+    "$(tail -n 1 "$log")" >&2
 }
 
 v2_state_snapshot() {
@@ -2219,6 +2282,7 @@ if group_runs roles-noop; then
   stage_v2_reconcile_noop
   # Right after the no-op run: the realm is reconciled, so the dry run must withhold nothing.
   stage_v2_reconcile_check
+  stage_reconcile_session_parity
   stage_event_retention_after_noop_reconciliation
   stage_reset_choose_user_after_noop_reconciliation
   stage_v2_identity_guardrails

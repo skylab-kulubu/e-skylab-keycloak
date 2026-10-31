@@ -40,7 +40,7 @@ entegrasyon testi bunu doğrular.
 | Kimlik korumaları: core sertifika rolleri, OBS `department mapper`, core'un `manage-clients` rolü | Uzlaştırıcı **dokunmaz**: kimliğinin kullanıcı ve kimlik sağlayıcısı yetkisi yoktur. Operatör `config/identity-guardrails.sh` ile uygular (§8). |
 | Forms'un Privileged rolü (§28) | `forms` istemcisinde `skyforms:read-all` (DK'nın Forms okuması; forms-backend henüz okumuyor) her koşuda var edilir; SkyMail'inkiler gibi yalnız `DK`'ya **bir kez** verilir (operatörün `core-roles` koşusu). |
 | SkyMail'in Privileged rolleri (§25) | `skymail` istemcisinde `skymail:system-mails:read` ve `skymail:mails:tracking:read` (ADMIN, YK, DK; kişi bazındaki takip raporu, iletisim-servisi 17) her koşuda var edilir (yoksa açıklamasıyla oluşturulur); SkyMail'in kendi rolleri `skymail:access`, `templates:read`, `lists:read`, `mails:read`, `mails:send`, `mails:write` (ADMIN, YK) ve `mails:approve` (yalnız YK) oluşturulmaz, varsa tohumlanır (ekip-yetkileri 03; `announcements:send` listeden çıktı). core'un kaynak rolleri gibi kendi Privileged gruplarına **bir kez** verilir ve `skylab.seeded-group-mappings` ile işaretlenir; tohumlamayı operatörün `KEYCLOAK_RECONCILE_ONLY=core-roles` koşusu yapar. Kişilerin diğer `skymail:*` rolleri `/ROLLER` rol gruplarına taşınır (§26). |
-| Servis hesaplarının rolleri (§20, §20.1, §20.2) | `place-service` istemcisini oluşturur (gizli, yalnız client credentials, §20.2); `forms`'a core'un beş servis rolü (`consent:record` dahil), `place-service`'e yalnız `consent:record`, `skymail-backend`'e core'un `audience:read`'i, `communication-preferences:read`'i ve `consent:audience:read`'i ile `realm-management`'ın `view-users` ve `view-clients`'ı, `core`'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`, `skymail:lists:read`, `skymail:lists:write`, `skymail:tracking:withdraw` rolleri, `skymail-seed`'in servis hesabına `skymail:templates:system`. Uzlaştırıcı kimliği core rollerini, `skymail:tracking:withdraw`'u ve `skymail:templates:system`'ı oluşturur ve raporlar; vermeyi operatör `KEYCLOAK_RECONCILE_ONLY=service-roles` ile yapar. SkyMail'in öbür rolleri oluşturulmaz. Yalnız servis hesaplarının rolünü taşıyan kişi, grup, varsayılan rol ve bileşik rol bildirilir. |
+| Servis hesaplarının rolleri (§20, §20.1, §20.2) | `place-service` istemcisini oluşturur (gizli, yalnız client credentials, §20.2); `forms`'a core'un beş servis rolü (`consent:record` dahil), `place-service`'e yalnız `consent:record`, `skymail-backend`'e core'un `audience:read`'i, `communication-preferences:read`'i ve `consent:audience:read`'i ile `realm-management`'ın `view-users` ve `view-clients`'ı, `core`'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`, `skymail:lists:read`, `skymail:lists:write`, `skymail:tracking:withdraw` rolleri ile Forms'un `skyforms:responses:read-service`'i, `skymail-seed`'in servis hesabına `skymail:templates:system`. Uzlaştırıcı kimliği core rollerini, `skymail:tracking:withdraw`'u, `skymail:templates:system`'ı ve `skyforms:responses:read-service`'i oluşturur ve raporlar; vermeyi operatör `KEYCLOAK_RECONCILE_ONLY=service-roles` ile yapar. SkyMail'in öbür rolleri oluşturulmaz. Yalnız servis hesaplarının rolünü taşıyan kişi, grup, varsayılan rol ve bileşik rol bildirilir. |
 | Rol grupları `/ROLLER/<UYGULAMA>-<ROL>` (§26) ve Leader gruplarının uygulama rolleri (§27) | Uzlaştırıcı **dokunmaz** (gruba rol eşlemek kullanıcı yetkisi ister). Operatör `config/role-groups.sh` ve `config/leader-app-roles.sh` (ya da `KEYCLOAK_RECONCILE_ONLY=role-groups` / `leader-app-roles`) ile kurar; kuru koşu varsayılandır, `--apply` yazar; üye hiç eklenmez. |
 
 Ortam değişkenleri: `KEYCLOAK_PASSKEY_RP_ID` (varsayılan `yildizskylab.com`) ve
@@ -415,6 +415,12 @@ alınır: 1.16.0'dan eski bir imaja dönmeden önce, onu kullanan her istemcide
 `sky-group-overage-mapper` yerleşik Group Membership mapper'ına geri çevrilir; yoksa Keycloak eksik
 mapper'ı sessizce atlar ve token'lar `groups` claim'ini kaybeder.
 
+Uzlaştırma oturumunun (tek JVM'de kcadm okumaları ve ReconcileJson, README) geri dönüşü imaj
+gerektirmez: aynı imajla koşuya `KEYCLOAK_RECONCILE_SESSION=off` verilir; her kcadm ve ReconcileJson
+çağrısı yine kendi JVM'ini açar (eski davranış, yalnız yavaş). Oturum koşu ortasında ölürse koşu
+yeni bir istek göndermeden exit 1 ile durur; aynı koşu `KEYCLOAK_RECONCILE_SESSION=off` ile yeniden
+yapılır.
+
 Realm ayarları için ayrı bir geri dönüş yolu yoktur; önceki imaj digest'i ile
 eski uzlaştırıcı çalıştırıldığında RP ID yeniden boşalır (Keycloak passwordless
 politikayı her yazımda bütünüyle yeniden kurar) ve `account-center` istemcisi
@@ -473,7 +479,7 @@ edilir). core'un istemci kimliği `--core-client` ya da
 
 1. Bu betiği ve SPI 1.13.1'i taşıyan Keycloak sürümü yayımlanır (production
    dalı, Dokploy yeniden dağıtımı; `/health/ready` yeşil).
-2. Sunucuda (`api.yildizskylab.com`), geçici bir master yöneticisiyle önce
+2. Sunucuda, geçici bir master yöneticisiyle önce
    kuru koşu, çıktı kontrol edildikten sonra uygulama. Üretim Keycloak'ı bir
    Dokploy Application'ıdır; betik çalışan konteynerin içinde koşar:
 
@@ -563,7 +569,7 @@ hiçbir şey yazmaz. Entegrasyon testi şunları kanıtlar:
    Dokploy'u tetikler. `/health/ready` yeşil olmalıdır. Uzlaştırıcı imajın
    içindedir; imaj değişmeden `reconcile-account-center.sh` eski mapper
    listesini uygular.
-2. Sunucuda (`api.yildizskylab.com`) uzlaştırıcı, Hesap Merkezi sürüm
+2. Sunucuda uzlaştırıcı, Hesap Merkezi sürüm
    sihirbazlarındaki gibi çalışan üretim Keycloak konteynerinin içinde bir kez
    koşar. Kapsamlı uzlaştırıcı istemcisinin gizli anahtarı yalnız stdin'den
    geçer, ekrana basılmaz:
@@ -660,7 +666,7 @@ kendisi ulaşabilir.
 1. Bu betiği ve SPI 1.13.2'yi taşıyan Keycloak sürümü yayımlanır (production
    dalı, Dokploy yeniden dağıtımı; `/health/ready` yeşil). 1.13.2 aynı zamanda
    `email/change-request`'in eski birincili kabul etmesini getirir.
-2. Sunucuda (`api.yildizskylab.com`), §8'deki gibi geçici bir master
+2. Sunucuda, §8'deki gibi geçici bir master
    yöneticisiyle önce kuru koşu, sayılar kontrol edildikten sonra uygulama:
 
    ```bash
@@ -781,7 +787,7 @@ okur.
    engellemez.
 2. `skymail`, `skycms` ve `forms` istemcilerinin iki realm'de de var olduğu
    doğrulanır. Betik eksik olanı adıyla yazar ve durur.
-3. Sunucuda (`api.yildizskylab.com`) wizard koşulur; nasıl kopyalanacağı başında
+3. Sunucuda wizard koşulur; nasıl kopyalanacağı başında
    yazar: `sudo bash ~/openbao-setup/core-erasure-client-wizard.sh`. Geçici bir
    master yöneticisi gerekir; parolası yalnız kcadm'ın prompt'una yazılır. Betiği
    elle koşmak gerekirse (secret'ın taşınması yine wizard'ındır):
@@ -2658,14 +2664,8 @@ Uzlaştırıcı kimliğinin `manage-realm` rolü yeter.
    doğrudur. Keycloak Traefik'in adresini görüyorsa herkes tek bir /24 kovasını paylaşır (öneri realm
    genelinde saatte 100 gönderimle sınırlanır); güvenilen vekil listesi yoksa ve `X-Forwarded-For`
    istemciden geçiyorsa bütçe atlatılabilir (oturum ve genel sınır yine bağlar). Wizard
-   `ops/wizards/real-client-ip-diagnostics-v2.sh` Mac'ten sunucuya kopyalanır ve **production
-   sunucusunda root olarak** koşulur (kendi başlığındaki gibi). Mac'te:
-
-   ```bash
-   cd ~/Projects/sky_lab_genel/ops/wizards && scp -P 1911 real-client-ip-diagnostics-v2.sh yusssss@api.yildizskylab.com:~/
-   ```
-
-   Production sunucusunda:
+   `ops/wizards/real-client-ip-diagnostics-v2.sh` sunucuya kopyalanır (nasıl kopyalanacağı kendi
+   başlığında yazar) ve **production sunucusunda root olarak** koşulur. Sunucuda:
 
    ```bash
    sudo bash ~/real-client-ip-diagnostics-v2.sh
@@ -2869,10 +2869,12 @@ Aynı adım iki servis hesabını daha yönetir:
 | `view-users`, `view-clients` | `realm-management` (Keycloak'ın; oluşturulmaz) | `skymail-backend`'in servis hesabı (kişiler ve gruplar da taşır) | SkyMail kişileri Admin REST'ten okur: grup üyeleri, onay rollerinin sahipleri ve tekil postada takip için adresin tek Keycloak hesabı (`GET /users?email=…&exact=true`, skymail-backend #85). `view-users` gerekir (yalnız `query-users` kullanıcıları döndürmez), `view-clients` istemciyi ve rollerini okur. Production'da 2026-09-23'te elle verildi; burada kodlandı |
 | `skymail:tracking:withdraw` | `skymail` (**adım oluşturur**; açıklamalı SkyMail satırı) | yalnız `core`'un servis hesabı (`service-account-core`) | `PUT /internal/v1/tracking-withdrawals/{sub}`: kişi takibi kapatınca core SkyMail'deki olaylarını sildirir (skymail-backend #75, core #256). SkyMail `azp=core`, `aud ∋ skymail` ve bu rolü ister, token'ın servis hesabınınki olduğuna bakmaz: rol hiçbir kişiye, gruba, bileşik role ya da varsayılan role girmez (B2) |
 | `skymail:notifications:send` | `skymail` (**adım oluşturur**; açıklamalı SkyMail satırı) | yalnız `core`'un servis hesabı (`service-account-core`) | `POST /v1/notifications`: core ne olduğunu ve kime olduğunu söyler, SkyMail kanalı ve metni seçer (ADR 0070; skymail-backend #79, `docs/notifications.md`; core'un yeni bilet bildirimi, iletisim-servisi 06). SkyMail bu ucu yalnız servis hesabı token'ından (`client_id` = `azp`) kabul eder; Forms ve `keycloak-mailer` almaz, `/v1/mail_tasks/single` ile devam eder. Rol hiçbir kişiye, gruba, bileşik role ya da varsayılan role girmez |
+| `skyforms:responses:read-service` | `forms` (**adım oluşturur**; açıklamalı Forms satırı, `FORMS_SERVICE_ROLE_DEFINITIONS`) | yalnız `core`'un servis hesabı (`service-account-core`) | Forms'un iç okuma uçları (ADR 0071'deki dar rol, ADR 0075; forms-posta-core 04): form, yanıtlar, tek yanıt, gecikmiş değerlendirmeler ve gönderenin rolüyle yanıtlayanlar. Forms bu uçları yalnız iç ağdan sunar. `aud ∋ forms` varsayılan `roles` kapsamının audience resolve'undan gelir, yeni eşleyici yok. Rol hiçbir kişiye, gruba, bileşik role ya da varsayılan role girmez. core bir kişinin `forms` etkin rollerini (`skyforms:*`, ADR 0075 karar 6) zaten taşıdığı `realm-management` rolleriyle okur (site istemcilerindeki gibi, core `docs/keycloak-admin-permissions.md`); burada ek yetki verilmez |
 | `skymail:templates:system` | `skymail` (**adım oluşturur**; açıklamalı SkyMail satırı) | yalnız `skymail-seed`'in servis hesabı (`service-account-skymail-seed`) | `PUT /v1/templates/by-key/{key}`: bir şablonu sistem şablonu yapmak ya da işareti kaldırmak (skymail-backend README "Keycloak"). `account.*`/`keycloak.*` sistem şablonu bastırma listesini atladığı için `skymail:templates:write` artık işareti değiştirmez (Yusuf, 2026-10-21). `skymail-seed` istemcisini ve öbür üç SkyMail rolünü sky_lab_genel `ops/wizards/skymail-seed-github-wizard.sh` kurar; adım o istemci yoksa uyarır. Rol hiçbir kişiye, gruba, bileşik role ya da varsayılan role girmez |
 
-Liste `CORE_SERVICE_ROLE_DEFINITIONS` (core), `SKYMAIL_SERVICE_ROLE_DEFINITIONS` (SkyMail) ve
-`REALM_MANAGEMENT_SERVICE_ROLE_DEFINITIONS` (realm-management) dizilerindedir; üçü aynı gövdeyle (`reconcile_service_roles`) yürür ve operatör adımının sonunda tek
+Liste `CORE_SERVICE_ROLE_DEFINITIONS` (core), `SKYMAIL_SERVICE_ROLE_DEFINITIONS` (SkyMail),
+`FORMS_SERVICE_ROLE_DEFINITIONS` (Forms) ve `REALM_MANAGEMENT_SERVICE_ROLE_DEFINITIONS`
+(realm-management) dizilerindedir; dördü aynı gövdeyle (`reconcile_service_roles`) yürür ve operatör adımının sonunda tek
 toplam yazılır (`check: N change(s) pending…` / `applied N change(s)`). SkyMail'in rolleri SkyMail'in
 kataloğudur: yoksa `WARNING: client role <rol> of skymail does not exist in realm …; it is not granted
 to core` yazılır ve o rol atlanır. Bunlar bugüne kadar elle verilmişti; kuru koşu production'daki
@@ -2938,6 +2940,26 @@ SkyMail'in `SKYMAIL_TRACKING=on`'undan önce yapılır. Geri dönüş: Admin Con
 hesabından kaldırılır ve `skylab.granted-service-accounts` özniteliği silinir; kalıcı geri dönüş
 satırı listeden çıkaran sürümdür.
 
+**Forms'un iç okuma rolü (`skyforms:responses:read-service`, forms-posta-core 04).** Yayından
+sonraki tam uzlaştırma rolü `forms` istemcisinde açıklamasıyla oluşturur (`client role
+skyforms:responses:read-service of forms: created`), `default client scope roles of core: verified
+(… aud forms in the token)` yazar ve `WARNING: skyforms:responses:read-service is not yet granted to
+service account service-account-core by the operator step` ile uyarır. `forms` istemcisi olmayan
+realm'de `WARNING: client forms does not exist in realm …; skipped its service roles` yazılır. Operatör
+`service-roles` kuru koşusunda (önce sandbox, sonra production) bu rol için beklenen satırlar:
+`would grant skyforms:responses:read-service to service account service-account-core` ve `would record
+the grant of skyforms:responses:read-service (skylab.granted-service-accounts=<now>
+service-account-core)`. `core`'da `fullScopeAllowed=false` ise `would map
+forms/skyforms:responses:read-service in the role scope of core …` da gelir. Realm'de rol henüz yoksa
+(tam uzlaştırma koşmadıysa) `would create client role skyforms:responses:read-service of forms` görünür.
+Kişi, grup ya da bileşik rol uyarısı çıkarsa uygulamadan önce Admin Console'dan kaldırılır. Admin
+panelinin rol kapsamı `forms`'un her rolünü aldığı için (§16) sonraki tam uzlaştırma rolü panelin
+kapsamına da ekler; rolü kimse taşımadığı için panel token'ına girmez. Sıra: rol zararsızdır (Forms'un
+iç uçları ve core'un okuyucusu açılmadan kimse kullanmaz); Keycloak yayını ve operatör adımı, core'un
+Forms'tan okuyan sürümü (forms-posta-core 05–07) açılmadan önce yapılır. Geri dönüş: Admin
+Console'dan rol `service-account-core`'dan kaldırılır ve rolün `skylab.granted-service-accounts`
+özniteliği silinir; kalıcı geri dönüş satırı listeden çıkaran sürümdür.
+
 **`realm-management` rolleri.** Production'da `service-account-skymail-backend` iki rolü 2026-09-23'ten
 beri taşıdığı için operatör kuru koşusu bunlar için yalnız `service account
 service-account-skymail-backend: view-users unchanged (held)` (ve `view-clients`) ile ilk kez bir
@@ -2959,7 +2981,10 @@ uygulayan koşusu bunu uyarır ve silmez (bileşik okuması düşerse koşu yazm
 `communication-preferences:read`, `core`'unkinde `azp=core`, `aud ∋ skymail` ve
 `skymail:tracking:withdraw` var, `core-erasure`'ınkinde ikisi de yok; her rolü yalnız kendi servis
 hesabı taşır: başka kullanıcı, grup, bileşik rol (realm'in ve her istemcinin rolleri taranır) ve
-varsayılan rol yok (B2).
+varsayılan rol yok (B2). `skyforms:responses:read-service`'i `forms`'u ilk gören tam uzlaştırma
+oluşturur (ilk koşu `forms` yokken adımı atladığını yazar); operatör adımından sonra `core`'un gerçek
+token'ında `azp=core`, `aud ∋ forms` ve `forms` rolü olarak yalnız o vardır, `core-erasure`'ın ve
+`forms`'un kendi token'ında yoktur; rolü yalnız `service-account-core` taşır (B2).
 
 ### 20.2 Rıza kaydının rolleri: `consent:record`, `consent:audience:read` (data-lifecycle 10)
 
@@ -3443,7 +3468,7 @@ Keycloak admin olaylarında (30 gün) görünür; kalıcı iz yedek dosyası ve 
 
 ### Operatör sırası (önce sandbox, sonra production)
 
-Komutlar production sunucusunda (`ssh -p 1911 yusssss@api.yildizskylab.com`) koşar; sandbox realm'i
+Komutlar production sunucusunda koşar; sandbox realm'i
 aynı Keycloak konteynerindedir.
 
 1. Bu değişikliği taşıyan Keycloak sürümü yayımlanır (Touch ID kapısı). Tam uzlaştırma
@@ -4075,22 +4100,29 @@ Panel alanı, `geçici` ve `karar-bekliyor` sapma değildir.
 Yalnız kodun sahibi olduğu alan sapma sayılır (groups-only rol modeli, Microsoft Entra kalıbı: tohum bir
 kez, sonra panelin). Uzlaştırıcının Privileged kökler için bir kez tohumladığı roller (§19, §25, §28,
 §33.6, §33.7 listeleri; rolde `skylab.seeded-group-mappings` işareti) tohumdan sonra SKY LAB admin
-panelinindir: böyle bir rolün bir Privileged kökten (ya da altındaki gruptan) alınması ya da oraya
-verilmesi sapma değil, tek bir bilgi satırıdır, `BILGI|S2-tohum|<grup yolu>|<istemci>|<rol>|<eksik|fazla>`;
-alarma katılmaz. Tohumlanmamış (işaretsiz) rolün eksik eşlemesi kodun bekleyen işidir: `S2-eksik`.
-Privileged kökte hiçbir listenin tohumlamadığı rol (`--privileged-file`'da olmayan istemci, yönetici ya da
-realm rolü) kodundur: `S2-fazla`.
+panelinindir: böyle bir rolün kendi tohum kümesindeki bir kökten (listenin adladığı Privileged adlar,
+`/<AD>` ve `/UYELER/<AD>`, ya da altlarındaki grup) alınması ya da oraya verilmesi sapma değil, tek bir
+bilgi satırıdır, `BILGI|S2-tohum|<grup yolu>|<istemci>|<rol>|<eksik|fazla>`; alarma katılmaz.
+Tohumlanmamış (işaretsiz) rolün eksik eşlemesi kodun bekleyen işidir: `S2-eksik`. Privileged kökte
+hiçbir listenin tohumlamadığı rol (`--privileged-file`'da olmayan istemci, yönetici ya da realm rolü)
+kodundur: `S2-fazla`. Tohumlanmış rol de kendi tohum kümesi dışındaki bir Privileged köke (ya da
+altındaki gruba) verilirse `S2-fazla`dır (ör. yalnız YK'ya tohumlanan `skymail:mails:approve` ADMIN'de);
+DK'ya ya da altındaki gruba verilen her yazma rolü (`config/dk-read-only.sh` `WRITE_ROLES`,
+`--print-write-roles`) de öyle: DK okur, yazmaz (ekip-yetkileri bilet 17). DK'nın geçici Forms
+yönetici rollerinin (`geçici`, `dk-read-only.sh --forms`'un alacağı) yokluğu hedef durumdur: tek bir
+`BILGI|S2-geçici|<grup yolu>|<istemci>|<rol>|eksik` satırı, alarma ve özete katılmaz. Karar tablosu
+Keycloak'sız `tests/check-app-assignments-drift.sh`'ta (CI static işi).
 
 | Sınıf | Ne |
 |---|---|
 | S1 | kişide doğrudan yönetici ya da sınıfsız client rolü (rol başına bir satır, `kişi:<n>`) |
 | S1-realm | kişide doğrudan realm rolü: Java dönemi rolleri, rol-temizligi bilet 19'un penceresine kadar yalnız bilgi; `KEYCLOAK_APP_ASSIGNMENTS_REALM_ROLES=alarm` (`--realm-roles alarm`) alarma katar |
-| S2-eksik | kodun beklediği, realm'de olmayan eşleme (beklenen `evet`, canlı `yok`); tohumlanmış Privileged rolün Privileged kökteki eksiği hariç (`S2-tohum`) |
-| S2-fazla | kodun beklemediği kod alanı eşlemesi: Privileged kök, `/ROLLER` ve `role-groups.json`'daki yapraklar, `/UYELER`, alan ve öbür gruplar; herkese giden hedefteki uygulama rolü |
+| S2-eksik | kodun beklediği, realm'de olmayan eşleme (beklenen `evet`, canlı `yok`); tohumlanmış Privileged rolün kendi tohum kümesindeki eksiği hariç (`S2-tohum`) |
+| S2-fazla | kodun beklemediği kod alanı eşlemesi: Privileged kök (tohumlanmamış rol, tohum kümesi dışındaki kök, DK'da yazma rolü), `/ROLLER` ve `role-groups.json`'daki yapraklar, `/UYELER`, alan ve öbür gruplar; herkese giden hedefteki uygulama rolü |
 | S2b | panel hedefinde (ekip, alt ekip, Leader grubu) yönetici, sınıfsız ya da realm rolü |
 | S3 | `/ROLLER` altında `role-groups.json`'ın adlamadığı yaprakta ya da yaprağın altındaki grupta eşleme |
 | S5 | Leader gruplarının (LIDERLER, KOORDINATORLER) hiçbirinde etkin üye olmayan en üst ekip |
-| S2-tohum (bilgi) | tohumlanmış Privileged rolün Privileged kökte panelden alınan (`eksik`) ya da verilen (`fazla`) eşlemesi; alarma katılmaz |
+| S2-tohum (bilgi) | tohumlanmış Privileged rolün kendi tohum kümesindeki kökte (ya da altındaki grupta) panelden alınan (`eksik`) ya da verilen (`fazla`) eşlemesi; DK'da yazma rolü hiçbir zaman; alarma katılmaz |
 
 Varsayılan rol ve IdP ayarları (S4, S7) §33.2'nin, konsol yazımları (S6) Keycloak yönetici
 olaylarının, katalog-core karşılaştırması (S8) `tests/check-app-assignments.sh`'ın; bu adım okumaz.
@@ -4104,7 +4136,9 @@ alarm (bilet 07, sunucu zamanlayıcısı ve ADMIN postası hub `ops/`'ta) bu ad�
 tek bir `[app-assignments] SAPMA: …, alarm=<n>` satırı varsa ve çıkış onunla uyuşuyorsa (0 ile `alarm=0`,
 1 ile `alarm>0`) geçirir. Özet satırı yoksa (uzlaştırıcı `app-assignments.sh`'ı çağırmadan, girişte ya da
 realm okumasında durduysa, ki orada düşüş de 1 olabilir), birden çoksa ya da çıkış uymuyorsa sonuç 2'dir
-(`[app-assignments-alarm] not measured: …`): ölçülemedi, sapma sayılmaz.
+(`[app-assignments-alarm] not measured: …`): ölçülemedi, sapma sayılmaz. Zamanlayıcı sarmalayıcının
+yalnız 0 ve 1'ini sonuç sayar; öbür her çıkış (2, zaman aşımının 124'ü, sinyalin 143'ü ya da başka) ölçülemedi
+demektir (bilet 17, F3).
 
 İlk geceler (bilinen gürültü, bilet 07): üretimde ilk girişte `broker/read-token`'ı doğrudan almış kişiler
 (§33.2'nin `NOTE`'u) `S1` (kişide sınıfsız client rolü), Java dönemi grup eşlemeleri `S2-fazla` olarak
@@ -4254,3 +4288,178 @@ Bir kök rolü taşımıyorsa önce onun `would kcadm create groups/<kök kimli�
 kimliği> (body)` satırı çıkar ve `granted to:` onu sayar. İkinci koşu: `group mappings of the admin
 Privileged roles: unchanged`. Harness `tests/role-groups.sh` (denetimde `evet`/`hayır`, kuru → uygula →
 ikinci koşu tohumsuz, YK ve DK üyesinin token'ı, sandbox'ta `superadmin`).
+
+## 34. Master konsolu: konsol grupları, sertleştirme ve passkey girişi (rol-temizligi 03)
+
+Karar (rol-temizligi S1–S3, 2026-10-12; konsol listesi 2026-10-13): Keycloak konsoluna her kişi
+**master realm'deki kendi ayrı hesabıyla** girer (Microsoft Entra'nın "yönetim işi için ayrı hesap"
+önerisi). Yetki master'daki `/KONSOL` gruplarından gelir; master'ın `admin` realm rolü yalnız işletme
+hesabında ve kişiye bağlı olmayan iki acil hesapta kalır (§35). e-skylab'da hiçbir kişi ve grup
+`realm-management` rolü taşımaz (K3). Neden ayrı realm: Keycloak 26.7.4'te `manage-users` taşıyan biri
+(core'un servis hesabı dahil) yönetim rolü taşıyan bir gruba istediği kişiyi üye ekleyebilir; e-skylab
+içindeki bir konsol grubu, panel ya da core'un sırrı üzerinden herkese yöneticilik verdirebilirdi. core
+ve panel master'a erişemez. master uzlaştırıcının dışındadır; ayarı operatör betiği yapar.
+
+### 34.1 Konsol politikası (grup-yonetimi 04)
+
+- Konsol yalnız kimlik sağlayıcı (IdP), client ve token ayarları ile acil durum (§35) içindir.
+- Kişi, üyelik, grup açma, silme, adlandırma ve grup rol eşlemesi SKY LAB yönetim panelinden yapılır:
+  core bunları denetim kaydına ve yetki postasına yazar. Konsoldan yapılan aynı değişiklik core'un
+  kaydına girmez; yalnız Keycloak admin olaylarında (30 gün) görünür.
+- Acil durumda konsoldan yapılan her üyelik ya da grup değişikliği aynı gün devir notuna ve ekip
+  sohbetine yazılır (grup-yonetimi 10 konsol değişikliklerini kendiliğinden kaydedene kadar).
+- Konsol hesabı kişiseldir, paylaşılmaz. e-skylab'daki günlük hesap konsol yetkisi taşımaz.
+
+### 34.2 `config/master-console.sh` ne yapar
+
+Kuru koşu varsayılan (`--check`), `--apply` yazar; her yazma yalnız canlı değer farklıysa yapılır,
+ikinci `--apply` hiçbir şey yazmaz (admin olayı yok). Realm ayarlarında kuru koşu her alanı canlı ve
+yeni değeriyle basar (`bruteForceProtected false -> true`). Realm yazmaları canlı realm temsilinin
+üstüne birleştirilip tam gönderilir (kcadm `--merge`): Keycloak, kısmi bir realm PUT'unda olmayan CIBA,
+PAR ve cihaz kodu ayarlarını varsayılana döndürür. Yalnız master'a yazar; e-skylab realm'lerine
+dokunmaz. **Üyeliğe dokunmaz**: kimin hangi grupta olduğu veridir (rol-temizligi 04, F1).
+
+| Kalem | Uygulanan durum |
+| --- | --- |
+| Gruplar (`config/master-console.json`, `/ROLLER` dosyasının biçimi) | `/KONSOL` (rol taşımaz) ve yaprakları: `E-SKYLAB-YAZICILAR` = `e-skylab-realm` client'ının bütün rolleri, `SANDBOX-YAZICILAR` = `e-skylab-sandbox-realm`'in bütün rolleri; ikisinde de `impersonation` yok (`excluded_roles`): yazanlar başkasının yerine geçemez. Okuyucu grubu yok (S2: konsoldakilerin hepsi yazar). Yapraktaki fazla rol, `/KONSOL`'un kendi rolü, yaprak altındaki alt grup, dosyada olmayan `/KONSOL/*` grubu ve client'ın dosyada ne listelenen ne hariç tutulan rolü (Keycloak'ın yeni bir sürümle eklediği rol) `WARNING` olur, alınmaz. client yoksa (o realm o sunucuda yoksa) yaprak uyarıyla atlanır. `/KONSOL` ya da altı master'ın varsayılan grubuysa `PROBLEM`, hiçbir şey yazılmaz. |
+| Giriş akışı `konsol-passkey` | Üst düzey akış: `auth-username-password-form`, ardından `webauthn-authenticator`, ikisi de `REQUIRED`. **Cookie adımı yok**: açık bir SSO oturumu iki faktörün yerine geçmez, konsol her girişte parola ve passkey ister. **Koşullu rol akışı yok** (spec §4.4): rol adı değişirse ikinci faktör sessizce atlanırdı. Elle değiştirilmiş akış geri kurulur (fazla adım ya da alt akış silinir, eksik adım sırasıyla yeniden eklenir, gereklilik `REQUIRED` yapılır). |
+| Akışın bağlandığı client'lar | `security-admin-console`, `account-console` ve `account` (client akış ezmesi, `browser`). Hesap konsolları da bağlıdır: yalnız parolayla açılmış bir master Hesap Konsolu oturumu kişinin passkey'ini silebilirdi (Account REST, adım yükseltme yok); sonraki konsol girişinde parolayı bilen kendi passkey'ini kaydederdi. Master'da tarayıcıyla giriş yapılan (standard ya da implicit akış, yönlendirme adresi var, bearer-only değil) başka bir client bağlı değilse `WARNING` (client kimliğiyle). master'ın kendi tarayıcı akışı değişmez. |
+| Passkey politikası ve kaydı | master'ın iki faktörlü WebAuthn politikası: `webAuthnPolicyResidentKey=required`, `webAuthnPolicyUserVerificationRequirement=required` (keşfedilebilir kimlik bilgisi + kullanıcı doğrulaması: passkey; e-skylab'ın passkey politikasıyla aynı iki değer). Keycloak bu politikayı yalnız tam haliyle yazar; betik onu canlı realm temsilinin üstüne birleştirip gönderir. Zorunlu eylem `webauthn-register` açık: passkey'i olmayan hesap parolasından hemen sonra bir tane kaydeder (bir kez). Eylem kayıtlı değilse `PROBLEM`, hiçbir şey yazılmaz: akış bağlansaydı passkey'i olmayan herkes konsoldan geri çevrilirdi. |
+| Brute force | e-skylab'ınkiyle aynı değerler: `config/account-center-realm-security.json`'un brute force alanları (`bruteForceProtected=true`, `failureFactor=10`, `waitIncrementSeconds=60`, `maxFailureWaitSeconds=900`, `maxDeltaTimeSeconds=43200`, `quickLoginCheckMilliSeconds=1000`, `minimumQuickLoginWaitSeconds=60`, `permanentLockout=false`). Parola politikası master'a yazılmaz. |
+| Olaylar | Kullanıcı ve admin olayları açık, ikisi de 30 gün (`eventsExpiration`, realm özniteliği `adminEventsExpiration`), admin olay ayrıntıları açık; uzlaştırıcının e-skylab'daki ayarıyla aynı (§0). Acil hesap postası (rol-temizligi 18) master'ın `LOGIN` olaylarını okur. Dinleyiciler ve olay türleri yazılmaz. |
+
+`--check` ayrıca **kişi adı basmadan** sayar (servis hesapları sayılmaz):
+
+- master `admin` taşıyan kişi (doğrudan, grup ya da kompozit yoluyla); `KEYCLOAK_MASTER_ADMIN_MAX`'ı
+  (varsayılan 3: işletme hesabı + iki acil hesap) geçerse `WARNING`;
+- her yaprağın üyesi (doğrudan ya da alt gruptan); `KEYCLOAK_CONSOLE_WRITERS_MAX`'ı (varsayılan 6:
+  13 Ekim'in konsol listesi) geçerse `WARNING`;
+- bir `<realm>-realm` rolünü doğrudan ya da `/KONSOL/*` dışındaki bir gruptan taşıyan kişi; varsa
+  `WARNING`;
+- konsol kişileri (`admin` sahipleri ve yaprak üyeleri) ve aralarında passkey'i olmayanlar; varsa
+  `WARNING` (bir sonraki girişte kaydederler). Kapatılmış (`enabled=false`) hesap giriş yapamaz;
+  ayrı sayılır, passkey sayımına girmez; `admin` ve yaprak sayımlarına girmeye devam eder.
+
+e-skylab tarafının sayımı (K3: `realm-management` taşıyan kişi ve grup 0) `KEYCLOAK_REALM=e-skylab
+config/role-groups.sh --audit`'in `audit K3` satırıdır (§26); master oturumuyla aynı konteynerde koşar.
+
+**Bilinen sınır: kcadm'in parola girişi.** Operatör betikleri ve wizard'lar master'a `admin-cli`'nin
+parola girişiyle (direct grant) girer; o akış tarayıcı akışı değildir, passkey istemez. Bu bilinçlidir
+(geri dönüş konsol açılmasa da çalışır), ama konsol yazıcısının parolası Admin REST'e passkey'siz
+token alır. Telafi: master'ın uçları kenarda kapalıdır; yalnız konteynerin içinden ve erişimi
+Cloudflare Access ile kısıtlı yönetim adından ulaşılır.
+
+### 34.3 Konsol kişi listesinin değiştirilmesi
+
+Liste master yöneticisinin elindedir; core ve panel değiştiremez.
+
+**Ekleme.**
+1. master'da kişiye ayrı bir hesap açılır (Users → Add user; master `admin` verilmez), geçici parola
+   ve "Update Password" zorunlu eylemi.
+2. Hesap `/KONSOL/E-SKYLAB-YAZICILAR`'a (gerekiyorsa `/KONSOL/SANDBOX-YAZICILAR`'a da) eklenir: Users
+   → kişi → Groups → Join group (ya da rol-temizligi F1 wizard'ının konsol üyesi adımı).
+3. Cloudflare Access'te yönetim adının politikasına kişinin e-postası eklenir.
+4. Kişi ilk girişte parolasını değiştirir ve passkey kaydeder. Kayıt, parolayı bilen herkese açık
+   bir ilk kullanım adımıdır: master yöneticisi kaydı kişinin kendisinin yaptığını aynı anda
+   (yüz yüze ya da görüntülü) doğrular.
+5. `master-console.sh --check`: yaprak üye sayısı bir artar, `without a passkey` sayısı yerinde kalır.
+
+**Çıkarma.** Hesap gruptan çıkarılır ve kapatılır (`enabled=false`); Cloudflare Access'ten e-postası
+çıkarılır; hesap 30 gün sonra silinir. **Passkey kaybı:** master yöneticisi kişinin `webauthn`
+kimlik bilgisini siler (Users → kişi → Credentials); kişi sonraki girişte yenisini kaydeder (aynı
+doğrulamayla). **Eşikler** büyüyen listeyle bilerek değiştirilir (`KEYCLOAK_CONSOLE_WRITERS_MAX`,
+`KEYCLOAK_MASTER_ADMIN_MAX`); gerekçesi devir notuna yazılır.
+
+### 34.4 Operatör sırası
+
+Bu değişikliği taşıyan Keycloak sürümü yayımlandıktan sonra (Touch ID kapısı), konteynerde
+(`docker exec -it "$(docker ps -q -f name=sky-lab-production-keycloak | head -n 1)" bash`):
+
+```bash
+read -r -p 'master realm yöneticisi: ' OPERATOR_USER
+/opt/keycloak/bin/kcadm.sh config credentials --config /tmp/kcadm-operator.config \
+  --server http://localhost:8080 --realm master --user "$OPERATOR_USER"
+/opt/keycloak/config/master-console.sh --kcadm-config /tmp/kcadm-operator.config
+/opt/keycloak/config/master-console.sh --kcadm-config /tmp/kcadm-operator.config --apply
+/opt/keycloak/config/master-console.sh --kcadm-config /tmp/kcadm-operator.config
+rm -f /tmp/kcadm-operator.config
+```
+
+İlk kuru koşuda beklenen: brute force, passkey politikası ve olaylar için `would set …`; `would create
+the flow konsol-passkey …`; üç client için `would bind the browser sign-in of …`; `/KONSOL` ve iki yaprak
+için `would create …` ve `would map 20 role(s) …`. Sayımlar F1'den önce uyarı verir (master `admin`
+sahibi eşiğin üstünde, konsol kişilerinin passkey'i yok); bunlar F1'in (rol-temizligi 04) işidir.
+Başka bir `WARNING` ya da `PROBLEM` `--apply`'dan önce incelenir. `--apply`'dan sonraki kuru koşu
+`check: 0 change(s) pending` der. `--apply`'dan sonra her konsol girişi parola ve passkey ister;
+passkey'i olmayan hesap (işletme hesabı dahil) ilk girişte kaydeder.
+
+### 34.5 Geri dönüş
+
+Konsola kimse giremiyorsa (ör. passkey töreni yönetim adının arkasında bozuldu) aynı konteynerde,
+kcadm girişinden sonra önce kuru, sonra yazarak:
+
+```bash
+/opt/keycloak/config/master-console.sh --kcadm-config /tmp/kcadm-operator.config --remove-override
+/opt/keycloak/config/master-console.sh --kcadm-config /tmp/kcadm-operator.config --remove-override --apply
+```
+
+Üç client'ın akış ezmesi kalkar (yalnız `konsol-passkey`'i gösteriyorsa), konsol master'ın kendi
+tarayıcı akışıyla (yalnız parola) açılır. Akış, gruplar ve realm ayarları kalır; `--apply` (seçeneksiz)
+ezmeyi geri koyar. kcadm girişi de olmuyorsa (operatör hesabı brute force kilidinde: en çok 15 dakika
+bekleyin; ya da hesap bozuk) §35'teki geçici yönetici yolu kullanılır.
+
+**Harness.** `tests/master-console.sh` (CI işi `master-console`, stok Keycloak, dev modu): eşik ve
+dosya hataları girişten önce 2; temiz master'da kuru koşu her değişikliği adlandırır ve yazmaz;
+`--apply` akışı, üç ezmeyi, brute force'u (e-skylab'ın değerleri), olayları, passkey politikasını ve iki
+yaprağı (20'şer rol, `impersonation` yok) kurar; kuru koşu 0 değişiklik, ikinci `--apply` admin olayı
+bırakmaz; master'ın CIBA, PAR ve cihaz kodu ayarları korunur; akışa eklenen Cookie adımı, `DISABLED`
+passkey adımı, kalkan ezme, kapatılan `webauthn-register` ve silinen parola adımı geri kurulur,
+fazlalar yalnız uyarılır, `/KONSOL` altında varsayılan grup ve kayıtlı olmayan `webauthn-register` 1
+ile durur, hiçbir şey yazılmaz; sayımlar kişi adı basmaz, kapatılmış hesap passkey sayımına girmez;
+kişilerin kendi token'larıyla yazıcı e-skylab'ı okur ve yazar, `impersonation` ve master'ı okuyamaz,
+`view-*` okuyucu okur ve yazamaz; Chromium'da sanal authenticator'la (fiziksel anahtar yok) passkey'siz
+hesap parolasından sonra kayda gider ve konsola ulaşır, açık SSO oturumunda konsol parola ve passkey'i
+yeniden ister (`prompt=none` → `login_required`; aynı istek ezmesiz bir client'ta kod alır, oturum
+canlıdır), kayıtlı passkey olmadan giriş reddedilir (`LOGIN_ERROR`), `view-*` okuyucu konsolu açar;
+`--remove-override` önce kuru, sonra üç ezmeyi kaldırır, akış kalır, `--apply` geri bağlar.
+
+## 35. Acil erişim (break-glass): genel kural (grup-yonetimi 06)
+
+Bu bölüm kuralın kendisidir. Sunucu, kullanıcı adları ve kimlik bilgisinin saklandığı yer kulübün iç
+runbook'undadır; bu herkese açık depoya yazılmaz.
+
+**Ne zaman acil sayılır.**
+- Panel ya da core çalışmıyor ve bekleyemeyecek bir üyelik ya da rol değişikliği gerekiyor (ör. ele
+  geçirilmiş bir hesabın yetkisini almak).
+- Keycloak'ın kendisi bozuk ya da konsol hesaplarıyla girilemiyor (passkey akışının bozulması dahil).
+
+Sıradan iş acil değildir: panel beklenir.
+
+**Kim.**
+- Konsoldan yazanlar: `/KONSOL/E-SKYLAB-YAZICILAR` üyeleri, kendi konsol hesaplarıyla (§34).
+- Sunucudan kurtarma yalnız sunucu yöneticisinin işidir: bütün düğümler dururken, aynı imaj ve
+  ortamla ayrı, tek seferlik bir konteynerde `kc.sh bootstrap-admin` ile geçici bir yönetici açılır,
+  iş bitince silinir. Master'da geçici yönetici kalmadığı (konsolun "temporary admin" uyarısı yok, `is_temporary_admin` taşıyan hesap yok) doğrulanır.
+
+**Acil hesaplar.** master'da kişiye bağlı olmayan iki hesap, master `admin` rolüyle. İkisi de
+passkey'le korunur (§34'teki akış). Parola ve passkey'i taşıyan anahtar mühürlü zarfta saklanır,
+parolanın bir kopyası OpenBao'dadır. Değer elle kopyalanmaz; gerekiyorsa değeri taşıyan bir betik
+kullanılır. OpenBao'ya insan girişi Keycloak'a bağlıdır: Keycloak bozukken OpenBao'daki kopyaya da
+ulaşılamayabilir, asıl yedek zarftır.
+
+**Kullanılınca.**
+- Acil hesabın master'daki her girişi ADMIN'e posta olarak gider (rol-temizligi 18; master'ın `LOGIN`
+  olaylarından okunur, bu yüzden master'da olaylar açıktır, §34).
+- Aynı gün devir notuna ve ekip sohbetine ne yapıldığı yazılır.
+- İş bitince kullanılan hesabın parolası değiştirilir ve yeni bir zarf hazırlanır; açılan zarf yenisi
+  hazır olunca imha edilir.
+
+**Yılda bir deneme.** Dönem devri haftasında her acil hesapla bir kez girilir (passkey dahil), salt
+okur bir bakış yapılır, çıkılır; ADMIN'e postanın geldiği doğrulanır. Denemenin tarihi iç runbook'a
+yazılır.
+
+**Bilinçli sapmalar.**
+- Microsoft Entra en az iki acil hesap ister (bizde iki) ve 90 günde bir deneme önerir; bizde deneme
+  yılda bir, dönem devriyle.
+- Sunucuda tek kişi vardır: Keycloak'ın kendisi bozulursa onarım sunucu yöneticisini bekler. Panel ve
+  konsol üzerinden yapılabilen işleri konsol yazıcıları yürütür.

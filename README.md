@@ -681,10 +681,13 @@ haber ve duyuru kitlesi), `communication-preferences:read` rolünü (core #256, 
 edilebileceği) ve `consent:audience:read` rolünü (rıza kaydının davet ve tanıtım kitlesi, runbook §20.2) ile `realm-management`'ın `view-users` ve `view-clients` rollerini (Admin REST'ten kişi okuma; production'da 2026-09-23'ten beri elle verilmişti), core'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`,
 `skymail:lists:read`, `skymail:lists:write`, `skymail:notifications:send` (skymail-backend #79, `POST /v1/notifications`;
 yalnız `service-account-core`) ve `skymail:tracking:withdraw` (skymail-backend #75, takibi
-geri alma; yalnız `service-account-core`) rollerini, Template seed'in servis hesabına
+geri alma; yalnız `service-account-core`) rollerini ve Forms'un `skyforms:responses:read-service`
+rolünü (core Forms'un iç okuma uçlarını okur: form, yanıtlar, yanıtlayanlar, gecikmiş
+değerlendirmeler; ADR 0071, ADR 0075; yalnız `service-account-core`, `aud forms` varsayılan `roles`
+kapsamından; runbook §20.1), Template seed'in servis hesabına
 (`skymail-seed`) `skymail:templates:system`'ı (yalnız o bir şablonu sistem şablonu yapar ya da
 işareti kaldırır; skymail-backend README) verir; SkyMail'in rollerinden yalnız
-`skymail:notifications:send`'i, `skymail:tracking:withdraw`'u ve `skymail:templates:system`'ı oluşturur, öbürleri eksikse uyarır (runbook §20.1); listelenen servis istemcisinde varsayılan `roles` kapsamı yoksa ekler (runbook §20.1). SkyMail'in kendi
+`skymail:notifications:send`'i, `skymail:tracking:withdraw`'u ve `skymail:templates:system`'ı, Forms'un rollerinden yalnız `skyforms:responses:read-service`'i oluşturur, öbürleri eksikse uyarır (runbook §20.1); listelenen servis istemcisinde varsayılan `roles` kapsamı yoksa ekler (runbook §20.1). SkyMail'in kendi
 rolleri `skymail:access`, `skymail:templates:read`, `skymail:lists:read`, `skymail:mails:read`,
 `skymail:mails:send`, `skymail:mails:write` ADMIN ve YK'ya, `skymail:mails:approve` yalnız YK'ya
 (onaycı YK kökü) aynı biçimde bir kez tohumlanır; uzlaştırıcı onları oluşturmaz, realm'de olanı
@@ -728,6 +731,18 @@ yazar, ikinci koşu 0 değişiklik; uzlaştırıcıda `KEYCLOAK_RECONCILE_ONLY=r
 `leader-app-roles`). Hiçbiri üye eklemez ya da bir şey almaz; `role-groups.sh --audit` doğrudan rol
 sahiplerini ve izinli yerler dışındaki grup eşlemelerini kişi adı basmadan sayar (runbook §26, §27).
 Harness `tests/role-groups.sh` tek başına çalışır.
+
+Keycloak konsolu master realm'dedir: her kişi orada kendi ayrı hesabıyla girer (rol-temizligi 03;
+Entra'nın ayrı yönetici hesabı). Operatör betiği `config/master-console.sh` (kuru koşu varsayılan,
+`--apply` yazar, ikinci koşu admin olayı bırakmaz; master uzlaştırıcının dışındadır) `/KONSOL`
+gruplarını (`config/master-console.json`: `e-skylab-realm` ve `e-skylab-sandbox-realm`'in bütün
+rolleri, `impersonation` hariç), Cookie adımı olmayan `konsol-passkey` akışını (parola, sonra
+passkey; `security-admin-console`, `account-console` ve `account`'a client ezmesiyle bağlı), passkey
+politikasını, e-skylab'ın brute force değerlerini ve 30 günlük kullanıcı ve admin olaylarını kurar.
+Üyeliğe dokunmaz; `admin` sahiplerini, yaprak üyelerini, `/KONSOL` dışından `<realm>-realm` rolü
+taşıyanları ve passkey'i olmayan konsol kişilerini kişi adı basmadan sayar. `--remove-override` akış
+ezmesini geri alır. Konsol politikası ve acil erişimin genel kuralı runbook §34 ve §35'te. Harness
+`tests/master-console.sh` tek başına çalışır (Chromium'da sanal authenticator).
 
 Kod alanı ve panel alanı (ekip-yetkileri bilet 03; Microsoft Entra'nın Enterprise app modeli): rol
 tanımları, "atama gerekli" (`config/app-assignments.json`, tam olarak core'un uygulama rolleri;
@@ -819,7 +834,20 @@ yazar ve `[reconcile] <adım>: unchanged|updated (...)` satırı basar;
 değişiklik gerektirmeyen koşu hiçbir admin olayı üretmez (entegrasyon testi
 üçüncü koşuda bunu doğrular). İmajda `jq` bulunmadığından JSON
 karşılaştırmaları imajdaki JDK ile çalışma anında derlenen
-`config/ReconcileJson.java` ile yapılır. Passkey relying party id geçişinden
+`config/ReconcileJson.java` ile yapılır. Tam bir koşu iki yüze yakın kcadm ve ReconcileJson
+çağrısı yapar; her çağrı kendi JVM'ini açtığında production'da yaklaşık 8,5 dakika sürüyordu. Bu
+yüzden kcadm okumaları (`get`) ve ReconcileJson çağrıları koşu başına bir kez açılan tek JVM'de
+(`config/ReconcileSession.java`) koşar: her çağrı kendi `main`'inin yapacağı gibi çalışır,
+stdout/stderr baytları, sıraları ve çıkış kodu aynı kalır (harness tam kuru koşuyu ve gerçek koşuyu
+iki yolla da koşturup bayt bayt karşılaştırır). Yazmalar (`create`, `update`, `delete`) ve
+`KCADM_BIN` ile verilen kcadm her çağrıda kendi JVM'ini açar. `KEYCLOAK_RECONCILE_SESSION`: `on`
+(varsayılan; oturum başlayamazsa çağrı başına JVM, stderr'de `[reconcile] ` öneki olmayan tek
+`Reconciliation session not started (…)` satırıyla), `off` (çağrı başına JVM, eski davranış ve geri
+dönüş, runbook §7) ya da `required` (oturum başlayamazsa koşu durur; harness). Oturum yalnız
+sınıfları denetlenmiş kcadm sürümlerinde açılır (26.4 ve 26.7, betikte `SESSION_KCADM_VERSIONS`);
+Keycloak yükseltmesinde harness'in `required` koşusu durur ve liste denetimden sonra genişletilir.
+Oturum koşu ortasında durursa (JVM ölümü, yazılamayan çıktı) koşu yeni istek göndermeden exit 1 ile
+biter; son satır nedeni söyler. Passkey relying party id geçişinden
 önce kayıtlı passkey'ler bir daha doğrulanamaz; `config/cleanup-legacy-passkeys.sh`
 (varsayılan kuru koşu, yalnız sayı basar) geçiş anından önce oluşturulmuş
 `webauthn-passwordless` kimlik bilgilerini `--apply` ile siler. Geçiş anını

@@ -21,6 +21,8 @@
 # SESSION_PARITY_LOG is the log of the run with the session.
 
 SESSION_PARITY_COUNT=0
+# Read by the tests that source this file.
+# shellcheck disable=SC2034
 SESSION_PARITY_LOG=''
 
 # session_files_to_tmp: the session's two files into the container's /tmp, for a test that copies the

@@ -1,9 +1,11 @@
 # shellcheck shell=bash
 # Sourced by the stand-alone tests that run operator scripts inside a Keycloak container
-# (tests/role-groups.sh, tests/dk-read-only.sh, tests/master-console.sh): a whole run of a script with
-# a JVM per kcadm and ReconcileJson call (KEYCLOAK_RECONCILE_SESSION=off) and with the reconciliation
-# session (required; config/reconcile-session.sh) must print the same bytes, in the same order, and
-# end with the same status: the release wizards read these lines. The test runs its container with
+# (tests/role-groups.sh, dk-read-only.sh, master-console.sh, site-clients.sh, inscribed-cms-roles.sh,
+# skyapp-cms-editor.sh, sandbox-admin-local-client.sh, sandbox-site-clients.sh, place-client.sh,
+# forms-skymail-grants.sh): a whole run of a script with a JVM per kcadm and ReconcileJson call
+# (KEYCLOAK_RECONCILE_SESSION=off) and with the reconciliation session (required;
+# config/reconcile-session.sh) must print the same bytes, in the same order, and end with the same
+# status: the release wizards read these lines. The test runs its container with
 # KEYCLOAK_RECONCILE_SESSION=required, so that every other run of a script uses the session too (and a
 # session that cannot start stops it); a run with KCADM_BIN (an injected kcadm failure) keeps a JVM
 # per call.
@@ -17,9 +19,25 @@
 # times. The two logs hold stdout and stderr as one stream, merged inside the container in the order
 # written, and a last line "exit STATUS"; their bytes must be equal. Prints both times and the status;
 # SESSION_PARITY_LOG is the log of the run with the session.
+#
+#   session_parity_slow LABEL SETUP EXEC_OPTION... -- COMMAND...
+# the same for a comparison whose run with a JVM per call takes minutes (app-assignments --check,
+# role-groups --audit): whole only in the nightly and manual full runs (GITHUB_EVENT_NAME schedule
+# or workflow_dispatch) and locally; a pull request's or a push's run makes the run with the session
+# alone (SESSION_PARITY_LOG, its time). SESSION_PARITY_SLOW=1 or 0 overrides.
 
 SESSION_PARITY_COUNT=0
+# Read by the tests that source this file.
+# shellcheck disable=SC2034
 SESSION_PARITY_LOG=''
+
+# session_files_to_tmp: the session's two files into the container's /tmp, for a test that copies the
+# scripts it runs there one by one (a script finds its session next to it; one copied alone has none
+# and keeps a JVM per call). Needs REPOSITORY_ROOT.
+session_files_to_tmp() {
+  docker exec -i "$CONTAINER" sh -c 'cat > /tmp/reconcile-session.sh' <"$REPOSITORY_ROOT/config/reconcile-session.sh"
+  docker exec -i "$CONTAINER" sh -c 'cat > /tmp/ReconcileSession.java' <"$REPOSITORY_ROOT/config/ReconcileSession.java"
+}
 
 # session_parity_run MODE LOG EXEC_OPTION... -- COMMAND...: one run; SESSION_PARITY_SECONDS its time.
 session_parity_run() {
@@ -54,4 +72,25 @@ session_parity() {
   SESSION_PARITY_LOG=$on
   printf '    session parity: %s: the same %s line(s), %s; %ds with a JVM per call, %ds with the session\n' \
     "$label" "$(($(wc -l <"$on") - 1))" "$(tail -n 1 "$on")" "$off_seconds" "$SESSION_PARITY_SECONDS"
+}
+
+session_parity_slow() {
+  local label=$1 setup=$2 slow=${SESSION_PARITY_SLOW:-}
+  if [[ -z $slow ]]; then
+    case ${GITHUB_EVENT_NAME:-} in
+      pull_request | push) slow=0 ;;
+      *) slow=1 ;;
+    esac
+  fi
+  if [[ $slow == 1 ]]; then
+    session_parity "$@"
+    return
+  fi
+  shift 2
+  SESSION_PARITY_COUNT=$((SESSION_PARITY_COUNT + 1))
+  SESSION_PARITY_LOG="$SESSION_PARITY_DIR/parity-$SESSION_PARITY_COUNT-session.log"
+  "$setup"
+  session_parity_run required "$SESSION_PARITY_LOG" "$@"
+  printf '    session parity: %s: %s line(s), %s; %ds with the session (the run with a JVM per call: nightly and manual full runs)\n' \
+    "$label" "$(($(wc -l <"$SESSION_PARITY_LOG") - 1))" "$(tail -n 1 "$SESSION_PARITY_LOG")" "$SESSION_PARITY_SECONDS"
 }

@@ -264,7 +264,7 @@ CURRENT_STAGE='Keycloak start'
 [[ -n $IMAGE ]] || fail 'Dockerfile has no ARG KEYCLOAK_IMAGE'
 for tool in jq curl openssl; do command -v "$tool" >/dev/null || fail "$tool is required"; done
 docker run --rm -d --name "$CONTAINER" --memory "$MEMORY" -p "127.0.0.1:$PORT:8080" \
-  -e KC_OPTS="$KCADM_JVM_OPTS" \
+  -e KC_OPTS="$KCADM_JVM_OPTS" -e KEYCLOAK_RECONCILE_SESSION=required \
   -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
   "$IMAGE" start-dev >/dev/null
 for _ in $(seq 1 90); do

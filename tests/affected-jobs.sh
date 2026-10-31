@@ -77,19 +77,17 @@ FAST_ENTRIES=(
 
 # Whole-suite jobs longer than a pull request's 15-minute budget: a pull request into main does not
 # run them even when its diff affects them (--pull-request names them on stderr); main's push run,
-# always full, does, before any release. Minutes on GitHub's runners, the shortest and the longest of the PR
-# and main runs of 2026-10-23..25: integration-group 17-42 (six groups), role-groups 23-37,
-# site-clients 19-25, login-clients 16-23, skyapp-cms-editor 11-18, ytu-first-login 11-16,
-# inscribed-cms-roles 14-16. The whole-suite jobs left run in a pull request when affected:
-# after-sign-up-native 8-11 (one main run 19), sandbox-admin-local-client 10-11, dk-read-only 7-9.
+# always full, does, before any release. Minutes on GitHub's runners, the shortest and the longest of the
+# full runs of 2026-10-31 with the reconciliation session (config/reconcile-session.sh; #169, runs
+# 41213525020, 41213535701 and 41217584537): integration-group 10-19 (six groups). The whole-suite jobs
+# left run in a pull request when affected: role-groups 9 (a pull request's and a push's run; 24-25
+# with the two slow parity comparisons of the nightly and manual runs, tests/session-parity.sh),
+# site-clients 8-11, ytu-first-login 6-8, after-sign-up-native 7, dk-read-only 6, login-clients 6-7,
+# inscribed-cms-roles 4-5, skyapp-cms-editor 3-5, sandbox-admin-local-client 4 (before the session,
+# 2026-10-23..25: role-groups 23-37, site-clients 19-25, login-clients 16-23, skyapp-cms-editor 11-18,
+# ytu-first-login 11-16, inscribed-cms-roles 14-16).
 PR_DEFERRED=(
   integration-group
-  role-groups
-  site-clients
-  login-clients
-  skyapp-cms-editor
-  ytu-first-login
-  inscribed-cms-roles
 )
 
 # Files a job's own workflow steps read that the scripts it runs do not reach. Job, then paths;

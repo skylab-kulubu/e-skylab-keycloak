@@ -73,6 +73,9 @@ shopt -s inherit_errexit
 umask 077
 
 KCADM=${KCADM_BIN:-/opt/keycloak/bin/kcadm.sh}
+CONFIG_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# The reconciliation session (config/reconcile-session.sh): on, off or required.
+SESSION_MODE=${KEYCLOAK_RECONCILE_SESSION:-on}
 ADMIN_URL=${KEYCLOAK_ADMIN_URL:-http://keycloak:8080}
 ADMIN_REALM=${KEYCLOAK_ADMIN_REALM:-master}
 TARGET_REALM=${KEYCLOAK_REALM:-e-skylab}
@@ -154,6 +157,28 @@ while [[ $# -gt 0 ]]; do
 done
 [[ ${#CLIENTS[@]} -gt 0 ]] || CLIENTS=("${DEFAULT_CLIENTS[@]}")
 
+# The reconciliation session (config/reconcile-session.sh: every kcadm read of the run in one JVM;
+# KEYCLOAK_RECONCILE_SESSION on, the default, off or required) when this file runs from the image's
+# config directory. A copy of this file alone (a wizard runs main's copy from /tmp) has no session:
+# every call keeps its own JVM, as before; KEYCLOAK_RECONCILE_SESSION=required stops it (exit 2).
+if [[ -f $CONFIG_DIR/reconcile-session.sh ]]; then
+  # shellcheck source=reconcile-session.sh
+  source "$CONFIG_DIR/reconcile-session.sh"
+  session_mode_valid || exit 2
+else
+  if [[ $SESSION_MODE == required ]]; then
+    printf 'KEYCLOAK_RECONCILE_SESSION=required, but %s has no reconcile-session.sh next to this script (a copy alone runs without the session)\n' "$CONFIG_DIR" >&2
+    exit 2
+  fi
+  start_session() { :; }
+  stop_session() { :; }
+  session_kcadm() {
+    local command=$1
+    shift
+    "$KCADM" "$command" --config "$KCADM_CONFIG" "$@"
+  }
+fi
+
 if [[ -z $KCADM_CONFIG ]]; then
   if [[ -z $ADMIN_USER ]]; then
     if [[ -t 0 ]]; then
@@ -168,10 +193,13 @@ elif [[ ! -r $KCADM_CONFIG ]]; then
   exit 2
 fi
 
+WORK_DIR=$(mktemp -d /tmp/inscribed-cms-roles.XXXXXX)
 cleanup() {
+  stop_session
   if [[ $OWN_CONFIG == true ]]; then
     rm -f "$KCADM_CONFIG"
   fi
+  rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
 
@@ -204,10 +232,9 @@ problem() {
   log "PROBLEM: $1"
 }
 
+# A read (get) in the session when it runs (config/reconcile-session.sh), a write in its own JVM.
 kcadm() {
-  local command=$1
-  shift
-  "$KCADM" "$command" --config "$KCADM_CONFIG" "$@"
+  session_kcadm "$@"
 }
 
 kcadm_write() {
@@ -481,6 +508,7 @@ if [[ $OWN_CONFIG == true ]]; then
   # active" otherwise). Its "Logging into" line goes to stderr, so stdout stays clean either way.
   "$KCADM" config credentials "${credential_arguments[@]}"
 fi
+start_session
 post_cutover_note=''
 [[ $POST_CUTOVER != true ]] || post_cutover_note=' post-cutover'
 log "realm=$TARGET_REALM mode=$MODE clients=${CLIENTS[*]}$post_cutover_note"

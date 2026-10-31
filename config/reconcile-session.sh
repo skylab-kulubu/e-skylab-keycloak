@@ -11,15 +11,18 @@
 # cannot leave a write half sent.
 #
 # Sourced by config/reconcile-account-center.sh and by the operator scripts that read many times
-# (config/app-assignments.sh, role-groups.sh, dk-read-only.sh, master-console.sh). Such a script:
+# (config/app-assignments.sh, role-groups.sh, dk-read-only.sh, master-console.sh, and those of kcadm
+# reads alone: site-clients.sh and the others that source this file). Such a script:
 #   - sets SESSION_MODE=${KEYCLOAK_RECONCILE_SESSION:-on} at its top and checks it before its login
 #     (session_mode_valid): on (the default; a JVM per call when the session cannot start, with one
 #     line on stderr), off (a JVM per call: as before, the rollback and the comparison base) or
 #     required (on, but the run stops when the session cannot start; the tests). With a KCADM_BIN (the
 #     tests' injected kcadm failures) every call keeps its own JVM, whatever SESSION_MODE says;
-#   - has KCADM, KCADM_CONFIG, CONFIG_DIR, WORK_DIR (the run's own 0700 directory) and, once it has
-#     compiled config/ReconcileJson.java into $WORK_DIR/classes (with config/ReconcileSession.java in the
-#     same javac call when session_wanted), JSON_TOOL_CLASSPATH;
+#   - has KCADM, KCADM_CONFIG, CONFIG_DIR, WORK_DIR (the run's own 0700 directory) and, when it has
+#     ReconcileJson, JSON_TOOL_CLASSPATH once it has compiled config/ReconcileJson.java into
+#     $WORK_DIR/classes (with config/ReconcileSession.java in the same javac call when session_wanted);
+#     a script without ReconcileJson leaves JSON_TOOL_CLASSPATH unset or empty, and start_session
+#     compiles config/ReconcileSession.java alone (a session of kcadm reads);
 #   - calls start_session once, at its top level after its login and before its reads, sends its kcadm
 #     calls through session_kcadm and its ReconcileJson calls to session_call json when
 #     session_takes json, and calls stop_session in its EXIT trap.
@@ -135,13 +138,22 @@ start_session() {
     java=java
   fi
   mkdir "$SESSION_DIR"
+  # A script without ReconcileJson: the session's class alone, with the JDK that runs it.
+  if [[ ! -f $WORK_DIR/classes/ReconcileSession.class ]]; then
+    mkdir -p "$WORK_DIR/classes"
+    if ! "$java" -XX:TieredStopAtLevel=1 -XX:+UseSerialGC -m jdk.compiler/com.sun.tools.javac.Main \
+      -d "$WORK_DIR/classes" "$CONFIG_DIR/ReconcileSession.java" >"$SESSION_DIR/log" 2>&1; then
+      session_unavailable 'config/ReconcileSession.java did not compile'
+      return 0
+    fi
+  fi
   mkfifo "$SESSION_DIR/requests" "$SESSION_DIR/ready"
   exec {SESSION_FD}<>"$SESSION_DIR/requests" {ready_fd}<>"$SESSION_DIR/ready"
   # KC_OPTS is split into options as kcadm.sh splits it. The JVM keeps none of this shell's other
   # files open (SESSION_ERR_FD is this run's stderr).
   # shellcheck disable=SC2086
   "$java" ${KC_OPTS:-} -cp "$jar:$WORK_DIR/classes" --add-opens=java.base/java.security=ALL-UNNAMED "${native[@]}" \
-    "-Dkc.lib.dir=$kcadm_dir/client/lib" ReconcileSession "$SESSION_DIR" "$JSON_TOOL_CLASSPATH" \
+    "-Dkc.lib.dir=$kcadm_dir/client/lib" ReconcileSession "$SESSION_DIR" "${JSON_TOOL_CLASSPATH:-}" \
     </dev/null >"$SESSION_DIR/log" 2>&1 {SESSION_ERR_FD}>&- {SESSION_FD}>&- {ready_fd}>&- &
   SESSION_PID=$!
   until IFS= read -r -t 1 -u "$ready_fd" line; do
@@ -166,6 +178,9 @@ session_takes() {
   local tool=$1 argument
   shift
   [[ -n $SESSION_PID && $PWD == "$SESSION_PWD" ]] || return 1
+  if [[ $tool == json && -z ${JSON_TOOL_CLASSPATH:-} ]]; then
+    return 1
+  fi
   if [[ $tool == kcadm ]]; then
     for argument in "$@"; do
       case ${argument,,} in
@@ -199,7 +214,8 @@ session_reads_stdin() {
 # session_guard: after session_lost the run is ending (its own shell exits at once, or at the end of
 # the command substitution it waits for); a call from a subshell that is still running then sends
 # nothing, read or write, and that subshell ends too (status 1, no more output: the reason stays the
-# run's last line).
+# run's last line). session_kcadm checks it before every kcadm call, session_call before it writes
+# the call and again before it sends it; the reconciler's kcadm() checks it before a dry run write.
 session_guard() {
   if [[ -n $SESSION_DIR && -e $SESSION_DIR/lost ]]; then
     exit 1
@@ -236,6 +252,9 @@ session_call() {
   if session_reads_stdin "$tool" "$@"; then
     cat >"$request/stdin" || session_lost 'stdin could not be written'
   fi
+  # Again: the right side of "kcadm_json … | json_tool …" waits on stdin above while the left side
+  # may lose the session; then this call sends nothing either.
+  session_guard
   mkfifo "$request/done" || session_lost 'mkfifo failed'
   exec {done_fd}<>"$request/done"
   printf '%s %s\n' "$tool" "$request" >&"$SESSION_FD"

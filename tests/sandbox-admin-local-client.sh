@@ -58,6 +58,9 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$SCRIPT_DIR/kcadm-jvm.sh"
 # shellcheck source=kcadm-rest.sh
 source "$SCRIPT_DIR/kcadm-rest.sh"
+# shellcheck source=session-parity.sh
+source "$SCRIPT_DIR/session-parity.sh"
+SESSION_PARITY_DIR=$(mktemp -d)
 REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 OPERATOR_SCRIPT="$REPOSITORY_ROOT/config/sandbox-admin-local-client.sh"
 AUDIENCE_MAPPERS_FILE="$REPOSITORY_ROOT/config/admin-panel-api-audience-mappers.json"
@@ -85,6 +88,7 @@ fail() {
 cleanup() {
   kcadm_rest_cleanup
   docker rm -fv "$CONTAINER" >/dev/null 2>&1 || true
+  rm -rf "$SESSION_PARITY_DIR"
   rm -f "$OUTPUTS"
 }
 trap 'status=$?; trap - EXIT; cleanup; exit "$status"' EXIT
@@ -276,7 +280,7 @@ CURRENT_STAGE='Keycloak start'
 [[ -n $IMAGE ]] || fail 'Dockerfile has no ARG KEYCLOAK_IMAGE'
 for tool in jq curl openssl base64; do command -v "$tool" >/dev/null || fail "$tool is required"; done
 docker run --rm -d --name "$CONTAINER" -p "127.0.0.1:$PORT:8080" \
-  -e KC_OPTS="$KCADM_JVM_OPTS" \
+  -e KC_OPTS="$KCADM_JVM_OPTS" -e KEYCLOAK_RECONCILE_SESSION=required \
   -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
   "$IMAGE" start-dev >/dev/null
 for _ in $(seq 1 90); do
@@ -288,6 +292,7 @@ docker exec "$CONTAINER" /opt/keycloak/bin/kcadm.sh config credentials --config 
   --server http://localhost:8080 --realm master --user admin --password "$ADMIN_PASSWORD" >/dev/null 2>&1 \
   || fail 'kcadm login failed'
 docker exec -i "$CONTAINER" sh -c "cat > $IN_CONTAINER_SCRIPT" <"$OPERATOR_SCRIPT"
+session_files_to_tmp
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='only the sandbox realm'
@@ -631,6 +636,15 @@ revoke=$(run_expecting 0 --revoke --apply)
 expect_line "$revoke" 'client admin-local does not exist in realm e-skylab-sandbox; nothing to revoke' 'second revoke not a no-op'
 expect_line "$revoke" 'applied 0 change(s)' 'second revoke wrote'
 printf '    --revoke: planned without a write, deleted admin-local only (superadmin unchanged), second run 0\n'
+
+# ---------------------------------------------------------------------------------------------------
+# The reconciliation session (config/reconcile-session.sh): every run above used it (the container's
+# KEYCLOAK_RECONCILE_SESSION=required, the session's files next to the scripts in /tmp). Here whole
+# runs on the realm the stages above left, once with a JVM per call and once with the session: the
+# same bytes and status (tests/session-parity.sh).
+session_parity 'sandbox-admin-local-client --check' : -e KEYCLOAK_ADMIN_URL=http://localhost:8080 -e "KEYCLOAK_REALM=$REALM" \
+  -e "KEYCLOAK_ADMIN_PANEL_CLIENT_ID=$REFERENCE" -- bash "$IN_CONTAINER_SCRIPT" --kcadm-config "$KCADM_CONFIG" --check
+cat "$SESSION_PARITY_LOG" >>"$OUTPUTS"
 
 CURRENT_STAGE='secrets'
 if reference_secret | grep -Fq -f - "$OUTPUTS"; then fail 'an output carries the secret of superadmin'; fi

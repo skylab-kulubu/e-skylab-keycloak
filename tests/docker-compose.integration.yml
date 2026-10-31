@@ -125,6 +125,10 @@ services:
       KEYCLOAK_PASSKEY_RP_ID: localhost
       KEYCLOAK_PASSKEY_EXTRA_ORIGINS: http://localhost:18080
       KC_OPTS: ${KCADM_COMPOSE_KC_OPTS:-}
+      # The reconciliation session (config/ReconcileSession.java): every run of the harness uses it
+      # and stops when it cannot start, so a Keycloak upgrade that changes kcadm.sh's launch line or
+      # kcadm's classes fails here instead of falling back unseen. Production's default is on.
+      KEYCLOAK_RECONCILE_SESSION: ${KEYCLOAK_RECONCILE_SESSION:-required}
     volumes:
       - ${TEST_STATE_DIR:?set the integration state directory}/kcadm-cds:/opt/kcadm-cds:ro
     depends_on:

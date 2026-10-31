@@ -849,10 +849,13 @@ Keycloak yükseltmesinde harness'in `required` koşusu durur ve liste denetimden
 Oturum koşu ortasında durursa (JVM ölümü, yazılamayan çıktı) koşu yeni istek göndermeden exit 1 ile
 biter; son satır nedeni söyler. Oturum kodu `config/reconcile-session.sh`'tedir; çok okuyan operatör
 betikleri de onu aynı değişkenle kullanır: `config/app-assignments.sh` (production'da `--check`
-oturumsuz 18 dakikaydı), `role-groups.sh`, `dk-read-only.sh` ve `master-console.sh`. Bunlarda da
-yalnız okumalar ve ReconcileJson oturuma gider, yazmalar çağrı başına `kcadm.sh` kalır; testleri
-(`tests/role-groups.sh`, `tests/dk-read-only.sh`, `tests/master-console.sh`) her betiğin kuru ve
-yazan koşusunu iki yolla koşturup bayt bayt karşılaştırır. Passkey relying party id geçişinden
+oturumsuz 18 dakikaydı), `role-groups.sh`, `dk-read-only.sh`, `master-console.sh` ve yalnız kcadm
+okuyanlar (`site-clients.sh`, `site-editor-grants.sh`, `inscribed-cms-roles.sh`,
+`skyapp-cms-editor.sh`, `sandbox-site-clients.sh`, `sandbox-admin-local-client.sh`,
+`create-place-client.sh`, `forms-skymail-grants.sh`, `leader-app-roles.sh`). Bunlarda da yalnız
+okumalar ve ReconcileJson oturuma gider, yazmalar çağrı başına `kcadm.sh` kalır; testleri her betiğin
+koşusunu iki yolla koşturup bayt bayt karşılaştırır. Yalnız kcadm okuyan bir betik tek başına
+kopyalanıp koşulursa (yanında `reconcile-session.sh` yoksa) eskisi gibi çağrı başına JVM açar. Passkey relying party id geçişinden
 önce kayıtlı passkey'ler bir daha doğrulanamaz; `config/cleanup-legacy-passkeys.sh`
 (varsayılan kuru koşu, yalnız sayı basar) geçiş anından önce oluşturulmuş
 `webauthn-passwordless` kimlik bilgilerini `--apply` ile siler. Geçiş anını

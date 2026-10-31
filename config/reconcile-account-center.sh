@@ -16,8 +16,8 @@ JAVA_BIN=${JAVA_BIN:-java}
 # KEYCLOAK_RECONCILE_SESSION: on (the default; a JVM per call when the session cannot start), off (a
 # JVM per call: as before, the rollback and the comparison base) or required (on, but the run stops
 # when the session cannot start; the tests). With a KCADM_BIN (the tests' injected kcadm failures)
-# every call keeps its own JVM, whatever this says. The operator scripts role-groups.sh and
-# app-assignments.sh, which this one runs as steps, take the same variable.
+# every call keeps its own JVM, whatever this says. The operator scripts role-groups.sh,
+# leader-app-roles.sh and app-assignments.sh, which this one runs as steps, take the same variable.
 SESSION_MODE=${KEYCLOAK_RECONCILE_SESSION:-on}
 KEYCLOAK_LIB_DIR=${KEYCLOAK_LIB_DIR:-/opt/keycloak/lib/lib/main}
 CONFIG_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)

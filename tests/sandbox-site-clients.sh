@@ -48,6 +48,9 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$SCRIPT_DIR/kcadm-jvm.sh"
 # shellcheck source=kcadm-rest.sh
 source "$SCRIPT_DIR/kcadm-rest.sh"
+# shellcheck source=session-parity.sh
+source "$SCRIPT_DIR/session-parity.sh"
+SESSION_PARITY_DIR=$(mktemp -d)
 REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 OPERATOR_SCRIPT="$REPOSITORY_ROOT/config/sandbox-site-clients.sh"
 ROLES_SCRIPT="$REPOSITORY_ROOT/config/inscribed-cms-roles.sh"
@@ -76,6 +79,7 @@ fail() {
 cleanup() {
   kcadm_rest_cleanup
   docker rm -fv "$CONTAINER" >/dev/null 2>&1 || true
+  rm -rf "$SESSION_PARITY_DIR"
   rm -f "$OUTPUTS"
 }
 trap 'status=$?; trap - EXIT; cleanup; exit "$status"' EXIT
@@ -220,7 +224,7 @@ CURRENT_STAGE='Keycloak start'
 [[ -n $IMAGE ]] || fail 'Dockerfile has no ARG KEYCLOAK_IMAGE'
 if ! command -v jq >/dev/null || ! command -v curl >/dev/null; then fail 'jq and curl are required'; fi
 docker run --rm -d --name "$CONTAINER" -p "127.0.0.1:$PORT:8080" \
-  -e KC_OPTS="$KCADM_JVM_OPTS" \
+  -e KC_OPTS="$KCADM_JVM_OPTS" -e KEYCLOAK_RECONCILE_SESSION=required \
   -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
   "$IMAGE" start-dev >/dev/null
 for _ in $(seq 1 90); do
@@ -233,6 +237,7 @@ docker exec "$CONTAINER" /opt/keycloak/bin/kcadm.sh config credentials --config 
   || fail 'kcadm login failed'
 docker exec -i "$CONTAINER" sh -c "cat > $IN_CONTAINER_SCRIPT" <"$OPERATOR_SCRIPT"
 docker exec -i "$CONTAINER" sh -c "cat > $IN_CONTAINER_ROLES" <"$ROLES_SCRIPT"
+session_files_to_tmp
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='only the sandbox realm'
@@ -475,5 +480,17 @@ kcadm delete "clients/$(client_uuid core)" -r "$REALM" >/dev/null
 check=$(run_script --check) || { printf '%s\n' "$check" >&2; fail 'no-core --check failed'; }
 expect_line "$check" 'NOTE: realm e-skylab-sandbox has no core client; frontend-arge-core-audience skipped' 'missing core not skipped'
 expect_line "$check" 'check: 0 change(s) pending' 'a missing core client changed the plan'
+
+# ---------------------------------------------------------------------------------------------------
+# The reconciliation session (config/reconcile-session.sh): every run above used it (the container's
+# KEYCLOAK_RECONCILE_SESSION=required, the session's files next to the scripts in /tmp). Here whole
+# runs on the realm the stages above left, once with a JVM per call and once with the session: the
+# same bytes and status (tests/session-parity.sh).
+session_parity 'sandbox-site-clients --check' : -e KEYCLOAK_ADMIN_URL=http://localhost:8080 -e "KEYCLOAK_REALM=$REALM" -- \
+  bash "$IN_CONTAINER_SCRIPT" --kcadm-config "$KCADM_CONFIG" --check
+cat "$SESSION_PARITY_LOG" >>"$OUTPUTS"
+session_parity 'inscribed-cms-roles --check (sandbox)' : -e KEYCLOAK_ADMIN_URL=http://localhost:8080 -e "KEYCLOAK_REALM=$REALM" -- \
+  bash "$IN_CONTAINER_ROLES" --kcadm-config "$KCADM_CONFIG" --check
+cat "$SESSION_PARITY_LOG" >>"$OUTPUTS"
 
 printf 'sandbox-site-clients.sh contract holds against %s.\n' "$IMAGE"

@@ -1,9 +1,11 @@
 # shellcheck shell=bash
 # Sourced by the stand-alone tests that run operator scripts inside a Keycloak container
-# (tests/role-groups.sh, tests/dk-read-only.sh, tests/master-console.sh): a whole run of a script with
-# a JVM per kcadm and ReconcileJson call (KEYCLOAK_RECONCILE_SESSION=off) and with the reconciliation
-# session (required; config/reconcile-session.sh) must print the same bytes, in the same order, and
-# end with the same status: the release wizards read these lines. The test runs its container with
+# (tests/role-groups.sh, dk-read-only.sh, master-console.sh, site-clients.sh, inscribed-cms-roles.sh,
+# skyapp-cms-editor.sh, sandbox-admin-local-client.sh, sandbox-site-clients.sh, place-client.sh,
+# forms-skymail-grants.sh): a whole run of a script with a JVM per kcadm and ReconcileJson call
+# (KEYCLOAK_RECONCILE_SESSION=off) and with the reconciliation session (required;
+# config/reconcile-session.sh) must print the same bytes, in the same order, and end with the same
+# status: the release wizards read these lines. The test runs its container with
 # KEYCLOAK_RECONCILE_SESSION=required, so that every other run of a script uses the session too (and a
 # session that cannot start stops it); a run with KCADM_BIN (an injected kcadm failure) keeps a JVM
 # per call.
@@ -20,6 +22,14 @@
 
 SESSION_PARITY_COUNT=0
 SESSION_PARITY_LOG=''
+
+# session_files_to_tmp: the session's two files into the container's /tmp, for a test that copies the
+# scripts it runs there one by one (a script finds its session next to it; one copied alone has none
+# and keeps a JVM per call). Needs REPOSITORY_ROOT.
+session_files_to_tmp() {
+  docker exec -i "$CONTAINER" sh -c 'cat > /tmp/reconcile-session.sh' <"$REPOSITORY_ROOT/config/reconcile-session.sh"
+  docker exec -i "$CONTAINER" sh -c 'cat > /tmp/ReconcileSession.java' <"$REPOSITORY_ROOT/config/ReconcileSession.java"
+}
 
 # session_parity_run MODE LOG EXEC_OPTION... -- COMMAND...: one run; SESSION_PARITY_SECONDS its time.
 session_parity_run() {

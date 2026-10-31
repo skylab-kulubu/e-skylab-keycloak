@@ -420,8 +420,9 @@ gerektirmez: aynı imajla koşuya `KEYCLOAK_RECONCILE_SESSION=off` verilir; her 
 çağrısı yine kendi JVM'ini açar (eski davranış, yalnız yavaş). Oturum koşu ortasında ölürse koşu
 yeni bir istek göndermeden exit 1 ile durur; aynı koşu `KEYCLOAK_RECONCILE_SESSION=off` ile yeniden
 yapılır. Aynı oturumu kullanan operatör betikleri (`config/app-assignments.sh`, `role-groups.sh`,
-`dk-read-only.sh`, `master-console.sh`; uzlaştırıcının `app-assignments`, `tohum-atamalar` ve
-`role-groups` adımlarında betik değişkeni ortamdan alır) için de geri dönüş aynıdır:
+`dk-read-only.sh`, `master-console.sh`, `leader-app-roles.sh`, site ve CMS betikleri, README;
+uzlaştırıcının `app-assignments`, `tohum-atamalar`, `role-groups` ve `leader-app-roles` adımlarında
+betik değişkeni ortamdan alır) için de geri dönüş aynıdır:
 `docker exec -e KEYCLOAK_RECONCILE_SESSION=off …`.
 
 Realm ayarları için ayrı bir geri dönüş yolu yoktur; önceki imaj digest'i ile

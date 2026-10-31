@@ -54,6 +54,9 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$SCRIPT_DIR/kcadm-jvm.sh"
 # shellcheck source=kcadm-rest.sh
 source "$SCRIPT_DIR/kcadm-rest.sh"
+# shellcheck source=session-parity.sh
+source "$SCRIPT_DIR/session-parity.sh"
+SESSION_PARITY_DIR=$(mktemp -d)
 REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 OPERATOR_SCRIPT="$REPOSITORY_ROOT/config/create-place-client.sh"
 USER_PROFILE_FILE="$REPOSITORY_ROOT/config/account-center-user-profile.json"
@@ -78,6 +81,7 @@ fail() {
 cleanup() {
   kcadm_rest_cleanup
   docker rm -fv "$CONTAINER" >/dev/null 2>&1 || true
+  rm -rf "$SESSION_PARITY_DIR"
   rm -f "$OUTPUTS"
 }
 trap 'status=$?; trap - EXIT; cleanup; exit "$status"' EXIT
@@ -235,7 +239,7 @@ CURRENT_STAGE='Keycloak start'
 [[ -n $IMAGE ]] || fail 'Dockerfile has no ARG KEYCLOAK_IMAGE'
 for tool in jq curl openssl base64; do command -v "$tool" >/dev/null || fail "$tool is required"; done
 docker run --rm -d --name "$CONTAINER" -p "127.0.0.1:$PORT:8080" \
-  -e KC_OPTS="$KCADM_JVM_OPTS" \
+  -e KC_OPTS="$KCADM_JVM_OPTS" -e KEYCLOAK_RECONCILE_SESSION=required \
   -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
   "$IMAGE" start-dev >/dev/null
 for _ in $(seq 1 90); do
@@ -247,6 +251,7 @@ docker exec "$CONTAINER" /opt/keycloak/bin/kcadm.sh config credentials --config 
   --server http://localhost:8080 --realm master --user admin --password "$ADMIN_PASSWORD" >/dev/null 2>&1 \
   || fail 'kcadm login failed'
 docker exec -i "$CONTAINER" sh -c "cat > $IN_CONTAINER_SCRIPT" <"$OPERATOR_SCRIPT"
+session_files_to_tmp
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='only the realm e-skylab'
@@ -532,6 +537,15 @@ kcadm get users/profile -r "$REALM" | jq '.attributes |= map(select(.name != "sc
 warned=$(run_script --check) || { printf '%s\n' "$warned" >&2; fail '--check without schoolEmail failed'; }
 expect_line "$warned" 'WARNING: the User Profile of realm e-skylab does not declare schoolEmail; tokens carry no school_email until it does' 'the missing attribute not warned'
 expect_line "$warned" 'check: 0 change(s) pending, 1 warning(s), 0 problem(s)' 'unexpected plan without schoolEmail'
+
+# ---------------------------------------------------------------------------------------------------
+# The reconciliation session (config/reconcile-session.sh): every run above used it (the container's
+# KEYCLOAK_RECONCILE_SESSION=required, the session's files next to the scripts in /tmp). Here whole
+# runs on the realm the stages above left, once with a JVM per call and once with the session: the
+# same bytes and status (tests/session-parity.sh).
+session_parity 'create-place-client --check' : -e KEYCLOAK_ADMIN_URL=http://localhost:8080 -e "KEYCLOAK_REALM=$REALM" -- \
+  bash "$IN_CONTAINER_SCRIPT" --kcadm-config "$KCADM_CONFIG" --check
+cat "$SESSION_PARITY_LOG" >>"$OUTPUTS"
 
 CURRENT_STAGE='the secret is never printed (all runs)'
 secret=$(client_secret)

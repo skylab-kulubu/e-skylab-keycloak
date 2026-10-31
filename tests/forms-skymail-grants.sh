@@ -32,6 +32,9 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$SCRIPT_DIR/kcadm-jvm.sh"
 # shellcheck source=kcadm-rest.sh
 source "$SCRIPT_DIR/kcadm-rest.sh"
+# shellcheck source=session-parity.sh
+source "$SCRIPT_DIR/session-parity.sh"
+SESSION_PARITY_DIR=$(mktemp -d)
 REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 OPERATOR_SCRIPT="$REPOSITORY_ROOT/config/forms-skymail-grants.sh"
 IMAGE=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' "$REPOSITORY_ROOT/Dockerfile")
@@ -50,6 +53,7 @@ fail() {
 cleanup() {
   kcadm_rest_cleanup
   docker rm -fv "$CONTAINER" >/dev/null 2>&1 || true
+  rm -rf "$SESSION_PARITY_DIR"
 }
 trap 'status=$?; trap - EXIT; cleanup; exit "$status"' EXIT
 on_error() {
@@ -154,7 +158,7 @@ CURRENT_STAGE='Keycloak start'
 [[ -n $IMAGE ]] || fail 'Dockerfile has no ARG KEYCLOAK_IMAGE'
 for tool in jq curl; do command -v "$tool" >/dev/null || fail "$tool is required"; done
 docker run --rm -d --name "$CONTAINER" -p "127.0.0.1:$PORT:8080" \
-  -e KC_OPTS="$KCADM_JVM_OPTS" \
+  -e KC_OPTS="$KCADM_JVM_OPTS" -e KEYCLOAK_RECONCILE_SESSION=required \
   -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
   "$IMAGE" start-dev >/dev/null
 for _ in $(seq 1 90); do
@@ -166,6 +170,7 @@ docker exec "$CONTAINER" /opt/keycloak/bin/kcadm.sh config credentials --config 
   --server http://localhost:8080 --realm master --user admin --password "$ADMIN_PASSWORD" >/dev/null 2>&1 \
   || fail 'kcadm login failed'
 docker exec -i "$CONTAINER" sh -c "cat > $IN_CONTAINER_SCRIPT" <"$OPERATOR_SCRIPT"
+session_files_to_tmp
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='refused and missing realms'
@@ -242,5 +247,15 @@ broken=$(run_expecting 1 e-skylab-sandbox --apply)
 expect_line "$broken" 'PROBLEM: client skymail has no role skymail:access' 'missing role not a PROBLEM'
 expect_line "$broken" 'applied 0 change(s)' 'a PROBLEM run wrote something'
 printf '    a client skymail without skymail:access is a PROBLEM (exit 1), nothing written\n'
+
+# ---------------------------------------------------------------------------------------------------
+# The reconciliation session (config/reconcile-session.sh): every run above used it (the container's
+# KEYCLOAK_RECONCILE_SESSION=required, the session's files next to the script in /tmp). Here whole
+# runs on both realms as the stages above left them, once with a JVM per call and once with the
+# session: the same bytes and status (tests/session-parity.sh).
+for parity_realm in e-skylab e-skylab-sandbox; do
+  session_parity "forms-skymail-grants --check ($parity_realm)" : -e KEYCLOAK_ADMIN_URL=http://localhost:8080 \
+    -e "KEYCLOAK_REALM=$parity_realm" -- bash "$IN_CONTAINER_SCRIPT" --kcadm-config "$KCADM_CONFIG" --check
+done
 
 printf 'forms-skymail-grants: all checks passed\n'

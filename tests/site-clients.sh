@@ -67,6 +67,9 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$SCRIPT_DIR/kcadm-jvm.sh"
 # shellcheck source=kcadm-rest.sh
 source "$SCRIPT_DIR/kcadm-rest.sh"
+# shellcheck source=session-parity.sh
+source "$SCRIPT_DIR/session-parity.sh"
+SESSION_PARITY_DIR=$(mktemp -d)
 REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 CLIENTS_SCRIPT="$REPOSITORY_ROOT/config/site-clients.sh"
 GRANTS_SCRIPT="$REPOSITORY_ROOT/config/site-editor-grants.sh"
@@ -94,6 +97,7 @@ fail() {
 cleanup() {
   kcadm_rest_cleanup
   docker rm -fv "$CONTAINER" >/dev/null 2>&1 || true
+  rm -rf "$SESSION_PARITY_DIR"
   rm -f "$OUTPUTS"
 }
 trap 'status=$?; trap - EXIT; cleanup; exit "$status"' EXIT
@@ -213,7 +217,7 @@ CURRENT_STAGE='Keycloak start'
 [[ -n $IMAGE ]] || fail 'Dockerfile has no ARG KEYCLOAK_IMAGE'
 for tool in jq curl openssl; do command -v "$tool" >/dev/null || fail "$tool is required"; done
 docker run --rm -d --name "$CONTAINER" -p "127.0.0.1:$PORT:8080" \
-  -e KC_OPTS="$KCADM_JVM_OPTS" \
+  -e KC_OPTS="$KCADM_JVM_OPTS" -e KEYCLOAK_RECONCILE_SESSION=required \
   -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
   "$IMAGE" start-dev >/dev/null
 for _ in $(seq 1 90); do
@@ -227,6 +231,7 @@ docker exec "$CONTAINER" /opt/keycloak/bin/kcadm.sh config credentials --config 
 docker exec -i "$CONTAINER" sh -c 'cat > /tmp/site-clients.sh' <"$CLIENTS_SCRIPT"
 docker exec -i "$CONTAINER" sh -c 'cat > /tmp/site-editor-grants.sh' <"$GRANTS_SCRIPT"
 docker exec -i "$CONTAINER" sh -c 'cat > /tmp/inscribed-cms-roles.sh' <"$ROLES_SCRIPT"
+session_files_to_tmp
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='only the club realms'
@@ -664,5 +669,35 @@ secret=$(client_secret frontend-main "$SANDBOX_REALM")
 [[ ${#secret} -ge 16 ]] || fail 'the sandbox frontend-main has no generated secret'
 if grep -Fq -- "$secret" "$OUTPUTS"; then fail 'a script printed the sandbox frontend-main secret'; fi
 secret=''
+
+# ---------------------------------------------------------------------------------------------------
+# The reconciliation session (config/reconcile-session.sh): every run above used it (the container's
+# KEYCLOAK_RECONCILE_SESSION=required, the session's files next to the scripts in /tmp). Here whole
+# runs on the realm the stages above left, once with a JVM per call and once with the session: the
+# same bytes and status (tests/session-parity.sh).
+site_parity_drift() {
+  kcadm update "clients/$(client_uuid frontend-artlab)" -r "$REALM" -s "redirectUris=[\"$CALLBACK\",\"http://localhost:3000/*\"]" >/dev/null
+}
+session_parity 'site-clients --check' : -e KEYCLOAK_ADMIN_URL=http://localhost:8080 -e "KEYCLOAK_REALM=$REALM" -- \
+  bash /tmp/site-clients.sh --kcadm-config "$KCADM_CONFIG" --check
+cat "$SESSION_PARITY_LOG" >>"$OUTPUTS"
+# A copy of the script alone (a wizard runs main's copy from /tmp) has no session beside it: a JVM per
+# call, the same bytes.
+docker exec "$CONTAINER" sh -c 'mkdir -p /tmp/alone && cp /tmp/site-clients.sh /tmp/alone/'
+session_parity_run required "$SESSION_PARITY_DIR/alone.log" -e KEYCLOAK_ADMIN_URL=http://localhost:8080 -e "KEYCLOAK_REALM=$REALM" -- \
+  bash /tmp/alone/site-clients.sh --kcadm-config "$KCADM_CONFIG" --check
+cmp -s "$SESSION_PARITY_LOG" "$SESSION_PARITY_DIR/alone.log" \
+  || { diff "$SESSION_PARITY_LOG" "$SESSION_PARITY_DIR/alone.log" >&2 || true; fail 'site-clients.sh copied alone printed other bytes'; }
+printf '    site-clients.sh copied alone (no session beside it): the same bytes, %ds\n' "$SESSION_PARITY_SECONDS"
+session_parity 'site-clients --apply (a redirect URI repaired)' site_parity_drift -e KEYCLOAK_ADMIN_URL=http://localhost:8080 -e "KEYCLOAK_REALM=$REALM" -- \
+  bash /tmp/site-clients.sh --kcadm-config "$KCADM_CONFIG" --apply --site artlab
+expect_line "$(cat "$SESSION_PARITY_LOG")" 'set the redirect URIs of frontend-artlab to exactly' 'the compared apply did not repair the drift'
+cat "$SESSION_PARITY_LOG" >>"$OUTPUTS"
+session_parity 'site-editor-grants --check' : -e KEYCLOAK_ADMIN_URL=http://localhost:8080 -e "KEYCLOAK_REALM=$REALM" -- \
+  bash /tmp/site-editor-grants.sh --kcadm-config "$KCADM_CONFIG" --check
+cat "$SESSION_PARITY_LOG" >>"$OUTPUTS"
+session_parity 'inscribed-cms-roles --check' : -e "KEYCLOAK_REALM=$REALM" -- \
+  bash /tmp/inscribed-cms-roles.sh --kcadm-config "$KCADM_CONFIG" --check
+cat "$SESSION_PARITY_LOG" >>"$OUTPUTS"
 
 printf 'site-clients.sh and site-editor-grants.sh contract holds against %s.\n' "$IMAGE"

@@ -75,8 +75,8 @@
 #     without the client skycloud is skipped with a WARNING;
 #   - the reconciliation session (config/reconcile-session.sh): every script run here uses it (the
 #     container's KEYCLOAK_RECONCILE_SESSION=required); app-assignments --check through the
-#     reconciler's step, app-assignments --seed, role-groups --audit and a role-groups --apply that
-#     repairs a drift print the same bytes and status with a JVM per call (off) as with the session;
+#     reconciler's step, app-assignments --seed, role-groups --audit, leader-app-roles --check and a
+#     role-groups --apply that repairs a drift print the same bytes and status with a JVM per call (off) as with the session;
 #   - the admin panel's inscribed roles (ADR-0056: News is written in the panel; grup-yonetimi GY1: DK
 #     reads and does not write): app-assignments --check expects the panel client's content:read on
 #     ADMIN, YK and DK and its content:write on ADMIN and YK, never DK's content:write; the core-roles
@@ -1221,6 +1221,8 @@ expect_line "$(cat "$SESSION_PARITY_LOG")" 'YENI ATAMA ' 'the compared seed plan
 session_parity 'role-groups --audit' : "${parity_options[@]}" -- \
   bash "$IN_CONTAINER_CONFIG/role-groups.sh" --kcadm-config "$KCADM_CONFIG" --audit
 expect_line "$(cat "$SESSION_PARITY_LOG")" 'audit K1: ' 'the compared audit did not count'
+session_parity 'leader-app-roles --check' : "${parity_options[@]}" -- \
+  bash "$IN_CONTAINER_CONFIG/leader-app-roles.sh" --kcadm-config "$KCADM_CONFIG" --check
 session_parity 'role-groups --apply (a mapping and an attribute repaired)' role_groups_parity_drift "${parity_options[@]}" -- \
   bash "$IN_CONTAINER_CONFIG/role-groups.sh" --kcadm-config "$KCADM_CONFIG" --apply
 expect_line "$(cat "$SESSION_PARITY_LOG")" 'applied 2 change(s), ' 'the compared apply did not repair the drift'

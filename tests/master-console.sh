@@ -35,7 +35,10 @@
 #     the SSO session open the console asks for the password and the passkey again (prompt=none gets
 #     login_required, while a client without the override gets a code: the session is live); a sign-in
 #     without the registered passkey is refused; the view-* reader opens the console;
-#   - --remove-override takes the three overrides away (dry run first) and --apply puts them back.
+#   - --remove-override takes the three overrides away (dry run first) and --apply puts them back;
+#   - the reconciliation session (config/reconcile-session.sh): every run here uses it (the
+#     container's KEYCLOAK_RECONCILE_SESSION=required); --check, an --apply that repairs a drift and
+#     --remove-override print the same bytes and status with a JVM per call (off) as with the session.
 # Requirements on the host: docker, curl, jq, node with theme/node_modules (npm ci) and Playwright's
 # Chromium. MASTER_CONSOLE_TEST_PORT (default 18098), MASTER_CONSOLE_TEST_CONTAINER (default
 # master-console-test-<pid>), MASTER_CONSOLE_TEST_IMAGE (default: the Dockerfile's KEYCLOAK_IMAGE),
@@ -48,6 +51,8 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$SCRIPT_DIR/kcadm-jvm.sh"
 # shellcheck source=kcadm-rest.sh
 source "$SCRIPT_DIR/kcadm-rest.sh"
+# shellcheck source=session-parity.sh
+source "$SCRIPT_DIR/session-parity.sh"
 REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 IMAGE=${MASTER_CONSOLE_TEST_IMAGE:-$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' "$REPOSITORY_ROOT/Dockerfile")}
 PORT=${MASTER_CONSOLE_TEST_PORT:-18098}
@@ -63,6 +68,7 @@ SANDBOX_WRITERS=/KONSOL/SANDBOX-YAZICILAR
 WRITER_ROLES='["create-client","manage-authorization","manage-clients","manage-events","manage-identity-providers","manage-organizations","manage-realm","manage-users","query-clients","query-groups","query-organizations","query-realms","query-users","view-authorization","view-clients","view-events","view-identity-providers","view-organizations","view-realm","view-users"]'
 CURRENT_STAGE=startup
 STATE_DIR=$(mktemp -d)
+SESSION_PARITY_DIR=$STATE_DIR
 
 fail() {
   printf 'master-console failure during %s: %s\n' "$CURRENT_STAGE" "$1" >&2
@@ -194,7 +200,7 @@ CURRENT_STAGE='Keycloak start'
 [[ -n $IMAGE ]] || fail 'Dockerfile has no ARG KEYCLOAK_IMAGE'
 for tool in jq curl; do command -v "$tool" >/dev/null || fail "$tool is required"; done
 docker run --rm -d --name "$CONTAINER" -p "127.0.0.1:$PORT:8080" \
-  -e KC_OPTS="$KCADM_JVM_OPTS" \
+  -e KC_OPTS="$KCADM_JVM_OPTS" -e KEYCLOAK_RECONCILE_SESSION=required \
   -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
   "$IMAGE" start-dev >/dev/null
 for _ in $(seq 1 90); do
@@ -482,5 +488,30 @@ back=$(run_expecting 0 --apply)
 expect_line "$back" 'applied 3 change(s)' '--apply did not bind the three clients again'
 [[ $(override_of security-admin-console) == "$flow" ]] || fail 'the console is not bound again'
 printf '    --remove-override: dry run, removes the three overrides, keeps the flow; --apply binds them again\n'
+
+# ---------------------------------------------------------------------------------------------------
+CURRENT_STAGE='the reconciliation session: the same bytes and status as a JVM per call'
+# Every run above used the session (the container's KEYCLOAK_RECONCILE_SESSION=required). Here whole
+# runs on master as the stages above left it (the people and their counts), once with a JVM per call
+# and once with the session; the apply gets the same drift both times (a missing override, a disabled
+# registration, a brute force value).
+master_console_parity_drift() {
+  kcadm update "clients/$(client_uuid "$MASTER" account-console)" -r "$MASTER" -s 'authenticationFlowBindingOverrides.browser=' >/dev/null
+  kcadm update authentication/required-actions/webauthn-register -r "$MASTER" -s enabled=false >/dev/null
+  kcadm update "realms/$MASTER" -s failureFactor=99 >/dev/null
+}
+parity_run=(bash "$IN_CONTAINER_CONFIG/master-console.sh" --kcadm-config "$KCADM_CONFIG")
+session_parity 'master-console --check' : -e KEYCLOAK_ADMIN_URL=http://localhost:8080 -- "${parity_run[@]}"
+expect_line "$(cat "$SESSION_PARITY_LOG")" 'check: 0 change(s) pending, ' 'the compared check planned a change'
+session_parity 'master-console --apply (an override, the registration and brute force repaired)' master_console_parity_drift \
+  -e KEYCLOAK_ADMIN_URL=http://localhost:8080 -- "${parity_run[@]}" --apply
+for line in 'bind the browser sign-in of account-console to konsol-passkey' 'enable the required action webauthn-register' \
+  'set brute force detection (the values of e-skylab) (failureFactor 99 -> ' 'applied 3 change(s), '; do
+  expect_line "$(cat "$SESSION_PARITY_LOG")" "$line" 'the compared apply did not repair the drift'
+done
+[[ $(override_of account-console) == "$flow" ]] || fail 'the apply with the session did not bind account-console again'
+session_parity 'master-console --remove-override (dry run)' : -e KEYCLOAK_ADMIN_URL=http://localhost:8080 -- \
+  "${parity_run[@]}" --remove-override
+expect_line "$(cat "$SESSION_PARITY_LOG")" 'would remove the browser flow override of account' 'the compared rollback dry run named nothing'
 
 printf 'master-console contract passed\n'

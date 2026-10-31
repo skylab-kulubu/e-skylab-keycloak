@@ -54,7 +54,9 @@
 #
 # Environment: KEYCLOAK_ADMIN_URL (default http://keycloak:8080), KEYCLOAK_REALM (required),
 # KEYCLOAK_ADMIN_REALM (default master), KEYCLOAK_ROLE_GROUPS_ADMIN_USERNAME (or --admin-user),
-# KEYCLOAK_ROLE_GROUPS_FILE (default config/role-groups.json next to this script).
+# KEYCLOAK_ROLE_GROUPS_FILE (default config/role-groups.json next to this script),
+# KEYCLOAK_RECONCILE_SESSION (on, the default: every kcadm read and ReconcileJson call in one JVM,
+# config/reconcile-session.sh; off: a JVM a call, as before; required: the tests).
 # Output: "[role-groups] ..." lines, then "check: N change(s) pending, W warning(s), P problem(s)" or
 # "applied N change(s), ...". Exit 0 unless a PROBLEM (1) or a usage error, a refused realm or an
 # invalid file (2).
@@ -65,6 +67,8 @@ umask 077
 
 KCADM=${KCADM_BIN:-/opt/keycloak/bin/kcadm.sh}
 JAVA_BIN=${JAVA_BIN:-java}
+# The reconciliation session (config/reconcile-session.sh): on, off or required.
+SESSION_MODE=${KEYCLOAK_RECONCILE_SESSION:-on}
 KEYCLOAK_LIB_DIR=${KEYCLOAK_LIB_DIR:-/opt/keycloak/lib/lib/main}
 CONFIG_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 CONFIG_FILE=${KEYCLOAK_ROLE_GROUPS_FILE:-$CONFIG_DIR/role-groups.json}
@@ -121,6 +125,10 @@ if [[ $TARGET_REALM != e-skylab && $TARGET_REALM != e-skylab-sandbox ]]; then
   exit 2
 fi
 
+# shellcheck source=reconcile-session.sh
+source "$CONFIG_DIR/reconcile-session.sh"
+session_mode_valid || exit 2
+
 WORK_DIR=$(mktemp -d /tmp/role-groups.XXXXXX)
 if [[ -z $KCADM_CONFIG ]]; then
   if [[ -z $ADMIN_USER ]]; then
@@ -138,6 +146,7 @@ elif [[ ! -r $KCADM_CONFIG ]]; then
 fi
 
 cleanup() {
+  stop_session
   if [[ $OWN_CONFIG == true ]]; then
     rm -f "$KCADM_CONFIG"
   fi
@@ -172,10 +181,9 @@ problem() {
   log "PROBLEM: $1"
 }
 
+# A read (get) in the session when it runs (config/reconcile-session.sh), a write in its own JVM.
 kcadm() {
-  local command=$1
-  shift
-  "$KCADM" "$command" --config "$KCADM_CONFIG" "$@"
+  session_kcadm "$@"
 }
 
 kcadm_write() {
@@ -196,18 +204,26 @@ csv() {
 }
 
 # The in-image JSON helper (config/ReconcileJson.java, the reconciler's): the image has a JDK and
-# Jackson but no jq.
+# Jackson but no jq. The session's class is compiled with it when the session runs.
 compile_json_tool() {
   local jackson_jars=("$KEYCLOAK_LIB_DIR"/com.fasterxml.jackson.core.jackson-*.jar) classpath='' jar
+  local sources=("$CONFIG_DIR/ReconcileJson.java")
   [[ -f ${jackson_jars[0]} ]] || { printf 'Jackson libraries were not found under %s\n' "$KEYCLOAK_LIB_DIR" >&2; exit 2; }
   for jar in "${jackson_jars[@]}"; do classpath="$classpath$jar:"; done
   mkdir -p "$WORK_DIR/classes"
+  if session_wanted; then
+    sources+=("$CONFIG_DIR/ReconcileSession.java")
+  fi
   "$JAVA_BIN" -XX:TieredStopAtLevel=1 -XX:+UseSerialGC -m jdk.compiler/com.sun.tools.javac.Main \
-    -d "$WORK_DIR/classes" -cp "$classpath" "$CONFIG_DIR/ReconcileJson.java" >/dev/null
+    -d "$WORK_DIR/classes" -cp "$classpath" "${sources[@]}" >/dev/null
   JSON_TOOL_CLASSPATH="$WORK_DIR/classes:$classpath"
 }
 
 json_tool() {
+  if session_takes json "$@"; then
+    session_call json "$@"
+    return
+  fi
   "$JAVA_BIN" -XX:TieredStopAtLevel=1 -XX:+UseSerialGC -cp "$JSON_TOOL_CLASSPATH" ReconcileJson "$@"
 }
 
@@ -291,6 +307,7 @@ credential_arguments=(
 if [[ $OWN_CONFIG == true ]]; then
   "$KCADM" config credentials "${credential_arguments[@]}"
 fi
+start_session
 log "realm=$TARGET_REALM mode=$MODE root=/$ROOT leaves=${#LEAVES[@]} audit=$AUDIT"
 
 if ! realm_name=$(kcadm get "realms/$TARGET_REALM" --fields realm --format csv --noquotes 2>/dev/null | tr -d '\r') \

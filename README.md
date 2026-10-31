@@ -844,10 +844,15 @@ iki yolla da koşturup bayt bayt karşılaştırır). Yazmalar (`create`, `updat
 (varsayılan; oturum başlayamazsa çağrı başına JVM, stderr'de `[reconcile] ` öneki olmayan tek
 `Reconciliation session not started (…)` satırıyla), `off` (çağrı başına JVM, eski davranış ve geri
 dönüş, runbook §7) ya da `required` (oturum başlayamazsa koşu durur; harness). Oturum yalnız
-sınıfları denetlenmiş kcadm sürümlerinde açılır (26.4 ve 26.7, betikte `SESSION_KCADM_VERSIONS`);
+sınıfları denetlenmiş kcadm sürümlerinde açılır (26.4 ve 26.7, `config/reconcile-session.sh`'te `SESSION_KCADM_VERSIONS`);
 Keycloak yükseltmesinde harness'in `required` koşusu durur ve liste denetimden sonra genişletilir.
 Oturum koşu ortasında durursa (JVM ölümü, yazılamayan çıktı) koşu yeni istek göndermeden exit 1 ile
-biter; son satır nedeni söyler. Passkey relying party id geçişinden
+biter; son satır nedeni söyler. Oturum kodu `config/reconcile-session.sh`'tedir; çok okuyan operatör
+betikleri de onu aynı değişkenle kullanır: `config/app-assignments.sh` (production'da `--check`
+oturumsuz 18 dakikaydı), `role-groups.sh`, `dk-read-only.sh` ve `master-console.sh`. Bunlarda da
+yalnız okumalar ve ReconcileJson oturuma gider, yazmalar çağrı başına `kcadm.sh` kalır; testleri
+(`tests/role-groups.sh`, `tests/dk-read-only.sh`, `tests/master-console.sh`) her betiğin kuru ve
+yazan koşusunu iki yolla koşturup bayt bayt karşılaştırır. Passkey relying party id geçişinden
 önce kayıtlı passkey'ler bir daha doğrulanamaz; `config/cleanup-legacy-passkeys.sh`
 (varsayılan kuru koşu, yalnız sayı basar) geçiş anından önce oluşturulmuş
 `webauthn-passwordless` kimlik bilgilerini `--apply` ile siler. Geçiş anını

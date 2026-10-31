@@ -479,7 +479,7 @@ edilir). core'un istemci kimliği `--core-client` ya da
 
 1. Bu betiği ve SPI 1.13.1'i taşıyan Keycloak sürümü yayımlanır (production
    dalı, Dokploy yeniden dağıtımı; `/health/ready` yeşil).
-2. Sunucuda (`api.yildizskylab.com`), geçici bir master yöneticisiyle önce
+2. Sunucuda, geçici bir master yöneticisiyle önce
    kuru koşu, çıktı kontrol edildikten sonra uygulama. Üretim Keycloak'ı bir
    Dokploy Application'ıdır; betik çalışan konteynerin içinde koşar:
 
@@ -569,7 +569,7 @@ hiçbir şey yazmaz. Entegrasyon testi şunları kanıtlar:
    Dokploy'u tetikler. `/health/ready` yeşil olmalıdır. Uzlaştırıcı imajın
    içindedir; imaj değişmeden `reconcile-account-center.sh` eski mapper
    listesini uygular.
-2. Sunucuda (`api.yildizskylab.com`) uzlaştırıcı, Hesap Merkezi sürüm
+2. Sunucuda uzlaştırıcı, Hesap Merkezi sürüm
    sihirbazlarındaki gibi çalışan üretim Keycloak konteynerinin içinde bir kez
    koşar. Kapsamlı uzlaştırıcı istemcisinin gizli anahtarı yalnız stdin'den
    geçer, ekrana basılmaz:
@@ -666,7 +666,7 @@ kendisi ulaşabilir.
 1. Bu betiği ve SPI 1.13.2'yi taşıyan Keycloak sürümü yayımlanır (production
    dalı, Dokploy yeniden dağıtımı; `/health/ready` yeşil). 1.13.2 aynı zamanda
    `email/change-request`'in eski birincili kabul etmesini getirir.
-2. Sunucuda (`api.yildizskylab.com`), §8'deki gibi geçici bir master
+2. Sunucuda, §8'deki gibi geçici bir master
    yöneticisiyle önce kuru koşu, sayılar kontrol edildikten sonra uygulama:
 
    ```bash
@@ -787,7 +787,7 @@ okur.
    engellemez.
 2. `skymail`, `skycms` ve `forms` istemcilerinin iki realm'de de var olduğu
    doğrulanır. Betik eksik olanı adıyla yazar ve durur.
-3. Sunucuda (`api.yildizskylab.com`) wizard koşulur; nasıl kopyalanacağı başında
+3. Sunucuda wizard koşulur; nasıl kopyalanacağı başında
    yazar: `sudo bash ~/openbao-setup/core-erasure-client-wizard.sh`. Geçici bir
    master yöneticisi gerekir; parolası yalnız kcadm'ın prompt'una yazılır. Betiği
    elle koşmak gerekirse (secret'ın taşınması yine wizard'ındır):
@@ -2664,14 +2664,8 @@ Uzlaştırıcı kimliğinin `manage-realm` rolü yeter.
    doğrudur. Keycloak Traefik'in adresini görüyorsa herkes tek bir /24 kovasını paylaşır (öneri realm
    genelinde saatte 100 gönderimle sınırlanır); güvenilen vekil listesi yoksa ve `X-Forwarded-For`
    istemciden geçiyorsa bütçe atlatılabilir (oturum ve genel sınır yine bağlar). Wizard
-   `ops/wizards/real-client-ip-diagnostics-v2.sh` Mac'ten sunucuya kopyalanır ve **production
-   sunucusunda root olarak** koşulur (kendi başlığındaki gibi). Mac'te:
-
-   ```bash
-   cd ~/Projects/sky_lab_genel/ops/wizards && scp -P 1911 real-client-ip-diagnostics-v2.sh yusssss@api.yildizskylab.com:~/
-   ```
-
-   Production sunucusunda:
+   `ops/wizards/real-client-ip-diagnostics-v2.sh` sunucuya kopyalanır (nasıl kopyalanacağı kendi
+   başlığında yazar) ve **production sunucusunda root olarak** koşulur. Sunucuda:
 
    ```bash
    sudo bash ~/real-client-ip-diagnostics-v2.sh
@@ -3474,7 +3468,7 @@ Keycloak admin olaylarında (30 gün) görünür; kalıcı iz yedek dosyası ve 
 
 ### Operatör sırası (önce sandbox, sonra production)
 
-Komutlar production sunucusunda (`ssh -p 1911 yusssss@api.yildizskylab.com`) koşar; sandbox realm'i
+Komutlar production sunucusunda koşar; sandbox realm'i
 aynı Keycloak konteynerindedir.
 
 1. Bu değişikliği taşıyan Keycloak sürümü yayımlanır (Touch ID kapısı). Tam uzlaştırma
@@ -4443,9 +4437,9 @@ Sıradan iş acil değildir: panel beklenir.
 
 **Kim.**
 - Konsoldan yazanlar: `/KONSOL/E-SKYLAB-YAZICILAR` üyeleri, kendi konsol hesaplarıyla (§34).
-- Sunucudan kurtarma yalnız sunucu yöneticisinin işidir: Keycloak konteynerinde `kc.sh
-  bootstrap-admin` ile geçici bir yönetici açılır, iş bitince silinir. Master'da geçici yönetici
-  kalmadığı (konsolun "temporary admin" uyarısı yok, `is_temporary_admin` taşıyan hesap yok) doğrulanır.
+- Sunucudan kurtarma yalnız sunucu yöneticisinin işidir: bütün düğümler dururken, aynı imaj ve
+  ortamla ayrı, tek seferlik bir konteynerde `kc.sh bootstrap-admin` ile geçici bir yönetici açılır,
+  iş bitince silinir. Master'da geçici yönetici kalmadığı (konsolun "temporary admin" uyarısı yok, `is_temporary_admin` taşıyan hesap yok) doğrulanır.
 
 **Acil hesaplar.** master'da kişiye bağlı olmayan iki hesap, master `admin` rolüyle. İkisi de
 passkey'le korunur (§34'teki akış). Parola ve passkey'i taşıyan anahtar mühürlü zarfta saklanır,

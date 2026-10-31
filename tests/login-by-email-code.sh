@@ -37,7 +37,8 @@
 #   - an address that names nobody: the same page and no mail;
 #   - a person core's disable_identity closed (the erasure header): marked, the same page, one
 #     account.deletion-in-progress notice through SkyMail (no name; erase_after_send is a unit test) and no second
-#     within the hour; a person an administrator disabled: no mark, the same page and nothing mailed;
+#     within the hour; Admin REST cannot write or change the mark and a whole-representation PUT keeps
+#     it; a person an administrator disabled: no mark, the same page and nothing mailed;
 #   - a code does not work in another browser; five wrong codes kill it; a person locked by
 #     brute-force protection is not signed in by the right code;
 #   - the fourth code to one address within a quarter hour is not mailed, the page is the same, a
@@ -757,6 +758,30 @@ kcadm get "users/$erased" -r "$REALM" \
 kcadm get "users/$closed" -r "$REALM" \
   | jq -e '.enabled == false and ((.attributes // {}) | has("skyAccountErasureDisabledAt") | not)' >/dev/null \
   || fail "an administrator's disable left an erasure mark"
+# The mark under the realm's ADMIN_VIEW policy: Admin REST cannot write or change it (refused or
+# ignored), and a whole-representation PUT, with or without it in the attributes, keeps it.
+mark=$(kcadm get "users/$erased" -r "$REALM" | jq -r '.attributes.skyAccountErasureDisabledAt[0]')
+admin_put() { # admin_put USER_ID JQ_EDIT: the user as read, edited, PUT back; prints the HTTP status
+  local body
+  body=$(kcadm get "users/$1" -r "$REALM" | jq -c "$2")
+  kcadm_rest_token
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}' --request PUT \
+    -H @"$KCADM_REST_DIR/header" -H 'Content-Type: application/json' \
+    --data-binary "$body" "$BASE_URL/admin/realms/$REALM/users/$1"
+}
+status=$(admin_put "$closed" '.attributes = ((.attributes // {}) + {skyAccountErasureDisabledAt: ["2026-01-01T00:00:00Z"]})')
+[[ $status == 204 || $status == 400 ]] || fail "writing the mark through Admin REST returned HTTP $status"
+kcadm get "users/$closed" -r "$REALM" | jq -e '(.attributes // {}) | has("skyAccountErasureDisabledAt") | not' >/dev/null \
+  || fail 'Admin REST wrote an erasure mark'
+status=$(admin_put "$erased" '.attributes.skyAccountErasureDisabledAt = ["2026-01-01T00:00:00Z"]')
+[[ $status == 204 || $status == 400 ]] || fail "changing the mark through Admin REST returned HTTP $status"
+status=$(admin_put "$erased" '.firstName = "Silinen"')
+[[ $status == 204 ]] || fail "a whole-representation PUT of a person being erased returned HTTP $status"
+status=$(admin_put "$erased" 'del(.attributes.skyAccountErasureDisabledAt)')
+[[ $status == 204 || $status == 400 ]] || fail "a PUT without the mark returned HTTP $status"
+kcadm get "users/$erased" -r "$REALM" \
+  | jq -e --arg mark "$mark" '.enabled == false and .firstName == "Silinen" and .attributes.skyAccountErasureDisabledAt == [$mark]' >/dev/null \
+  || fail 'an Admin REST PUT changed or removed the erasure mark'
 for who in erased@example.invalid closed; do
   open_code_page "disabled-$who"
   ask_code "$who"

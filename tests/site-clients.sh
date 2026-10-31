@@ -681,14 +681,21 @@ site_parity_drift() {
 session_parity 'site-clients --check' : -e KEYCLOAK_ADMIN_URL=http://localhost:8080 -e "KEYCLOAK_REALM=$REALM" -- \
   bash /tmp/site-clients.sh --kcadm-config "$KCADM_CONFIG" --check
 cat "$SESSION_PARITY_LOG" >>"$OUTPUTS"
-# A copy of the script alone (a wizard runs main's copy from /tmp) has no session beside it: a JVM per
-# call, the same bytes.
+# A copy of the script alone (a wizard runs main's copy from /tmp) has no session beside it: with on, a
+# JVM per call and the same bytes; with required it stops before a login (exit 2).
 docker exec "$CONTAINER" sh -c 'mkdir -p /tmp/alone && cp /tmp/site-clients.sh /tmp/alone/'
-session_parity_run required "$SESSION_PARITY_DIR/alone.log" -e KEYCLOAK_ADMIN_URL=http://localhost:8080 -e "KEYCLOAK_REALM=$REALM" -- \
+session_parity_run on "$SESSION_PARITY_DIR/alone.log" -e KEYCLOAK_ADMIN_URL=http://localhost:8080 -e "KEYCLOAK_REALM=$REALM" -- \
   bash /tmp/alone/site-clients.sh --kcadm-config "$KCADM_CONFIG" --check
 cmp -s "$SESSION_PARITY_LOG" "$SESSION_PARITY_DIR/alone.log" \
   || { diff "$SESSION_PARITY_LOG" "$SESSION_PARITY_DIR/alone.log" >&2 || true; fail 'site-clients.sh copied alone printed other bytes'; }
 printf '    site-clients.sh copied alone (no session beside it): the same bytes, %ds\n' "$SESSION_PARITY_SECONDS"
+session_parity_run required "$SESSION_PARITY_DIR/alone-required.log" -e KEYCLOAK_ADMIN_URL=http://localhost:8080 \
+  -e "KEYCLOAK_REALM=$REALM" -- bash /tmp/alone/site-clients.sh --kcadm-config "$KCADM_CONFIG" --check
+[[ $(tail -n 1 "$SESSION_PARITY_DIR/alone-required.log") == 'exit 2' ]] \
+  && grep -Fq 'KEYCLOAK_RECONCILE_SESSION=required, but /tmp/alone has no reconcile-session.sh next to this script' "$SESSION_PARITY_DIR/alone-required.log" \
+  && ! grep -Fq 'realm=' "$SESSION_PARITY_DIR/alone-required.log" \
+  || { cat "$SESSION_PARITY_DIR/alone-required.log" >&2; fail 'site-clients.sh copied alone ran with KEYCLOAK_RECONCILE_SESSION=required'; }
+printf '    site-clients.sh copied alone with KEYCLOAK_RECONCILE_SESSION=required: stopped before a login (exit 2)\n'
 session_parity 'site-clients --apply (a redirect URI repaired)' site_parity_drift -e KEYCLOAK_ADMIN_URL=http://localhost:8080 -e "KEYCLOAK_REALM=$REALM" -- \
   bash /tmp/site-clients.sh --kcadm-config "$KCADM_CONFIG" --apply --site artlab
 expect_line "$(cat "$SESSION_PARITY_LOG")" 'set the redirect URIs of frontend-artlab to exactly' 'the compared apply did not repair the drift'

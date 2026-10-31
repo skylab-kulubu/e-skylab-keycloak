@@ -214,7 +214,8 @@ session_reads_stdin() {
 # session_guard: after session_lost the run is ending (its own shell exits at once, or at the end of
 # the command substitution it waits for); a call from a subshell that is still running then sends
 # nothing, read or write, and that subshell ends too (status 1, no more output: the reason stays the
-# run's last line).
+# run's last line). session_kcadm checks it before every kcadm call, session_call before it writes
+# the call and again before it sends it; the reconciler's kcadm() checks it before a dry run write.
 session_guard() {
   if [[ -n $SESSION_DIR && -e $SESSION_DIR/lost ]]; then
     exit 1
@@ -251,6 +252,9 @@ session_call() {
   if session_reads_stdin "$tool" "$@"; then
     cat >"$request/stdin" || session_lost 'stdin could not be written'
   fi
+  # Again: the right side of "kcadm_json … | json_tool …" waits on stdin above while the left side
+  # may lose the session; then this call sends nothing either.
+  session_guard
   mkfifo "$request/done" || session_lost 'mkfifo failed'
   exec {done_fd}<>"$request/done"
   printf '%s %s\n' "$tool" "$request" >&"$SESSION_FD"

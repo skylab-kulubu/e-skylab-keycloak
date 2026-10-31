@@ -740,7 +740,7 @@ def assert_affected_jobs(root, helper)
     end
   end
   pr_reaches = {
-    "config/" "reconcile-account-center.sh" => %w[dk-read-only login-by-email-code sign-up-by-email-code -integration-group -role-groups -login-clients],
+    "config/" "reconcile-account-center.sh" => %w[dk-read-only login-by-email-code sign-up-by-email-code login-clients -integration-group -role-groups],
     "config/" "not-read-by-any-job.sh" => all_pull_request + deferred.map { |name| "-#{name}" },
   }
   pr_exactly = {

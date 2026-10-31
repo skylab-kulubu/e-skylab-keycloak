@@ -182,12 +182,16 @@ fi
 # The reconciliation session (config/reconcile-session.sh: every kcadm read of the run in one JVM;
 # KEYCLOAK_RECONCILE_SESSION on, the default, off or required) when this file runs from the image's
 # config directory. A copy of this file alone (a wizard runs main's copy from /tmp) has no session:
-# every call keeps its own JVM, as before.
+# every call keeps its own JVM, as before; KEYCLOAK_RECONCILE_SESSION=required stops it (exit 2).
 if [[ -f $CONFIG_DIR/reconcile-session.sh ]]; then
   # shellcheck source=reconcile-session.sh
   source "$CONFIG_DIR/reconcile-session.sh"
   session_mode_valid || exit 2
 else
+  if [[ $SESSION_MODE == required ]]; then
+    printf 'KEYCLOAK_RECONCILE_SESSION=required, but %s has no reconcile-session.sh next to this script (a copy alone runs without the session)\n' "$CONFIG_DIR" >&2
+    exit 2
+  fi
   start_session() { :; }
   stop_session() { :; }
   session_kcadm() {

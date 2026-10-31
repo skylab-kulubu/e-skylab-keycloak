@@ -482,6 +482,8 @@ check_placeholder_read() {
 kcadm() {
   local command=$1
   shift
+  # After a lost session not even a dry run's "would kcadm" line follows the reason.
+  session_guard
   if [[ $CHECK_WRITES == true ]]; then
     case $command in
       create | update | delete)

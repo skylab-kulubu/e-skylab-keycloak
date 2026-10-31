@@ -1,1 +1,2 @@
 com.skylab.account.LoginCodeFailuresListenerFactory
+com.skylab.account.AccountErasureMarkListenerFactory

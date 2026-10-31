@@ -1,5 +1,6 @@
 package com.skylab.mail;
 
+import com.skylab.account.AccountErasureNotice;
 import com.skylab.account.EmailCodeAuthenticator;
 import com.skylab.account.EmailResource;
 import com.skylab.account.SudoResource;
@@ -28,6 +29,11 @@ final class SkyMailTemplates {
     static final String PERSONAL_EMAIL_CONFIRM = "keycloak.personal-email-confirm";
     /** The Login code of "E-postayla devam et" (eskylab-login-ux 08); carries code and purpose. */
     static final String LOGIN_CODE = "keycloak.login-code";
+    /**
+     * A person whose Account erasure is running asked for a Login code: the account is being
+     * deleted. Sent by Keycloak; named as SkyMail's other account deletion mails are.
+     */
+    static final String ACCOUNT_DELETION_IN_PROGRESS = "account.deletion-in-progress";
     /** The operator's alarm when the realm's Login codes reach half or all of the day's budget. */
     static final String LOGIN_CODE_ALARM = "keycloak.login-code-alarm";
     static final String GENERIC = "keycloak.generic";
@@ -47,9 +53,20 @@ final class SkyMailTemplates {
             // By the constant sky-account sends it with, so the two names cannot drift apart.
             EmailResource.TEMPLATE.toLowerCase(Locale.ROOT), PERSONAL_EMAIL_CONFIRM,
             EmailCodeAuthenticator.MAIL_TEMPLATE.toLowerCase(Locale.ROOT), LOGIN_CODE,
-            SudoResource.MAIL_TEMPLATE.toLowerCase(Locale.ROOT), LOGIN_CODE);
+            SudoResource.MAIL_TEMPLATE.toLowerCase(Locale.ROOT), LOGIN_CODE,
+            AccountErasureNotice.MAIL_TEMPLATE.toLowerCase(Locale.ROOT), ACCOUNT_DELETION_IN_PROGRESS);
 
     private SkyMailTemplates() {
+    }
+
+    /**
+     * Whether SkyMail keeps no record of this mail's recipient: the Account erasure notice goes
+     * after the person's Erasure command may have run in SkyMail, so nothing would erase its row
+     * later. SkyMail erases it once its outcome is written ({@code erase_after_send}); an image
+     * from before that ignores the field and keeps the row, so the mail carries no name either.
+     */
+    static boolean keepsNoRecord(String templateKey) {
+        return ACCOUNT_DELETION_IN_PROGRESS.equals(templateKey);
     }
 
     /**

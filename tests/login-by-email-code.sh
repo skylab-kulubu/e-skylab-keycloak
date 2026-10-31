@@ -35,6 +35,10 @@
 #   - the School e-mail of a Verified YTÜ account and a proven Personal e-mail as the identifier: the
 #     code goes to the Primary e-mail; without a Primary e-mail it goes to the School e-mail;
 #   - an address that names nobody: the same page and no mail;
+#   - a person core's disable_identity closed (the erasure header): marked, the same page, one
+#     account.deletion-in-progress notice through SkyMail (no name; erase_after_send is a unit test) and no second
+#     within the hour; Admin REST cannot write or change the mark and a whole-representation PUT keeps
+#     it; a person an administrator disabled: no mark, the same page and nothing mailed;
 #   - a code does not work in another browser; five wrong codes kill it; a person locked by
 #     brute-force protection is not signed in by the right code;
 #   - the fourth code to one address within a quarter hour is not mailed, the page is the same, a
@@ -351,6 +355,12 @@ skymail_records() {
 code_count() {
   skymail_records | jq -s --arg to "$1" \
     '[.[] | select(.event == "mail_task" and .template_key == "keycloak.login-code" and .recipient_email == $to)] | length'
+}
+
+# notice_count ADDRESS: how many Account erasure notices SkyMail got for the address.
+notice_count() {
+  skymail_records | jq -s --arg to "$1" \
+    '[.[] | select(.event == "mail_task" and .template_key == "account.deletion-in-progress" and .recipient_email == $to)] | length'
 }
 
 # await_code ADDRESS BEFORE [PURPOSE]: waits for a code mail task beyond BEFORE (the code
@@ -731,6 +741,77 @@ sleep 5
 printf '    same page (ids, data attributes) for a known and an unknown address; nothing mailed to the unknown one\n'
 
 # ---------------------------------------------------------------------------------------------------
+stage 'a person whose Account erasure runs'
+erased=$(person erased erased@example.invalid)
+closed=$(person closed closed@example.invalid)
+# core's disable_identity: exactly {"enabled":false} and the erasure header (core-backend
+# internal/identity/keycloak.go DisableUser); an administrator's disable has no header.
+kcadm_rest_token
+status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --request PUT \
+  -H @"$KCADM_REST_DIR/header" -H 'Content-Type: application/json' -H 'X-Sky-Account-Erasure: disable_identity' \
+  --data-binary '{"enabled":false}' "$BASE_URL/admin/realms/$REALM/users/$erased")
+[[ $status == 204 ]] || fail "core's disable returned HTTP $status"
+kcadm update "users/$closed" -r "$REALM" -s enabled=false
+kcadm get "users/$erased" -r "$REALM" \
+  | jq -e '.enabled == false and (.attributes.skyAccountErasureDisabledAt[0] // "" | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$"))' >/dev/null \
+  || fail "core's disable left no erasure mark"
+kcadm get "users/$closed" -r "$REALM" \
+  | jq -e '.enabled == false and ((.attributes // {}) | has("skyAccountErasureDisabledAt") | not)' >/dev/null \
+  || fail "an administrator's disable left an erasure mark"
+# The mark under the realm's ADMIN_VIEW policy: Admin REST cannot write or change it (refused or
+# ignored), and a whole-representation PUT, with or without it in the attributes, keeps it.
+mark=$(kcadm get "users/$erased" -r "$REALM" | jq -r '.attributes.skyAccountErasureDisabledAt[0]')
+admin_put() { # admin_put USER_ID JQ_EDIT: the user as read, edited, PUT back; prints the HTTP status
+  local body
+  body=$(kcadm get "users/$1" -r "$REALM" | jq -c "$2")
+  kcadm_rest_token
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}' --request PUT \
+    -H @"$KCADM_REST_DIR/header" -H 'Content-Type: application/json' \
+    --data-binary "$body" "$BASE_URL/admin/realms/$REALM/users/$1"
+}
+status=$(admin_put "$closed" '.attributes = ((.attributes // {}) + {skyAccountErasureDisabledAt: ["2026-01-01T00:00:00Z"]})')
+[[ $status == 204 || $status == 400 ]] || fail "writing the mark through Admin REST returned HTTP $status"
+kcadm get "users/$closed" -r "$REALM" | jq -e '(.attributes // {}) | has("skyAccountErasureDisabledAt") | not' >/dev/null \
+  || fail 'Admin REST wrote an erasure mark'
+status=$(admin_put "$erased" '.attributes.skyAccountErasureDisabledAt = ["2026-01-01T00:00:00Z"]')
+[[ $status == 204 || $status == 400 ]] || fail "changing the mark through Admin REST returned HTTP $status"
+status=$(admin_put "$erased" '.firstName = "Silinen"')
+[[ $status == 204 ]] || fail "a whole-representation PUT of a person being erased returned HTTP $status"
+status=$(admin_put "$erased" 'del(.attributes.skyAccountErasureDisabledAt)')
+[[ $status == 204 || $status == 400 ]] || fail "a PUT without the mark returned HTTP $status"
+kcadm get "users/$erased" -r "$REALM" \
+  | jq -e --arg mark "$mark" '.enabled == false and .firstName == "Silinen" and .attributes.skyAccountErasureDisabledAt == [$mark]' >/dev/null \
+  || fail 'an Admin REST PUT changed or removed the erasure mark'
+for who in erased@example.invalid closed; do
+  open_code_page "disabled-$who"
+  ask_code "$who"
+  [[ $(page_shape) == "$known_page" ]] || { printf 'known: %s\nthis:  %s\n' "$known_page" "$(page_shape)" >&2; fail "the page tells '$who' apart"; }
+done
+for _ in $(seq 1 30); do
+  (($(notice_count erased@example.invalid) > 0)) && break
+  sleep 1
+done
+(($(notice_count erased@example.invalid) == 1)) || fail 'no erasure notice reached SkyMail'
+skymail_records | jq -s -c --arg to erased@example.invalid \
+  '[.[] | select(.event == "mail_task" and .template_key == "account.deletion-in-progress" and .recipient_email == $to)] | last' \
+  | jq -e '.missing_variables == [] and (.roles | index("skymail:mails:send")) != null
+      and .recipient_full_name == ""
+      and (.body_variables | .code == "" and .link == "" and .purpose == "" and .firstName == "" and .username == ""
+        and .subjectKey == "skyAccountErasureNoticeSubject")' >/dev/null \
+  || fail 'the erasure notice carries a name, a code or a link, or has the wrong subject'
+# Within the hour: the same page again, no second notice.
+open_code_page erased-again
+ask_code erased
+[[ $(page_shape) == "$known_page" ]] || fail 'the page tells a second request for an account being erased apart'
+sleep 5
+(($(notice_count erased@example.invalid) == 1)) || fail 'a second erasure notice within the hour'
+(($(code_count erased@example.invalid) == 0 && $(mail_count erased@example.invalid) == 0)) \
+  || fail 'a code was mailed to an account being erased'
+(($(notice_count closed@example.invalid) == 0 && $(code_count closed@example.invalid) == 0 && $(mail_count closed@example.invalid) == 0)) \
+  || fail "the account an administrator disabled was mailed"
+printf '    an account being erased: the same page, one deletion notice an hour through SkyMail; an administrator-disabled one: nothing\n'
+
+# ---------------------------------------------------------------------------------------------------
 stage 'the code works only where it was asked for'
 person bea bea@example.invalid >/dev/null
 open_code_page bea-first
@@ -996,7 +1077,8 @@ for code in "${CODES[@]}"; do
 done
 for address in ada@example.invalid ytu.personal@example.invalid ytu.okul@std.yildiz.edu.tr only.okul@std.yildiz.edu.tr \
   nobody@example.invalid bea@example.invalid cem@example.invalid dila@example.invalid eda@example.invalid fikret@example.invalid \
-  skymail-fallback@example.invalid hakan@example.invalid gul@example.invalid ilker@example.invalid; do
+  skymail-fallback@example.invalid hakan@example.invalid gul@example.invalid ilker@example.invalid \
+  erased@example.invalid closed@example.invalid; do
   ! grep -Fiq "$address" "$STATE_DIR/server.log" || fail 'an address of the run reached the server log'
 done
 [[ -n $remote ]] || fail 'no client IP in the LOGIN event to look for'

@@ -89,17 +89,18 @@ record SkyMailMessage(String templateKey, String recipientFullName, Map<String, 
             String purpose,
             UserModel user,
             RealmModel realm) {
+        UserModel named = SkyMailTemplates.keepsNoRecord(templateKey) ? null : user;
         Map<String, String> variables = new LinkedHashMap<>();
         variables.put(LINK, text(link));
         variables.put(LINK_EXPIRATION_MINUTES, text(linkExpirationMinutes));
         variables.put(CODE, text(code));
         variables.put(CODE_EXPIRATION_MINUTES, text(codeExpirationMinutes));
         variables.put(PURPOSE, text(purpose));
-        variables.put(FIRST_NAME, user == null ? "" : text(user.getFirstName()));
-        variables.put(USERNAME, user == null ? "" : text(user.getUsername()));
+        variables.put(FIRST_NAME, named == null ? "" : text(named.getFirstName()));
+        variables.put(USERNAME, named == null ? "" : text(named.getUsername()));
         variables.put(REALM_DISPLAY_NAME, realmDisplayName(realm));
         variables.put(SUBJECT_KEY, text(subjectKey));
-        return new SkyMailMessage(templateKey, fullName(user), variables);
+        return new SkyMailMessage(templateKey, fullName(named), variables);
     }
 
     /**
@@ -117,6 +118,9 @@ record SkyMailMessage(String templateKey, String recipientFullName, Map<String, 
             bodyVariables.put(name, variables.getOrDefault(name, ""));
         }
         body.put("body_variables", bodyVariables);
+        if (SkyMailTemplates.keepsNoRecord(templateKey)) {
+            body.put("erase_after_send", true);
+        }
         return JsonSerialization.writeValueAsString(body);
     }
 

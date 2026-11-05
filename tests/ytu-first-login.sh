@@ -1173,9 +1173,10 @@ session_remember_me() {
 }
 
 # identity_cookie_expiry: when the browser drops Keycloak's SSO cookie (KEYCLOAK_IDENTITY of this
-# realm in JAR); 0 is a browser-session cookie.
+# realm in JAR); 0 is a browser-session cookie. Keycloak sets the path /realms/REALM/; curl up to
+# 8.5 writes it as sent, newer curl (8.18 on ubuntu-26.04) without the trailing slash.
 identity_cookie_expiry() {
-  awk -F '\t' -v path="/realms/$REALM/" '$3 == path && $6 == "KEYCLOAK_IDENTITY" { print $5 }' "$JAR" | tail -n 1
+  awk -F '\t' -v path="/realms/$REALM" '($3 == path || $3 == path "/") && $6 == "KEYCLOAK_IDENTITY" { print $5 }' "$JAR" | tail -n 1
 }
 
 stay_events() { # stay_events USER_ID yes|no: the question's CUSTOM_REQUIRED_ACTION events with that answer

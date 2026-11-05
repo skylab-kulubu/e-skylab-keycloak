@@ -48,7 +48,11 @@
 #     default group under DK and a failed read (injected: the DK group, its role mappings) stop the run
 #     with exit 1 and write nothing; a failed write (injected) stops it with exit 1, the backup named,
 #     and --restore puts back what was taken; without --backup-file the backup gets its default name;
-#     the sandbox realm without DK has nothing to do.
+#     the sandbox realm without DK has nothing to do;
+#   - the reconciliation session (config/reconcile-session.sh): every script run here uses it (the
+#     container's KEYCLOAK_RECONCILE_SESSION=required); --check with nothing and with 15 write roles
+#     to take away, a --restore that grants them back and an --apply that takes them away again print
+#     the same bytes and status with a JVM per call (off) as with the session.
 # Requirements on the host: docker, curl, jq. DK_READ_ONLY_TEST_PORT (default 18097),
 # DK_READ_ONLY_TEST_CONTAINER (default dk-read-only-test-<pid>).
 # shellcheck disable=SC2016  # jq programs name jq variables
@@ -59,6 +63,8 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$SCRIPT_DIR/kcadm-jvm.sh"
 # shellcheck source=kcadm-rest.sh
 source "$SCRIPT_DIR/kcadm-rest.sh"
+# shellcheck source=session-parity.sh
+source "$SCRIPT_DIR/session-parity.sh"
 REPOSITORY_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 IMAGE=$(sed -n 's/^ARG KEYCLOAK_IMAGE=//p' "$REPOSITORY_ROOT/Dockerfile")
 PORT=${DK_READ_ONLY_TEST_PORT:-18097}
@@ -84,6 +90,7 @@ CORE_REMOVED_ROLES=(event:manage season:manage ticket:manage ticket:validate com
 DK_AFTER='["core/audit:read","core/global:read","core/url:access","forms/skyforms:*","forms/skyforms:access","forms/skyforms:read-all","frontend-artlab/content:read","realm/DK","skymail/skymail:mails:tracking:read","skymail/skymail:system-mails:read"]'
 OLD_MARK='2026-10-04T09:00:00Z /ADMIN,/UYELER/YK,/UYELER/DK'
 CURRENT_STAGE=startup
+SESSION_PARITY_DIR=$(mktemp -d)
 
 fail() {
   printf 'dk-read-only failure during %s: %s\n' "$CURRENT_STAGE" "$1" >&2
@@ -92,6 +99,7 @@ fail() {
 cleanup() {
   kcadm_rest_cleanup
   docker rm -fv "$CONTAINER" >/dev/null 2>&1 || true
+  rm -rf "$SESSION_PARITY_DIR"
 }
 trap 'status=$?; trap - EXIT; cleanup; exit "$status"' EXIT
 on_error() {
@@ -235,7 +243,7 @@ CURRENT_STAGE='Keycloak start'
 [[ -n $IMAGE ]] || fail 'Dockerfile has no ARG KEYCLOAK_IMAGE'
 for tool in jq curl; do command -v "$tool" >/dev/null || fail "$tool is required"; done
 docker run --rm -d --name "$CONTAINER" -p "127.0.0.1:$PORT:8080" \
-  -e KC_OPTS="$KCADM_JVM_OPTS" \
+  -e KC_OPTS="$KCADM_JVM_OPTS" -e KEYCLOAK_RECONCILE_SESSION=required \
   -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
   "$IMAGE" start-dev >/dev/null
 for _ in $(seq 1 90); do
@@ -572,5 +580,42 @@ sandbox=$(run_expecting 0 "$SANDBOX" --apply)
 expect_line "$sandbox" "no DK group (neither /DK nor /UYELER/DK) in realm $SANDBOX; nothing to do" 'the missing DK group was not reported'
 expect_line "$sandbox" 'applied 0 change(s), 0 warning(s), 0 problem(s)' 'the sandbox run changed something'
 printf '    sandbox without DK: nothing to do\n'
+
+# ---------------------------------------------------------------------------------------------------
+CURRENT_STAGE='the reconciliation session: the same bytes and status as a JVM per call'
+# Every run above used the session (the container's KEYCLOAK_RECONCILE_SESSION=required). Here whole
+# runs on e-skylab as the stages above left it (DK read-only), once with a JVM per call and once with
+# the session: --check, a --restore of the first backup (15 write roles back), --check again (15 to
+# take away) and an --apply (the same backup file name both times: the first is removed before the
+# second run).
+parity_options=(-e KEYCLOAK_ADMIN_URL=http://localhost:8080 -e "KEYCLOAK_REALM=$REALM")
+dk_parity_run=(bash "$IN_CONTAINER_CONFIG/dk-read-only.sh" --kcadm-config "$KCADM_CONFIG")
+session_parity 'dk-read-only --check (read-only DK)' : "${parity_options[@]}" -- "${dk_parity_run[@]}"
+# The restore with a JVM per call grants the 15 back; the --apply between takes them away again, so that
+# the restore with the session starts from the same realm.
+dk_parity_restored=false
+dk_parity_back_to_read_only() {
+  if [[ $dk_parity_restored == true ]]; then
+    docker exec "$CONTAINER" rm -f /tmp/dk-parity-between.tsv
+    run_expecting 0 "$REALM" --apply --backup-file /tmp/dk-parity-between.tsv >/dev/null
+  fi
+  dk_parity_restored=true
+}
+session_parity 'dk-read-only --restore --apply (15 write roles back)' dk_parity_back_to_read_only "${parity_options[@]}" -- \
+  "${dk_parity_run[@]}" --restore /tmp/dk-backup.tsv --apply
+expect_line "$(cat "$SESSION_PARITY_LOG")" 'applied 15 change(s), ' 'the compared restore did not grant the 15 back'
+session_parity 'dk-read-only --check (15 write roles to take away)' : "${parity_options[@]}" -- "${dk_parity_run[@]}"
+expect_line "$(cat "$SESSION_PARITY_LOG")" 'check: 15 change(s) pending, ' 'the compared check did not plan the 15'
+dk_parity_apply_runs=0
+dk_parity_restore_again() {
+  docker exec "$CONTAINER" rm -f /tmp/dk-parity.tsv
+  if ((dk_parity_apply_runs++ > 0)); then
+    run_expecting 0 "$REALM" --restore /tmp/dk-backup.tsv --apply >/dev/null
+  fi
+}
+session_parity 'dk-read-only --apply (15 write roles away)' dk_parity_restore_again "${parity_options[@]}" -- \
+  "${dk_parity_run[@]}" --apply --backup-file /tmp/dk-parity.tsv
+expect_line "$(cat "$SESSION_PARITY_LOG")" 'applied 15 change(s), ' 'the compared apply did not take the 15 away'
+expect_line "$(cat "$SESSION_PARITY_LOG")" "$DK: write roles held: 15 (" 'the compared apply did not count the 15'
 
 printf 'dk-read-only contract passed.\n'

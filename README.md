@@ -40,7 +40,7 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.27.0`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.28.0`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.3.0`; yalnız olay kataloğu, kişisel verisiz gövde, arka planda yayın:
   [`docs/keycloak-events-to-rabbitmq.md`](docs/keycloak-events-to-rabbitmq.md)) bulunur.
@@ -501,6 +501,18 @@ Varsayılan kapsamlar `basic` (`sub`) ve `roles`'tür. Uzlaştırıcı istemciyi
 doğrular. Secret'ı OpenBao'ya ve core'un ortamına sky_lab_genel'deki
 `ops/wizards/core-erasure-client-wizard.sh` taşır (runbook §11).
 
+Silme sürerken giriş (SPI 1.28.0): core'un `disable_identity` adımı kişiyi yine yalnız
+`{"enabled":false}` gövdesiyle kapatır ve isteğe `X-Sky-Account-Erasure: disable_identity`
+başlığını ekler. Global olay dinleyicisi `sky-account-erasure-mark` aynı istek ve işlemde kapalı
+kişiye yönetilmeyen `skyAccountErasureDisabledAt` özniteliğini (kapatma anı) yazar; başlıksız
+kapatma (yönetici, Admin Console, kcadm) işaret koymaz, kişiyi yeniden açan güncelleme işareti
+siler, işaret `delete_identity` ile kişiyle birlikte gider. "E-postayla devam et" her kapalı kişiye
+aynı kod sayfasını gösterir; kişi işaretliyse istekten sonra, arka planda, giriş kodunun gideceği
+adrese SkyMail'in `account.deletion-in-progress` şablonuyla "hesap silinme sürecinde" postası
+gider, aynı adrese saatte en çok bir kez. Posta ad taşımaz ve `erase_after_send: true` ile gider:
+kişinin SkyMail'deki silme komutu çoktan koşmuş olabilir, SkyMail satırı gönderince siler. Yönetici kapattığı hesapta davranış aynıdır (posta yok).
+Başlığı göndermeyen core'da hiçbir şey değişmez. Harness: `tests/login-by-email-code.sh`.
+
 CMS inscribed'a geçerken (ADR-0056) operatör site istemcilerinde (`frontend-main`,
 `frontend-arge` ve admin panelinin istemcisi: `admin`, sandbox'ta `superadmin`)
 inscribed'ın rollerini imajdaki idempotent `config/inscribed-cms-roles.sh` ile kurar
@@ -844,10 +856,18 @@ iki yolla da koşturup bayt bayt karşılaştırır). Yazmalar (`create`, `updat
 (varsayılan; oturum başlayamazsa çağrı başına JVM, stderr'de `[reconcile] ` öneki olmayan tek
 `Reconciliation session not started (…)` satırıyla), `off` (çağrı başına JVM, eski davranış ve geri
 dönüş, runbook §7) ya da `required` (oturum başlayamazsa koşu durur; harness). Oturum yalnız
-sınıfları denetlenmiş kcadm sürümlerinde açılır (26.4 ve 26.7, betikte `SESSION_KCADM_VERSIONS`);
+sınıfları denetlenmiş kcadm sürümlerinde açılır (26.4 ve 26.7, `config/reconcile-session.sh`'te `SESSION_KCADM_VERSIONS`);
 Keycloak yükseltmesinde harness'in `required` koşusu durur ve liste denetimden sonra genişletilir.
 Oturum koşu ortasında durursa (JVM ölümü, yazılamayan çıktı) koşu yeni istek göndermeden exit 1 ile
-biter; son satır nedeni söyler. Passkey relying party id geçişinden
+biter; son satır nedeni söyler. Oturum kodu `config/reconcile-session.sh`'tedir; çok okuyan operatör
+betikleri de onu aynı değişkenle kullanır: `config/app-assignments.sh` (production'da `--check`
+oturumsuz 18 dakikaydı), `role-groups.sh`, `dk-read-only.sh`, `master-console.sh` ve yalnız kcadm
+okuyanlar (`site-clients.sh`, `site-editor-grants.sh`, `inscribed-cms-roles.sh`,
+`skyapp-cms-editor.sh`, `sandbox-site-clients.sh`, `sandbox-admin-local-client.sh`,
+`create-place-client.sh`, `forms-skymail-grants.sh`, `leader-app-roles.sh`). Bunlarda da yalnız
+okumalar ve ReconcileJson oturuma gider, yazmalar çağrı başına `kcadm.sh` kalır; testleri her betiğin
+koşusunu iki yolla koşturup bayt bayt karşılaştırır. Yalnız kcadm okuyan bir betik tek başına
+kopyalanıp koşulursa (yanında `reconcile-session.sh` yoksa) eskisi gibi çağrı başına JVM açar. Passkey relying party id geçişinden
 önce kayıtlı passkey'ler bir daha doğrulanamaz; `config/cleanup-legacy-passkeys.sh`
 (varsayılan kuru koşu, yalnız sayı basar) geçiş anından önce oluşturulmuş
 `webauthn-passwordless` kimlik bilgilerini `--apply` ile siler. Geçiş anını
@@ -1107,9 +1127,10 @@ dışındaki her şey). Uzun Keycloak işleri ve `integration (<grup>)` gruplar�
 (doğrudan veya dolaylı, yorum satırları hariç) okuyan ya da çalıştıran işler koşar
 (`tests/affected-jobs.sh --pull-request`; harness Playwright dosyaları `theme/tests/` de). Bu,
 hızlı kümenin kısa işleri ve PR süresine (15 dk) sığan tam takım işleri (`dk-read-only`,
-`sandbox-admin-local-client`, `after-sign-up-native`) içindir. 15 dakikayı aşan tam takım işleri
-(`PR_DEFERRED`: `integration (<grup>)` grupları, `role-groups`, `site-clients`, `login-clients`,
-`skyapp-cms-editor`, `ytu-first-login`, `inscribed-cms-roles`) PR etkilese de PR'da koşmaz; adları
+`sandbox-admin-local-client`, `after-sign-up-native`, `role-groups`, `site-clients`, `login-clients`,
+`skyapp-cms-editor`, `ytu-first-login`, `inscribed-cms-roles`; uzlaştırma oturumundan sonra 3-11 dk)
+içindir. 15 dakikayı aşan tam takım işleri (`PR_DEFERRED`: `integration (<grup>)` grupları) PR
+etkilese de PR'da koşmaz; adları
 `scope` günlüğüne, koşu özetine ve PR'ın kontrol sayfasına uyarı (`::warning::`) olarak yazılır,
 `main` push'unun tam koşusunda koşarlar (yayından önce).
 PR'da da koşsunlar istenirse PR'a `full-ci` etiketi konur. Hiçbir iş akışının ulaşmadığı bir

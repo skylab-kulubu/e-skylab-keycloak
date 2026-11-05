@@ -55,6 +55,30 @@ class SkyMailMessageTest {
         assertEquals("emailVerificationSubject", variables.get("subjectKey").textValue());
     }
 
+    // The Account erasure notice goes after the person's Erasure command may have run in SkyMail:
+    // SkyMail erases its row once sent (erase_after_send), and it carries no name meanwhile.
+    @Test
+    void theErasureNoticeKeepsNoRecordAndCarriesNoName() throws Exception {
+        SkyMailMessage message = SkyMailMessage.of(SkyMailTemplates.ACCOUNT_DELETION_IN_PROGRESS,
+                "skyAccountErasureNoticeSubject", "", "", "", "", "",
+                user("Ada", "Yıldız", "ada", "ada@yildizskylab.com"), realm("e-skylab", "SKY LAB"));
+
+        JsonNode body = JsonSerialization.mapper.readTree(message.toRequestBody("ada@yildizskylab.com"));
+
+        assertTrue(body.get("erase_after_send").booleanValue());
+        assertEquals("", body.get("recipient_full_name").textValue());
+        assertEquals("", body.get("body_variables").get("firstName").textValue());
+        assertEquals("", body.get("body_variables").get("username").textValue());
+        assertEquals("SKY LAB", body.get("body_variables").get("realmDisplayName").textValue());
+
+        JsonNode code = JsonSerialization.mapper.readTree(SkyMailMessage.of(SkyMailTemplates.LOGIN_CODE,
+                "skyLoginCodeSubject", "", "", "123456", "10", "login",
+                user("Ada", "Yıldız", "ada", "ada@yildizskylab.com"), realm("e-skylab", "SKY LAB"))
+                .toRequestBody("ada@yildizskylab.com"));
+        assertTrue(code.get("erase_after_send") == null, "every other mail keeps its record as before");
+        assertEquals("Ada Yıldız", code.get("recipient_full_name").textValue());
+    }
+
     @Test
     void sendsEveryVariableAsAnEmptyStringWhenKeycloakDoesNotKnowIt() throws Exception {
         SkyMailMessage message = SkyMailMessage.of(

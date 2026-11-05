@@ -29,13 +29,16 @@ import java.util.Set;
 import java.util.function.IntConsumer;
 
 /**
- * One JVM for the kcadm reads and the ReconcileJson calls of a reconcile-account-center.sh run.
+ * One JVM for the kcadm reads and the ReconcileJson calls of a run of reconcile-account-center.sh
+ * or of an operator script that sources reconcile-session.sh (app-assignments.sh, role-groups.sh,
+ * dk-read-only.sh, master-console.sh; a script without ReconcileJson passes an empty JSON class path
+ * and gets a session of kcadm reads alone).
  *
  * Every kcadm.sh call and every ReconcileJson call used to start a JVM of its own, some two hundred
  * of them for a whole reconciliation (about 8.5 minutes in production, 2026-10-27). The script starts
  * this process once instead, the way kcadm.sh starts its JVM (the same class path, options and
- * kc.lib.dir; config/reconcile-account-center.sh start_session), and this process runs each call the
- * way that JVM's main would have run it:
+ * kc.lib.dir; config/reconcile-session.sh start_session), and this process runs each call the way
+ * that JVM's main would have run it:
  *
  * - kcadm: KcAdmMain.main without --v2 is Globals.main(args, new KcAdmCmd(), CMD,
  *   DEFAULT_CONFIG_FILE_STRING). Its set-up (the crypto class loader of kc.lib.dir, CryptoIntegration,
@@ -126,6 +129,12 @@ public final class ReconcileSession {
                 .getField("DEFAULT_CONFIG_PATH_STRING_KEY").get(null);
         System.setProperty(configPathKey, defaultConfigFile);
 
+        // No JSON class path: a script without ReconcileJson (a session of kcadm reads alone).
+        if (jsonClasspath.isEmpty()) {
+            jsonLoader = null;
+            jsonMain = null;
+            return;
+        }
         List<URL> urls = new ArrayList<>();
         for (String entry : jsonClasspath.split(":")) {
             if (!entry.isEmpty()) {
@@ -189,6 +198,9 @@ public final class ReconcileSession {
     private int call(String tool, Path directory) throws Exception {
         if (!tool.equals("kcadm") && !tool.equals("json")) {
             throw new IllegalArgumentException("unknown tool " + tool);
+        }
+        if (tool.equals("json") && jsonMain == null) {
+            throw new IllegalArgumentException("this session was started without ReconcileJson");
         }
         String[] args = arguments(Files.readAllBytes(directory.resolve("args")));
         Path stdinFile = directory.resolve("stdin");

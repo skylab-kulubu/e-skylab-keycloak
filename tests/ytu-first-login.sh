@@ -1284,7 +1284,8 @@ fi
 # passive login into interaction_required.
 kcadm update identity-provider/instances/OBS -r "$REALM" -s config.acceptsPromptNoneForwardFromClient=true >/dev/null
 JAR="$STATE_DIR/stay-passive.cookies"
-grep -v -F "/realms/$REALM/" "$STATE_DIR/stay-yes.cookies" >"$JAR"
+# This realm's cookies go (path /realms/REALM/, or without the slash from curl 8.18), the tenant's stay.
+awk -F '\t' -v path="/realms/$REALM" '!($3 == path || index($3, path "/") == 1)' "$STATE_DIR/stay-yes.cookies" >"$JAR"
 end_sessions "$stay_yes_id"
 follow "$JAR" "$(auth_url '&kc_idp_hint=OBS&prompt=none')"
 [[ $LANDED == app ]] || fail "the passive login did not reach the application ($(page_summary))"

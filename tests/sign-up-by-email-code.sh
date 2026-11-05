@@ -780,10 +780,10 @@ jq -e --arg user "$new_id" --arg id "$register_id" --arg client "$APP" '
     [.[] | select(.routing_key | endswith(".REGISTER"))] as $registers
     | ($registers | length) == 1
     and $registers[0].routing_key == ("KK.EVENT.CLIENT.e-skylab.SUCCESS." + $client + ".REGISTER")
-    and ($registers[0].payload | fromjson) as $body
-    | ($body | keys) == ["clientId", "id", "realmId", "time", "type", "userId"]
-      and $body.type == "REGISTER" and $body.userId == $user and $body.clientId == $client and $body.id == $id
-      and $registers[0].properties.message_id == $id' <<<"$messages" >/dev/null \
+    and (($registers[0].payload | fromjson) as $body
+      | ($body | keys) == ["clientId", "id", "realmId", "time", "type", "userId"]
+        and $body.type == "REGISTER" and $body.userId == $user and $body.clientId == $client and $body.id == $id
+        and $registers[0].properties.message_id == $id)' <<<"$messages" >/dev/null \
   || fail "no single REGISTER of the new account with the catalog body and Keycloak's event id: $(jq -c '[.[].routing_key]' <<<"$messages")"
 for secret in yeni.kisi@example.invalid ayse.yilmaz "$client_ip" Ayşe Yılmaz; do
   if jq -r '.[].payload' <<<"$messages" | grep -Fiq -- "$secret"; then

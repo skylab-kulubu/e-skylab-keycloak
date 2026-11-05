@@ -31,6 +31,13 @@ interface LoginCodeMail {
     void sendSignUpCode(AuthenticationFlowContext context, String address, String code);
 
     /**
+     * Mails {@code user}, a disabled person who asked for a code, that their account is being
+     * deleted, when it is ({@link AccountErasureNotice}: whether, where and how often is decided
+     * after the request). Never throws: a notice that cannot be sent is logged with a fixed word.
+     */
+    void sendErasureNotice(AuthenticationFlowContext context, UserModel user);
+
+    /**
      * Tells the operator that the realm's Login codes reached {@code level} ({@link #HALF} or
      * {@link #FULL}) of {@code dailyLimit} today. Never throws.
      */

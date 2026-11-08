@@ -3171,15 +3171,20 @@ onları "kodda yok" diye bildirir, sıfırlama penceresi (bilet 06 c2) kaldırı
 **`skymail:mails:tracking:read` (iletisim-servisi 14b/17, karar T2).** Aynı listede üçüncü rol:
 gönderimlerin kişi bazındaki açılma ve tıklama raporunu okur (skymail-backend
 `internal/handlers/tracking_read.go`, `TrackingReadRole`). Aydınlatma metni kişi bazındaki bilgiyi
-YK'nın, DK'nın, sistem yöneticilerinin ve postayı gönderen yetkilinin göreceğini söylüyor. Bu yüzden
-rol `ADMIN`, `YK` ve `DK`'ya (`/ADMIN`, `/YK`, `/DK`, `/UYELER/ADMIN`, `/UYELER/YK`, `/UYELER/DK`;
-hangileri varsa) bir kez verilir. Okuma rolüdür, DK salt okur kuralıyla uyumludur
-(`config/dk-read-only.sh` onu okuma rolü sayar ve DK'da bırakır). Gönderen yetkili kendi gönderimini
-rolsüz görür; bunu SkyMail `sent_by` ile denetler. Rol kişiye doğrudan verilmez, yalnız bu gruplara
-verilir. Bu yayında `core-roles` öncesindeki uyarı satırında beklenen rol budur: `WARNING: skymail
-roles not yet granted to the Privileged groups: skymail:mails:tracking:read`. Operatör çıktısı
-`skymail role skymail:mails:tracking:read: seeded once to <yollar> (granted to: …)`. Rol yokken
-SkyMail'in rapor ucu yalnız gönderene açıktır (zararsız).
+YK'nın, DK'nın, sistem yöneticilerinin ve postayı gönderen yetkilinin göreceğini söylüyor; anahtar
+kapalıyken (varsayılan) gönderen bunu görmediği için metin gerçekte olandan fazlasını söyler. Bu
+yüzden rol `ADMIN`, `YK` ve `DK`'ya (`/ADMIN`, `/YK`, `/DK`, `/UYELER/ADMIN`, `/UYELER/YK`,
+`/UYELER/DK`; hangileri varsa) bir kez verilir. Okuma rolüdür, DK salt okur kuralıyla uyumludur
+(`config/dk-read-only.sh` onu okuma rolü sayar ve DK'da bırakır). Gönderen kendi gönderiminde yalnız
+toplamları görür; SkyMail'de `SKYMAIL_SENDER_SEES_RECIPIENTS=on` ona kendi gönderiminin kişilerini
+geri açar (skymail-backend #129; e-skylab ADR 0074 2026-11-08 eki). Kişi bazında açma-tıklama yalnız
+bu rolle görülür; `skymail:mails:read` (`/ROLLER/SKYMAIL-MAILS-READ`) gönderimleri ve kuyrukta
+alıcıların adını, adresini ve teslim durumunu görür, açma-tıklama görmez. Rol kişiye doğrudan
+verilmez, yalnız bu gruplara verilir. Bu yayında `core-roles` öncesindeki uyarı satırında beklenen
+rol budur: `WARNING: skymail roles not yet granted to the Privileged groups:
+skymail:mails:tracking:read`. Operatör çıktısı `skymail role skymail:mails:tracking:read: seeded
+once to <yollar> (granted to: …)`. Rol yokken SkyMail'in kişi bazındaki rapor ucu kimseye açık
+değildir; anahtar `on` ise yalnız gönderene açıktır (zararsız).
 
 **`skymail:suppressions:manage` ve `skymail:unsubscribes:reactivate` (ADR 0073, ADR 0072 karar 7).**
 Aynı listede iki yazma rolü. `suppressions:manage` SkyMail'in bastırma listesini (adresler) okur,

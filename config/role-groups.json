@@ -71,7 +71,7 @@
       "client": "skymail",
       "roles": ["skymail:mails:read"],
       "display_name_tr": "SkyMail: gönderimleri görür",
-      "description_tr": "SkyMail gönderimlerini görür (skymail:mails:read)."
+      "description_tr": "SkyMail gönderimlerini görür, kuyruktaki alıcı adları, adresleri ve teslim durumu dahil (skymail:mails:read)."
     },
     {
       "name": "SKYMAIL-MAILS-WRITE",

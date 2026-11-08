@@ -3830,11 +3830,12 @@ reconcile_core_service_roles() {
 # (written only when the role is created; "-": SkyMail's own role, never created here).
 #   skymail:system-mails:read      ADMIN, YK, DK: reading is for all three (skymail-backend #61).
 #   skymail:mails:tracking:read    ADMIN, YK, DK: the per-person opening and click report of any send
-#                                  (iletisim-servisi tickets 14b/17, decision T2; the privacy notice:
-#                                  YK, DK, the system administrators and the sending officer see it).
-#                                  A reading role, so DK holds it too; the sender sees their own send
-#                                  without it (SkyMail checks sent_by, skymail-backend
-#                                  internal/handlers/tracking_read.go).
+#                                  (iletisim-servisi tickets 14b/17, decision T2; e-skylab ADR 0074
+#                                  addendum 2026-11-08). A reading role, so DK holds it too. Without
+#                                  it the sender sees only the totals of their own send
+#                                  (skymail-backend #129; SKYMAIL_SENDER_SEES_RECIPIENTS=on gives the
+#                                  sender their own recipients back). skymail:mails:read still sees
+#                                  the recipients and their delivery status, not opens and clicks.
 #   skymail:suppressions:manage    ADMIN and YK: the suppression list (addresses), removing a
 #                                  permanent failure (bounce) from it and the bounce rate
 #                                  (skymail-backend internal/handlers/suppressions.go,
@@ -3861,7 +3862,7 @@ reconcile_core_service_roles() {
 # code area's check reports them as not in code, and the reset window (ticket 06 c2) takes them away.
 SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS=(
   'skymail:system-mails:read|ADMIN YK DK|Tekil sistem postalarının (doğrulama, bildirim) içeriğini görür (skymail-backend #61)'
-  'skymail:mails:tracking:read|ADMIN YK DK|Her gönderimin kişi bazındaki açılma ve tıklama raporunu görür (iletisim-servisi 14b/17, T2; gönderen kendi gönderimini rolsüz görür)'
+  'skymail:mails:tracking:read|ADMIN YK DK|Her gönderimin kişi bazındaki açılma ve tıklama raporunu görür (iletisim-servisi 14b/17, T2; gönderen yalnız toplamları görür)'
   'skymail:suppressions:manage|ADMIN YK|SkyMail: bastırma listesini görür, kalıcı ret (bounce) kaydını kaldırır, bounce oranını okur (ADR 0073)'
   'skymail:unsubscribes:reactivate|ADMIN YK|SkyMail: kimliği olmayan adresin kendi çıkışını, kişi isteyince ya da hata olunca, gerekçeyle geri alır (ADR 0072)'
   'skymail:access|ADMIN YK|-'

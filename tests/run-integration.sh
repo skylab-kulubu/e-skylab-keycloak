@@ -1990,6 +1990,7 @@ kcadm update realms/e-skylab-test \
   -s ssoSessionMaxLifespanRememberMe=0 \
   -s clientSessionIdleTimeout=1800 \
   -s clientSessionMaxLifespan=120 \
+  -s accessTokenLifespan=600 \
   -s webAuthnPolicyPasswordlessPasskeysEnabled=false \
   -s webAuthnPolicyPasswordlessMediation=none >/dev/null
 kcadm update authentication/required-actions/UPDATE_PASSWORD \
@@ -2046,8 +2047,9 @@ json_assert "$realm" \
   'realm security or theme desired state differs'
 # Sessions: 2 hours idle and 8 hours at most; remember-me 7 days idle and 30 days at most; client
 # sessions inherit the SSO session (0), so a refresh token lives as long as the SSO session does.
+# Access tokens live 5 minutes: a role change reaches the person with the next token.
 json_assert "$realm" \
-  '.ssoSessionIdleTimeout == 7200 and .ssoSessionMaxLifespan == 28800 and .rememberMe == true and .ssoSessionIdleTimeoutRememberMe == 604800 and .ssoSessionMaxLifespanRememberMe == 2592000 and .clientSessionIdleTimeout == 0 and .clientSessionMaxLifespan == 0' \
+  '.accessTokenLifespan == 300 and .ssoSessionIdleTimeout == 7200 and .ssoSessionMaxLifespan == 28800 and .rememberMe == true and .ssoSessionIdleTimeoutRememberMe == 604800 and .ssoSessionMaxLifespanRememberMe == 2592000 and .clientSessionIdleTimeout == 0 and .clientSessionMaxLifespan == 0' \
   'realm session desired state differs'
 grep -Eq '^\[reconcile\] realm session, login and theme settings: updated \(.*clientSessionIdleTimeout' \
   "$TEST_STATE_DIR/reconcile-second.log" \

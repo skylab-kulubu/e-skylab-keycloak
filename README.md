@@ -189,7 +189,9 @@ açık, o oturum 7 gün hareketsizlikte, en geç 30 günde biter:
 `rememberMe=true`, `ssoSessionIdleTimeoutRememberMe=604800`,
 `ssoSessionMaxLifespanRememberMe=2592000`; istemci oturumu SSO oturumundan miras
 alır, `clientSessionIdleTimeout=0` ve `clientSessionMaxLifespan=0`, yani refresh
-token SSO oturumu yaşadıkça yaşar, ayrı bir 30 dakika ya da 10 saat sınırı yoktur),
+token SSO oturumu yaşadıkça yaşar, ayrı bir 30 dakika ya da 10 saat sınırı yoktur;
+erişim tokenı 5 dakika yaşar, `accessTokenLifespan=300`: rol ya da grup değişikliği
+yeniden giriş olmadan en geç bir token ömründe gelir),
 brute-force koruması ve parola politikası
 `config/account-center-realm-security.json` (10 deneme, 60 sn artan bekleme,
 en çok 15 dk, 12 saat sıfırlama, kalıcı kilit yok;

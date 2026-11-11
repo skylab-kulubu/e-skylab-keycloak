@@ -12,6 +12,7 @@
   "ssoSessionMaxLifespanRememberMe": 2592000,
   "clientSessionIdleTimeout": 0,
   "clientSessionMaxLifespan": 0,
+  "accessTokenLifespan": 300,
   "accessCodeLifespan": 60,
   "accessCodeLifespanLogin": 1800,
   "accessCodeLifespanUserAction": 300,

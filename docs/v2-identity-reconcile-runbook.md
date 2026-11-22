@@ -2457,8 +2457,8 @@ sorulur. `off` `on`'u geri getirir.
 OBS'yi elle kopyaya bağlamayın; realm bağlaması yeter. OBS'nin geri kalanı (secret, `syncMode`,
 `trustEmail`, post broker login akışı) aynı kalır.
 
-**Elle yapılmış, kodlanmamış akışlar (bu adım dokunmaz; izleme: hub
-`.scratch/keycloak-yayin/issues/02-elle-yapilmis-akislar.md`):**
+**Elle yapılmış broker akışları (bu adım dokunmaz; ikisi de 2026-11-22'den beri koddadır: aşağıda
+"broker-flows adımı"):**
 
 - `post-broker-passkey-offer`: OBS'nin post broker login akışı ("sso sonrası passkey teklif et").
   `passkey-offer-authenticator` REQUIRED ve CONDITIONAL "cond 2fa" alt akışı (`conditional-user-role`
@@ -2469,12 +2469,49 @@ OBS'yi elle kopyaya bağlamayın; realm bağlaması yeter. OBS'nin geri kalanı 
     `DefaultAuthenticationFlow.isConditionalSubflowDisabled`: CONDITIONAL alt akışın koşulları
     yalnız **etkin** koşul adımlarıdır (`isConditionalAuthenticator` `model.isEnabled()` ister);
     etkin koşul yoksa liste boştur ve alt akış devre dışı sayılır (`conditionalAuthenticatorList.isEmpty()
-    || …`). Tek koşul DISABLED olduğu için `auth-otp-form`'a hiç gelinmez. Koşul bir gün ENABLED
-    yapılırsa ADMIN rolündekiler her YTÜ girişinde OTP'ye (OTP'si yoksa kuruluma) zorlanır.
+    || …`). Tek koşul DISABLED olduğu için `auth-otp-form`'a hiç gelinmez. Koşul ENABLED yapılsaydı
+    sonuç realm'e bağlı olurdu: `ADMIN` adlı bir realm rolü yoksa (üretimde `ADMIN` bir grup, rol
+    değil) koşul hiç eşleşmez, yine kimseye OTP sorulmaz ve her YTÜ girişinde Keycloak günlüğüne
+    `Invalid role name submitted: ADMIN` hatası düşer (`ConditionalRoleAuthenticator.matchCondition`);
+    böyle bir rol varsa onu taşıyanlar her YTÜ girişinde OTP'ye (OTP'si yoksa kuruluma) zorlanır.
 - `first broker login + http ` (sonunda boşlukla): hiçbir IdP'ye bağlı değil (2026-10-13 dökümünde
   tek IdP OBS, onun geçersiz kılması `first broker login for obs`) ve hiçbir realm bağı değil
   (2026-09-21 dökümü). Üst düzeyi yerleşik akışla aynı (review profile, User creation or linking,
   Conditional Organization). Bağlı olmadığı için çalışmaz.
+
+**broker-flows adımı (keycloak-yayin 02, Yusuf'un kararı 2026-11-22).** Operatör adımı
+`KEYCLOAK_RECONCILE_ONLY=broker-flows` (IdP'leri yalnız yönetici oturumu okur; uzlaştırıcı kimliğiyle
+`Identity provider OBS is not readable with this session; …` ile exit 1). Kuru koşusu var
+(`KEYCLOAK_RECONCILE_CHECK=true`: yazmalar `would kcadm …` satırı olur, hiçbir şey yazılmaz).
+
+- `post-broker-passkey-offer`: yalnız `passkey-offer-authenticator` REQUIRED kalır. "cond 2fa" alt
+  akışı, içindeki her koşul DISABLED ve alt akış CONDITIONAL ya da DISABLED iken kaldırılır (bugün hiç
+  çalışmadığı için davranış değişmez; harness bunu YTÜ girişiyle önce ve sonra gösterir: ADMIN rolünde
+  bir hesap teklifi görür, OTP görmez). Koşullardan biri etkinse ya da alt akış REQUIRED ise, ya da
+  akışta başka bir adım varsa adım hiçbir şey değiştirmeden durur (exit 1, `… can run (…): removing it
+  would change who is asked for an OTP; nothing was changed` ya da `… holds steps this step does not
+  know (…)`). Akış yoksa kurulur, OBS'nin post broker login akışı boşsa ona bağlanır; OBS başka bir
+  akışa bağlıysa `WARNING: identity provider OBS keeps its own post broker login flow '…'` ve dokunulmaz.
+  OBS yoksa (sandbox) `identity provider OBS post broker login flow: unchanged (absent)`.
+- `first broker login + http `: realm'in yedi akış bağından hiçbiri, hiçbir IdP'nin first/post broker
+  login akışı ve hiçbir istemcinin akış geçersiz kılması onu göstermiyorsa silinir. Biri gösteriyorsa
+  `Authentication flow 'first broker login + http ' is bound (…); nothing was deleted` ve exit 1.
+  Silme geri alınmaz (akış hiçbir yerde kullanılmıyordu); geri dönüş gerekmez.
+
+Beklenen satırlar, kuru koşu (yayından sonra ilk kez):
+
+```text
+[reconcile] post broker login flow 'post-broker-passkey-offer': would remove subflow 'cond 2fa' (CONDITIONAL; no enabled condition: it never runs)
+[reconcile] identity provider OBS post broker login flow: unchanged ('post-broker-passkey-offer')
+[reconcile] authentication flow 'first broker login + http ': would be deleted (bound nowhere: no realm binding, identity provider or client override)
+Broker flows are checked; nothing was written (2 write(s) withheld).
+```
+
+Gerçek koşuda `would remove …` yerine `updated (removed subflow 'cond 2fa', CONDITIONAL; no enabled
+condition: it never ran)`, `would be deleted` yerine `deleted (…)` ve son satır `Broker flows are
+reconciled.` İkinci koşu yalnız `unchanged` satırları basar. Komut, yukarıdaki first-broker-login
+komutunun aynısıdır; yalnız `KEYCLOAK_RECONCILE_ONLY=broker-flows` (önce `-e KEYCLOAK_RECONCILE_CHECK=true`
+ile). Adım bu kodu taşıyan imaj yayımlandıktan sonra bir kez koşulur.
 
 ### Üretim sırası
 
@@ -2761,7 +2798,7 @@ SPI 1.19.0'daki `sky-stay-signed-in` gerekli eylemi (`com.skylab.authenticator.S
 Bir authenticator değil, çünkü bağlı bir hesabın YTÜ girişinde Keycloak IdP'den doğrudan girişin
 sonuna gider; realm'e bağlı hiçbir akış çalışmaz (yalnız IdP'ye özel post broker login akışı
 çalışırdı, onu da uzlaştırıcı kimliği okuyamaz). Üretimde OBS'nin post broker login akışı
-`post-broker-passkey-offer` elle yapılmış, kodlanmamış (§22 sonundaki not); gerekli eylemler ondan
+`post-broker-passkey-offer` §22'deki broker-flows adımıyla koddadır (yalnız passkey teklifi); gerekli eylemler ondan
 sonra çalışır, bu eylem ona dokunmaz. Her girişte çalışan şey realm'in gerekli
 eylemlerinin `evaluateTriggers`'ıdır. Eylem kendini kullanıcıya değil **giriş oturumuna** ekler
 (`authSession.addRequiredAction`), yalnız şunlar birlikte tutunca:

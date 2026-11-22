@@ -850,25 +850,29 @@ değişiklik gerektirmeyen koşu hiçbir admin olayı üretmez (entegrasyon test
 karşılaştırmaları imajdaki JDK ile çalışma anında derlenen
 `config/ReconcileJson.java` ile yapılır. Tam bir koşu iki yüze yakın kcadm ve ReconcileJson
 çağrısı yapar; her çağrı kendi JVM'ini açtığında production'da yaklaşık 8,5 dakika sürüyordu. Bu
-yüzden kcadm okumaları (`get`) ve ReconcileJson çağrıları koşu başına bir kez açılan tek JVM'de
+yüzden kcadm çağrıları (okumalar ve yazmalar) ve ReconcileJson çağrıları koşu başına bir kez açılan tek JVM'de
 (`config/ReconcileSession.java`) koşar: her çağrı kendi `main`'inin yapacağı gibi çalışır,
 stdout/stderr baytları, sıraları ve çıkış kodu aynı kalır (harness tam kuru koşuyu ve gerçek koşuyu
-iki yolla da koşturup bayt bayt karşılaştırır). Yazmalar (`create`, `update`, `delete`) ve
-`KCADM_BIN` ile verilen kcadm her çağrıda kendi JVM'ini açar. `KEYCLOAK_RECONCILE_SESSION`: `on`
+iki yolla da koşturup bayt bayt, gerçek koşunun bıraktığı realm'i de karşılaştırır). Oturumun aldığı
+kcadm komutları `get`, `create`, `update`, `delete`, `add-roles`, `remove-roles`, `get-roles`
+(`SESSION_KCADM_COMMANDS`); giriş (`config`), `set-password` ve `KCADM_BIN` ile verilen kcadm her
+çağrıda kendi JVM'ini açar. `KEYCLOAK_RECONCILE_SESSION`: `on`
 (varsayılan; oturum başlayamazsa çağrı başına JVM, stderr'de `[reconcile] ` öneki olmayan tek
 `Reconciliation session not started (…)` satırıyla), `off` (çağrı başına JVM, eski davranış ve geri
 dönüş, runbook §7) ya da `required` (oturum başlayamazsa koşu durur; harness). Oturum yalnız
 sınıfları denetlenmiş kcadm sürümlerinde açılır (26.4 ve 26.7, `config/reconcile-session.sh`'te `SESSION_KCADM_VERSIONS`);
 Keycloak yükseltmesinde harness'in `required` koşusu durur ve liste denetimden sonra genişletilir.
 Oturum koşu ortasında durursa (JVM ölümü, yazılamayan çıktı) koşu yeni istek göndermeden exit 1 ile
-biter; son satır nedeni söyler. Oturum kodu `config/reconcile-session.sh`'tedir; çok okuyan operatör
+biter; son satır nedeni söyler. O sırada bir yazma sürüyorsa Keycloak'a ulaşıp ulaşmadığı bilinmez
+(kendi JVM'i öldürülen bir `kcadm.sh` yazmasında olduğu gibi); bütün yazmalar yakınsar, aynı koşu
+yeniden (gerekirse `KEYCLOAK_RECONCILE_SESSION=off` ile) işi tamamlar. Oturum kodu `config/reconcile-session.sh`'tedir; çok okuyan operatör
 betikleri de onu aynı değişkenle kullanır: `config/app-assignments.sh` (production'da `--check`
 oturumsuz 18 dakikaydı), `role-groups.sh`, `dk-read-only.sh`, `master-console.sh` ve yalnız kcadm
-okuyanlar (`site-clients.sh`, `site-editor-grants.sh`, `inscribed-cms-roles.sh`,
+çağıranlar (`site-clients.sh`, `site-editor-grants.sh`, `inscribed-cms-roles.sh`,
 `skyapp-cms-editor.sh`, `sandbox-site-clients.sh`, `sandbox-admin-local-client.sh`,
-`create-place-client.sh`, `forms-skymail-grants.sh`, `leader-app-roles.sh`). Bunlarda da yalnız
-okumalar ve ReconcileJson oturuma gider, yazmalar çağrı başına `kcadm.sh` kalır; testleri her betiğin
-koşusunu iki yolla koşturup bayt bayt karşılaştırır. Yalnız kcadm okuyan bir betik tek başına
+`create-place-client.sh`, `forms-skymail-grants.sh`, `leader-app-roles.sh`). Bunlarda da kcadm
+okumaları, yazmaları ve ReconcileJson oturuma gider; testleri her betiğin koşusunu (yazan koşular
+dahil) iki yolla koşturup bayt bayt karşılaştırır. Yalnız kcadm çağıran bir betik tek başına
 kopyalanıp koşulursa (yanında `reconcile-session.sh` yoksa) eskisi gibi çağrı başına JVM açar. Passkey relying party id geçişinden
 önce kayıtlı passkey'ler bir daha doğrulanamaz; `config/cleanup-legacy-passkeys.sh`
 (varsayılan kuru koşu, yalnız sayı basar) geçiş anından önce oluşturulmuş

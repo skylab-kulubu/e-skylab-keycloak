@@ -1321,10 +1321,13 @@ printf '    off disables the question; a YTÜ login goes straight to the applica
 # keycloak-yayin 02: the operator step KEYCLOAK_RECONCILE_ONLY=broker-flows. The fixture is
 # production's hand-made state: OBS's post broker login flow with the passkey offer and a CONDITIONAL
 # "cond 2fa" subflow whose only condition (a role condition, ADMIN) is DISABLED, and an unbound
-# duplicate of the built-in first broker login flow named with a trailing space.
+# duplicate of the built-in first broker login flow whose alias ends with a space. Keycloak 26.7.4's
+# Admin REST refuses a '+' in a new flow alias (production's was made before), so that flow lives in
+# a realm of its own, FLOWS, made by a realm import (which does not check aliases).
 PB=post-broker-passkey-offer
 DEAD='cond 2fa'
 UNBOUND='first broker login + http '
+FLOWS=ytu-broker-flows
 pb_flow() { flow "$PB" | jq -c '[.[] | {level, requirement, what: (if .authenticationFlow then .displayName else .providerId end)}]'; }
 pb_set() { # pb_set FLOW_ALIAS PROVIDER_OR_SUBFLOW REQUIREMENT
   local body
@@ -1346,11 +1349,17 @@ add_dead_subflow() {
   kcadm create "authentication/executions/$condition/config" -r "$REALM" \
     -b '{"alias":"admin mi2","config":{"condUserRole":"ADMIN","negate":"false"}}' >/dev/null
 }
-make_unbound_flow() {
-  kcadm create "authentication/flows/${BUILT_IN// /%20}/copy" -r "$REALM" -b "{\"newName\":\"$UNBOUND\"}" >/dev/null
+# make_flows_realm: FLOWS anew, holding the unbound duplicate (Keycloak adds its built-in flows).
+make_flows_realm() {
+  kcadm delete "realms/$FLOWS" >/dev/null 2>&1 || true
+  kcadm create realms -f - >/dev/null <<JSON
+{"realm": "$FLOWS", "enabled": true,
+ "authenticationFlows": [{"alias": "$UNBOUND", "description": "hand-made", "providerId": "basic-flow",
+   "topLevel": true, "builtIn": false, "authenticationExecutions": []}]}
+JSON
 }
 unbound_exists() {
-  kcadm get authentication/flows -r "$REALM" | jq -e --arg a "$UNBOUND" 'any(.[]; .alias == $a)' >/dev/null
+  kcadm get authentication/flows -r "$FLOWS" | jq -e --arg a "$UNBOUND" 'any(.[]; .alias == $a)' >/dev/null
 }
 # pb_login LABEL: a new SKY LAB account with the realm role ADMIN, linked to a new YTÜ identity, signs
 # in with YTÜ; it must see the passkey offer, say no and reach the application with no other page
@@ -1368,6 +1377,7 @@ pb_login() {
   follow "$JAR" "$(form_action kc-passkey-offer-form)" --data-urlencode passkey-choice=no
   [[ $LANDED == app ]] || fail "$1: another page followed the passkey offer ($(page_summary))"
 }
+DELETED_LINE="[reconcile] authentication flow '$UNBOUND': deleted (bound nowhere: no realm binding, identity provider or client override)"
 
 stage "broker flows: production's hand-made state"
 kcadm create roles -r "$REALM" -s name=ADMIN >/dev/null
@@ -1377,7 +1387,8 @@ kcadm create "authentication/flows/$PB/executions/execution" -r "$REALM" -b '{"p
 pb_set "$PB" passkey-offer-authenticator REQUIRED
 add_dead_subflow DISABLED
 kcadm update identity-provider/instances/OBS -r "$REALM" -s "postBrokerLoginFlowAlias=$PB" >/dev/null
-make_unbound_flow
+make_flows_realm
+unbound_exists || fail "the realm import did not keep the flow '$UNBOUND'"
 hand_made=$(pb_flow)
 [[ $hand_made == '[{"level":0,"requirement":"REQUIRED","what":"passkey-offer-authenticator"},{"level":0,"requirement":"CONDITIONAL","what":"cond 2fa"},{"level":1,"requirement":"DISABLED","what":"conditional-user-role"},{"level":1,"requirement":"REQUIRED","what":"auth-otp-form"}]' ]] \
   || fail "the fixture is not production's hand-made flow: $hand_made"
@@ -1392,46 +1403,55 @@ output=$(RECONCILE_STEP=broker-flows reconcile "$ADMIN_CONFIG" 0 KEYCLOAK_RECONC
 expect_line "$output" "[reconcile] post broker login flow '$PB': would remove subflow '$DEAD' (CONDITIONAL; no enabled condition: it never runs)" \
   'the dry run did not name the dead subflow'
 expect_line "$output" "[reconcile] identity provider OBS post broker login flow: unchanged ('$PB')" 'the dry run would rebind OBS'
+expect_line "$output" "[reconcile] authentication flow '$UNBOUND': unchanged (absent)" 'e-skylab has no duplicate'
+expect_line "$output" 'Broker flows are checked; nothing was written (1 write(s) withheld).' 'the dry run did not withhold one write'
+output=$(RECONCILE_STEP=broker-flows reconcile "$ADMIN_CONFIG" 0 KEYCLOAK_RECONCILE_CHECK=true "KEYCLOAK_REALM=$FLOWS")
+expect_line "$output" '[reconcile] identity provider OBS post broker login flow: unchanged (absent)' 'a realm without OBS'
 expect_line "$output" "[reconcile] authentication flow '$UNBOUND': would be deleted (bound nowhere: no realm binding, identity provider or client override)" \
   'the dry run did not name the unbound flow'
-expect_line "$output" 'Broker flows are checked; nothing was written (2 write(s) withheld).' 'the dry run did not withhold two writes'
+expect_line "$output" 'Broker flows are checked; nothing was written (1 write(s) withheld).' 'the dry run did not withhold one write'
 [[ $(pb_flow) == "$hand_made" ]] && unbound_exists || fail 'the dry run wrote'
-printf '    the reconciler identity is refused; the dry run names both deletions and writes nothing\n'
+printf '    the reconciler identity is refused; the dry runs name both deletions and write nothing\n'
 
 stage 'broker flows: the operator run'
 output=$(RECONCILE_STEP=broker-flows reconcile "$ADMIN_CONFIG" 0)
 expect_line "$output" "[reconcile] post broker login flow '$PB': updated (removed subflow '$DEAD', CONDITIONAL; no enabled condition: it never ran)" \
   'the dead subflow was not removed'
-expect_line "$output" "[reconcile] authentication flow '$UNBOUND': deleted (bound nowhere: no realm binding, identity provider or client override)" \
-  'the unbound flow was not deleted'
 expect_line "$output" 'Broker flows are reconciled.' 'no closing line'
 [[ $(pb_flow) == '[{"level":0,"requirement":"REQUIRED","what":"passkey-offer-authenticator"}]' ]] || fail "the flow is not the offer alone: $(pb_flow)"
-! unbound_exists || fail 'the unbound flow is still there'
 [[ $(kcadm get identity-provider/instances/OBS -r "$REALM" | jq -r .postBrokerLoginFlowAlias) == "$PB" ]] || fail 'OBS lost its post broker login flow'
 [[ -z $(kcadm get authentication/flows -r "$REALM" | jq -r --arg d "$DEAD" '.[] | select(.alias == $d) | .id') ]] || fail 'the subflow outlived its execution'
+output=$(RECONCILE_STEP=broker-flows reconcile "$ADMIN_CONFIG" 0 "KEYCLOAK_REALM=$FLOWS")
+expect_line "$output" "$DELETED_LINE" 'the unbound flow was not deleted'
+! unbound_exists || fail 'the unbound flow is still there'
 pb_login after
 output=$(RECONCILE_STEP=broker-flows reconcile "$ADMIN_CONFIG" 0)
 expect_quiet "$output" 'a second run changed something'
 expect_line "$output" "[reconcile] post broker login flow '$PB': unchanged (passkey-offer-authenticator REQUIRED, nothing else)" 'no unchanged line'
+output=$(RECONCILE_STEP=broker-flows reconcile "$ADMIN_CONFIG" 0 "KEYCLOAK_REALM=$FLOWS")
+expect_quiet "$output" 'a second run changed something in the other realm'
 expect_line "$output" "[reconcile] authentication flow '$UNBOUND': unchanged (absent)" 'no absent line'
 printf '    the offer alone, the duplicate deleted; the same YTÜ login: the offer, no OTP; a second run changes nothing\n'
 
 stage 'broker flows: a bound duplicate and an enabled condition stop the step'
-make_unbound_flow
-kcadm create identity-provider/instances -r "$REALM" -f - >/dev/null <<JSON
+make_flows_realm
+kcadm create identity-provider/instances -r "$FLOWS" -f - >/dev/null <<JSON
 {"alias": "harness-other", "providerId": "oidc", "enabled": false, "firstBrokerLoginFlowAlias": "$UNBOUND",
  "config": {"clientId": "x", "clientSecret": "x", "authorizationUrl": "http://127.0.0.1:9/a", "tokenUrl": "http://127.0.0.1:9/t"}}
 JSON
-output=$(RECONCILE_STEP=broker-flows reconcile "$ADMIN_CONFIG" 1)
+output=$(RECONCILE_STEP=broker-flows reconcile "$ADMIN_CONFIG" 1 "KEYCLOAK_REALM=$FLOWS")
 grep -Fq "Authentication flow '$UNBOUND' is bound (an identity provider's first or post broker login flow); nothing was deleted" <<<"$output" \
   || { printf '%s\n' "$output" >&2; fail 'a bound duplicate was not refused'; }
 unbound_exists || fail 'a bound duplicate was deleted'
-kcadm delete identity-provider/instances/harness-other -r "$REALM" >/dev/null
-kcadm update "realms/$REALM" -b "{\"directGrantFlow\":\"$UNBOUND\"}" >/dev/null
-output=$(RECONCILE_STEP=broker-flows reconcile "$ADMIN_CONFIG" 1)
+kcadm delete identity-provider/instances/harness-other -r "$FLOWS" >/dev/null
+kcadm update "realms/$FLOWS" -b "{\"directGrantFlow\":\"$UNBOUND\"}" >/dev/null
+output=$(RECONCILE_STEP=broker-flows reconcile "$ADMIN_CONFIG" 1 "KEYCLOAK_REALM=$FLOWS")
 grep -Fq "Authentication flow '$UNBOUND' is bound (realm directGrantFlow); nothing was deleted" <<<"$output" \
   || { printf '%s\n' "$output" >&2; fail 'a duplicate bound by the realm was not refused'; }
-kcadm update "realms/$REALM" -s 'directGrantFlow=direct grant' >/dev/null
+unbound_exists || fail 'a duplicate the realm binds was deleted'
+kcadm update "realms/$FLOWS" -b '{"directGrantFlow":"direct grant"}' >/dev/null
+output=$(RECONCILE_STEP=broker-flows reconcile "$ADMIN_CONFIG" 0 "KEYCLOAK_REALM=$FLOWS")
+expect_line "$output" "$DELETED_LINE" 'the duplicate was not deleted once unbound'
 add_dead_subflow REQUIRED
 output=$(RECONCILE_STEP=broker-flows reconcile "$ADMIN_CONFIG" 1)
 grep -Fq "Subflow '$DEAD' of post broker login flow '$PB' can run (conditional-user-role REQUIRED): removing it would change who is asked for an OTP; nothing was changed" <<<"$output" \
@@ -1439,9 +1459,8 @@ grep -Fq "Subflow '$DEAD' of post broker login flow '$PB' can run (conditional-u
 [[ $(pb_flow | jq length) == 4 ]] || fail 'the refused run changed the flow'
 pb_set "$DEAD" conditional-user-role DISABLED
 output=$(RECONCILE_STEP=broker-flows reconcile "$ADMIN_CONFIG" 0)
-expect_line "$output" "[reconcile] authentication flow '$UNBOUND': deleted (bound nowhere: no realm binding, identity provider or client override)" \
-  'the unbound duplicate was not deleted once unbound'
 [[ $(pb_flow) == '[{"level":0,"requirement":"REQUIRED","what":"passkey-offer-authenticator"}]' ]] || fail "the dead subflow was not removed again: $(pb_flow)"
+kcadm delete "realms/$FLOWS" >/dev/null
 printf '    bound (identity provider, realm binding) or an enabled condition: refused, nothing changed\n'
 
 # ---------------------------------------------------------------------------------------------------

@@ -238,7 +238,7 @@ docker run --pull=never --cpus 2 --rm -d --name "$PG_CONTAINER" --network "$NETW
 docker run --pull=never --cpus 2 --rm -d --name "$MAIL_CONTAINER" --network "$NETWORK" --memory 128m \
   -p "127.0.0.1:$MAIL_PORT:8025" "$MAILPIT_IMAGE" >/dev/null
 docker run --pull=never --cpus 2 --rm -d --name "$CONTAINER" --network "$NETWORK" --memory 2g \
-  -e KC_OPTS="$KCADM_JVM_OPTS" \
+  -e KC_OPTS="$KCADM_JVM_STANDALONE_OPTS" \
   --tmpfs /opt/keycloak/data:rw,size=256m,mode=1777 -p "127.0.0.1:$PORT:8080" \
   -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e "KC_BOOTSTRAP_ADMIN_PASSWORD=$ADMIN_PASSWORD" \
   -e SKY_HARNESS=1 -e SKY_MAIL_ENABLED=false \
@@ -253,6 +253,7 @@ for _ in $(seq 1 90); do
 done
 curl -fsS "$BASE_URL/realms/master" >/dev/null || fail 'Keycloak did not start'
 sessions_login
+kcadm_jvm_dump "$CONTAINER" "$ADMIN_CONFIG"
 stage 'local realms'
 kcadm create realms -s "realm=$REALM" -s enabled=true -s loginWithEmailAllowed=true -s duplicateEmailsAllowed=false \
   -s registrationAllowed=false -s verifyEmail=true -s eventsEnabled=true -s defaultLocale=tr >/dev/null

@@ -188,7 +188,7 @@ start_keycloak() {
   done
   docker rm -fv "$CONTAINER" >/dev/null 2>&1 || true
   docker run --rm -d --name "$CONTAINER" --memory "$MEMORY" -p "127.0.0.1:$PORT:8080" \
-    -e KC_OPTS="$KCADM_JVM_OPTS" \
+    -e KC_OPTS="$KCADM_JVM_STANDALONE_OPTS" \
     -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
     ${environment[@]+"${environment[@]}"} \
     -v "$SPI_JAR:/opt/keycloak/providers/e-skylab-spi.jar:ro" \
@@ -201,6 +201,7 @@ start_keycloak() {
   docker exec "$CONTAINER" /opt/keycloak/bin/kcadm.sh config credentials --config "$ADMIN_CONFIG" \
     --server http://localhost:8080 --realm master --user admin --password "$ADMIN_PASSWORD" >/dev/null 2>&1 \
     || fail 'kcadm login failed'
+  kcadm_jvm_dump "$CONTAINER" "$ADMIN_CONFIG"
 
   kcadm create realms -s "realm=$REALM" -s enabled=true >/dev/null
   kcadm create clients -r "$REALM" -s "clientId=$APP" -s publicClient=true -s standardFlowEnabled=true \

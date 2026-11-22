@@ -836,22 +836,26 @@ stage_v2_reconcile_check() {
 }
 
 # The reconciliation session (KEYCLOAK_RECONCILE_SESSION, config/ReconcileSession.java) runs every
-# kcadm read and every ReconcileJson call of a run in one JVM; it must not change one byte of what a
-# run prints (the release wizards read these lines) nor its status. On a reconciled realm with three
-# drifts (a realm setting, a client scope attribute, a missing protocol mapper) the whole dry run
+# kcadm call (reads and writes) and every ReconcileJson call of a run in one JVM; it must not change one
+# byte of what a run prints (the release wizards read these lines) nor its status, nor what a run
+# writes. On a reconciled realm with four drifts (a realm setting, a client scope attribute, a missing
+# protocol mapper, an extra one: an update, a create and a delete to repair them) the whole dry run
 # prints the same bytes with a JVM per call (off) and with the session (required); so does the real
-# run that repairs them, each from the same drifts. Every other reconciliation of the harness runs
-# with the session too (the compose default, required). The times are the before and after of the
-# change.
+# run that repairs them, each from the same drifts, and the two real runs leave the same realm (ids
+# aside). Every other reconciliation of the harness runs with the session too (the compose default,
+# required). The times are the before and after of the change.
 stage_reconcile_session_parity() {
-  CURRENT_STAGE='reconciliation session: the same bytes and status as a JVM per call'
+  CURRENT_STAGE='reconciliation session: the same bytes, status and writes as a JVM per call'
   local dir="$TEST_STATE_DIR/session-parity" check
   mkdir -p "$dir"
   reconcile_session_parity_drift
   for check in true false; do
     reconcile_session_run off "$check" "$dir/check-$check-off.log"
     # The dry runs leave the drifts; the real run with a JVM per call repaired them.
-    [[ $check == true ]] || reconcile_session_parity_drift
+    if [[ $check == false ]]; then
+      reconcile_session_parity_state >"$dir/state-off.json"
+      reconcile_session_parity_drift
+    fi
     reconcile_session_run required "$check" "$dir/check-$check-session.log"
     if ! cmp -s "$dir/check-$check-off.log" "$dir/check-$check-session.log"; then
       diff "$dir/check-$check-off.log" "$dir/check-$check-session.log" >&2 || true
@@ -861,20 +865,48 @@ stage_reconcile_session_parity() {
       || { cat "$dir/check-$check-off.log" >&2; fail "the reconciliation (KEYCLOAK_RECONCILE_CHECK=$check) of the drifted realm failed"; }
   done
   # The dry run named the drifts and the real run repaired them, so the runs compared are whole ones.
-  [[ $(grep -Ec '^\[reconcile\] would kcadm ' "$dir/check-true-off.log") -ge 3 ]] \
-    || { cat "$dir/check-true-off.log" >&2; fail 'the dry run of the drifted realm did not withhold the three repairs'; }
+  [[ $(grep -Ec '^\[reconcile\] would kcadm ' "$dir/check-true-off.log") -ge 4 ]] \
+    || { cat "$dir/check-true-off.log" >&2; fail 'the dry run of the drifted realm did not withhold the four repairs'; }
   grep -Fq '[reconcile] realm session, login and theme settings: updated (ssoSessionIdleTimeout)' "$dir/check-false-off.log" \
     || { cat "$dir/check-false-off.log" >&2; fail 'the real run did not repair the realm setting'; }
+  grep -Eq '^\[reconcile\] pruned protocol mappers from scope [0-9a-f-]+: harness-extra$' "$dir/check-false-off.log" \
+    || { cat "$dir/check-false-off.log" >&2; fail 'the real run did not delete the extra protocol mapper'; }
   [[ $(kcadm get "realms/$V2_REALM" -c | jq -r .ssoSessionIdleTimeout) == 7200 ]] \
     || fail 'the real run with the session left the realm setting drifted'
+  reconcile_session_parity_state >"$dir/state-session.json"
+  if ! cmp -s "$dir/state-off.json" "$dir/state-session.json"; then
+    diff <(jq . "$dir/state-off.json") <(jq . "$dir/state-session.json") >&2 || true
+    fail 'the real run with the session left another realm than the one with a JVM per call'
+  fi
+  # A session lost during a write (KEYCLOAK_RECONCILE_SESSION_TEST_KILL_ON_WRITE, config/reconcile-session.sh:
+  # the session JVM is killed as soon as the first write is sent): the run stops with exit 1 and says
+  # why, whether or not that write reached Keycloak; the same run again finishes the work and leaves the
+  # realm the runs above left.
+  reconcile_session_parity_drift
+  reconcile_session_run required false "$dir/lost.log" KEYCLOAK_RECONCILE_SESSION_TEST_KILL_ON_WRITE=1
+  [[ $(tail -n 1 "$dir/lost.log") == 'exit 1' ]] \
+    && grep -Eq '^The reconciliation session stopped during a kcadm or ReconcileJson call \(the session JVM (exited during the call|is gone)\); the run stops here\.' "$dir/lost.log" \
+    || { cat "$dir/lost.log" >&2; fail 'a session lost during a write did not stop the run with its reason'; }
+  ! grep -Fq 'Account Center Keycloak configuration is reconciled.' "$dir/lost.log" \
+    || fail 'the run that lost its session said it was reconciled'
+  reconcile_session_run required false "$dir/after-lost.log"
+  [[ $(tail -n 1 "$dir/after-lost.log") == 'exit 0' ]] || { cat "$dir/after-lost.log" >&2; fail 'the run after a lost session failed'; }
+  reconcile_session_parity_state >"$dir/state-after-lost.json"
+  if ! cmp -s "$dir/state-off.json" "$dir/state-after-lost.json"; then
+    diff <(jq . "$dir/state-off.json") <(jq . "$dir/state-after-lost.json") >&2 || true
+    fail 'the run after a session lost during a write did not finish the work'
+  fi
 }
 
-# The three drifts of stage_reconcile_session_parity.
+# The four drifts of stage_reconcile_session_parity.
 reconcile_session_parity_drift() {
   local scope_uuid mapper_uuid
   kcadm update "realms/$V2_REALM" -s ssoSessionIdleTimeout=1800 >/dev/null
   scope_uuid=$(v2_scope_uuid account-center-account-api)
   kcadm update "client-scopes/$scope_uuid" -r "$V2_REALM" -s 'attributes."include.in.token.scope"=true' >/dev/null
+  kcadm create "client-scopes/$scope_uuid/protocol-mappers/models" -r "$V2_REALM" \
+    -b '{"name":"harness-extra","protocol":"openid-connect","protocolMapper":"oidc-hardcoded-claim-mapper","config":{"claim.name":"harness_extra","claim.value":"x","jsonType.label":"String","access.token.claim":"false","id.token.claim":"false","userinfo.token.claim":"false"}}' \
+    >/dev/null
   scope_uuid=$(v2_scope_uuid account-center-core-claims)
   mapper_uuid=$(kcadm get "client-scopes/$scope_uuid/protocol-mappers/models" -r "$V2_REALM" -c \
     | jq -r '.[] | select(.name == "sky_embed") | .id')
@@ -882,14 +914,31 @@ reconcile_session_parity_drift() {
   kcadm delete "client-scopes/$scope_uuid/protocol-mappers/models/$mapper_uuid" -r "$V2_REALM" >/dev/null
 }
 
-# reconcile_session_run MODE CHECK LOG: one whole reconciliation with KEYCLOAK_RECONCILE_SESSION=MODE
-# and KEYCLOAK_RECONCILE_CHECK=CHECK. LOG gets what it printed (stdout and stderr in one stream, in
-# the order written) and a last line "exit STATUS"; Compose's own messages go elsewhere. Logs the
-# time it took.
+# What the drifts touch after a real run, ids aside (the run creates sky_embed anew): the realm and
+# the two client scopes with their mappers, sorted.
+reconcile_session_parity_state() {
+  local scope_uuid
+  {
+    kcadm get "realms/$V2_REALM" -c
+    for scope_uuid in $(v2_scope_uuid account-center-account-api) $(v2_scope_uuid account-center-core-claims); do
+      kcadm get "client-scopes/$scope_uuid" -r "$V2_REALM" -c | jq -c 'del(.protocolMappers)'
+      kcadm get "client-scopes/$scope_uuid/protocol-mappers/models" -r "$V2_REALM" -c | jq -c 'sort_by(.name)'
+    done
+  } | jq -S -c 'walk(if type == "object" then del(.id) else . end)'
+}
+
+# reconcile_session_run MODE CHECK LOG [ENV=VALUE ...]: one whole reconciliation with
+# KEYCLOAK_RECONCILE_SESSION=MODE and KEYCLOAK_RECONCILE_CHECK=CHECK. LOG gets what it printed (stdout
+# and stderr in one stream, in the order written) and a last line "exit STATUS"; Compose's own
+# messages go elsewhere. Logs the time it took.
 reconcile_session_run() {
-  local mode=$1 check=$2 log=$3 started=$SECONDS
+  local mode=$1 check=$2 log=$3 started=$SECONDS assignment environment=()
+  shift 3
+  for assignment in "$@"; do
+    environment+=(-e "$assignment")
+  done
   "${COMPOSE[@]}" run --rm --no-deps -T \
-    -e "KEYCLOAK_RECONCILE_SESSION=$mode" -e "KEYCLOAK_RECONCILE_CHECK=$check" \
+    -e "KEYCLOAK_RECONCILE_SESSION=$mode" -e "KEYCLOAK_RECONCILE_CHECK=$check" ${environment[@]+"${environment[@]}"} \
     --entrypoint bash keycloak-config \
     -c '/opt/keycloak/config/reconcile-account-center.sh 2>&1; printf "exit %s\n" "$?"' \
     >"$log" 2>"$log.compose"
@@ -1990,6 +2039,7 @@ kcadm update realms/e-skylab-test \
   -s ssoSessionMaxLifespanRememberMe=0 \
   -s clientSessionIdleTimeout=1800 \
   -s clientSessionMaxLifespan=120 \
+  -s accessTokenLifespan=600 \
   -s webAuthnPolicyPasswordlessPasskeysEnabled=false \
   -s webAuthnPolicyPasswordlessMediation=none >/dev/null
 kcadm update authentication/required-actions/UPDATE_PASSWORD \
@@ -2046,8 +2096,9 @@ json_assert "$realm" \
   'realm security or theme desired state differs'
 # Sessions: 2 hours idle and 8 hours at most; remember-me 7 days idle and 30 days at most; client
 # sessions inherit the SSO session (0), so a refresh token lives as long as the SSO session does.
+# Access tokens live 5 minutes: a role change reaches the person with the next token.
 json_assert "$realm" \
-  '.ssoSessionIdleTimeout == 7200 and .ssoSessionMaxLifespan == 28800 and .rememberMe == true and .ssoSessionIdleTimeoutRememberMe == 604800 and .ssoSessionMaxLifespanRememberMe == 2592000 and .clientSessionIdleTimeout == 0 and .clientSessionMaxLifespan == 0' \
+  '.accessTokenLifespan == 300 and .ssoSessionIdleTimeout == 7200 and .ssoSessionMaxLifespan == 28800 and .rememberMe == true and .ssoSessionIdleTimeoutRememberMe == 604800 and .ssoSessionMaxLifespanRememberMe == 2592000 and .clientSessionIdleTimeout == 0 and .clientSessionMaxLifespan == 0' \
   'realm session desired state differs'
 grep -Eq '^\[reconcile\] realm session, login and theme settings: updated \(.*clientSessionIdleTimeout' \
   "$TEST_STATE_DIR/reconcile-second.log" \

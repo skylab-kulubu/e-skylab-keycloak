@@ -154,7 +154,7 @@ if [[ $TARGET_REALM != "$PRODUCTION_REALM" ]]; then
   exit 2
 fi
 
-# The reconciliation session (config/reconcile-session.sh: every kcadm read of the run in one JVM;
+# The reconciliation session (config/reconcile-session.sh: every kcadm call of the run in one JVM;
 # KEYCLOAK_RECONCILE_SESSION on, the default, off or required) when this file runs from the image's
 # config directory. A copy of this file alone (a wizard runs main's copy from /tmp) has no session:
 # every call keeps its own JVM, as before; KEYCLOAK_RECONCILE_SESSION=required stops it (exit 2).
@@ -228,7 +228,7 @@ problem() {
   log "PROBLEM: $1"
 }
 
-# A read (get) in the session when it runs (config/reconcile-session.sh), a write in its own JVM.
+# In the session when it runs (config/reconcile-session.sh), reads and writes alike.
 kcadm() {
   session_kcadm "$@"
 }

@@ -18,7 +18,7 @@ entegrasyon testi bunu doğrular.
 
 | Adım | Uygulanan durum |
 | --- | --- |
-| Realm oturum/giriş/tema (`account-center-realm.json`) | `editUsernameAllowed=false`, `loginWithEmailAllowed=true`, `duplicateEmailsAllowed=false`, `e-skylab-theme`; oturum süreleri: `ssoSessionIdleTimeout=7200` (2 saat hareketsizlik), `ssoSessionMaxLifespan=28800` (en çok 8 saat), `rememberMe=true`, `ssoSessionIdleTimeoutRememberMe=604800` (7 gün), `ssoSessionMaxLifespanRememberMe=2592000` (30 gün), `clientSessionIdleTimeout=0` ve `clientSessionMaxLifespan=0` (istemci oturumu SSO oturumundan miras alır; refresh token SSO oturumu yaşadıkça yaşar). Bu alanlar elle değiştirilirse sonraki uzlaştırma geri yazar. Offline oturum ayarları (`offlineSession*`, SkyApp) yönetilmez. |
+| Realm oturum/giriş/tema (`account-center-realm.json`) | `editUsernameAllowed=false`, `loginWithEmailAllowed=true`, `duplicateEmailsAllowed=false`, `e-skylab-theme`; oturum süreleri: `ssoSessionIdleTimeout=7200` (2 saat hareketsizlik), `ssoSessionMaxLifespan=28800` (en çok 8 saat), `rememberMe=true`, `ssoSessionIdleTimeoutRememberMe=604800` (7 gün), `ssoSessionMaxLifespanRememberMe=2592000` (30 gün), `clientSessionIdleTimeout=0` ve `clientSessionMaxLifespan=0` (istemci oturumu SSO oturumundan miras alır; refresh token SSO oturumu yaşadıkça yaşar), `accessTokenLifespan=300` (erişim tokenı 5 dk; rol/grup değişikliği yeniden giriş olmadan en geç bu sürede gelir; istemci düzeyi `access.token.lifespan` ezmesi yönetilmez). Bu alanlar elle değiştirilirse sonraki uzlaştırma geri yazar. Offline oturum ayarları (`offlineSession*`, SkyApp) yönetilmez. |
 | Brute force ve parola politikası (`account-center-realm-security.json`) | `bruteForceProtected=true`, `permanentLockout=false`, `failureFactor=10`, `waitIncrementSeconds=60`, `maxFailureWaitSeconds=900`, `maxDeltaTimeSeconds=43200`, `quickLoginCheckMilliSeconds=1000`, `minimumQuickLoginWaitSeconds=60`, `passwordPolicy="length(8) and notUsername and notEmail"` |
 | Olay saklama süresi (hesap silme 09; değerler betiğin başındaki `EVENT_RETENTION_*` sabitlerinde) | `eventsEnabled=true`, `eventsExpiration=2592000`, `adminEventsEnabled=true`, `adminEventsDetailsEnabled=true` ve realm özniteliği `adminEventsExpiration=2592000`: kullanıcı ve admin olayları 30 gün sonra silinir, admin olay ayrıntıları denetim için açık kalır (Yusuf'un seçimi). Neden: Keycloak silinen kişinin olaylarını silmez. `CREATE`/`UPDATE` admin olayları kişinin tam temsilini (e-posta, ad, okul ve kişisel e-posta), `DELETE` kullanıcı adını, `LOGIN`/`LOGIN_ERROR` yazılan adresi tutar. Süre kapatılırsa bunlar süresiz kalır; 30 gün KVKK'nın başvuruyu sonuçlandırma süresidir. Öznitelik, canlı öznitelik haritasının üstüne birleştirilerek yazılır. Dinleyiciler ve kaydedilen olay türleri yönetilmez. Yetki: realm PUT'u `manage-realm` ister, uzlaştırıcı kimliğinde var; `events/config` uç noktası (`manage-events`) kullanılmaz. Üretimde bu değerler 2026-09-26'dan önce elle kurulmuştu; ilk koşuda `[reconcile] realm event retention (…): unchanged` beklenir, `updated (…)` görülürse biri ayarı değiştirmiştir, not edin. Harness: `tests/event-retention.sh`. |
 | Şifresiz passkey politikası (`account-center-passkey-policy.json` + ortam) | `webAuthnPolicyPasswordlessRpId=yildizskylab.com`, `webAuthnPolicyPasswordlessExtraOrigins=["https://my.yildizskylab.com"]`; entity name `SKY LAB`, ES256/RS256, resident key ve kullanıcı doğrulaması zorunlu, passkeys açık, conditional mediation; diğer alanlar Keycloak varsayılanları. Relying party id gerçekten değişiyorsa politika yazılmadan önce realm özniteliği `skylab.passkeyRpIdSwitchedAt=<ISO-8601 UTC>` kaydedilir (öznitelik haritası canlı halinin üstüne birleştirilir, başka öznitelik silinmez) ve `[reconcile] passkey relying party id switches from '…' to '…'` satırı basılır; §5'teki temizlik bu anı cutover alır. İki faktörlü (`webAuthnPolicy*`) politika yönetilmez. `attributes` taşımayan realm PUT'ları CIBA/PAR sürelerini ve cihaz kodu ömrünü (`oauth2DeviceCodeLifespan`) Keycloak varsayılanına sıfırlar (önceden de böyleydi). |
@@ -39,7 +39,7 @@ entegrasyon testi bunu doğrular.
 | Parola sıfırlamanın OTP adımı (eskylab-login-ux 23, §17.1) | Bağlı (düzenlenebilir) sıfırlama akışının "Reset - Conditional OTP" alt akışında `reset-otp`'nin yerine aynı öncelik ve `REQUIRED` ile `auth-otp-form` konur; koşul `conditional-user-configured` aynen kalır. Durdurma kuralları parola formununkiyle aynıdır; yarıda kalmış değişim ve Admin Console'un acil yolunun bıraktığı hâl (DISABLED `reset-otp` yanında REQUIRED `auth-otp-form`) tamamlanır. Keycloak'ın yerleşik akışına dokunulmaz. `KEYCLOAK_RESET_OTP_STEP=reset` Keycloak'ın adımını geri koyar. |
 | Kimlik korumaları: core sertifika rolleri, OBS `department mapper`, core'un `manage-clients` rolü | Uzlaştırıcı **dokunmaz**: kimliğinin kullanıcı ve kimlik sağlayıcısı yetkisi yoktur. Operatör `config/identity-guardrails.sh` ile uygular (§8). |
 | Forms'un Privileged rolü (§28) | `forms` istemcisinde `skyforms:read-all` (DK'nın Forms okuması; forms-backend henüz okumuyor) her koşuda var edilir; SkyMail'inkiler gibi yalnız `DK`'ya **bir kez** verilir (operatörün `core-roles` koşusu). |
-| SkyMail'in Privileged rolleri (§25) | `skymail` istemcisinde `skymail:system-mails:read` ve `skymail:mails:tracking:read` (ADMIN, YK, DK; kişi bazındaki takip raporu, iletisim-servisi 17) her koşuda var edilir (yoksa açıklamasıyla oluşturulur); SkyMail'in kendi rolleri `skymail:access`, `templates:read`, `lists:read`, `mails:read`, `mails:send`, `mails:write` (ADMIN, YK) ve `mails:approve` (yalnız YK) oluşturulmaz, varsa tohumlanır (ekip-yetkileri 03; `announcements:send` listeden çıktı). core'un kaynak rolleri gibi kendi Privileged gruplarına **bir kez** verilir ve `skylab.seeded-group-mappings` ile işaretlenir; tohumlamayı operatörün `KEYCLOAK_RECONCILE_ONLY=core-roles` koşusu yapar. Kişilerin diğer `skymail:*` rolleri `/ROLLER` rol gruplarına taşınır (§26). |
+| SkyMail'in Privileged rolleri (§25) | `skymail` istemcisinde `skymail:system-mails:read` ve `skymail:mails:tracking:read` (ADMIN, YK, DK; kişi bazındaki takip raporu, iletisim-servisi 17) ile `skymail:audit:read` (yalnız DK; maskeli içeriği kimin açtığı, skymail-frontend-rewrite 32) her koşuda var edilir; `skymail:access` ve `skymail:mails:read` 2026-11-22'den beri DK'ya da gider (önceden tohumlanmış realm'de bir kezlik tohum eki) (yoksa açıklamasıyla oluşturulur); SkyMail'in kendi rolleri `skymail:access`, `templates:read`, `lists:read`, `mails:read`, `mails:send`, `mails:write` (ADMIN, YK) ve `mails:approve` (yalnız YK) oluşturulmaz, varsa tohumlanır (ekip-yetkileri 03; `announcements:send` listeden çıktı). core'un kaynak rolleri gibi kendi Privileged gruplarına **bir kez** verilir ve `skylab.seeded-group-mappings` ile işaretlenir; tohumlamayı operatörün `KEYCLOAK_RECONCILE_ONLY=core-roles` koşusu yapar. Kişilerin diğer `skymail:*` rolleri `/ROLLER` rol gruplarına taşınır (§26). |
 | Servis hesaplarının rolleri (§20, §20.1, §20.2) | `place-service` istemcisini oluşturur (gizli, yalnız client credentials, §20.2); `forms`'a core'un beş servis rolü (`consent:record` dahil), `place-service`'e yalnız `consent:record`, `skymail-backend`'e core'un `audience:read`'i, `communication-preferences:read`'i ve `consent:audience:read`'i ile `realm-management`'ın `view-users` ve `view-clients`'ı, `core`'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`, `skymail:lists:read`, `skymail:lists:write`, `skymail:tracking:withdraw` rolleri ile Forms'un `skyforms:responses:read-service`'i, `skymail-seed`'in servis hesabına `skymail:templates:system`. Uzlaştırıcı kimliği core rollerini, `skymail:tracking:withdraw`'u, `skymail:templates:system`'ı ve `skyforms:responses:read-service`'i oluşturur ve raporlar; vermeyi operatör `KEYCLOAK_RECONCILE_ONLY=service-roles` ile yapar. SkyMail'in öbür rolleri oluşturulmaz. Yalnız servis hesaplarının rolünü taşıyan kişi, grup, varsayılan rol ve bileşik rol bildirilir. |
 | Rol grupları `/ROLLER/<UYGULAMA>-<ROL>` (§26) ve Leader gruplarının uygulama rolleri (§27) | Uzlaştırıcı **dokunmaz** (gruba rol eşlemek kullanıcı yetkisi ister). Operatör `config/role-groups.sh` ve `config/leader-app-roles.sh` (ya da `KEYCLOAK_RECONCILE_ONLY=role-groups` / `leader-app-roles`) ile kurar; kuru koşu varsayılandır, `--apply` yazar; üye hiç eklenmez. |
 
@@ -415,11 +415,11 @@ alınır: 1.16.0'dan eski bir imaja dönmeden önce, onu kullanan her istemcide
 `sky-group-overage-mapper` yerleşik Group Membership mapper'ına geri çevrilir; yoksa Keycloak eksik
 mapper'ı sessizce atlar ve token'lar `groups` claim'ini kaybeder.
 
-Uzlaştırma oturumunun (tek JVM'de kcadm okumaları ve ReconcileJson, README) geri dönüşü imaj
+Uzlaştırma oturumunun (tek JVM'de kcadm okumaları, yazmaları ve ReconcileJson, README) geri dönüşü imaj
 gerektirmez: aynı imajla koşuya `KEYCLOAK_RECONCILE_SESSION=off` verilir; her kcadm ve ReconcileJson
 çağrısı yine kendi JVM'ini açar (eski davranış, yalnız yavaş). Oturum koşu ortasında ölürse koşu
-yeni bir istek göndermeden exit 1 ile durur; aynı koşu `KEYCLOAK_RECONCILE_SESSION=off` ile yeniden
-yapılır. Aynı oturumu kullanan operatör betikleri (`config/app-assignments.sh`, `role-groups.sh`,
+yeni bir istek göndermeden exit 1 ile durur (o anki yazmanın Keycloak'a ulaşıp ulaşmadığı bilinmez;
+yazmalar yakınsar); aynı koşu `KEYCLOAK_RECONCILE_SESSION=off` ile yeniden yapılır. Aynı oturumu kullanan operatör betikleri (`config/app-assignments.sh`, `role-groups.sh`,
 `dk-read-only.sh`, `master-console.sh`, `leader-app-roles.sh`, site ve CMS betikleri, README;
 uzlaştırıcının `app-assignments`, `tohum-atamalar`, `role-groups` ve `leader-app-roles` adımlarında
 betik değişkeni ortamdan alır) için de geri dönüş aynıdır:
@@ -2457,14 +2457,63 @@ sorulur. `off` `on`'u geri getirir.
 OBS'yi elle kopyaya bağlamayın; realm bağlaması yeter. OBS'nin geri kalanı (secret, `syncMode`,
 `trustEmail`, post broker login akışı) aynı kalır.
 
-**Elle yapılmış, kodlanmamış akışlar (bu adım dokunmaz; izleme: hub
-`.scratch/keycloak-yayin/issues/02-elle-yapilmis-akislar.md`):**
+**Elle yapılmış broker akışları (bu adım dokunmaz; ikisi de 2026-11-22'den beri koddadır: aşağıda
+"broker-flows adımı"):**
 
 - `post-broker-passkey-offer`: OBS'nin post broker login akışı ("sso sonrası passkey teklif et").
   `passkey-offer-authenticator` REQUIRED ve CONDITIONAL "cond 2fa" alt akışı (`conditional-user-role`
-  DISABLED, config "admin mi2" `condUserRole=ADMIN`; `auth-otp-form` REQUIRED). Koşul DISABLED
-  olduğu için alt akışın nasıl değerlendirildiği ayrıca doğrulanmalı.
-- `first broker login + http ` (sonunda boşlukla): hiçbir IdP'ye bağlı görünmüyor.
+  DISABLED, config "admin mi2" `condUserRole=ADMIN`; `auth-otp-form` REQUIRED).
+  - Passkey teklifi her YTÜ girişinde çalışır: passkey'i olmayan ve son 30 günde "hayır" dememiş
+    kişiye sorulur; `account-center` istemcisinde ve `kc_action`'lı isteklerde atlanır.
+  - "cond 2fa" **hiç çalışmaz, yöneticiler dahil kimseye OTP sorulmaz.** Keycloak 26.7.4
+    `DefaultAuthenticationFlow.isConditionalSubflowDisabled`: CONDITIONAL alt akışın koşulları
+    yalnız **etkin** koşul adımlarıdır (`isConditionalAuthenticator` `model.isEnabled()` ister);
+    etkin koşul yoksa liste boştur ve alt akış devre dışı sayılır (`conditionalAuthenticatorList.isEmpty()
+    || …`). Tek koşul DISABLED olduğu için `auth-otp-form`'a hiç gelinmez. Koşul ENABLED yapılsaydı
+    sonuç realm'e bağlı olurdu: `ADMIN` adlı bir realm rolü yoksa (üretimde `ADMIN` bir grup, rol
+    değil) koşul hiç eşleşmez, yine kimseye OTP sorulmaz ve her YTÜ girişinde Keycloak günlüğüne
+    `Invalid role name submitted: ADMIN` hatası düşer (`ConditionalRoleAuthenticator.matchCondition`);
+    böyle bir rol varsa onu taşıyanlar her YTÜ girişinde OTP'ye (OTP'si yoksa kuruluma) zorlanır.
+- `first broker login + http ` (sonunda boşlukla): hiçbir IdP'ye bağlı değil (2026-10-13 dökümünde
+  tek IdP OBS, onun geçersiz kılması `first broker login for obs`) ve hiçbir realm bağı değil
+  (2026-09-21 dökümü). Üst düzeyi yerleşik akışla aynı (review profile, User creation or linking,
+  Conditional Organization). Bağlı olmadığı için çalışmaz.
+
+**broker-flows adımı (keycloak-yayin 02, Yusuf'un kararı 2026-11-22).** Operatör adımı
+`KEYCLOAK_RECONCILE_ONLY=broker-flows` (IdP'leri yalnız yönetici oturumu okur; uzlaştırıcı kimliğiyle
+`Identity provider OBS is not readable with this session; …` ile exit 1). Kuru koşusu var
+(`KEYCLOAK_RECONCILE_CHECK=true`: yazmalar `would kcadm …` satırı olur, hiçbir şey yazılmaz).
+
+- `post-broker-passkey-offer`: yalnız `passkey-offer-authenticator` REQUIRED kalır. "cond 2fa" alt
+  akışı, içindeki her koşul DISABLED ve alt akış CONDITIONAL ya da DISABLED iken kaldırılır (bugün hiç
+  çalışmadığı için davranış değişmez; harness bunu YTÜ girişiyle önce ve sonra gösterir: ADMIN rolünde
+  bir hesap teklifi görür, OTP görmez). Koşullardan biri etkinse ya da alt akış REQUIRED ise, ya da
+  akışta başka bir adım varsa adım hiçbir şey değiştirmeden durur (exit 1, `… can run (…): removing it
+  would change who is asked for an OTP; nothing was changed` ya da `… holds steps this step does not
+  know (…)`). Akış yoksa kurulur, OBS'nin post broker login akışı boşsa ona bağlanır; OBS başka bir
+  akışa bağlıysa `WARNING: identity provider OBS keeps its own post broker login flow '…'` ve dokunulmaz.
+  OBS yoksa (sandbox) `identity provider OBS post broker login flow: unchanged (absent)`.
+- `first broker login + http `: realm'in yedi akış bağından hiçbiri, hiçbir IdP'nin first/post broker
+  login akışı (IdP'lerin hepsi, 100'lük sayfalarla okunur), hiçbir istemcinin akış geçersiz kılması onu
+  göstermiyorsa ve başka bir akışta alt akış olarak kullanılmıyorsa silinir. Boşluksuz adlı bir kardeş
+  akış (`first broker login + http`) varsa ona dokunulmaz. Biri gösteriyorsa
+  `Authentication flow 'first broker login + http ' is bound (…); nothing was deleted` ve exit 1.
+  Silme geri alınmaz (akış hiçbir yerde kullanılmıyordu); geri dönüş gerekmez.
+
+Beklenen satırlar, kuru koşu (yayından sonra ilk kez):
+
+```text
+[reconcile] post broker login flow 'post-broker-passkey-offer': would remove subflow 'cond 2fa' (CONDITIONAL; no enabled condition: it never runs)
+[reconcile] identity provider OBS post broker login flow: unchanged ('post-broker-passkey-offer')
+[reconcile] authentication flow 'first broker login + http ': would be deleted (bound nowhere: no realm binding, identity provider, client override or parent flow)
+Broker flows are checked; nothing was written (2 write(s) withheld).
+```
+
+Gerçek koşuda `would remove …` yerine `updated (removed subflow 'cond 2fa', CONDITIONAL; no enabled
+condition: it never ran)`, `would be deleted` yerine `deleted (…)` ve son satır `Broker flows are
+reconciled.` İkinci koşu yalnız `unchanged` satırları basar. Komut, yukarıdaki first-broker-login
+komutunun aynısıdır; yalnız `KEYCLOAK_RECONCILE_ONLY=broker-flows` (önce `-e KEYCLOAK_RECONCILE_CHECK=true`
+ile). Adım bu kodu taşıyan imaj yayımlandıktan sonra bir kez koşulur.
 
 ### Üretim sırası
 
@@ -2751,7 +2800,7 @@ SPI 1.19.0'daki `sky-stay-signed-in` gerekli eylemi (`com.skylab.authenticator.S
 Bir authenticator değil, çünkü bağlı bir hesabın YTÜ girişinde Keycloak IdP'den doğrudan girişin
 sonuna gider; realm'e bağlı hiçbir akış çalışmaz (yalnız IdP'ye özel post broker login akışı
 çalışırdı, onu da uzlaştırıcı kimliği okuyamaz). Üretimde OBS'nin post broker login akışı
-`post-broker-passkey-offer` elle yapılmış, kodlanmamış (§22 sonundaki not); gerekli eylemler ondan
+`post-broker-passkey-offer` §22'deki broker-flows adımıyla koddadır (yalnız passkey teklifi); gerekli eylemler ondan
 sonra çalışır, bu eylem ona dokunmaz. Her girişte çalışan şey realm'in gerekli
 eylemlerinin `evaluateTriggers`'ıdır. Eylem kendini kullanıcıya değil **giriş oturumuna** ekler
 (`authSession.addRequiredAction`), yalnız şunlar birlikte tutunca:
@@ -3154,13 +3203,14 @@ olsun. Bu yüzden rol §19'daki core kaynak rolleriyle aynı biçimde yönetilir
 
 **SkyMail'in kod alanı rolleri (ekip-yetkileri bilet 03, 2026-10-23).** Aynı listede
 (`SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS`, `rol|Privileged adlar|açıklama`) SkyMail'in kendi rolleri de
-var: `skymail:access`, `skymail:templates:read`, `skymail:lists:read`, `skymail:mails:read`,
-`skymail:mails:send` ve `skymail:mails:write` `ADMIN` ve `YK`'ya (ADR 0067: YK doğrudan gönderir),
+var: `skymail:templates:read`, `skymail:lists:read`, `skymail:mails:send` ve `skymail:mails:write`
+`ADMIN` ve `YK`'ya (ADR 0067: YK doğrudan gönderir), `skymail:access` ve `skymail:mails:read`
+`ADMIN`, `YK` ve `DK`'ya (DK 2026-11-22'den beri, aşağıda),
 `skymail:mails:approve` yalnız `YK`'ya (S2: Mail onayının onaycısı YK kökü; dönem devrinde
 kendiliğinden değişir). Açıklama sütunu `-` olan rol SkyMail'indir: uzlaştırıcı onu **oluşturmaz**,
 realm'de varsa bir kez tohumlar, yoksa `Privileged roles of skymail (9): unchanged; not in the
-realm, the application makes them, seeded once they exist: …` satırında adını yazar. DK bu
-rollerin hiçbirini almaz (GY1). `skymail:access` ve `skymail:templates:read` uygulama rolüdür: köklerin
+realm, the application makes them, seeded once they exist: …` satırında adını yazar. DK yazma
+rollerinin hiçbirini almaz (GY1). `skymail:access` ve `skymail:templates:read` uygulama rolüdür: köklerin
 dışındaki atamaları panelindir (§33), uzlaştırıcı onlara dokunmaz.
 
 **`skymail:announcements:send` listeden çıktı (bilet 03, YETKI-MATRISI §3 D-1).** Okuyan servis yok;
@@ -3171,15 +3221,73 @@ onları "kodda yok" diye bildirir, sıfırlama penceresi (bilet 06 c2) kaldırı
 **`skymail:mails:tracking:read` (iletisim-servisi 14b/17, karar T2).** Aynı listede üçüncü rol:
 gönderimlerin kişi bazındaki açılma ve tıklama raporunu okur (skymail-backend
 `internal/handlers/tracking_read.go`, `TrackingReadRole`). Aydınlatma metni kişi bazındaki bilgiyi
-YK'nın, DK'nın, sistem yöneticilerinin ve postayı gönderen yetkilinin göreceğini söylüyor. Bu yüzden
-rol `ADMIN`, `YK` ve `DK`'ya (`/ADMIN`, `/YK`, `/DK`, `/UYELER/ADMIN`, `/UYELER/YK`, `/UYELER/DK`;
-hangileri varsa) bir kez verilir. Okuma rolüdür, DK salt okur kuralıyla uyumludur
-(`config/dk-read-only.sh` onu okuma rolü sayar ve DK'da bırakır). Gönderen yetkili kendi gönderimini
-rolsüz görür; bunu SkyMail `sent_by` ile denetler. Rol kişiye doğrudan verilmez, yalnız bu gruplara
-verilir. Bu yayında `core-roles` öncesindeki uyarı satırında beklenen rol budur: `WARNING: skymail
-roles not yet granted to the Privileged groups: skymail:mails:tracking:read`. Operatör çıktısı
-`skymail role skymail:mails:tracking:read: seeded once to <yollar> (granted to: …)`. Rol yokken
-SkyMail'in rapor ucu yalnız gönderene açıktır (zararsız).
+YK'nın, DK'nın, sistem yöneticilerinin ve postayı gönderen yetkilinin göreceğini söylüyor; anahtar
+kapalıyken (varsayılan) gönderen bunu görmediği için metin gerçekte olandan fazlasını söyler. Bu
+yüzden rol `ADMIN`, `YK` ve `DK`'ya (`/ADMIN`, `/YK`, `/DK`, `/UYELER/ADMIN`, `/UYELER/YK`,
+`/UYELER/DK`; hangileri varsa) bir kez verilir. Okuma rolüdür, DK salt okur kuralıyla uyumludur
+(`config/dk-read-only.sh` onu okuma rolü sayar ve DK'da bırakır). Gönderen kendi gönderiminde yalnız
+toplamları görür; SkyMail'de `SKYMAIL_SENDER_SEES_RECIPIENTS=on` ona kendi gönderiminin kişilerini
+geri açar (skymail-backend #129; e-skylab ADR 0074 2026-11-08 eki). Kişi bazında açma-tıklama yalnız
+bu rolle görülür; `skymail:mails:read` (`/ROLLER/SKYMAIL-MAILS-READ`) gönderimleri ve kuyrukta
+alıcıların adını, adresini ve teslim durumunu görür, açma-tıklama görmez. Rol kişiye doğrudan
+verilmez, yalnız bu gruplara verilir. Bu yayında `core-roles` öncesindeki uyarı satırında beklenen
+rol budur: `WARNING: skymail roles not yet granted to the Privileged groups:
+skymail:mails:tracking:read`. Operatör çıktısı `skymail role skymail:mails:tracking:read: seeded
+once to <yollar> (granted to: …)`. Rol yokken SkyMail'in kişi bazındaki rapor ucu kimseye açık
+değildir; anahtar `on` ise yalnız gönderene açıktır (zararsız).
+
+**`skymail:audit:read` (hub bileti skymail-frontend-rewrite 32; Yusuf, 2026-11-22).** Aynı listede bir
+okuma rolü: maskeli (hassas) bir postanın içeriğini kimin, ne zaman, hangi alıcının satırında açtığını
+okur. SkyMail her açılışı `sent_content_views`'a yazar; rol yalnız bu kaydı okuyan uca açar
+(skymail-backend `GET /v1/mail_tasks/{id}/content-views`, `AuditReadRole`). İçeriği açan roller
+(`skymail:system-mails:read`, toplu gönderimde `skymail:mails:write`, gönderimin sahibi) bu rolü
+kendiliğinden **almaz**: kaydın konusu onlardır. Rol yalnız `DK`'ya (`/DK`, `/UYELER/DK`; hangisi
+varsa) bir kez verilir; ADMIN ve YK'ya verilmez. Sektör karşılığı: Microsoft Purview'da denetim kaydını
+okumak içerik yetkisinden ayrı bir roldür (Audit Reader / View-Only Audit Logs), Google Workspace'te
+denetim raporları ayrı bir yönetici yetkisidir (Reports), NIST SP 800-53 AU-9(4) denetim kaydına
+erişimi ayrıcalıklı kullanıcıların küçük bir alt kümesine bırakır (görevler ayrılığı). Okuma rolüdür,
+DK salt okur kuralıyla uyumludur (`config/dk-read-only.sh` onu okuma rolü sayar). Açıklaması var:
+SkyMail onu yalnız denetler, her koşu yoksa açıklamasıyla oluşturur. Uzlaştırıcı kimliğinin uyarı
+satırı onu da sayar (`WARNING: skymail roles not yet granted to the Privileged groups: …
+skymail:audit:read …`); operatör çıktısı `skymail role skymail:audit:read: seeded once to /UYELER/DK
+(granted to: /UYELER/DK)`. Realm'de DK grubu yoksa rol tohumlanmaz ve uyarılır (`no Privileged group
+(DK, at /<NAME> or under /UYELER) exists in realm …; nothing was granted, the skymail Privileged roles
+stay unseeded`). Tohumdan sonra eşleme paneldir: DK'nın
+alt grubundaki eşleme `BILGI|S2-tohum`, ADMIN ya da YK'daki eşleme `SAPMA|S2-fazla` (§33). Rol yokken
+ya da tohumlanmadan SkyMail'in ucu kimseye açık değildir (zararsız; kayıt yazılmaya devam eder).
+DK'nın SkyMail'e girmesi için `skymail:access`, gönderim sayfasını açması için `skymail:mails:read`
+gerekir; ikisi de aşağıdaki tohum ekiyle DK'ya verilir.
+
+**Bilinçli sapma: DK hem içeriği açar hem açılış kaydını okur (Yusuf, 2026-11-22).** DK
+`skymail:system-mails:read`'i (ADMIN, YK, DK) korur: "DK her şeyin sahibi, her şeyi görebilmeli"; DK
+kulübün denetim organıdır, tam görünürlük ister. Bu rol maskeli içeriği açar, yani DK kendi açışlarının
+kaydını da okur. NIST SP 800-53 AU-9(4)'ün görevler ayrılığından (denetlenen kendi kaydını okumaz) ve
+Purview'daki ayrımdan bilinçli sapmadır; gerekçe Yusuf'un kararıdır. Telafi: DK'nın açışları da
+`sent_content_views`'a yazılır ve "Kim açtı"da görünür kalır; kayıt yalnız eklenir, hiçbir rol onu
+gizlemez ya da silemez (yalnız `SENT_CONTENT_VIEWS_RETENTION_DAYS` sonunda süpürülür). ADMIN ve YK
+içeriği açar, kaydı okumaz. DK'nın `system-mails:read`'i bugüne kadar `skymail:access` ve
+`skymail:mails:read` olmadığı için fiilen çalışmıyordu; bu yayınla DK maskeli içerik dahil bütün
+gönderimleri açabilir hale gelir (Yusuf kararı).
+
+**DK'nın SkyMail okuması: `skymail:access` ve `skymail:mails:read` (Yusuf, 2026-11-22).** DK her şeyi
+okur, hiçbir şeyi değiştirmez (Entra Global Reader; denetim kaydı için Audit Reader karşılığı
+`skymail:audit:read`). Bu yüzden iki rolün kümesi `ADMIN YK DK` oldu. İkisi de içerik açmaz:
+skymail-backend bir gönderimin içeriğini yalnız göndereninine, `skymail:system-mails:read` sahibine ve
+toplu gönderimde `skymail:mails:write` sahibine açar (`mayRead`); `mails:read` gönderimleri, alıcıları
+ve teslim durumunu gösterir. Onaya gönderme `skymail:templates:read` ister; DK almaz. İki rol de yazma
+rolü değildir (`config/dk-read-only.sh` okuma rolü sayar).
+
+İki rol production'da ADMIN ve YK'ya çoktan tohumlandı (işaretli); tohum bir kez çalıştığı için yeni
+küme kendiliğinden DK'ya gitmez. **Tohum eki** (`SKYMAIL_PRIVILEGED_SEED_ADDITIONS`, `rol|ad`) bunu bir
+kez yapar: işaretli bir rolün işareti eklenen adın hiçbir yolunu (`/DK`, `/UYELER/DK`) anmıyorsa,
+operatörün `core-roles` adımı rolü o adın gruplarına verir ve işareti eski değeri önde kalarak
+`<eski işaret>; <zaman> /UYELER/DK` yapar. Çıktı: `skymail role skymail:access: seed addition, once to
+/UYELER/DK (granted to: /UYELER/DK)`, aynısı `skymail:mails:read` için. İşaret yolu andığında (ek
+yapılmış ya da realm küme DK'yı içerirken tohumlanmış) bir şey yapılmaz; ekten sonra panelden kaldırılan
+eşleme kaldırılmış kalır. İşaretsiz rol eskisi gibi bütün kümesiyle tohumlanır. Operatör oturumu yokken
+uyarı satırı eki de sayar: `WARNING: skymail roles not yet granted to the Privileged groups: …
+skymail:access(DK) skymail:mails:read(DK) …`. Sapma bekçisi (§33) DK'daki iki eşlemeyi beklenen sayar;
+eksiği tohumdan sonra `BILGI|S2-tohum`.
 
 **`skymail:suppressions:manage` ve `skymail:unsubscribes:reactivate` (ADR 0073, ADR 0072 karar 7).**
 Aynı listede iki yazma rolü. `suppressions:manage` SkyMail'in bastırma listesini (adresler) okur,

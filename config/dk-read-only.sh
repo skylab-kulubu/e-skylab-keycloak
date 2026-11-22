@@ -28,8 +28,11 @@
 #          them away, not that the code expects them on DK: that is config/app-assignments.sh's (the
 #          reconciler's Privileged lists and config/site-editor-grants.sh). core users:read (the Forms
 #          service account's role, a Java era leftover on people; DK reads people through global:read)
-#          and SkyMail's skymail:access, templates:read, lists:read and mails:read are not expected on
-#          DK, so the reset window (ekip-yetkileri ticket 06 c2) takes them away;
+#          and SkyMail's templates:read and lists:read are not expected on DK, so the reset window
+#          (ekip-yetkileri ticket 06 c2) takes them away. SkyMail's skymail:access and mails:read are
+#          (Yusuf, 2026-11-22: DK reads the sends, and with skymail:audit:read who opened masked
+#          content; the reconciler's seed addition gives them): neither opens a send's content nor
+#          writes;
 #   app    kept (APP_ROLES, core's app roles bound to the holder; Yusuf 2026-10-14, Y1 and Y5): core's
 #          own short link roles (url:access and url:create/get/update/delete: a DK member keeps their
 #          own links) and Forms' seat and screens (skyforms:access, form:manage, response:manage,
@@ -71,7 +74,7 @@
 # (ekip-yetkileri ticket 17). It reads and needs nothing else.
 # Environment: KEYCLOAK_ADMIN_URL (default http://keycloak:8080), KEYCLOAK_REALM (required),
 # KEYCLOAK_ADMIN_REALM (default master), KEYCLOAK_DK_READ_ONLY_ADMIN_USERNAME (or --admin-user),
-# KEYCLOAK_RECONCILE_SESSION (on, the default: every kcadm read and ReconcileJson call in one JVM,
+# KEYCLOAK_RECONCILE_SESSION (on, the default: every kcadm and ReconcileJson call in one JVM,
 # config/reconcile-session.sh; off: a JVM a call, as before; required: the tests).
 # Output: "[dk-read-only] ..." lines (group paths and role names, never a person), then "check: N
 # change(s) pending, W warning(s), P problem(s)" or "applied N change(s), ...". Exit 0 unless a
@@ -132,6 +135,7 @@ READ_ROLES=(
   'core|global:read' 'core|audit:read' 'core|users:read'
   'skymail|skymail:system-mails:read' 'skymail|skymail:access' 'skymail|skymail:templates:read'
   'skymail|skymail:lists:read' 'skymail|skymail:mails:read' 'skymail|skymail:mails:tracking:read'
+  'skymail|skymail:audit:read'
   '*|content:read'
   'forms|skyforms:read-all'
 )
@@ -311,7 +315,7 @@ summary() {
   fi
 }
 
-# A read (get) in the session when it runs (config/reconcile-session.sh), a write in its own JVM.
+# In the session when it runs (config/reconcile-session.sh), reads and writes alike.
 kcadm() {
   session_kcadm "$@"
 }

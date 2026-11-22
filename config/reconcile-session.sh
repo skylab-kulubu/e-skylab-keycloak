@@ -266,6 +266,14 @@ session_call() {
   mkfifo "$request/done" || session_lost 'mkfifo failed'
   exec {done_fd}<>"$request/done"
   printf '%s %s\n' "$tool" "$request" >&"$SESSION_FD"
+  # For the tests alone (tests/run-integration.sh, stage_reconcile_session_parity): with required and
+  # KEYCLOAK_RECONCILE_SESSION_TEST_KILL_ON_WRITE=1 the session JVM is killed as soon as the run's first
+  # kcadm write is sent, so that the run stops during a write (session_lost) whether or not that write
+  # reached Keycloak, and the same run again must finish the work.
+  if [[ ${KEYCLOAK_RECONCILE_SESSION_TEST_KILL_ON_WRITE:-} == 1 && $SESSION_MODE == required && $tool == kcadm \
+    && ${1:-} != get ]]; then
+    kill -KILL "$SESSION_PID" 2>/dev/null || true
+  fi
   until IFS= read -r -t 1 -u "$done_fd" status; do
     kill -0 "$SESSION_PID" 2>/dev/null || session_lost 'the session JVM exited during the call'
   done

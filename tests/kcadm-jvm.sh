@@ -15,11 +15,29 @@ KCADM_JVM_OPTS=${KEYCLOAK_TEST_KC_OPTS--XX:TieredStopAtLevel=1 -XX:+UseSerialGC 
 # JDK, a half-written file) is ignored without a word: -Xshare:auto, and the CDS log is off, since the
 # JVM logs to stdout, where kcadm writes its JSON. Writing the archive is a separate call whose status
 # is ignored, because a JVM that cannot write it exits with status 1 after a successful call.
+# kcadm_jvm_archive_options dump|use [ARCHIVE]: the options that write or map ARCHIVE (default
+# KCADM_JVM_ARCHIVE); nothing when KCADM_JVM_OPTS is off.
 KCADM_JVM_ARCHIVE=/opt/kcadm-cds/kcadm.jsa
 kcadm_jvm_archive_options() {
+  local archive=${2:-$KCADM_JVM_ARCHIVE}
   [[ -n $KCADM_JVM_OPTS ]] || return 0
   case $1 in
-    dump) printf '%s -XX:ArchiveClassesAtExit=%s -Xlog:cds=off -Xlog:cds+dynamic=off' "$KCADM_JVM_OPTS" "$KCADM_JVM_ARCHIVE" ;;
-    use) printf '%s -XX:SharedArchiveFile=%s -Xlog:cds=off -Xlog:cds+dynamic=off' "$KCADM_JVM_OPTS" "$KCADM_JVM_ARCHIVE" ;;
+    dump) printf '%s -XX:ArchiveClassesAtExit=%s -Xlog:cds=off -Xlog:cds+dynamic=off' "$KCADM_JVM_OPTS" "$archive" ;;
+    use) printf '%s -XX:SharedArchiveFile=%s -Xlog:cds=off -Xlog:cds+dynamic=off' "$KCADM_JVM_OPTS" "$archive" ;;
   esac
+}
+
+# The test scripts that start a Keycloak container of their own (docker run) use the same archive in
+# that container's /tmp: the container gets KCADM_JVM_STANDALONE_OPTS as its KC_OPTS, so every kcadm
+# call in it maps the archive (the script's own, and those of the operator scripts it runs there, the
+# reconciliation session's JVM included), and kcadm_jvm_dump CONTAINER CONFIG writes the archive once,
+# right after the script's first kcadm login. Until then, or when the dump fails, calls run without it.
+KCADM_JVM_STANDALONE_ARCHIVE=/tmp/kcadm.jsa
+KCADM_JVM_STANDALONE_OPTS=$(kcadm_jvm_archive_options use "$KCADM_JVM_STANDALONE_ARCHIVE")
+kcadm_jvm_dump() {
+  local options
+  options=$(kcadm_jvm_archive_options dump "$KCADM_JVM_STANDALONE_ARCHIVE")
+  [[ -n $options ]] || return 0
+  docker exec -e "KC_OPTS=$options" "$1" /opt/keycloak/bin/kcadm.sh get realms/master --config "$2" \
+    --fields realm >/dev/null 2>&1 || true
 }

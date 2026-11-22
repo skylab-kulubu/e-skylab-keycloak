@@ -7,7 +7,9 @@
 # content of single system mails) and skymail:mails:tracking:read (iletisim-servisi 14b/17, T2) are
 # made by the reconciler on every run (it only warns while they are unseeded); the operator's
 # core-roles step grants them once to ADMIN, YK and DK and marks them, the same way as core's resource
-# roles. skymail:suppressions:manage (ADR 0073, skymail-bounce-isleme 06) and
+# roles. skymail:audit:read (who opened a masked mail's content; skymail-frontend-rewrite 32, Yusuf
+# 2026-11-22: an audit role of its own, as Purview's Audit Reader) is made the same way and goes to
+# DK alone: ADMIN and YK, who may open the content, do not read its record. skymail:suppressions:manage (ADR 0073, skymail-bounce-isleme 06) and
 # skymail:unsubscribes:reactivate (ADR 0072 decision 7, abonelik-cikisi 10) are made the same way and
 # go to ADMIN and YK alone (write roles: DK none). SkyMail's own roles of the code area (ekip-yetkileri ticket 03): skymail:access,
 # skymail:templates:read, skymail:lists:read, skymail:mails:read, skymail:mails:send and
@@ -20,6 +22,8 @@
 
 SR_ROLE=skymail:system-mails:read
 SR_TRACK_ROLE=skymail:mails:tracking:read
+# The audit role (skymail-frontend-rewrite 32), seeded to DK alone.
+SR_AUDIT_ROLE=skymail:audit:read
 # The two write roles the reconciler makes (descriptions), seeded to ADMIN and YK alone.
 SR_SUPPRESS_ROLE=skymail:suppressions:manage
 SR_REACTIVATE_ROLE=skymail:unsubscribes:reactivate
@@ -58,15 +62,17 @@ sr_effective_roles() {
 stage_skymail_roles_after_first_reconciliation() {
   CURRENT_STAGE='skymail Privileged roles: created by the first reconciliation, not granted'
   local log="$TEST_STATE_DIR/reconcile-first.log" roles path role
-  grep -Fq "[reconcile] Privileged roles of skymail (11): created ($SR_ROLE, $SR_TRACK_ROLE, $SR_SUPPRESS_ROLE, $SR_REACTIVATE_ROLE); not in the realm, the application makes them, seeded once they exist: $SR_ABSENT" "$log" \
-    || fail "the first reconciliation did not create $SR_ROLE, $SR_TRACK_ROLE, $SR_SUPPRESS_ROLE and $SR_REACTIVATE_ROLE alone, or did not name SkyMail's absent roles"
-  grep -Fq "[reconcile] WARNING: skymail roles not yet granted to the Privileged groups: $SR_ROLE $SR_TRACK_ROLE $SR_SUPPRESS_ROLE $SR_REACTIVATE_ROLE skymail:access skymail:lists:read" "$log" \
+  grep -Fq "[reconcile] Privileged roles of skymail (12): created ($SR_ROLE, $SR_TRACK_ROLE, $SR_AUDIT_ROLE, $SR_SUPPRESS_ROLE, $SR_REACTIVATE_ROLE); not in the realm, the application makes them, seeded once they exist: $SR_ABSENT" "$log" \
+    || fail "the first reconciliation did not create $SR_ROLE, $SR_TRACK_ROLE, $SR_AUDIT_ROLE, $SR_SUPPRESS_ROLE and $SR_REACTIVATE_ROLE alone, or did not name SkyMail's absent roles"
+  grep -Fq "[reconcile] WARNING: skymail roles not yet granted to the Privileged groups: $SR_ROLE $SR_TRACK_ROLE $SR_AUDIT_ROLE $SR_SUPPRESS_ROLE $SR_REACTIVATE_ROLE skymail:access skymail:lists:read" "$log" \
     || fail 'the first reconciliation did not report the unseeded skymail roles'
   roles=$(kcadm get "clients/$(lca_client_uuid skymail)/roles" -r "$V2_REALM" -c)
   json_assert "$roles" '[.[] | select(.name == $r) | .description] == ["Tekil sistem postalarının (doğrulama, bildirim) içeriğini görür (skymail-backend #61)"]' \
     "$SR_ROLE was not created with its description" --arg r "$SR_ROLE"
   json_assert "$roles" '[.[] | select(.name == $r) | (.description | startswith("Her gönderimin kişi bazındaki açılma ve tıklama raporunu görür")) and .composite == false] == [true]' \
     "$SR_TRACK_ROLE was not created with its description or was created as a composite" --arg r "$SR_TRACK_ROLE"
+  json_assert "$roles" '[.[] | select(.name == $r) | (.description | startswith("Maskeli içeriği kimin açtığını görür")) and .composite == false] == [true]' \
+    "$SR_AUDIT_ROLE was not created with its description or was created as a composite" --arg r "$SR_AUDIT_ROLE"
   json_assert "$roles" '[.[] | select(.name == $r) | (.description | startswith("SkyMail: bastırma listesini görür")) and .composite == false] == [true]' \
     "$SR_SUPPRESS_ROLE was not created with its description or was created as a composite" --arg r "$SR_SUPPRESS_ROLE"
   json_assert "$roles" '[.[] | select(.name == $r) | (.description | startswith("SkyMail: kimliği olmayan adresin kendi çıkışını")) and .composite == false] == [true]' \
@@ -75,11 +81,13 @@ stage_skymail_roles_after_first_reconciliation() {
     [[ $role == skymail:mails:send ]] && continue
     json_assert "$roles" '[.[] | select(.name == $r)] | length == 0' "the reconciler created SkyMail's own role $role" --arg r "$role"
   done
-  [[ -z $(sr_seed_mark) && -z $(sr_seed_mark "$SR_TRACK_ROLE") && -z $(sr_seed_mark "$SR_SUPPRESS_ROLE") && -z $(sr_seed_mark skymail:access) ]] \
+  [[ -z $(sr_seed_mark) && -z $(sr_seed_mark "$SR_TRACK_ROLE") && -z $(sr_seed_mark "$SR_AUDIT_ROLE") && -z $(sr_seed_mark "$SR_SUPPRESS_ROLE") \
+    && -z $(sr_seed_mark skymail:access) ]] \
     || fail 'the reconciler identity marked a skymail role as seeded'
   for path in "${SR_PRIVILEGED[@]}"; do
-    json_assert "$(sr_group_roles "$path")" 'index($r) == null and index($t) == null and index($s) == null and index("skymail:access") == null' \
-      "the reconciler identity granted a skymail Privileged role to $path" --arg r "$SR_ROLE" --arg t "$SR_TRACK_ROLE" --arg s "$SR_SUPPRESS_ROLE"
+    json_assert "$(sr_group_roles "$path")" 'index($r) == null and index($t) == null and index($s) == null and index($a) == null and index("skymail:access") == null' \
+      "the reconciler identity granted a skymail Privileged role to $path" --arg r "$SR_ROLE" --arg t "$SR_TRACK_ROLE" --arg s "$SR_SUPPRESS_ROLE" \
+      --arg a "$SR_AUDIT_ROLE"
   done
 }
 
@@ -98,6 +106,14 @@ stage_skymail_roles_seeded_by_operator() {
       || fail "$role was not seeded to ADMIN and YK alone (got: $(sr_seed_mark "$role"))"
   done
   [[ -z $(sr_seed_mark "$SR_GONE_ROLE") ]] || fail "$SR_GONE_ROLE was seeded"
+  # The audit role: DK alone (the core-roles stage's /UYELER/DK); neither ADMIN nor YK, nor the YK
+  # member (want below has no audit role).
+  [[ $(sr_seed_mark "$SR_AUDIT_ROLE") =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\ /UYELER/DK$ ]] \
+    || fail "$SR_AUDIT_ROLE was not seeded to DK alone (got: $(sr_seed_mark "$SR_AUDIT_ROLE"))"
+  for path in "${SR_PRIVILEGED[@]}"; do
+    json_assert "$(sr_group_roles "$path")" 'index($a) == null' "$path got $SR_AUDIT_ROLE (DK alone reads the record)" \
+      --arg a "$SR_AUDIT_ROLE"
+  done
   want=$(printf '%s\n' "$SR_ROLE" "$SR_TRACK_ROLE" "${SR_ADMIN_YK_ROLES[@]}" | jq -R . | jq -sc .)
   for path in "${SR_PRIVILEGED[@]}"; do
     json_assert "$(sr_group_roles "$path")" '. as $held | $want | all(. as $r | $held | index($r) != null)' \

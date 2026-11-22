@@ -3836,6 +3836,15 @@ reconcile_core_service_roles() {
 #                                  (skymail-backend #129; SKYMAIL_SENDER_SEES_RECIPIENTS=on gives the
 #                                  sender their own recipients back). skymail:mails:read still sees
 #                                  the recipients and their delivery status, not opens and clicks.
+#   skymail:audit:read             DK only: who opened a masked mail's content, the record SkyMail
+#                                  writes on every opening (sent_content_views; GET
+#                                  /v1/mail_tasks/{id}/content-views; hub ticket
+#                                  skymail-frontend-rewrite 32). Yusuf, 2026-11-22: a role of its own,
+#                                  apart from the roles that open the content (system-mails:read,
+#                                  mails:write), as Microsoft Purview's Audit Reader, Google
+#                                  Workspace's Reports privilege and NIST SP 800-53 AU-9(4)
+#                                  (separation of duties: those audited do not read their own audit
+#                                  trail). A reading role, so DK keeps it (config/dk-read-only.sh).
 #   skymail:suppressions:manage    ADMIN and YK: the suppression list (addresses), removing a
 #                                  permanent failure (bounce) from it and the bounce rate
 #                                  (skymail-backend internal/handlers/suppressions.go,
@@ -3863,6 +3872,7 @@ reconcile_core_service_roles() {
 SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS=(
   'skymail:system-mails:read|ADMIN YK DK|Tekil sistem postalarının (doğrulama, bildirim) içeriğini görür (skymail-backend #61)'
   'skymail:mails:tracking:read|ADMIN YK DK|Her gönderimin kişi bazındaki açılma ve tıklama raporunu görür (iletisim-servisi 14b/17, T2; gönderen yalnız toplamları görür)'
+  'skymail:audit:read|DK|Maskeli içeriği kimin açtığını görür (gönderim başına açılış kaydı; denetim, içeriği açan rollerden ayrı)'
   'skymail:suppressions:manage|ADMIN YK|SkyMail: bastırma listesini görür, kalıcı ret (bounce) kaydını kaldırır, bounce oranını okur (ADR 0073)'
   'skymail:unsubscribes:reactivate|ADMIN YK|SkyMail: kimliği olmayan adresin kendi çıkışını, kişi isteyince ya da hata olunca, gerekçeyle geri alır (ADR 0072)'
   'skymail:access|ADMIN YK|-'

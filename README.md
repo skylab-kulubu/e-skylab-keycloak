@@ -709,6 +709,9 @@ tohumlar. `skymail:announcements:send` listeden çıktı (okuyan yok; ekip-yetki
 eşlemeleri kalır (runbook §25).
 `skymail:mails:tracking:read` (gönderimlerin kişi bazındaki açılma ve tıklama raporu) aynı biçimde
 ADMIN, YK ve DK'ya bir kez tohumlanır; okuma rolüdür, DK'da kalır (runbook §25).
+`skymail:audit:read` (maskeli içeriği kimin açtığını gösteren kayıt; skymail-frontend-rewrite 32) aynı
+biçimde oluşturulur ve yalnız DK'ya bir kez tohumlanır: içeriği açabilen roller kendi açışlarının
+kaydını okumaz (Purview Audit Reader, NIST AU-9(4); runbook §25).
 `skymail:suppressions:manage` (bastırma listesi, kalıcı ret kaydını kaldırma, bounce oranı; ADR 0073)
 ve `skymail:unsubscribes:reactivate` (kimliği olmayan adresin çıkışını kişi isteyince ya da hata
 olunca gerekçeyle geri alma; ADR 0072 karar 7) aynı biçimde oluşturulur ve yalnız ADMIN ve YK'ya bir

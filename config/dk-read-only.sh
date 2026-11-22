@@ -132,6 +132,7 @@ READ_ROLES=(
   'core|global:read' 'core|audit:read' 'core|users:read'
   'skymail|skymail:system-mails:read' 'skymail|skymail:access' 'skymail|skymail:templates:read'
   'skymail|skymail:lists:read' 'skymail|skymail:mails:read' 'skymail|skymail:mails:tracking:read'
+  'skymail|skymail:audit:read'
   '*|content:read'
   'forms|skyforms:read-all'
 )

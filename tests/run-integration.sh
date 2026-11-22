@@ -878,6 +878,24 @@ stage_reconcile_session_parity() {
     diff <(jq . "$dir/state-off.json") <(jq . "$dir/state-session.json") >&2 || true
     fail 'the real run with the session left another realm than the one with a JVM per call'
   fi
+  # A session lost during a write (KEYCLOAK_RECONCILE_SESSION_TEST_KILL_ON_WRITE, config/reconcile-session.sh:
+  # the session JVM is killed as soon as the first write is sent): the run stops with exit 1 and says
+  # why, whether or not that write reached Keycloak; the same run again finishes the work and leaves the
+  # realm the runs above left.
+  reconcile_session_parity_drift
+  reconcile_session_run required false "$dir/lost.log" KEYCLOAK_RECONCILE_SESSION_TEST_KILL_ON_WRITE=1
+  [[ $(tail -n 1 "$dir/lost.log") == 'exit 1' ]] \
+    && grep -Eq '^The reconciliation session stopped during a kcadm or ReconcileJson call \(the session JVM (exited during the call|is gone)\); the run stops here\.' "$dir/lost.log" \
+    || { cat "$dir/lost.log" >&2; fail 'a session lost during a write did not stop the run with its reason'; }
+  ! grep -Fq 'Account Center Keycloak configuration is reconciled.' "$dir/lost.log" \
+    || fail 'the run that lost its session said it was reconciled'
+  reconcile_session_run required false "$dir/after-lost.log"
+  [[ $(tail -n 1 "$dir/after-lost.log") == 'exit 0' ]] || { cat "$dir/after-lost.log" >&2; fail 'the run after a lost session failed'; }
+  reconcile_session_parity_state >"$dir/state-after-lost.json"
+  if ! cmp -s "$dir/state-off.json" "$dir/state-after-lost.json"; then
+    diff <(jq . "$dir/state-off.json") <(jq . "$dir/state-after-lost.json") >&2 || true
+    fail 'the run after a session lost during a write did not finish the work'
+  fi
 }
 
 # The four drifts of stage_reconcile_session_parity.
@@ -909,14 +927,18 @@ reconcile_session_parity_state() {
   } | jq -S -c 'walk(if type == "object" then del(.id) else . end)'
 }
 
-# reconcile_session_run MODE CHECK LOG: one whole reconciliation with KEYCLOAK_RECONCILE_SESSION=MODE
-# and KEYCLOAK_RECONCILE_CHECK=CHECK. LOG gets what it printed (stdout and stderr in one stream, in
-# the order written) and a last line "exit STATUS"; Compose's own messages go elsewhere. Logs the
-# time it took.
+# reconcile_session_run MODE CHECK LOG [ENV=VALUE ...]: one whole reconciliation with
+# KEYCLOAK_RECONCILE_SESSION=MODE and KEYCLOAK_RECONCILE_CHECK=CHECK. LOG gets what it printed (stdout
+# and stderr in one stream, in the order written) and a last line "exit STATUS"; Compose's own
+# messages go elsewhere. Logs the time it took.
 reconcile_session_run() {
-  local mode=$1 check=$2 log=$3 started=$SECONDS
+  local mode=$1 check=$2 log=$3 started=$SECONDS assignment environment=()
+  shift 3
+  for assignment in "$@"; do
+    environment+=(-e "$assignment")
+  done
   "${COMPOSE[@]}" run --rm --no-deps -T \
-    -e "KEYCLOAK_RECONCILE_SESSION=$mode" -e "KEYCLOAK_RECONCILE_CHECK=$check" \
+    -e "KEYCLOAK_RECONCILE_SESSION=$mode" -e "KEYCLOAK_RECONCILE_CHECK=$check" ${environment[@]+"${environment[@]}"} \
     --entrypoint bash keycloak-config \
     -c '/opt/keycloak/config/reconcile-account-center.sh 2>&1; printf "exit %s\n" "$?"' \
     >"$log" 2>"$log.compose"

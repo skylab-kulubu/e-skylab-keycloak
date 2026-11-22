@@ -88,6 +88,26 @@ YTU_IDP_LEGACY_FIRST_BROKER_FLOWS=('first broker login for obs' 'first broker lo
 YTU_IDP_PREVIOUS_FLOW_SETTING=skyFirstLoginFlowBeforeYtuStep
 REVIEW_PROFILE_SETTING=update.profile.on.first.login
 YTU_FIRST_LOGIN=${KEYCLOAK_YTU_FIRST_LOGIN:-keep}
+# keycloak-yayin 02 (Yusuf, 2026-11-22): the operator step KEYCLOAK_RECONCILE_ONLY=broker-flows owns
+# two broker flows production had made by hand (runbook §22).
+#   - OBS's post broker login flow POST_BROKER_FLOW_ALIAS (its production name), which runs after
+#     every YTÜ login: the passkey offer (POST_BROKER_OFFER_STEP, REQUIRED) and nothing else. The
+#     hand-made flow also held a CONDITIONAL subflow POST_BROKER_DEAD_SUBFLOW (a role condition,
+#     DISABLED, and auth-otp-form). Keycloak 26.7.4 counts only enabled conditions of a CONDITIONAL
+#     subflow and skips one without any (DefaultAuthenticationFlow.isConditionalSubflowDisabled), so
+#     it never asked anyone for an OTP; the step removes it, and refuses (nothing changed, exit 1)
+#     while any condition in it is enabled or it is REQUIRED: then removing it would change who is
+#     asked. Any other step in the flow is refused the same way.
+#   - BROKER_FLOWS_TO_DELETE: hand-made first broker login duplicates no identity provider uses. Each
+#     is deleted only while nothing binds it (a realm binding, an identity provider's first or post
+#     broker login flow, a client's flow override); a bound one stops the step (exit 1, nothing
+#     deleted).
+# Only an operator session reads identity providers, so this is an operator step; with
+# KEYCLOAK_RECONCILE_CHECK=true it is a dry run ("would ..." lines, nothing written).
+POST_BROKER_FLOW_ALIAS=post-broker-passkey-offer
+POST_BROKER_OFFER_STEP=passkey-offer-authenticator
+POST_BROKER_DEAD_SUBFLOW='cond 2fa'
+BROKER_FLOWS_TO_DELETE=('first broker login + http ')
 # ADR-0063 decision 4: optional first-Microsoft-login existing-account proof. Installing the image
 # never enables this flow. Explicit on/off only edits our existing first-broker-login copy.
 EXISTING_ACCOUNT_PROMPT=${KEYCLOAK_EXISTING_ACCOUNT_PROMPT:-keep}
@@ -203,7 +223,8 @@ RECONCILE_ONLY=${KEYCLOAK_RECONCILE_ONLY:-}
 # KEYCLOAK_RECONCILE_CHECK=true: a dry run. Of the operator's service-roles step (runbook §20), of the
 # role-groups, leader-app-roles and tohum-atamalar steps (§26, §27, §33) and of the default-roles step
 # (§33): it prints "would ..." for each change and writes nothing. Of the whole reconciliation (the
-# reconciler identity, no KEYCLOAK_RECONCILE_ONLY) and of the operator's core-roles step: every write
+# reconciler identity, no KEYCLOAK_RECONCILE_ONLY) and of the operator's core-roles and broker-flows
+# (§22) steps: every write
 # is withheld (see kcadm below): each one is a "[reconcile] would kcadm VERB PATH ..." line instead,
 # the step's own lines say what a real run would log, and the run ends with "... is checked; nothing
 # was written (N write(s) withheld)." A step that reads back what it would have written (a flow it
@@ -239,11 +260,11 @@ RABBITMQ_EVENTS=${KEYCLOAK_RABBITMQ_EVENTS:-keep}
 RABBITMQ_EVENT_LISTENER=keycloak-to-rabbitmq
 ACCOUNT_ROLE_ALLOWLIST=(manage-account view-profile manage-account-links)
 case $RECONCILE_ONLY in
-  '' | admin-panel-client | login-clients | core-roles | service-roles | first-broker-login | email-code-login | role-groups | leader-app-roles | default-roles | app-assignments | tohum-atamalar) ;;
+  '' | admin-panel-client | login-clients | core-roles | service-roles | first-broker-login | broker-flows | email-code-login | role-groups | leader-app-roles | default-roles | app-assignments | tohum-atamalar) ;;
   # The step's name before core's service roles became a list (core-internal-auth ticket 03).
   media-attach) RECONCILE_ONLY=service-roles ;;
   *)
-    printf 'KEYCLOAK_RECONCILE_ONLY must be empty, admin-panel-client, login-clients, core-roles, service-roles, first-broker-login, email-code-login, role-groups, leader-app-roles, default-roles, app-assignments or tohum-atamalar, not %s\n' "$RECONCILE_ONLY" >&2
+    printf 'KEYCLOAK_RECONCILE_ONLY must be empty, admin-panel-client, login-clients, core-roles, service-roles, first-broker-login, broker-flows, email-code-login, role-groups, leader-app-roles, default-roles, app-assignments or tohum-atamalar, not %s\n' "$RECONCILE_ONLY" >&2
     exit 2
     ;;
 esac
@@ -252,8 +273,8 @@ case $RECONCILE_CHECK in
   true)
     # The whole reconciliation (the reconciler identity) or one operator step that has a dry run.
     if [[ -n $RECONCILE_ONLY ]] \
-      && [[ ! $RECONCILE_ONLY =~ ^(service-roles|role-groups|leader-app-roles|core-roles|default-roles|app-assignments|tohum-atamalar)$ || -z $OPERATOR_KCADM_CONFIG ]]; then
-      printf 'KEYCLOAK_RECONCILE_CHECK=true is a dry run of the operator step KEYCLOAK_RECONCILE_ONLY=service-roles (or core-roles, role-groups, leader-app-roles, default-roles, tohum-atamalar) with KEYCLOAK_RECONCILE_KCADM_CONFIG only, or of the whole reconciliation with the reconciler identity\n' >&2
+      && [[ ! $RECONCILE_ONLY =~ ^(service-roles|role-groups|leader-app-roles|core-roles|default-roles|broker-flows|app-assignments|tohum-atamalar)$ || -z $OPERATOR_KCADM_CONFIG ]]; then
+      printf 'KEYCLOAK_RECONCILE_CHECK=true is a dry run of the operator step KEYCLOAK_RECONCILE_ONLY=service-roles (or core-roles, role-groups, leader-app-roles, default-roles, broker-flows, tohum-atamalar) with KEYCLOAK_RECONCILE_KCADM_CONFIG only, or of the whole reconciliation with the reconciler identity\n' >&2
       exit 2
     fi
     ;;
@@ -289,7 +310,7 @@ if [[ -n $OPERATOR_KCADM_CONFIG ]]; then
 else
   KCADM_CONFIG=$(mktemp /tmp/account-center-kcadm.XXXXXX)
 fi
-if [[ $RECONCILE_ONLY =~ ^(default-roles|app-assignments|tohum-atamalar)$ && -z $OPERATOR_KCADM_CONFIG ]]; then
+if [[ $RECONCILE_ONLY =~ ^(default-roles|broker-flows|app-assignments|tohum-atamalar)$ && -z $OPERATOR_KCADM_CONFIG ]]; then
   rm -f "$KCADM_CONFIG"
   printf 'KEYCLOAK_RECONCILE_ONLY=%s is an operator step: set KEYCLOAK_RECONCILE_KCADM_CONFIG (it reads or maps roles of groups and people, or identity providers, which the reconciler identity %s may not)\n' \
     "$RECONCILE_ONLY" "$CONFIG_CLIENT_ID" >&2
@@ -435,7 +456,7 @@ BASE_URL=$(normalize_account_center_base_url \
 # placeholder answers an empty list (an empty object for one resource or a mapping set, nothing in
 # CSV), so that a step goes on as if the thing were made and empty. Anything else is read live.
 CHECK_WRITES=false
-if [[ $RECONCILE_CHECK == true && ( -z $RECONCILE_ONLY || $RECONCILE_ONLY == core-roles || $RECONCILE_ONLY == default-roles ) ]]; then
+if [[ $RECONCILE_CHECK == true && ( -z $RECONCILE_ONLY || $RECONCILE_ONLY =~ ^(core-roles|default-roles|broker-flows)$ ) ]]; then
   CHECK_WRITES=true
 fi
 CHECK_ID_PREFIX=checked-not-created-
@@ -1880,6 +1901,203 @@ restore_ytu_idp_first_login_flow() {
   fi
   set_ytu_idp_first_login_flow "$previous" ''
   log "identity provider $YTU_IDP_ALIAS: first login flow binding restored ('$previous', as before KEYCLOAK_YTU_FIRST_LOGIN=on)"
+}
+
+# keycloak-yayin 02: OBS's post broker login flow (see POST_BROKER_FLOW_ALIAS above). OBS absent
+# (the sandbox): nothing to do. OBS bound to another post broker login flow: reported and kept.
+# Otherwise the flow is made or put in shape (only the offer, REQUIRED; the dead subflow removed)
+# before OBS is bound to it, so no login meets a half-made flow.
+reconcile_obs_post_broker_flow() {
+  local idp_file stderr_file bound flow_id flow_path rows_file id level requirement priority provider is_flow name
+  local offer_id='' offer_requirement='' offer_priority=0 offer_count=0 dead_id='' dead_requirement='' refused='' enabled_condition=''
+  idp_file=$(mktemp "$WORK_DIR/post-broker-idp.XXXXXX")
+  stderr_file=$(mktemp "$WORK_DIR/post-broker-idp-stderr.XXXXXX")
+  if ! kcadm get "identity-provider/instances/$YTU_IDP_ALIAS" -r "$TARGET_REALM" >"$idp_file" 2>"$stderr_file"; then
+    if grep -Eqi '404|not found' "$stderr_file"; then
+      log "identity provider $YTU_IDP_ALIAS post broker login flow: unchanged (absent)"
+      return 0
+    fi
+    cat "$stderr_file" >&2
+    printf 'Identity provider %s is not readable with this session; KEYCLOAK_RECONCILE_ONLY=broker-flows needs an administrator session\n' \
+      "$YTU_IDP_ALIAS" >&2
+    return 1
+  fi
+  bound=$(json_tool field postBrokerLoginFlowAlias <"$idp_file")
+  if [[ -n $bound && $bound != "$POST_BROKER_FLOW_ALIAS" ]]; then
+    warn "identity provider $YTU_IDP_ALIAS keeps its own post broker login flow '$bound'; '$POST_BROKER_FLOW_ALIAS' was not checked"
+    return 0
+  fi
+  flow_path=$(flow_alias_path "$POST_BROKER_FLOW_ALIAS")
+  if flow_id=$(optional_lookup flow_id_by_alias "$POST_BROKER_FLOW_ALIAS"); then
+    :
+  else
+    return $?
+  fi
+  if [[ -z $flow_id ]]; then
+    kcadm create authentication/flows -r "$TARGET_REALM" -s "alias=$POST_BROKER_FLOW_ALIAS" -s providerId=basic-flow \
+      -s topLevel=true -s builtIn=false -s 'description=After every YTÜ login: the passkey offer (keycloak-yayin 02)' >/dev/null
+    kcadm create "authentication/flows/$flow_path/executions/execution" -r "$TARGET_REALM" \
+      -b "{\"provider\":\"$POST_BROKER_OFFER_STEP\"}" >/dev/null
+    if [[ $CHECK_WRITES == true ]]; then
+      log "post broker login flow '$POST_BROKER_FLOW_ALIAS': would be created ($POST_BROKER_OFFER_STEP REQUIRED)"
+    else
+      offer_id=$(kcadm get "authentication/flows/$flow_path/executions" -r "$TARGET_REALM" \
+        --fields id,providerId --format csv --noquotes | awk -F, -v p="$POST_BROKER_OFFER_STEP" '$2 == p { print $1 }')
+      [[ -n $offer_id ]] || { printf "Flow '%s' has no %s after it was made\n" "$POST_BROKER_FLOW_ALIAS" "$POST_BROKER_OFFER_STEP" >&2; return 1; }
+      kcadm update "authentication/flows/$flow_path/executions" -r "$TARGET_REALM" -n \
+        -b "{\"id\":\"$offer_id\",\"requirement\":\"REQUIRED\"}" >/dev/null
+      log "post broker login flow '$POST_BROKER_FLOW_ALIAS': created ($POST_BROKER_OFFER_STEP REQUIRED)"
+    fi
+  else
+    rows_file=$(mktemp "$WORK_DIR/post-broker-flow.XXXXXX")
+    kcadm get "authentication/flows/$flow_path/executions" -r "$TARGET_REALM" \
+      --fields id,level,requirement,priority,providerId,authenticationFlow,displayName --format csv --noquotes >"$rows_file"
+    while IFS=, read -r id level requirement priority provider is_flow name; do
+      [[ -n $id ]] || continue
+      if [[ $level == 0 && $is_flow != true && $provider == "$POST_BROKER_OFFER_STEP" ]]; then
+        offer_id=$id
+        offer_requirement=$requirement
+        offer_priority=${priority:-0}
+        offer_count=$((offer_count + 1))
+      elif [[ $level == 0 && $is_flow == true && $name == "$POST_BROKER_DEAD_SUBFLOW" && -z $dead_id ]]; then
+        dead_id=$id
+        dead_requirement=$requirement
+      elif [[ $level == 1 && -n $dead_id && $is_flow != true && $provider == conditional-* ]]; then
+        [[ $requirement == DISABLED ]] || enabled_condition="$provider $requirement"
+      elif [[ $level == 1 && -n $dead_id && $is_flow != true && $provider == auth-otp-form ]]; then
+        :
+      else
+        refused="${refused:+$refused; }level $level ${name:-$provider} $requirement"
+      fi
+    done <"$rows_file"
+    if ((offer_count > 1)); then
+      refused="${refused:+$refused; }$POST_BROKER_OFFER_STEP $offer_count times"
+    fi
+    if [[ -n $dead_id && -z $enabled_condition && $dead_requirement != CONDITIONAL && $dead_requirement != DISABLED ]]; then
+      enabled_condition="subflow $dead_requirement"
+    fi
+    if [[ -n $refused ]]; then
+      printf "Post broker login flow '%s' holds steps this step does not know (%s); nothing was changed: inspect it in the Admin Console\n" \
+        "$POST_BROKER_FLOW_ALIAS" "$refused" >&2
+      return 1
+    fi
+    if [[ -n $enabled_condition ]]; then
+      printf "Subflow '%s' of post broker login flow '%s' can run (%s): removing it would change who is asked for an OTP; nothing was changed\n" \
+        "$POST_BROKER_DEAD_SUBFLOW" "$POST_BROKER_FLOW_ALIAS" "$enabled_condition" >&2
+      return 1
+    fi
+    if [[ -n $dead_id ]]; then
+      kcadm delete "authentication/executions/$dead_id" -r "$TARGET_REALM" >/dev/null
+      if [[ $CHECK_WRITES == true ]]; then
+        log "post broker login flow '$POST_BROKER_FLOW_ALIAS': would remove subflow '$POST_BROKER_DEAD_SUBFLOW' ($dead_requirement; no enabled condition: it never runs)"
+      else
+        log "post broker login flow '$POST_BROKER_FLOW_ALIAS': updated (removed subflow '$POST_BROKER_DEAD_SUBFLOW', $dead_requirement; no enabled condition: it never ran)"
+      fi
+    fi
+    if [[ -z $offer_id ]]; then
+      kcadm create "authentication/flows/$flow_path/executions/execution" -r "$TARGET_REALM" \
+        -b "{\"provider\":\"$POST_BROKER_OFFER_STEP\"}" >/dev/null
+      if [[ $CHECK_WRITES != true ]]; then
+        offer_id=$(kcadm get "authentication/flows/$flow_path/executions" -r "$TARGET_REALM" \
+          --fields id,providerId --format csv --noquotes | awk -F, -v p="$POST_BROKER_OFFER_STEP" '$2 == p { print $1 }')
+        kcadm update "authentication/flows/$flow_path/executions" -r "$TARGET_REALM" -n \
+          -b "{\"id\":\"$offer_id\",\"requirement\":\"REQUIRED\"}" >/dev/null
+      fi
+      log "post broker login flow '$POST_BROKER_FLOW_ALIAS': updated (added $POST_BROKER_OFFER_STEP, REQUIRED)"
+    elif [[ $offer_requirement != REQUIRED ]]; then
+      kcadm update "authentication/flows/$flow_path/executions" -r "$TARGET_REALM" -n \
+        -b "{\"id\":\"$offer_id\",\"requirement\":\"REQUIRED\",\"priority\":$offer_priority}" >/dev/null
+      log "post broker login flow '$POST_BROKER_FLOW_ALIAS': updated ($POST_BROKER_OFFER_STEP $offer_requirement -> REQUIRED)"
+    elif [[ -z $dead_id ]]; then
+      log "post broker login flow '$POST_BROKER_FLOW_ALIAS': unchanged ($POST_BROKER_OFFER_STEP REQUIRED, nothing else)"
+    fi
+  fi
+  if [[ $bound == "$POST_BROKER_FLOW_ALIAS" ]]; then
+    log "identity provider $YTU_IDP_ALIAS post broker login flow: unchanged ('$POST_BROKER_FLOW_ALIAS')"
+  else
+    kcadm update "identity-provider/instances/$YTU_IDP_ALIAS" -r "$TARGET_REALM" -s "postBrokerLoginFlowAlias=$POST_BROKER_FLOW_ALIAS" >/dev/null
+    log "identity provider $YTU_IDP_ALIAS post broker login flow: updated (none -> '$POST_BROKER_FLOW_ALIAS')"
+  fi
+}
+
+# keycloak-yayin 02: deletes each of BROKER_FLOWS_TO_DELETE that nothing binds (see above). What
+# binds a flow: the realm's seven flow bindings, an identity provider's first or post broker login
+# flow and another flow's subflow execution (by alias), a client's flow overrides (by id). Every
+# identity provider is read, a page of BROKER_FLOWS_IDP_PAGE at a time (Keycloak returns at most 100
+# without max). Exit 1 before any delete when one is bound, built in or not a top-level flow.
+BROKER_FLOWS_IDP_PAGE=100
+delete_unbound_broker_flows() {
+  local alias flow_id flow_file realm_file idps_file page_file flows_file clients_file uses binding value first count
+  local deletable=()
+  for alias in "${BROKER_FLOWS_TO_DELETE[@]}"; do
+    if flow_id=$(optional_lookup flow_id_by_alias "$alias"); then
+      :
+    else
+      return $?
+    fi
+    if [[ -z $flow_id ]]; then
+      log "authentication flow '$alias': unchanged (absent)"
+      continue
+    fi
+    flow_file=$(mktemp "$WORK_DIR/flow-to-delete.XXXXXX")
+    kcadm_json "authentication/flows/$flow_id" -r "$TARGET_REALM" >"$flow_file"
+    if [[ $(json_tool field builtIn <"$flow_file") != false || $(json_tool field topLevel <"$flow_file") != true ]]; then
+      printf "Authentication flow '%s' is built in or not a top-level flow; nothing was deleted\n" "$alias" >&2
+      return 1
+    fi
+    uses=''
+    realm_file=$(mktemp "$WORK_DIR/realm-bindings.XXXXXX")
+    kcadm_json "realms/$TARGET_REALM" >"$realm_file"
+    for binding in browserFlow registrationFlow directGrantFlow resetCredentialsFlow clientAuthenticationFlow \
+      dockerAuthenticationFlow firstBrokerLoginFlow; do
+      value=$(json_tool field "$binding" <"$realm_file")
+      [[ $value != "$alias" ]] || uses="${uses:+$uses, }realm $binding"
+    done
+    idps_file=$(mktemp "$WORK_DIR/idp-bindings.XXXXXX")
+    page_file=$(mktemp "$WORK_DIR/idp-page.XXXXXX")
+    first=0
+    while :; do
+      if ! kcadm get identity-provider/instances -r "$TARGET_REALM" -q "first=$first" -q "max=$BROKER_FLOWS_IDP_PAGE" \
+        --fields alias,firstBrokerLoginFlowAlias,postBrokerLoginFlowAlias >"$page_file"; then
+        printf 'Identity providers are not readable with this session; nothing was deleted\n' >&2
+        return 1
+      fi
+      cat "$page_file" >>"$idps_file"
+      count=$(grep -Ec '^[[:space:]]*"alias"[[:space:]]*:' "$page_file" || true)
+      ((count >= BROKER_FLOWS_IDP_PAGE)) || break
+      first=$((first + BROKER_FLOWS_IDP_PAGE))
+    done
+    # A JSON string value: the alias is matched whole, its trailing space too.
+    if grep -Fq "\"$alias\"" "$idps_file"; then
+      uses="${uses:+$uses, }an identity provider's first or post broker login flow"
+    fi
+    # A subflow execution names its flow by alias (pretty JSON: key and value on one line).
+    flows_file=$(mktemp "$WORK_DIR/flow-subflows.XXXXXX")
+    kcadm_json authentication/flows -r "$TARGET_REALM" >"$flows_file"
+    if grep -F "\"$alias\"" "$flows_file" | grep -Eq '"flowAlias"[[:space:]]*:'; then
+      uses="${uses:+$uses, }a subflow of another flow"
+    fi
+    clients_file=$(mktemp "$WORK_DIR/client-bindings.XXXXXX")
+    kcadm_json clients -r "$TARGET_REALM" --fields 'clientId,authenticationFlowBindingOverrides(*)' >"$clients_file"
+    if grep -Fq "$flow_id" "$clients_file"; then
+      uses="${uses:+$uses, }a client's flow override"
+    fi
+    if [[ -n $uses ]]; then
+      printf "Authentication flow '%s' is bound (%s); nothing was deleted\n" "$alias" "$uses" >&2
+      return 1
+    fi
+    deletable+=("$flow_id" "$alias")
+  done
+  set -- "${deletable[@]+"${deletable[@]}"}"
+  while (($#)); do
+    kcadm delete "authentication/flows/$1" -r "$TARGET_REALM" >/dev/null
+    if [[ $CHECK_WRITES == true ]]; then
+      log "authentication flow '$2': would be deleted (bound nowhere: no realm binding, identity provider, client override or parent flow)"
+    else
+      log "authentication flow '$2': deleted (bound nowhere: no realm binding, identity provider, client override or parent flow)"
+    fi
+    shift 2
+  done
 }
 
 # eskylab-login-ux 21: the realm's required action sky-personal-email-offer (see
@@ -4632,6 +4850,16 @@ if [[ $RECONCILE_ONLY == first-broker-login ]]; then
   reconcile_personal_email_offer
   reconcile_stay_signed_in
   printf 'First broker login flow is reconciled.\n'
+  exit 0
+fi
+if [[ $RECONCILE_ONLY == broker-flows ]]; then
+  reconcile_obs_post_broker_flow
+  delete_unbound_broker_flows
+  if [[ $CHECK_WRITES == true ]]; then
+    printf 'Broker flows are checked; nothing was written (%s write(s) withheld).\n' "$(check_writes_withheld)"
+  else
+    printf 'Broker flows are reconciled.\n'
+  fi
   exit 0
 fi
 if [[ $RECONCILE_ONLY == email-code-login ]]; then

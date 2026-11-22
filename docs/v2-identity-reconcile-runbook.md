@@ -2462,9 +2462,19 @@ OBS'yi elle kopyaya bağlamayın; realm bağlaması yeter. OBS'nin geri kalanı 
 
 - `post-broker-passkey-offer`: OBS'nin post broker login akışı ("sso sonrası passkey teklif et").
   `passkey-offer-authenticator` REQUIRED ve CONDITIONAL "cond 2fa" alt akışı (`conditional-user-role`
-  DISABLED, config "admin mi2" `condUserRole=ADMIN`; `auth-otp-form` REQUIRED). Koşul DISABLED
-  olduğu için alt akışın nasıl değerlendirildiği ayrıca doğrulanmalı.
-- `first broker login + http ` (sonunda boşlukla): hiçbir IdP'ye bağlı görünmüyor.
+  DISABLED, config "admin mi2" `condUserRole=ADMIN`; `auth-otp-form` REQUIRED).
+  - Passkey teklifi her YTÜ girişinde çalışır: passkey'i olmayan ve son 30 günde "hayır" dememiş
+    kişiye sorulur; `account-center` istemcisinde ve `kc_action`'lı isteklerde atlanır.
+  - "cond 2fa" **hiç çalışmaz, yöneticiler dahil kimseye OTP sorulmaz.** Keycloak 26.7.4
+    `DefaultAuthenticationFlow.isConditionalSubflowDisabled`: CONDITIONAL alt akışın koşulları
+    yalnız **etkin** koşul adımlarıdır (`isConditionalAuthenticator` `model.isEnabled()` ister);
+    etkin koşul yoksa liste boştur ve alt akış devre dışı sayılır (`conditionalAuthenticatorList.isEmpty()
+    || …`). Tek koşul DISABLED olduğu için `auth-otp-form`'a hiç gelinmez. Koşul bir gün ENABLED
+    yapılırsa ADMIN rolündekiler her YTÜ girişinde OTP'ye (OTP'si yoksa kuruluma) zorlanır.
+- `first broker login + http ` (sonunda boşlukla): hiçbir IdP'ye bağlı değil (2026-10-13 dökümünde
+  tek IdP OBS, onun geçersiz kılması `first broker login for obs`) ve hiçbir realm bağı değil
+  (2026-09-21 dökümü). Üst düzeyi yerleşik akışla aynı (review profile, User creation or linking,
+  Conditional Organization). Bağlı olmadığı için çalışmaz.
 
 ### Üretim sırası
 

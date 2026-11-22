@@ -7,12 +7,12 @@ umask 077
 KCADM=${KCADM_BIN:-/opt/keycloak/bin/kcadm.sh}
 JAVA_BIN=${JAVA_BIN:-java}
 # The session (config/ReconcileSession.java, started by config/reconcile-session.sh): every kcadm
-# read and every ReconcileJson call of the run in one JVM. A kcadm.sh call starts a JVM of its own,
-# and a whole reconciliation made some two hundred of them (about 8.5 minutes in production,
-# 2026-10-27). The session runs each call as that JVM's main would, and session_call gives back the
-# same bytes on stdout and stderr, in the same order, and the same exit status, so every line,
-# warning, dry run line and exit status of the run stays the same (tests/run-integration.sh compares
-# whole runs both ways). Writes (create, update, delete) still start kcadm.sh.
+# call (reads and writes; the login aside) and every ReconcileJson call of the run in one JVM. A
+# kcadm.sh call starts a JVM of its own, and a whole reconciliation made some two hundred of them
+# (about 8.5 minutes in production, 2026-10-27). The session runs each call as that JVM's main would,
+# and session_call gives back the same bytes on stdout and stderr, in the same order, and the same
+# exit status, so every line, warning, dry run line and exit status of the run stays the same
+# (tests/run-integration.sh compares whole runs both ways, and the realm a writing run leaves).
 # KEYCLOAK_RECONCILE_SESSION: on (the default; a JVM per call when the session cannot start), off (a
 # JVM per call: as before, the rollback and the comparison base) or required (on, but the run stops
 # when the session cannot start; the tests). With a KCADM_BIN (the tests' injected kcadm failures)

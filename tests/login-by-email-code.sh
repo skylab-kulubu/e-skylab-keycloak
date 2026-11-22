@@ -534,7 +534,7 @@ fi
 start_keycloak() {
   local instance=$1 port=$2
   docker run "${pull_arguments[@]}" --rm -d --name "$instance" --network "$NETWORK" --memory "$MEMORY" -p "127.0.0.1:$port:$port" \
-    -e KC_OPTS="$KCADM_JVM_OPTS" \
+    -e KC_OPTS="$KCADM_JVM_STANDALONE_OPTS" \
     -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
     -e SKY_EMAIL_CODE_DAILY_LIMIT="$DAILY_LIMIT" -e SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT="$WRONG_CEILING" \
     -e SKY_HARNESS=1 -e SKY_MAIL_ENABLED=true -e "SKY_MAIL_BASE_URL=http://$SKYMAIL_CONTAINER:8080" \
@@ -550,6 +550,7 @@ for _ in $(seq 1 120); do
 done
 curl -fsS "$BASE_URL/realms/master" >/dev/null || { docker logs "$CONTAINER" 2>&1 | tail -n 40 >&2; fail "Keycloak did not start ($IMAGE)"; }
 sessions_login
+kcadm_jvm_dump "$CONTAINER" "$ADMIN_CONFIG"
 docker logs "$CONTAINER" >"$STATE_DIR/server.log" 2>&1
 grep -Fq 'sky_mail_enabled client=keycloak-mailer' "$STATE_DIR/server.log" || fail 'the SkyMail provider is not on'
 printf '    stock Keycloak in dev mode with the SPI jar (%s), daily limit %s, SkyMail fixture\n' "$(basename -- "$SPI_JAR")" "$DAILY_LIMIT"

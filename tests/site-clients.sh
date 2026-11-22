@@ -217,7 +217,7 @@ CURRENT_STAGE='Keycloak start'
 [[ -n $IMAGE ]] || fail 'Dockerfile has no ARG KEYCLOAK_IMAGE'
 for tool in jq curl openssl; do command -v "$tool" >/dev/null || fail "$tool is required"; done
 docker run --rm -d --name "$CONTAINER" -p "127.0.0.1:$PORT:8080" \
-  -e KC_OPTS="$KCADM_JVM_OPTS" -e KEYCLOAK_RECONCILE_SESSION=required \
+  -e KC_OPTS="$KCADM_JVM_STANDALONE_OPTS" -e KEYCLOAK_RECONCILE_SESSION=required \
   -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
   "$IMAGE" start-dev >/dev/null
 for _ in $(seq 1 90); do
@@ -228,6 +228,7 @@ curl -fsS "$BASE_URL/realms/master" >/dev/null || fail "Keycloak did not start (
 docker exec "$CONTAINER" /opt/keycloak/bin/kcadm.sh config credentials --config "$KCADM_CONFIG" \
   --server http://localhost:8080 --realm master --user admin --password "$ADMIN_PASSWORD" >/dev/null 2>&1 \
   || fail 'kcadm login failed'
+kcadm_jvm_dump "$CONTAINER" "$KCADM_CONFIG"
 docker exec -i "$CONTAINER" sh -c 'cat > /tmp/site-clients.sh' <"$CLIENTS_SCRIPT"
 docker exec -i "$CONTAINER" sh -c 'cat > /tmp/site-editor-grants.sh' <"$GRANTS_SCRIPT"
 docker exec -i "$CONTAINER" sh -c 'cat > /tmp/inscribed-cms-roles.sh' <"$ROLES_SCRIPT"

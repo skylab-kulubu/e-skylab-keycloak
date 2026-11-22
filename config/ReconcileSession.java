@@ -1,6 +1,7 @@
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.BufferedReader;
+import java.io.Closeable;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -14,6 +15,7 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.charset.Charset;
@@ -44,7 +46,8 @@ import java.util.function.IntConsumer;
  *   DEFAULT_CONFIG_FILE_STRING). Its set-up (the crypto class loader of kc.lib.dir, CryptoIntegration,
  *   the default config path property) runs once here, as once per JVM there; then each call gets a new
  *   KcAdmCmd and a new command line from Globals.createCommandLine, and the status that main would
- *   have passed to System.exit. Globals' two static options are reset before each call.
+ *   have passed to System.exit. Globals' two static options are reset before each call; HttpUtil's
+ *   client, with its connection pool, is dropped after each (dropHttpClient).
  * - json: ReconcileJson.main, in a class loader of its own (the classes and the Jackson of the image
  *   the script compiled it with; the kcadm jar carries another Jackson), with ReconcileJson.exitHook
  *   throwing the status instead of ending the JVM. An exception that would have ended main is printed
@@ -84,6 +87,7 @@ public final class ReconcileSession {
     private final Method execute;
     private final Field dumpTrace;
     private final Field help;
+    private final Field httpClient;
     private final ClassLoader kcadmLoader;
     private final ClassLoader jsonLoader;
     private final Method jsonMain;
@@ -111,6 +115,11 @@ public final class ReconcileSession {
                 Class.forName("org.keycloak.client.cli.common.BaseGlobalOptionsCmd"), String.class, PrintWriter.class);
         dumpTrace = globals.getField("dumpTrace");
         help = globals.getField("help");
+        httpClient = Class.forName("org.keycloak.client.cli.util.HttpUtil").getDeclaredField("httpClient");
+        if (!Modifier.isStatic(httpClient.getModifiers())) {
+            throw new IllegalStateException("HttpUtil.httpClient is not static");
+        }
+        httpClient.setAccessible(true);
         execute = createCommandLine.getReturnType().getMethod("execute", String[].class);
         if (execute.getReturnType() != int.class) {
             throw new IllegalStateException("CommandLine.execute does not return the exit status");
@@ -247,6 +256,27 @@ public final class ReconcileSession {
             return (int) execute.invoke(commandLine, (Object) args);
         } catch (InvocationTargetException e) {
             return uncaught(e.getCause(), "org.keycloak.client.admin.cli.KcAdmMain");
+        } finally {
+            dropHttpClient();
+        }
+    }
+
+    /**
+     * Each call gets a new HTTP client, as each kcadm.sh JVM does. HttpUtil keeps one client (and its
+     * connection pool) for the JVM, and kcadm never reads the response of a write that prints nothing
+     * (a create's 201), so that connection never goes back to the pool: a JVM of its own drops it at
+     * exit. Kept across calls, a few such writes would use up the pool and the next call would wait
+     * for a connection forever. Closing the client closes its connections.
+     */
+    private void dropHttpClient() throws IllegalAccessException {
+        Object client = httpClient.get(null);
+        httpClient.set(null, null);
+        if (client instanceof Closeable closeable) {
+            try {
+                closeable.close();
+            } catch (IOException ignored) {
+                // Its connections are dropped with it either way.
+            }
         }
     }
 

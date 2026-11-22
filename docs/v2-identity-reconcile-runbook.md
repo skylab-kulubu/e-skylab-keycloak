@@ -39,7 +39,7 @@ entegrasyon testi bunu doğrular.
 | Parola sıfırlamanın OTP adımı (eskylab-login-ux 23, §17.1) | Bağlı (düzenlenebilir) sıfırlama akışının "Reset - Conditional OTP" alt akışında `reset-otp`'nin yerine aynı öncelik ve `REQUIRED` ile `auth-otp-form` konur; koşul `conditional-user-configured` aynen kalır. Durdurma kuralları parola formununkiyle aynıdır; yarıda kalmış değişim ve Admin Console'un acil yolunun bıraktığı hâl (DISABLED `reset-otp` yanında REQUIRED `auth-otp-form`) tamamlanır. Keycloak'ın yerleşik akışına dokunulmaz. `KEYCLOAK_RESET_OTP_STEP=reset` Keycloak'ın adımını geri koyar. |
 | Kimlik korumaları: core sertifika rolleri, OBS `department mapper`, core'un `manage-clients` rolü | Uzlaştırıcı **dokunmaz**: kimliğinin kullanıcı ve kimlik sağlayıcısı yetkisi yoktur. Operatör `config/identity-guardrails.sh` ile uygular (§8). |
 | Forms'un Privileged rolü (§28) | `forms` istemcisinde `skyforms:read-all` (DK'nın Forms okuması; forms-backend henüz okumuyor) her koşuda var edilir; SkyMail'inkiler gibi yalnız `DK`'ya **bir kez** verilir (operatörün `core-roles` koşusu). |
-| SkyMail'in Privileged rolleri (§25) | `skymail` istemcisinde `skymail:system-mails:read` ve `skymail:mails:tracking:read` (ADMIN, YK, DK; kişi bazındaki takip raporu, iletisim-servisi 17) her koşuda var edilir (yoksa açıklamasıyla oluşturulur); SkyMail'in kendi rolleri `skymail:access`, `templates:read`, `lists:read`, `mails:read`, `mails:send`, `mails:write` (ADMIN, YK) ve `mails:approve` (yalnız YK) oluşturulmaz, varsa tohumlanır (ekip-yetkileri 03; `announcements:send` listeden çıktı). core'un kaynak rolleri gibi kendi Privileged gruplarına **bir kez** verilir ve `skylab.seeded-group-mappings` ile işaretlenir; tohumlamayı operatörün `KEYCLOAK_RECONCILE_ONLY=core-roles` koşusu yapar. Kişilerin diğer `skymail:*` rolleri `/ROLLER` rol gruplarına taşınır (§26). |
+| SkyMail'in Privileged rolleri (§25) | `skymail` istemcisinde `skymail:system-mails:read` ve `skymail:mails:tracking:read` (ADMIN, YK, DK; kişi bazındaki takip raporu, iletisim-servisi 17) ile `skymail:audit:read` (yalnız DK; maskeli içeriği kimin açtığı, skymail-frontend-rewrite 32) her koşuda var edilir; `skymail:access` ve `skymail:mails:read` 2026-11-22'den beri DK'ya da gider (önceden tohumlanmış realm'de bir kezlik tohum eki) (yoksa açıklamasıyla oluşturulur); SkyMail'in kendi rolleri `skymail:access`, `templates:read`, `lists:read`, `mails:read`, `mails:send`, `mails:write` (ADMIN, YK) ve `mails:approve` (yalnız YK) oluşturulmaz, varsa tohumlanır (ekip-yetkileri 03; `announcements:send` listeden çıktı). core'un kaynak rolleri gibi kendi Privileged gruplarına **bir kez** verilir ve `skylab.seeded-group-mappings` ile işaretlenir; tohumlamayı operatörün `KEYCLOAK_RECONCILE_ONLY=core-roles` koşusu yapar. Kişilerin diğer `skymail:*` rolleri `/ROLLER` rol gruplarına taşınır (§26). |
 | Servis hesaplarının rolleri (§20, §20.1, §20.2) | `place-service` istemcisini oluşturur (gizli, yalnız client credentials, §20.2); `forms`'a core'un beş servis rolü (`consent:record` dahil), `place-service`'e yalnız `consent:record`, `skymail-backend`'e core'un `audience:read`'i, `communication-preferences:read`'i ve `consent:audience:read`'i ile `realm-management`'ın `view-users` ve `view-clients`'ı, `core`'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`, `skymail:lists:read`, `skymail:lists:write`, `skymail:tracking:withdraw` rolleri ile Forms'un `skyforms:responses:read-service`'i, `skymail-seed`'in servis hesabına `skymail:templates:system`. Uzlaştırıcı kimliği core rollerini, `skymail:tracking:withdraw`'u, `skymail:templates:system`'ı ve `skyforms:responses:read-service`'i oluşturur ve raporlar; vermeyi operatör `KEYCLOAK_RECONCILE_ONLY=service-roles` ile yapar. SkyMail'in öbür rolleri oluşturulmaz. Yalnız servis hesaplarının rolünü taşıyan kişi, grup, varsayılan rol ve bileşik rol bildirilir. |
 | Rol grupları `/ROLLER/<UYGULAMA>-<ROL>` (§26) ve Leader gruplarının uygulama rolleri (§27) | Uzlaştırıcı **dokunmaz** (gruba rol eşlemek kullanıcı yetkisi ister). Operatör `config/role-groups.sh` ve `config/leader-app-roles.sh` (ya da `KEYCLOAK_RECONCILE_ONLY=role-groups` / `leader-app-roles`) ile kurar; kuru koşu varsayılandır, `--apply` yazar; üye hiç eklenmez. |
 
@@ -3154,13 +3154,14 @@ olsun. Bu yüzden rol §19'daki core kaynak rolleriyle aynı biçimde yönetilir
 
 **SkyMail'in kod alanı rolleri (ekip-yetkileri bilet 03, 2026-10-23).** Aynı listede
 (`SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS`, `rol|Privileged adlar|açıklama`) SkyMail'in kendi rolleri de
-var: `skymail:access`, `skymail:templates:read`, `skymail:lists:read`, `skymail:mails:read`,
-`skymail:mails:send` ve `skymail:mails:write` `ADMIN` ve `YK`'ya (ADR 0067: YK doğrudan gönderir),
+var: `skymail:templates:read`, `skymail:lists:read`, `skymail:mails:send` ve `skymail:mails:write`
+`ADMIN` ve `YK`'ya (ADR 0067: YK doğrudan gönderir), `skymail:access` ve `skymail:mails:read`
+`ADMIN`, `YK` ve `DK`'ya (DK 2026-11-22'den beri, aşağıda),
 `skymail:mails:approve` yalnız `YK`'ya (S2: Mail onayının onaycısı YK kökü; dönem devrinde
 kendiliğinden değişir). Açıklama sütunu `-` olan rol SkyMail'indir: uzlaştırıcı onu **oluşturmaz**,
 realm'de varsa bir kez tohumlar, yoksa `Privileged roles of skymail (9): unchanged; not in the
-realm, the application makes them, seeded once they exist: …` satırında adını yazar. DK bu
-rollerin hiçbirini almaz (GY1). `skymail:access` ve `skymail:templates:read` uygulama rolüdür: köklerin
+realm, the application makes them, seeded once they exist: …` satırında adını yazar. DK yazma
+rollerinin hiçbirini almaz (GY1). `skymail:access` ve `skymail:templates:read` uygulama rolüdür: köklerin
 dışındaki atamaları panelindir (§33), uzlaştırıcı onlara dokunmaz.
 
 **`skymail:announcements:send` listeden çıktı (bilet 03, YETKI-MATRISI §3 D-1).** Okuyan servis yok;
@@ -3185,6 +3186,59 @@ rol budur: `WARNING: skymail roles not yet granted to the Privileged groups:
 skymail:mails:tracking:read`. Operatör çıktısı `skymail role skymail:mails:tracking:read: seeded
 once to <yollar> (granted to: …)`. Rol yokken SkyMail'in kişi bazındaki rapor ucu kimseye açık
 değildir; anahtar `on` ise yalnız gönderene açıktır (zararsız).
+
+**`skymail:audit:read` (hub bileti skymail-frontend-rewrite 32; Yusuf, 2026-11-22).** Aynı listede bir
+okuma rolü: maskeli (hassas) bir postanın içeriğini kimin, ne zaman, hangi alıcının satırında açtığını
+okur. SkyMail her açılışı `sent_content_views`'a yazar; rol yalnız bu kaydı okuyan uca açar
+(skymail-backend `GET /v1/mail_tasks/{id}/content-views`, `AuditReadRole`). İçeriği açan roller
+(`skymail:system-mails:read`, toplu gönderimde `skymail:mails:write`, gönderimin sahibi) bu rolü
+kendiliğinden **almaz**: kaydın konusu onlardır. Rol yalnız `DK`'ya (`/DK`, `/UYELER/DK`; hangisi
+varsa) bir kez verilir; ADMIN ve YK'ya verilmez. Sektör karşılığı: Microsoft Purview'da denetim kaydını
+okumak içerik yetkisinden ayrı bir roldür (Audit Reader / View-Only Audit Logs), Google Workspace'te
+denetim raporları ayrı bir yönetici yetkisidir (Reports), NIST SP 800-53 AU-9(4) denetim kaydına
+erişimi ayrıcalıklı kullanıcıların küçük bir alt kümesine bırakır (görevler ayrılığı). Okuma rolüdür,
+DK salt okur kuralıyla uyumludur (`config/dk-read-only.sh` onu okuma rolü sayar). Açıklaması var:
+SkyMail onu yalnız denetler, her koşu yoksa açıklamasıyla oluşturur. Uzlaştırıcı kimliğinin uyarı
+satırı onu da sayar (`WARNING: skymail roles not yet granted to the Privileged groups: …
+skymail:audit:read …`); operatör çıktısı `skymail role skymail:audit:read: seeded once to /UYELER/DK
+(granted to: /UYELER/DK)`. Realm'de DK grubu yoksa rol tohumlanmaz ve uyarılır (`no Privileged group
+(DK, at /<NAME> or under /UYELER) exists in realm …; nothing was granted, the skymail Privileged roles
+stay unseeded`). Tohumdan sonra eşleme paneldir: DK'nın
+alt grubundaki eşleme `BILGI|S2-tohum`, ADMIN ya da YK'daki eşleme `SAPMA|S2-fazla` (§33). Rol yokken
+ya da tohumlanmadan SkyMail'in ucu kimseye açık değildir (zararsız; kayıt yazılmaya devam eder).
+DK'nın SkyMail'e girmesi için `skymail:access`, gönderim sayfasını açması için `skymail:mails:read`
+gerekir; ikisi de aşağıdaki tohum ekiyle DK'ya verilir.
+
+**Bilinçli sapma: DK hem içeriği açar hem açılış kaydını okur (Yusuf, 2026-11-22).** DK
+`skymail:system-mails:read`'i (ADMIN, YK, DK) korur: "DK her şeyin sahibi, her şeyi görebilmeli"; DK
+kulübün denetim organıdır, tam görünürlük ister. Bu rol maskeli içeriği açar, yani DK kendi açışlarının
+kaydını da okur. NIST SP 800-53 AU-9(4)'ün görevler ayrılığından (denetlenen kendi kaydını okumaz) ve
+Purview'daki ayrımdan bilinçli sapmadır; gerekçe Yusuf'un kararıdır. Telafi: DK'nın açışları da
+`sent_content_views`'a yazılır ve "Kim açtı"da görünür kalır; kayıt yalnız eklenir, hiçbir rol onu
+gizlemez ya da silemez (yalnız `SENT_CONTENT_VIEWS_RETENTION_DAYS` sonunda süpürülür). ADMIN ve YK
+içeriği açar, kaydı okumaz. DK'nın `system-mails:read`'i bugüne kadar `skymail:access` ve
+`skymail:mails:read` olmadığı için fiilen çalışmıyordu; bu yayınla DK maskeli içerik dahil bütün
+gönderimleri açabilir hale gelir (Yusuf kararı).
+
+**DK'nın SkyMail okuması: `skymail:access` ve `skymail:mails:read` (Yusuf, 2026-11-22).** DK her şeyi
+okur, hiçbir şeyi değiştirmez (Entra Global Reader; denetim kaydı için Audit Reader karşılığı
+`skymail:audit:read`). Bu yüzden iki rolün kümesi `ADMIN YK DK` oldu. İkisi de içerik açmaz:
+skymail-backend bir gönderimin içeriğini yalnız göndereninine, `skymail:system-mails:read` sahibine ve
+toplu gönderimde `skymail:mails:write` sahibine açar (`mayRead`); `mails:read` gönderimleri, alıcıları
+ve teslim durumunu gösterir. Onaya gönderme `skymail:templates:read` ister; DK almaz. İki rol de yazma
+rolü değildir (`config/dk-read-only.sh` okuma rolü sayar).
+
+İki rol production'da ADMIN ve YK'ya çoktan tohumlandı (işaretli); tohum bir kez çalıştığı için yeni
+küme kendiliğinden DK'ya gitmez. **Tohum eki** (`SKYMAIL_PRIVILEGED_SEED_ADDITIONS`, `rol|ad`) bunu bir
+kez yapar: işaretli bir rolün işareti eklenen adın hiçbir yolunu (`/DK`, `/UYELER/DK`) anmıyorsa,
+operatörün `core-roles` adımı rolü o adın gruplarına verir ve işareti eski değeri önde kalarak
+`<eski işaret>; <zaman> /UYELER/DK` yapar. Çıktı: `skymail role skymail:access: seed addition, once to
+/UYELER/DK (granted to: /UYELER/DK)`, aynısı `skymail:mails:read` için. İşaret yolu andığında (ek
+yapılmış ya da realm küme DK'yı içerirken tohumlanmış) bir şey yapılmaz; ekten sonra panelden kaldırılan
+eşleme kaldırılmış kalır. İşaretsiz rol eskisi gibi bütün kümesiyle tohumlanır. Operatör oturumu yokken
+uyarı satırı eki de sayar: `WARNING: skymail roles not yet granted to the Privileged groups: …
+skymail:access(DK) skymail:mails:read(DK) …`. Sapma bekçisi (§33) DK'daki iki eşlemeyi beklenen sayar;
+eksiği tohumdan sonra `BILGI|S2-tohum`.
 
 **`skymail:suppressions:manage` ve `skymail:unsubscribes:reactivate` (ADR 0073, ADR 0072 karar 7).**
 Aynı listede iki yazma rolü. `suppressions:manage` SkyMail'in bastırma listesini (adresler) okur,

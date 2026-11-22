@@ -189,7 +189,9 @@ açık, o oturum 7 gün hareketsizlikte, en geç 30 günde biter:
 `rememberMe=true`, `ssoSessionIdleTimeoutRememberMe=604800`,
 `ssoSessionMaxLifespanRememberMe=2592000`; istemci oturumu SSO oturumundan miras
 alır, `clientSessionIdleTimeout=0` ve `clientSessionMaxLifespan=0`, yani refresh
-token SSO oturumu yaşadıkça yaşar, ayrı bir 30 dakika ya da 10 saat sınırı yoktur),
+token SSO oturumu yaşadıkça yaşar, ayrı bir 30 dakika ya da 10 saat sınırı yoktur;
+erişim tokenı 5 dakika yaşar, `accessTokenLifespan=300`: rol ya da grup değişikliği
+yeniden giriş olmadan en geç bir token ömründe gelir),
 brute-force koruması ve parola politikası
 `config/account-center-realm-security.json` (10 deneme, 60 sn artan bekleme,
 en çok 15 dk, 12 saat sıfırlama, kalıcı kilit yok;
@@ -325,6 +327,12 @@ realm bağlamasını görmez; uzlaştırıcı kimliği IdP okuyamadığı için 
 yapılmış `first broker login for obs` geçersiz kılması da yalnız biçimi yerleşik akışla aynıysa
 kaldırılır (adı OBS'ye not edilir, akış silinmez); `off` onu geri yazar (bilet 22). Ayrıntı, üretim sırası ve geri dönüş: runbook §22. Harness
 `tests/ytu-first-login.sh` tek başına çalışır (stok imaj, SPI jar'ı, taklit YTÜ kiracısı).
+Üretimde elle yapılmış iki broker akışı da koddadır (keycloak-yayin 02, operatör adımı
+`KEYCLOAK_RECONCILE_ONLY=broker-flows`, kuru koşusu `KEYCLOAK_RECONCILE_CHECK=true`): OBS'nin post broker
+login akışı `post-broker-passkey-offer` yalnız passkey teklifini (REQUIRED) taşır, hiç çalışmayan
+"cond 2fa" alt akışı (tek koşulu DISABLED) kaldırılır; bağsız `first broker login + http ` kopyası,
+hiçbir realm bağı, IdP, istemci geçersiz kılması ya da üst akış onu göstermiyorsa silinir. Bağlıysa ya da alt
+akışta etkin bir koşul varsa adım hiçbir şey değiştirmeden durur (exit 1). Runbook §22.
 
 SPI 1.27.0, gerçek e-posta kaydından sonra isteğe bağlı YTÜ bağlama ve native erişim anahtarı/parola
 önerilerini ekler. Özgün uygulamanın OIDC callback'i korunur; native YTÜ yetkisi olmayan RP açıklama
@@ -701,12 +709,18 @@ kapsamından; runbook §20.1), Template seed'in servis hesabına
 işareti kaldırır; skymail-backend README) verir; SkyMail'in rollerinden yalnız
 `skymail:notifications:send`'i, `skymail:tracking:withdraw`'u ve `skymail:templates:system`'ı, Forms'un rollerinden yalnız `skyforms:responses:read-service`'i oluşturur, öbürleri eksikse uyarır (runbook §20.1); listelenen servis istemcisinde varsayılan `roles` kapsamı yoksa ekler (runbook §20.1). SkyMail'in kendi
 rolleri `skymail:access`, `skymail:templates:read`, `skymail:lists:read`, `skymail:mails:read`,
-`skymail:mails:send`, `skymail:mails:write` ADMIN ve YK'ya, `skymail:mails:approve` yalnız YK'ya
+`skymail:mails:send`, `skymail:mails:write` ADMIN ve YK'ya (`access` ve `mails:read` DK'ya da), `skymail:mails:approve` yalnız YK'ya
 (onaycı YK kökü) aynı biçimde bir kez tohumlanır; uzlaştırıcı onları oluşturmaz, realm'de olanı
 tohumlar. `skymail:announcements:send` listeden çıktı (okuyan yok; ekip-yetkileri bilet 03), var olan
 eşlemeleri kalır (runbook §25).
 `skymail:mails:tracking:read` (gönderimlerin kişi bazındaki açılma ve tıklama raporu) aynı biçimde
 ADMIN, YK ve DK'ya bir kez tohumlanır; okuma rolüdür, DK'da kalır (runbook §25).
+`skymail:audit:read` (maskeli içeriği kimin açtığını gösteren kayıt; skymail-frontend-rewrite 32) aynı
+biçimde oluşturulur ve yalnız DK'ya bir kez tohumlanır: içeriği açabilen roller kendi açışlarının
+kaydını okumaz (Purview Audit Reader, NIST AU-9(4); runbook §25).
+DK her şeyi okur (Yusuf, 2026-11-22): `skymail:access` ve `skymail:mails:read` ADMIN ve YK'nın yanında
+DK'ya da verilir; önceden tohumlanmış realm'de bunu operatörün `core-roles` adımındaki bir kezlik tohum
+eki yapar (`SKYMAIL_PRIVILEGED_SEED_ADDITIONS`). İkisi de içerik açmaz, yazmaz (runbook §25).
 `skymail:suppressions:manage` (bastırma listesi, kalıcı ret kaydını kaldırma, bounce oranı; ADR 0073)
 ve `skymail:unsubscribes:reactivate` (kimliği olmayan adresin çıkışını kişi isteyince ya da hata
 olunca gerekçeyle geri alma; ADR 0072 karar 7) aynı biçimde oluşturulur ve yalnız ADMIN ve YK'ya bir
@@ -848,25 +862,29 @@ değişiklik gerektirmeyen koşu hiçbir admin olayı üretmez (entegrasyon test
 karşılaştırmaları imajdaki JDK ile çalışma anında derlenen
 `config/ReconcileJson.java` ile yapılır. Tam bir koşu iki yüze yakın kcadm ve ReconcileJson
 çağrısı yapar; her çağrı kendi JVM'ini açtığında production'da yaklaşık 8,5 dakika sürüyordu. Bu
-yüzden kcadm okumaları (`get`) ve ReconcileJson çağrıları koşu başına bir kez açılan tek JVM'de
+yüzden kcadm çağrıları (okumalar ve yazmalar) ve ReconcileJson çağrıları koşu başına bir kez açılan tek JVM'de
 (`config/ReconcileSession.java`) koşar: her çağrı kendi `main`'inin yapacağı gibi çalışır,
 stdout/stderr baytları, sıraları ve çıkış kodu aynı kalır (harness tam kuru koşuyu ve gerçek koşuyu
-iki yolla da koşturup bayt bayt karşılaştırır). Yazmalar (`create`, `update`, `delete`) ve
-`KCADM_BIN` ile verilen kcadm her çağrıda kendi JVM'ini açar. `KEYCLOAK_RECONCILE_SESSION`: `on`
+iki yolla da koşturup bayt bayt, gerçek koşunun bıraktığı realm'i de karşılaştırır). Oturumun aldığı
+kcadm komutları `get`, `create`, `update`, `delete`, `add-roles`, `remove-roles`, `get-roles`
+(`SESSION_KCADM_COMMANDS`); giriş (`config`), `set-password` ve `KCADM_BIN` ile verilen kcadm her
+çağrıda kendi JVM'ini açar. `KEYCLOAK_RECONCILE_SESSION`: `on`
 (varsayılan; oturum başlayamazsa çağrı başına JVM, stderr'de `[reconcile] ` öneki olmayan tek
 `Reconciliation session not started (…)` satırıyla), `off` (çağrı başına JVM, eski davranış ve geri
 dönüş, runbook §7) ya da `required` (oturum başlayamazsa koşu durur; harness). Oturum yalnız
 sınıfları denetlenmiş kcadm sürümlerinde açılır (26.4 ve 26.7, `config/reconcile-session.sh`'te `SESSION_KCADM_VERSIONS`);
 Keycloak yükseltmesinde harness'in `required` koşusu durur ve liste denetimden sonra genişletilir.
 Oturum koşu ortasında durursa (JVM ölümü, yazılamayan çıktı) koşu yeni istek göndermeden exit 1 ile
-biter; son satır nedeni söyler. Oturum kodu `config/reconcile-session.sh`'tedir; çok okuyan operatör
+biter; son satır nedeni söyler. O sırada bir yazma sürüyorsa Keycloak'a ulaşıp ulaşmadığı bilinmez
+(kendi JVM'i öldürülen bir `kcadm.sh` yazmasında olduğu gibi); bütün yazmalar yakınsar, aynı koşu
+yeniden (gerekirse `KEYCLOAK_RECONCILE_SESSION=off` ile) işi tamamlar. Oturum kodu `config/reconcile-session.sh`'tedir; çok okuyan operatör
 betikleri de onu aynı değişkenle kullanır: `config/app-assignments.sh` (production'da `--check`
 oturumsuz 18 dakikaydı), `role-groups.sh`, `dk-read-only.sh`, `master-console.sh` ve yalnız kcadm
-okuyanlar (`site-clients.sh`, `site-editor-grants.sh`, `inscribed-cms-roles.sh`,
+çağıranlar (`site-clients.sh`, `site-editor-grants.sh`, `inscribed-cms-roles.sh`,
 `skyapp-cms-editor.sh`, `sandbox-site-clients.sh`, `sandbox-admin-local-client.sh`,
-`create-place-client.sh`, `forms-skymail-grants.sh`, `leader-app-roles.sh`). Bunlarda da yalnız
-okumalar ve ReconcileJson oturuma gider, yazmalar çağrı başına `kcadm.sh` kalır; testleri her betiğin
-koşusunu iki yolla koşturup bayt bayt karşılaştırır. Yalnız kcadm okuyan bir betik tek başına
+`create-place-client.sh`, `forms-skymail-grants.sh`, `leader-app-roles.sh`). Bunlarda da kcadm
+okumaları, yazmaları ve ReconcileJson oturuma gider; testleri her betiğin koşusunu (yazan koşular
+dahil) iki yolla koşturup bayt bayt karşılaştırır. Yalnız kcadm çağıran bir betik tek başına
 kopyalanıp koşulursa (yanında `reconcile-session.sh` yoksa) eskisi gibi çağrı başına JVM açar. Passkey relying party id geçişinden
 önce kayıtlı passkey'ler bir daha doğrulanamaz; `config/cleanup-legacy-passkeys.sh`
 (varsayılan kuru koşu, yalnız sayı basar) geçiş anından önce oluşturulmuş

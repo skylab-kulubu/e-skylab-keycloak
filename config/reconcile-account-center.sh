@@ -7,12 +7,12 @@ umask 077
 KCADM=${KCADM_BIN:-/opt/keycloak/bin/kcadm.sh}
 JAVA_BIN=${JAVA_BIN:-java}
 # The session (config/ReconcileSession.java, started by config/reconcile-session.sh): every kcadm
-# read and every ReconcileJson call of the run in one JVM. A kcadm.sh call starts a JVM of its own,
-# and a whole reconciliation made some two hundred of them (about 8.5 minutes in production,
-# 2026-10-27). The session runs each call as that JVM's main would, and session_call gives back the
-# same bytes on stdout and stderr, in the same order, and the same exit status, so every line,
-# warning, dry run line and exit status of the run stays the same (tests/run-integration.sh compares
-# whole runs both ways). Writes (create, update, delete) still start kcadm.sh.
+# call (reads and writes; the login aside) and every ReconcileJson call of the run in one JVM. A
+# kcadm.sh call starts a JVM of its own, and a whole reconciliation made some two hundred of them
+# (about 8.5 minutes in production, 2026-10-27). The session runs each call as that JVM's main would,
+# and session_call gives back the same bytes on stdout and stderr, in the same order, and the same
+# exit status, so every line, warning, dry run line and exit status of the run stays the same
+# (tests/run-integration.sh compares whole runs both ways, and the realm a writing run leaves).
 # KEYCLOAK_RECONCILE_SESSION: on (the default; a JVM per call when the session cannot start), off (a
 # JVM per call: as before, the rollback and the comparison base) or required (on, but the run stops
 # when the session cannot start; the tests). With a KCADM_BIN (the tests' injected kcadm failures)
@@ -88,6 +88,26 @@ YTU_IDP_LEGACY_FIRST_BROKER_FLOWS=('first broker login for obs' 'first broker lo
 YTU_IDP_PREVIOUS_FLOW_SETTING=skyFirstLoginFlowBeforeYtuStep
 REVIEW_PROFILE_SETTING=update.profile.on.first.login
 YTU_FIRST_LOGIN=${KEYCLOAK_YTU_FIRST_LOGIN:-keep}
+# keycloak-yayin 02 (Yusuf, 2026-11-22): the operator step KEYCLOAK_RECONCILE_ONLY=broker-flows owns
+# two broker flows production had made by hand (runbook §22).
+#   - OBS's post broker login flow POST_BROKER_FLOW_ALIAS (its production name), which runs after
+#     every YTÜ login: the passkey offer (POST_BROKER_OFFER_STEP, REQUIRED) and nothing else. The
+#     hand-made flow also held a CONDITIONAL subflow POST_BROKER_DEAD_SUBFLOW (a role condition,
+#     DISABLED, and auth-otp-form). Keycloak 26.7.4 counts only enabled conditions of a CONDITIONAL
+#     subflow and skips one without any (DefaultAuthenticationFlow.isConditionalSubflowDisabled), so
+#     it never asked anyone for an OTP; the step removes it, and refuses (nothing changed, exit 1)
+#     while any condition in it is enabled or it is REQUIRED: then removing it would change who is
+#     asked. Any other step in the flow is refused the same way.
+#   - BROKER_FLOWS_TO_DELETE: hand-made first broker login duplicates no identity provider uses. Each
+#     is deleted only while nothing binds it (a realm binding, an identity provider's first or post
+#     broker login flow, a client's flow override); a bound one stops the step (exit 1, nothing
+#     deleted).
+# Only an operator session reads identity providers, so this is an operator step; with
+# KEYCLOAK_RECONCILE_CHECK=true it is a dry run ("would ..." lines, nothing written).
+POST_BROKER_FLOW_ALIAS=post-broker-passkey-offer
+POST_BROKER_OFFER_STEP=passkey-offer-authenticator
+POST_BROKER_DEAD_SUBFLOW='cond 2fa'
+BROKER_FLOWS_TO_DELETE=('first broker login + http ')
 # ADR-0063 decision 4: optional first-Microsoft-login existing-account proof. Installing the image
 # never enables this flow. Explicit on/off only edits our existing first-broker-login copy.
 EXISTING_ACCOUNT_PROMPT=${KEYCLOAK_EXISTING_ACCOUNT_PROMPT:-keep}
@@ -203,7 +223,8 @@ RECONCILE_ONLY=${KEYCLOAK_RECONCILE_ONLY:-}
 # KEYCLOAK_RECONCILE_CHECK=true: a dry run. Of the operator's service-roles step (runbook §20), of the
 # role-groups, leader-app-roles and tohum-atamalar steps (§26, §27, §33) and of the default-roles step
 # (§33): it prints "would ..." for each change and writes nothing. Of the whole reconciliation (the
-# reconciler identity, no KEYCLOAK_RECONCILE_ONLY) and of the operator's core-roles step: every write
+# reconciler identity, no KEYCLOAK_RECONCILE_ONLY) and of the operator's core-roles and broker-flows
+# (§22) steps: every write
 # is withheld (see kcadm below): each one is a "[reconcile] would kcadm VERB PATH ..." line instead,
 # the step's own lines say what a real run would log, and the run ends with "... is checked; nothing
 # was written (N write(s) withheld)." A step that reads back what it would have written (a flow it
@@ -239,11 +260,11 @@ RABBITMQ_EVENTS=${KEYCLOAK_RABBITMQ_EVENTS:-keep}
 RABBITMQ_EVENT_LISTENER=keycloak-to-rabbitmq
 ACCOUNT_ROLE_ALLOWLIST=(manage-account view-profile manage-account-links)
 case $RECONCILE_ONLY in
-  '' | admin-panel-client | login-clients | core-roles | service-roles | first-broker-login | email-code-login | role-groups | leader-app-roles | default-roles | app-assignments | tohum-atamalar) ;;
+  '' | admin-panel-client | login-clients | core-roles | service-roles | first-broker-login | broker-flows | email-code-login | role-groups | leader-app-roles | default-roles | app-assignments | tohum-atamalar) ;;
   # The step's name before core's service roles became a list (core-internal-auth ticket 03).
   media-attach) RECONCILE_ONLY=service-roles ;;
   *)
-    printf 'KEYCLOAK_RECONCILE_ONLY must be empty, admin-panel-client, login-clients, core-roles, service-roles, first-broker-login, email-code-login, role-groups, leader-app-roles, default-roles, app-assignments or tohum-atamalar, not %s\n' "$RECONCILE_ONLY" >&2
+    printf 'KEYCLOAK_RECONCILE_ONLY must be empty, admin-panel-client, login-clients, core-roles, service-roles, first-broker-login, broker-flows, email-code-login, role-groups, leader-app-roles, default-roles, app-assignments or tohum-atamalar, not %s\n' "$RECONCILE_ONLY" >&2
     exit 2
     ;;
 esac
@@ -252,8 +273,8 @@ case $RECONCILE_CHECK in
   true)
     # The whole reconciliation (the reconciler identity) or one operator step that has a dry run.
     if [[ -n $RECONCILE_ONLY ]] \
-      && [[ ! $RECONCILE_ONLY =~ ^(service-roles|role-groups|leader-app-roles|core-roles|default-roles|app-assignments|tohum-atamalar)$ || -z $OPERATOR_KCADM_CONFIG ]]; then
-      printf 'KEYCLOAK_RECONCILE_CHECK=true is a dry run of the operator step KEYCLOAK_RECONCILE_ONLY=service-roles (or core-roles, role-groups, leader-app-roles, default-roles, tohum-atamalar) with KEYCLOAK_RECONCILE_KCADM_CONFIG only, or of the whole reconciliation with the reconciler identity\n' >&2
+      && [[ ! $RECONCILE_ONLY =~ ^(service-roles|role-groups|leader-app-roles|core-roles|default-roles|broker-flows|app-assignments|tohum-atamalar)$ || -z $OPERATOR_KCADM_CONFIG ]]; then
+      printf 'KEYCLOAK_RECONCILE_CHECK=true is a dry run of the operator step KEYCLOAK_RECONCILE_ONLY=service-roles (or core-roles, role-groups, leader-app-roles, default-roles, broker-flows, tohum-atamalar) with KEYCLOAK_RECONCILE_KCADM_CONFIG only, or of the whole reconciliation with the reconciler identity\n' >&2
       exit 2
     fi
     ;;
@@ -289,7 +310,7 @@ if [[ -n $OPERATOR_KCADM_CONFIG ]]; then
 else
   KCADM_CONFIG=$(mktemp /tmp/account-center-kcadm.XXXXXX)
 fi
-if [[ $RECONCILE_ONLY =~ ^(default-roles|app-assignments|tohum-atamalar)$ && -z $OPERATOR_KCADM_CONFIG ]]; then
+if [[ $RECONCILE_ONLY =~ ^(default-roles|broker-flows|app-assignments|tohum-atamalar)$ && -z $OPERATOR_KCADM_CONFIG ]]; then
   rm -f "$KCADM_CONFIG"
   printf 'KEYCLOAK_RECONCILE_ONLY=%s is an operator step: set KEYCLOAK_RECONCILE_KCADM_CONFIG (it reads or maps roles of groups and people, or identity providers, which the reconciler identity %s may not)\n' \
     "$RECONCILE_ONLY" "$CONFIG_CLIENT_ID" >&2
@@ -435,7 +456,7 @@ BASE_URL=$(normalize_account_center_base_url \
 # placeholder answers an empty list (an empty object for one resource or a mapping set, nothing in
 # CSV), so that a step goes on as if the thing were made and empty. Anything else is read live.
 CHECK_WRITES=false
-if [[ $RECONCILE_CHECK == true && ( -z $RECONCILE_ONLY || $RECONCILE_ONLY == core-roles || $RECONCILE_ONLY == default-roles ) ]]; then
+if [[ $RECONCILE_CHECK == true && ( -z $RECONCILE_ONLY || $RECONCILE_ONLY =~ ^(core-roles|default-roles|broker-flows)$ ) ]]; then
   CHECK_WRITES=true
 fi
 CHECK_ID_PREFIX=checked-not-created-
@@ -1882,6 +1903,203 @@ restore_ytu_idp_first_login_flow() {
   log "identity provider $YTU_IDP_ALIAS: first login flow binding restored ('$previous', as before KEYCLOAK_YTU_FIRST_LOGIN=on)"
 }
 
+# keycloak-yayin 02: OBS's post broker login flow (see POST_BROKER_FLOW_ALIAS above). OBS absent
+# (the sandbox): nothing to do. OBS bound to another post broker login flow: reported and kept.
+# Otherwise the flow is made or put in shape (only the offer, REQUIRED; the dead subflow removed)
+# before OBS is bound to it, so no login meets a half-made flow.
+reconcile_obs_post_broker_flow() {
+  local idp_file stderr_file bound flow_id flow_path rows_file id level requirement priority provider is_flow name
+  local offer_id='' offer_requirement='' offer_priority=0 offer_count=0 dead_id='' dead_requirement='' refused='' enabled_condition=''
+  idp_file=$(mktemp "$WORK_DIR/post-broker-idp.XXXXXX")
+  stderr_file=$(mktemp "$WORK_DIR/post-broker-idp-stderr.XXXXXX")
+  if ! kcadm get "identity-provider/instances/$YTU_IDP_ALIAS" -r "$TARGET_REALM" >"$idp_file" 2>"$stderr_file"; then
+    if grep -Eqi '404|not found' "$stderr_file"; then
+      log "identity provider $YTU_IDP_ALIAS post broker login flow: unchanged (absent)"
+      return 0
+    fi
+    cat "$stderr_file" >&2
+    printf 'Identity provider %s is not readable with this session; KEYCLOAK_RECONCILE_ONLY=broker-flows needs an administrator session\n' \
+      "$YTU_IDP_ALIAS" >&2
+    return 1
+  fi
+  bound=$(json_tool field postBrokerLoginFlowAlias <"$idp_file")
+  if [[ -n $bound && $bound != "$POST_BROKER_FLOW_ALIAS" ]]; then
+    warn "identity provider $YTU_IDP_ALIAS keeps its own post broker login flow '$bound'; '$POST_BROKER_FLOW_ALIAS' was not checked"
+    return 0
+  fi
+  flow_path=$(flow_alias_path "$POST_BROKER_FLOW_ALIAS")
+  if flow_id=$(optional_lookup flow_id_by_alias "$POST_BROKER_FLOW_ALIAS"); then
+    :
+  else
+    return $?
+  fi
+  if [[ -z $flow_id ]]; then
+    kcadm create authentication/flows -r "$TARGET_REALM" -s "alias=$POST_BROKER_FLOW_ALIAS" -s providerId=basic-flow \
+      -s topLevel=true -s builtIn=false -s 'description=After every YTÜ login: the passkey offer (keycloak-yayin 02)' >/dev/null
+    kcadm create "authentication/flows/$flow_path/executions/execution" -r "$TARGET_REALM" \
+      -b "{\"provider\":\"$POST_BROKER_OFFER_STEP\"}" >/dev/null
+    if [[ $CHECK_WRITES == true ]]; then
+      log "post broker login flow '$POST_BROKER_FLOW_ALIAS': would be created ($POST_BROKER_OFFER_STEP REQUIRED)"
+    else
+      offer_id=$(kcadm get "authentication/flows/$flow_path/executions" -r "$TARGET_REALM" \
+        --fields id,providerId --format csv --noquotes | awk -F, -v p="$POST_BROKER_OFFER_STEP" '$2 == p { print $1 }')
+      [[ -n $offer_id ]] || { printf "Flow '%s' has no %s after it was made\n" "$POST_BROKER_FLOW_ALIAS" "$POST_BROKER_OFFER_STEP" >&2; return 1; }
+      kcadm update "authentication/flows/$flow_path/executions" -r "$TARGET_REALM" -n \
+        -b "{\"id\":\"$offer_id\",\"requirement\":\"REQUIRED\"}" >/dev/null
+      log "post broker login flow '$POST_BROKER_FLOW_ALIAS': created ($POST_BROKER_OFFER_STEP REQUIRED)"
+    fi
+  else
+    rows_file=$(mktemp "$WORK_DIR/post-broker-flow.XXXXXX")
+    kcadm get "authentication/flows/$flow_path/executions" -r "$TARGET_REALM" \
+      --fields id,level,requirement,priority,providerId,authenticationFlow,displayName --format csv --noquotes >"$rows_file"
+    while IFS=, read -r id level requirement priority provider is_flow name; do
+      [[ -n $id ]] || continue
+      if [[ $level == 0 && $is_flow != true && $provider == "$POST_BROKER_OFFER_STEP" ]]; then
+        offer_id=$id
+        offer_requirement=$requirement
+        offer_priority=${priority:-0}
+        offer_count=$((offer_count + 1))
+      elif [[ $level == 0 && $is_flow == true && $name == "$POST_BROKER_DEAD_SUBFLOW" && -z $dead_id ]]; then
+        dead_id=$id
+        dead_requirement=$requirement
+      elif [[ $level == 1 && -n $dead_id && $is_flow != true && $provider == conditional-* ]]; then
+        [[ $requirement == DISABLED ]] || enabled_condition="$provider $requirement"
+      elif [[ $level == 1 && -n $dead_id && $is_flow != true && $provider == auth-otp-form ]]; then
+        :
+      else
+        refused="${refused:+$refused; }level $level ${name:-$provider} $requirement"
+      fi
+    done <"$rows_file"
+    if ((offer_count > 1)); then
+      refused="${refused:+$refused; }$POST_BROKER_OFFER_STEP $offer_count times"
+    fi
+    if [[ -n $dead_id && -z $enabled_condition && $dead_requirement != CONDITIONAL && $dead_requirement != DISABLED ]]; then
+      enabled_condition="subflow $dead_requirement"
+    fi
+    if [[ -n $refused ]]; then
+      printf "Post broker login flow '%s' holds steps this step does not know (%s); nothing was changed: inspect it in the Admin Console\n" \
+        "$POST_BROKER_FLOW_ALIAS" "$refused" >&2
+      return 1
+    fi
+    if [[ -n $enabled_condition ]]; then
+      printf "Subflow '%s' of post broker login flow '%s' can run (%s): removing it would change who is asked for an OTP; nothing was changed\n" \
+        "$POST_BROKER_DEAD_SUBFLOW" "$POST_BROKER_FLOW_ALIAS" "$enabled_condition" >&2
+      return 1
+    fi
+    if [[ -n $dead_id ]]; then
+      kcadm delete "authentication/executions/$dead_id" -r "$TARGET_REALM" >/dev/null
+      if [[ $CHECK_WRITES == true ]]; then
+        log "post broker login flow '$POST_BROKER_FLOW_ALIAS': would remove subflow '$POST_BROKER_DEAD_SUBFLOW' ($dead_requirement; no enabled condition: it never runs)"
+      else
+        log "post broker login flow '$POST_BROKER_FLOW_ALIAS': updated (removed subflow '$POST_BROKER_DEAD_SUBFLOW', $dead_requirement; no enabled condition: it never ran)"
+      fi
+    fi
+    if [[ -z $offer_id ]]; then
+      kcadm create "authentication/flows/$flow_path/executions/execution" -r "$TARGET_REALM" \
+        -b "{\"provider\":\"$POST_BROKER_OFFER_STEP\"}" >/dev/null
+      if [[ $CHECK_WRITES != true ]]; then
+        offer_id=$(kcadm get "authentication/flows/$flow_path/executions" -r "$TARGET_REALM" \
+          --fields id,providerId --format csv --noquotes | awk -F, -v p="$POST_BROKER_OFFER_STEP" '$2 == p { print $1 }')
+        kcadm update "authentication/flows/$flow_path/executions" -r "$TARGET_REALM" -n \
+          -b "{\"id\":\"$offer_id\",\"requirement\":\"REQUIRED\"}" >/dev/null
+      fi
+      log "post broker login flow '$POST_BROKER_FLOW_ALIAS': updated (added $POST_BROKER_OFFER_STEP, REQUIRED)"
+    elif [[ $offer_requirement != REQUIRED ]]; then
+      kcadm update "authentication/flows/$flow_path/executions" -r "$TARGET_REALM" -n \
+        -b "{\"id\":\"$offer_id\",\"requirement\":\"REQUIRED\",\"priority\":$offer_priority}" >/dev/null
+      log "post broker login flow '$POST_BROKER_FLOW_ALIAS': updated ($POST_BROKER_OFFER_STEP $offer_requirement -> REQUIRED)"
+    elif [[ -z $dead_id ]]; then
+      log "post broker login flow '$POST_BROKER_FLOW_ALIAS': unchanged ($POST_BROKER_OFFER_STEP REQUIRED, nothing else)"
+    fi
+  fi
+  if [[ $bound == "$POST_BROKER_FLOW_ALIAS" ]]; then
+    log "identity provider $YTU_IDP_ALIAS post broker login flow: unchanged ('$POST_BROKER_FLOW_ALIAS')"
+  else
+    kcadm update "identity-provider/instances/$YTU_IDP_ALIAS" -r "$TARGET_REALM" -s "postBrokerLoginFlowAlias=$POST_BROKER_FLOW_ALIAS" >/dev/null
+    log "identity provider $YTU_IDP_ALIAS post broker login flow: updated (none -> '$POST_BROKER_FLOW_ALIAS')"
+  fi
+}
+
+# keycloak-yayin 02: deletes each of BROKER_FLOWS_TO_DELETE that nothing binds (see above). What
+# binds a flow: the realm's seven flow bindings, an identity provider's first or post broker login
+# flow and another flow's subflow execution (by alias), a client's flow overrides (by id). Every
+# identity provider is read, a page of BROKER_FLOWS_IDP_PAGE at a time (Keycloak returns at most 100
+# without max). Exit 1 before any delete when one is bound, built in or not a top-level flow.
+BROKER_FLOWS_IDP_PAGE=100
+delete_unbound_broker_flows() {
+  local alias flow_id flow_file realm_file idps_file page_file flows_file clients_file uses binding value first count
+  local deletable=()
+  for alias in "${BROKER_FLOWS_TO_DELETE[@]}"; do
+    if flow_id=$(optional_lookup flow_id_by_alias "$alias"); then
+      :
+    else
+      return $?
+    fi
+    if [[ -z $flow_id ]]; then
+      log "authentication flow '$alias': unchanged (absent)"
+      continue
+    fi
+    flow_file=$(mktemp "$WORK_DIR/flow-to-delete.XXXXXX")
+    kcadm_json "authentication/flows/$flow_id" -r "$TARGET_REALM" >"$flow_file"
+    if [[ $(json_tool field builtIn <"$flow_file") != false || $(json_tool field topLevel <"$flow_file") != true ]]; then
+      printf "Authentication flow '%s' is built in or not a top-level flow; nothing was deleted\n" "$alias" >&2
+      return 1
+    fi
+    uses=''
+    realm_file=$(mktemp "$WORK_DIR/realm-bindings.XXXXXX")
+    kcadm_json "realms/$TARGET_REALM" >"$realm_file"
+    for binding in browserFlow registrationFlow directGrantFlow resetCredentialsFlow clientAuthenticationFlow \
+      dockerAuthenticationFlow firstBrokerLoginFlow; do
+      value=$(json_tool field "$binding" <"$realm_file")
+      [[ $value != "$alias" ]] || uses="${uses:+$uses, }realm $binding"
+    done
+    idps_file=$(mktemp "$WORK_DIR/idp-bindings.XXXXXX")
+    page_file=$(mktemp "$WORK_DIR/idp-page.XXXXXX")
+    first=0
+    while :; do
+      if ! kcadm get identity-provider/instances -r "$TARGET_REALM" -q "first=$first" -q "max=$BROKER_FLOWS_IDP_PAGE" \
+        --fields alias,firstBrokerLoginFlowAlias,postBrokerLoginFlowAlias >"$page_file"; then
+        printf 'Identity providers are not readable with this session; nothing was deleted\n' >&2
+        return 1
+      fi
+      cat "$page_file" >>"$idps_file"
+      count=$(grep -Ec '^[[:space:]]*"alias"[[:space:]]*:' "$page_file" || true)
+      ((count >= BROKER_FLOWS_IDP_PAGE)) || break
+      first=$((first + BROKER_FLOWS_IDP_PAGE))
+    done
+    # A JSON string value: the alias is matched whole, its trailing space too.
+    if grep -Fq "\"$alias\"" "$idps_file"; then
+      uses="${uses:+$uses, }an identity provider's first or post broker login flow"
+    fi
+    # A subflow execution names its flow by alias (pretty JSON: key and value on one line).
+    flows_file=$(mktemp "$WORK_DIR/flow-subflows.XXXXXX")
+    kcadm_json authentication/flows -r "$TARGET_REALM" >"$flows_file"
+    if grep -F "\"$alias\"" "$flows_file" | grep -Eq '"flowAlias"[[:space:]]*:'; then
+      uses="${uses:+$uses, }a subflow of another flow"
+    fi
+    clients_file=$(mktemp "$WORK_DIR/client-bindings.XXXXXX")
+    kcadm_json clients -r "$TARGET_REALM" --fields 'clientId,authenticationFlowBindingOverrides(*)' >"$clients_file"
+    if grep -Fq "$flow_id" "$clients_file"; then
+      uses="${uses:+$uses, }a client's flow override"
+    fi
+    if [[ -n $uses ]]; then
+      printf "Authentication flow '%s' is bound (%s); nothing was deleted\n" "$alias" "$uses" >&2
+      return 1
+    fi
+    deletable+=("$flow_id" "$alias")
+  done
+  set -- "${deletable[@]+"${deletable[@]}"}"
+  while (($#)); do
+    kcadm delete "authentication/flows/$1" -r "$TARGET_REALM" >/dev/null
+    if [[ $CHECK_WRITES == true ]]; then
+      log "authentication flow '$2': would be deleted (bound nowhere: no realm binding, identity provider, client override or parent flow)"
+    else
+      log "authentication flow '$2': deleted (bound nowhere: no realm binding, identity provider, client override or parent flow)"
+    fi
+    shift 2
+  done
+}
+
 # eskylab-login-ux 21: the realm's required action sky-personal-email-offer (see
 # PERSONAL_EMAIL_OFFER above).
 reconcile_personal_email_offer() {
@@ -3122,10 +3340,15 @@ seed_privileged_client_roles() {
       role_id="${CHECK_ID_PREFIX}role"
     fi
     [[ -n $role_id ]] || { printf '%s role %s could not be read back\n' "$label" "$name" >&2; return 1; }
+    # SEED_MARK_PREVIOUS (a seed addition, one role): the old mark stays in front.
     kcadm_quiet update "roles-by-id/$role_id" -r "$TARGET_REALM" \
-      -s "attributes.\"$CORE_ROLE_SEED_ATTRIBUTE\"=[\"$stamp $paths\"]" || return 1
+      -s "attributes.\"$CORE_ROLE_SEED_ATTRIBUTE\"=[\"${SEED_MARK_PREVIOUS:+$SEED_MARK_PREVIOUS; }$stamp $paths\"]" || return 1
     granted=${granted_to[$name]:-, none (every group already held it)}
-    log "$label role $name: seeded once to $paths (granted to: ${granted#, })"
+    if [[ -n ${SEED_MARK_PREVIOUS:-} ]]; then
+      log "$label role $name: seed addition, once to $paths (granted to: ${granted#, })"
+    else
+      log "$label role $name: seeded once to $paths (granted to: ${granted#, })"
+    fi
   done
 }
 
@@ -3830,11 +4053,21 @@ reconcile_core_service_roles() {
 # (written only when the role is created; "-": SkyMail's own role, never created here).
 #   skymail:system-mails:read      ADMIN, YK, DK: reading is for all three (skymail-backend #61).
 #   skymail:mails:tracking:read    ADMIN, YK, DK: the per-person opening and click report of any send
-#                                  (iletisim-servisi tickets 14b/17, decision T2; the privacy notice:
-#                                  YK, DK, the system administrators and the sending officer see it).
-#                                  A reading role, so DK holds it too; the sender sees their own send
-#                                  without it (SkyMail checks sent_by, skymail-backend
-#                                  internal/handlers/tracking_read.go).
+#                                  (iletisim-servisi tickets 14b/17, decision T2; e-skylab ADR 0074
+#                                  addendum 2026-11-08). A reading role, so DK holds it too. Without
+#                                  it the sender sees only the totals of their own send
+#                                  (skymail-backend #129; SKYMAIL_SENDER_SEES_RECIPIENTS=on gives the
+#                                  sender their own recipients back). skymail:mails:read still sees
+#                                  the recipients and their delivery status, not opens and clicks.
+#   skymail:audit:read             DK only: who opened a masked mail's content, the record SkyMail
+#                                  writes on every opening (sent_content_views; GET
+#                                  /v1/mail_tasks/{id}/content-views; hub ticket
+#                                  skymail-frontend-rewrite 32). Yusuf, 2026-11-22: a role of its own,
+#                                  apart from the roles that open the content (system-mails:read,
+#                                  mails:write), as Microsoft Purview's Audit Reader, Google
+#                                  Workspace's Reports privilege and NIST SP 800-53 AU-9(4)
+#                                  (separation of duties: those audited do not read their own audit
+#                                  trail). A reading role, so DK keeps it (config/dk-read-only.sh).
 #   skymail:suppressions:manage    ADMIN and YK: the suppression list (addresses), removing a
 #                                  permanent failure (bounce) from it and the bounce rate
 #                                  (skymail-backend internal/handlers/suppressions.go,
@@ -3847,11 +4080,15 @@ reconcile_core_service_roles() {
 #                                  10). A write role. Both have a description: SkyMail checks them and
 #                                  nothing else makes them. Until they exist and are seeded, nobody
 #                                  reads the list or reverses an unsubscribe in production.
-#   skymail:access, skymail:templates:read, skymail:lists:read, skymail:mails:read,
-#   skymail:mails:send, skymail:mails:write
+#   skymail:templates:read, skymail:lists:read, skymail:mails:send, skymail:mails:write
 #                                  ADMIN and YK (ekip-yetkileri ticket 03; ADR 0067: YK sends directly,
 #                                  everyone else through Mail approval). DK reads and does not write
 #                                  (grup-yonetimi GY1): none of them. Sub-groups inherit the mapping.
+#   skymail:access, skymail:mails:read
+#                                  ADMIN, YK and DK: SkyMail's seat and the sends (their recipients and
+#                                  delivery). DK got them on 2026-11-22 (Yusuf: DK reads everything;
+#                                  SKYMAIL_PRIVILEGED_SEED_ADDITIONS gives them to a realm seeded
+#                                  before). Neither opens a send's content.
 #   skymail:mails:approve          YK only (Yusuf, 2026-10-23, S2: the approver of Mail approval is the
 #                                  YK root, so it follows the term's handover; until then one named
 #                                  person in /ROLLER/SKYMAIL-MAILS-APPROVE approved).
@@ -3861,16 +4098,34 @@ reconcile_core_service_roles() {
 # code area's check reports them as not in code, and the reset window (ticket 06 c2) takes them away.
 SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS=(
   'skymail:system-mails:read|ADMIN YK DK|Tekil sistem postalarının (doğrulama, bildirim) içeriğini görür (skymail-backend #61)'
-  'skymail:mails:tracking:read|ADMIN YK DK|Her gönderimin kişi bazındaki açılma ve tıklama raporunu görür (iletisim-servisi 14b/17, T2; gönderen kendi gönderimini rolsüz görür)'
+  'skymail:mails:tracking:read|ADMIN YK DK|Her gönderimin kişi bazındaki açılma ve tıklama raporunu görür (iletisim-servisi 14b/17, T2; gönderen yalnız toplamları görür)'
+  'skymail:audit:read|DK|Maskeli içeriği kimin açtığını görür (gönderim başına açılış kaydı; denetim, içeriği açan rollerden ayrı)'
   'skymail:suppressions:manage|ADMIN YK|SkyMail: bastırma listesini görür, kalıcı ret (bounce) kaydını kaldırır, bounce oranını okur (ADR 0073)'
   'skymail:unsubscribes:reactivate|ADMIN YK|SkyMail: kimliği olmayan adresin kendi çıkışını, kişi isteyince ya da hata olunca, gerekçeyle geri alır (ADR 0072)'
-  'skymail:access|ADMIN YK|-'
+  'skymail:access|ADMIN YK DK|-'
   'skymail:templates:read|ADMIN YK|-'
   'skymail:lists:read|ADMIN YK|-'
-  'skymail:mails:read|ADMIN YK|-'
+  'skymail:mails:read|ADMIN YK DK|-'
   'skymail:mails:send|ADMIN YK|-'
   'skymail:mails:write|ADMIN YK|-'
   'skymail:mails:approve|YK|-'
+)
+# Seed additions (role|Privileged names): a Privileged name added to a role's set after the role was
+# seeded. The one-time seed (the mark) never runs again, so a marked role whose mark names no path of
+# such a name gets it once now: the groups of the name (/<NAME>, /UYELER/<NAME>) are granted the role
+# and the mark keeps its old value with "; <time> <paths>" after it. A mark that already names one of
+# its paths (a realm seeded with the name in its set, or the addition already made) is left alone, and
+# a mapping the panel removes after the addition stays removed. An unmarked role is seeded with its
+# whole set as before.
+#   skymail:access, skymail:mails:read  DK (Yusuf, 2026-11-22): DK reads everything and changes
+#       nothing (Microsoft Entra's Global Reader with the Reports/Audit Reader of
+#       skymail:audit:read): SkyMail's seat and the sends, their recipients and delivery. Neither opens
+#       a send's content (skymail-backend mayRead: the sender, skymail:system-mails:read, or
+#       skymail:mails:write for a send to many) nor writes anything; config/dk-read-only.sh counts
+#       both as reading roles.
+SKYMAIL_PRIVILEGED_SEED_ADDITIONS=(
+  'skymail:access|DK'
+  'skymail:mails:read|DK'
 )
 
 # Forms' Privileged roles (runbook §28), the same way as SkyMail's (same list format):
@@ -3935,13 +4190,20 @@ ADMIN_PANEL_PRIVILEGED_ROLE_DEFINITIONS=(
   'content:write|ADMIN YK|-'
 )
 
-# reconcile_privileged_app_roles CLIENT_ID LABEL OWNER DEFINITIONS SECTION: the Privileged roles of one
-# application client (DEFINITIONS names its list, "name|Privileged groups|description"). LABEL names
+# reconcile_privileged_app_roles CLIENT_ID LABEL OWNER DEFINITIONS SECTION [ADDITIONS]: the Privileged
+# roles of one application client (DEFINITIONS names its list, "name|Privileged groups|description";
+# ADDITIONS, when given, its seed additions, "name|Privileged names"). LABEL names
 # the roles in the messages ("<LABEL> roles not yet granted", "<LABEL> role <name>: seeded once"),
 # OWNER is the possessive in "skipped <OWNER> Privileged roles", SECTION the runbook section.
 reconcile_privileged_app_roles() {
   local client_id=$1 label=$2 owner=$3 section=$5
   local -n definitions=$4
+  local no_additions=()
+  if [[ -n ${6:-} ]]; then
+    local -n additions=$6
+  else
+    local -n additions=no_additions
+  fi
   local client_uuid roles_csv definition name description created='' seeds role_name role_seed_value seed
   local unseeded=()
   if ! client_uuid=$(optional_lookup client_id_by_client_id "$client_id"); then
@@ -3987,12 +4249,37 @@ reconcile_privileged_app_roles() {
     done <<<"$seeds"
     [[ -n $seed ]] || unseeded+=("$name")
   done
-  if [[ ${#unseeded[@]} == 0 ]]; then
+  # Seed additions due: a marked role whose mark names no path of the added name (/<NAME>,
+  # /UYELER/<NAME>). An absent or unmarked role is not one (its seed above gives it the whole set).
+  local addition added_names added_name named_path due_additions=()
+  for addition in ${additions[@]+"${additions[@]}"}; do
+    name=${addition%%|*}
+    added_names=${addition#*|}
+    seed=''
+    while IFS=$'\t' read -r role_name role_seed_value; do
+      [[ $role_name == "$name" ]] && seed=$role_seed_value
+    done <<<"$seeds"
+    [[ -n $seed ]] || continue
+    for added_name in $added_names; do
+      # A path of the name in the mark: after its start, a space or a comma; before a comma, a
+      # semicolon (an addition after it) or its end. /UYELER/DKX is no path of DK.
+      named_path="(^|[ ,])(/UYELER)?/$added_name(,|;|\$)"
+      if ! [[ $seed =~ $named_path ]]; then
+        due_additions+=("$name|$added_name|$seed")
+      fi
+    done
+  done
+  if [[ ${#unseeded[@]} == 0 && ${#due_additions[@]} == 0 ]]; then
     log "group mappings of the $client_id Privileged roles: unchanged (each seeded once; the SKY LAB admin panel owns them)"
     return 0
   fi
   if [[ -z $OPERATOR_KCADM_CONFIG ]]; then
-    warn "$label roles not yet granted to the Privileged groups: ${unseeded[*]} (granting a role to a group needs user permissions the reconciler identity does not have); run this step alone with an operator session: KEYCLOAK_RECONCILE_ONLY=core-roles (runbook $section)"
+    local pending=("${unseeded[@]}")
+    for addition in ${due_additions[@]+"${due_additions[@]}"}; do
+      IFS='|' read -r name added_name _ <<<"$addition"
+      pending+=("$name($added_name)")
+    done
+    warn "$label roles not yet granted to the Privileged groups: ${pending[*]} (granting a role to a group needs user permissions the reconciler identity does not have); run this step alone with an operator session: KEYCLOAK_RECONCILE_ONLY=core-roles (runbook $section)"
     return 0
   fi
 
@@ -4018,6 +4305,13 @@ reconcile_privileged_app_roles() {
     if [[ ${#set_names[@]} -gt 0 ]]; then
       seed_privileged_client_roles "$label" "$client_uuid" "$group_names" "${set_names[@]}"
     fi
+  done
+  # The seed additions, one call per role and name; the mark keeps its old value in front.
+  local old_mark
+  for addition in ${due_additions[@]+"${due_additions[@]}"}; do
+    IFS='|' read -r name added_name old_mark <<<"$addition"
+    SEED_MARK_PREVIOUS=$old_mark seed_privileged_client_roles "$label" "$client_uuid" "$added_name" "$name" \
+      || return 1
   done
 }
 
@@ -4251,7 +4545,8 @@ reconcile_default_roles() {
 }
 
 reconcile_skymail_privileged_roles() {
-  reconcile_privileged_app_roles "$SKYMAIL_CLIENT_ID" skymail "SkyMail's" SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS '§25'
+  reconcile_privileged_app_roles "$SKYMAIL_CLIENT_ID" skymail "SkyMail's" SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS '§25' \
+    SKYMAIL_PRIVILEGED_SEED_ADDITIONS
 }
 
 reconcile_forms_privileged_roles() {
@@ -4555,6 +4850,16 @@ if [[ $RECONCILE_ONLY == first-broker-login ]]; then
   reconcile_personal_email_offer
   reconcile_stay_signed_in
   printf 'First broker login flow is reconciled.\n'
+  exit 0
+fi
+if [[ $RECONCILE_ONLY == broker-flows ]]; then
+  reconcile_obs_post_broker_flow
+  delete_unbound_broker_flows
+  if [[ $CHECK_WRITES == true ]]; then
+    printf 'Broker flows are checked; nothing was written (%s write(s) withheld).\n' "$(check_writes_withheld)"
+  else
+    printf 'Broker flows are reconciled.\n'
+  fi
   exit 0
 fi
 if [[ $RECONCILE_ONLY == email-code-login ]]; then

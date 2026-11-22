@@ -3122,10 +3122,15 @@ seed_privileged_client_roles() {
       role_id="${CHECK_ID_PREFIX}role"
     fi
     [[ -n $role_id ]] || { printf '%s role %s could not be read back\n' "$label" "$name" >&2; return 1; }
+    # SEED_MARK_PREVIOUS (a seed addition, one role): the old mark stays in front.
     kcadm_quiet update "roles-by-id/$role_id" -r "$TARGET_REALM" \
-      -s "attributes.\"$CORE_ROLE_SEED_ATTRIBUTE\"=[\"$stamp $paths\"]" || return 1
+      -s "attributes.\"$CORE_ROLE_SEED_ATTRIBUTE\"=[\"${SEED_MARK_PREVIOUS:+$SEED_MARK_PREVIOUS; }$stamp $paths\"]" || return 1
     granted=${granted_to[$name]:-, none (every group already held it)}
-    log "$label role $name: seeded once to $paths (granted to: ${granted#, })"
+    if [[ -n ${SEED_MARK_PREVIOUS:-} ]]; then
+      log "$label role $name: seed addition, once to $paths (granted to: ${granted#, })"
+    else
+      log "$label role $name: seeded once to $paths (granted to: ${granted#, })"
+    fi
   done
 }
 
@@ -3857,11 +3862,15 @@ reconcile_core_service_roles() {
 #                                  10). A write role. Both have a description: SkyMail checks them and
 #                                  nothing else makes them. Until they exist and are seeded, nobody
 #                                  reads the list or reverses an unsubscribe in production.
-#   skymail:access, skymail:templates:read, skymail:lists:read, skymail:mails:read,
-#   skymail:mails:send, skymail:mails:write
+#   skymail:templates:read, skymail:lists:read, skymail:mails:send, skymail:mails:write
 #                                  ADMIN and YK (ekip-yetkileri ticket 03; ADR 0067: YK sends directly,
 #                                  everyone else through Mail approval). DK reads and does not write
 #                                  (grup-yonetimi GY1): none of them. Sub-groups inherit the mapping.
+#   skymail:access, skymail:mails:read
+#                                  ADMIN, YK and DK: SkyMail's seat and the sends (their recipients and
+#                                  delivery). DK got them on 2026-11-22 (Yusuf: DK reads everything;
+#                                  SKYMAIL_PRIVILEGED_SEED_ADDITIONS gives them to a realm seeded
+#                                  before). Neither opens a send's content.
 #   skymail:mails:approve          YK only (Yusuf, 2026-10-23, S2: the approver of Mail approval is the
 #                                  YK root, so it follows the term's handover; until then one named
 #                                  person in /ROLLER/SKYMAIL-MAILS-APPROVE approved).
@@ -3875,13 +3884,30 @@ SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS=(
   'skymail:audit:read|DK|Maskeli içeriği kimin açtığını görür (gönderim başına açılış kaydı; denetim, içeriği açan rollerden ayrı)'
   'skymail:suppressions:manage|ADMIN YK|SkyMail: bastırma listesini görür, kalıcı ret (bounce) kaydını kaldırır, bounce oranını okur (ADR 0073)'
   'skymail:unsubscribes:reactivate|ADMIN YK|SkyMail: kimliği olmayan adresin kendi çıkışını, kişi isteyince ya da hata olunca, gerekçeyle geri alır (ADR 0072)'
-  'skymail:access|ADMIN YK|-'
+  'skymail:access|ADMIN YK DK|-'
   'skymail:templates:read|ADMIN YK|-'
   'skymail:lists:read|ADMIN YK|-'
-  'skymail:mails:read|ADMIN YK|-'
+  'skymail:mails:read|ADMIN YK DK|-'
   'skymail:mails:send|ADMIN YK|-'
   'skymail:mails:write|ADMIN YK|-'
   'skymail:mails:approve|YK|-'
+)
+# Seed additions (role|Privileged names): a Privileged name added to a role's set after the role was
+# seeded. The one-time seed (the mark) never runs again, so a marked role whose mark names no path of
+# such a name gets it once now: the groups of the name (/<NAME>, /UYELER/<NAME>) are granted the role
+# and the mark keeps its old value with "; <time> <paths>" after it. A mark that already names one of
+# its paths (a realm seeded with the name in its set, or the addition already made) is left alone, and
+# a mapping the panel removes after the addition stays removed. An unmarked role is seeded with its
+# whole set as before.
+#   skymail:access, skymail:mails:read  DK (Yusuf, 2026-11-22): DK reads everything and changes
+#       nothing (Microsoft Entra's Global Reader with the Reports/Audit Reader of
+#       skymail:audit:read): SkyMail's seat and the sends, their recipients and delivery. Neither opens
+#       a send's content (skymail-backend mayRead: the sender, skymail:system-mails:read, or
+#       skymail:mails:write for a send to many) nor writes anything; config/dk-read-only.sh counts
+#       both as reading roles.
+SKYMAIL_PRIVILEGED_SEED_ADDITIONS=(
+  'skymail:access|DK'
+  'skymail:mails:read|DK'
 )
 
 # Forms' Privileged roles (runbook §28), the same way as SkyMail's (same list format):
@@ -3946,13 +3972,20 @@ ADMIN_PANEL_PRIVILEGED_ROLE_DEFINITIONS=(
   'content:write|ADMIN YK|-'
 )
 
-# reconcile_privileged_app_roles CLIENT_ID LABEL OWNER DEFINITIONS SECTION: the Privileged roles of one
-# application client (DEFINITIONS names its list, "name|Privileged groups|description"). LABEL names
+# reconcile_privileged_app_roles CLIENT_ID LABEL OWNER DEFINITIONS SECTION [ADDITIONS]: the Privileged
+# roles of one application client (DEFINITIONS names its list, "name|Privileged groups|description";
+# ADDITIONS, when given, its seed additions, "name|Privileged names"). LABEL names
 # the roles in the messages ("<LABEL> roles not yet granted", "<LABEL> role <name>: seeded once"),
 # OWNER is the possessive in "skipped <OWNER> Privileged roles", SECTION the runbook section.
 reconcile_privileged_app_roles() {
   local client_id=$1 label=$2 owner=$3 section=$5
   local -n definitions=$4
+  local no_additions=()
+  if [[ -n ${6:-} ]]; then
+    local -n additions=$6
+  else
+    local -n additions=no_additions
+  fi
   local client_uuid roles_csv definition name description created='' seeds role_name role_seed_value seed
   local unseeded=()
   if ! client_uuid=$(optional_lookup client_id_by_client_id "$client_id"); then
@@ -3998,12 +4031,37 @@ reconcile_privileged_app_roles() {
     done <<<"$seeds"
     [[ -n $seed ]] || unseeded+=("$name")
   done
-  if [[ ${#unseeded[@]} == 0 ]]; then
+  # Seed additions due: a marked role whose mark names no path of the added name (/<NAME>,
+  # /UYELER/<NAME>). An absent or unmarked role is not one (its seed above gives it the whole set).
+  local addition added_names added_name named_path due_additions=()
+  for addition in ${additions[@]+"${additions[@]}"}; do
+    name=${addition%%|*}
+    added_names=${addition#*|}
+    seed=''
+    while IFS=$'\t' read -r role_name role_seed_value; do
+      [[ $role_name == "$name" ]] && seed=$role_seed_value
+    done <<<"$seeds"
+    [[ -n $seed ]] || continue
+    for added_name in $added_names; do
+      # A path of the name in the mark: after its start, a space or a comma; before a comma, a
+      # semicolon (an addition after it) or its end. /UYELER/DKX is no path of DK.
+      named_path="(^|[ ,])(/UYELER)?/$added_name(,|;|\$)"
+      if ! [[ $seed =~ $named_path ]]; then
+        due_additions+=("$name|$added_name|$seed")
+      fi
+    done
+  done
+  if [[ ${#unseeded[@]} == 0 && ${#due_additions[@]} == 0 ]]; then
     log "group mappings of the $client_id Privileged roles: unchanged (each seeded once; the SKY LAB admin panel owns them)"
     return 0
   fi
   if [[ -z $OPERATOR_KCADM_CONFIG ]]; then
-    warn "$label roles not yet granted to the Privileged groups: ${unseeded[*]} (granting a role to a group needs user permissions the reconciler identity does not have); run this step alone with an operator session: KEYCLOAK_RECONCILE_ONLY=core-roles (runbook $section)"
+    local pending=("${unseeded[@]}")
+    for addition in ${due_additions[@]+"${due_additions[@]}"}; do
+      IFS='|' read -r name added_name _ <<<"$addition"
+      pending+=("$name($added_name)")
+    done
+    warn "$label roles not yet granted to the Privileged groups: ${pending[*]} (granting a role to a group needs user permissions the reconciler identity does not have); run this step alone with an operator session: KEYCLOAK_RECONCILE_ONLY=core-roles (runbook $section)"
     return 0
   fi
 
@@ -4029,6 +4087,13 @@ reconcile_privileged_app_roles() {
     if [[ ${#set_names[@]} -gt 0 ]]; then
       seed_privileged_client_roles "$label" "$client_uuid" "$group_names" "${set_names[@]}"
     fi
+  done
+  # The seed additions, one call per role and name; the mark keeps its old value in front.
+  local old_mark
+  for addition in ${due_additions[@]+"${due_additions[@]}"}; do
+    IFS='|' read -r name added_name old_mark <<<"$addition"
+    SEED_MARK_PREVIOUS=$old_mark seed_privileged_client_roles "$label" "$client_uuid" "$added_name" "$name" \
+      || return 1
   done
 }
 
@@ -4262,7 +4327,8 @@ reconcile_default_roles() {
 }
 
 reconcile_skymail_privileged_roles() {
-  reconcile_privileged_app_roles "$SKYMAIL_CLIENT_ID" skymail "SkyMail's" SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS '§25'
+  reconcile_privileged_app_roles "$SKYMAIL_CLIENT_ID" skymail "SkyMail's" SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS '§25' \
+    SKYMAIL_PRIVILEGED_SEED_ADDITIONS
 }
 
 reconcile_forms_privileged_roles() {

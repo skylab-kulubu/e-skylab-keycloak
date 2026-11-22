@@ -35,12 +35,15 @@ seed admin content:write 'ADMIN YK DK'
 seed forms 'skyforms:*' 'YK'
 # The reconciler's set: DK alone reads who opened a masked mail (skymail-frontend-rewrite 32).
 seed skymail skymail:audit:read 'DK'
+# DK reads the sends (Yusuf, 2026-11-22): SkyMail's seat and mails:read to ADMIN, YK and DK.
+seed skymail skymail:mails:read 'ADMIN YK DK'
 dk_write_roles=$(bash "$DK_SCRIPT" --print-write-roles)
 while IFS= read -r entry; do
   if [[ -n $entry ]]; then dk_write[$entry]=1; fi
 done <<<"$dk_write_roles"
-[[ -n ${dk_write["*|content:write"]:-} && -n ${dk_write["skymail|skymail:mails:approve"]:-} && -z ${dk_write["skymail|skymail:audit:read"]:-} ]] \
-  || { printf 'app-assignments drift check failed: dk-read-only.sh --print-write-roles lacks its write roles or holds skymail:audit:read\n' >&2; exit 1; }
+[[ -n ${dk_write["*|content:write"]:-} && -n ${dk_write["skymail|skymail:mails:approve"]:-} && -z ${dk_write["skymail|skymail:audit:read"]:-} \
+  && -z ${dk_write["skymail|skymail:mails:read"]:-} && -z ${dk_write["skymail|skymail:access"]:-} ]] \
+  || { printf 'app-assignments drift check failed: dk-read-only.sh --print-write-roles lacks its write roles or holds a SkyMail read role of DK\n' >&2; exit 1; }
 
 status=0
 # fazla WANT PATH CLIENT ROLE: a mapping the realm has and the code does not expect.
@@ -91,6 +94,9 @@ fazla BILGI /UYELER/DK/ALT skymail skymail:audit:read
 fazla drift /UYELER/YK skymail skymail:audit:read
 fazla drift /ADMIN skymail skymail:audit:read
 eksik S2-tohum /UYELER/DK skymail skymail:audit:read evet
+# mails:read on DK: a read role of its seed set, the panel's after the seed (no S2-fazla).
+fazla BILGI /UYELER/DK skymail skymail:mails:read
+eksik S2-tohum /UYELER/DK skymail skymail:mails:read evet
 # Missing: in the seed set BILGI (S2-tohum), DK's write role taken away included; DK's temporary
 # Forms roles taken away S2-geçici; outside the seed set or never seeded S2-eksik.
 eksik S2-tohum /ADMIN skymail skymail:mails:write evet
@@ -102,6 +108,6 @@ eksik S2-eksik /UYELER/YK forms skyforms:access evet
 eksik S2-eksik /ADMIN skymail skymail:mails:approve evet
 
 if [[ $status == 0 ]]; then
-  printf 'app-assignments drift decision: 28 cases as expected\n'
+  printf 'app-assignments drift decision: 30 cases as expected\n'
 fi
 exit "$status"

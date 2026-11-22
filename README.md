@@ -703,7 +703,7 @@ kapsamından; runbook §20.1), Template seed'in servis hesabına
 işareti kaldırır; skymail-backend README) verir; SkyMail'in rollerinden yalnız
 `skymail:notifications:send`'i, `skymail:tracking:withdraw`'u ve `skymail:templates:system`'ı, Forms'un rollerinden yalnız `skyforms:responses:read-service`'i oluşturur, öbürleri eksikse uyarır (runbook §20.1); listelenen servis istemcisinde varsayılan `roles` kapsamı yoksa ekler (runbook §20.1). SkyMail'in kendi
 rolleri `skymail:access`, `skymail:templates:read`, `skymail:lists:read`, `skymail:mails:read`,
-`skymail:mails:send`, `skymail:mails:write` ADMIN ve YK'ya, `skymail:mails:approve` yalnız YK'ya
+`skymail:mails:send`, `skymail:mails:write` ADMIN ve YK'ya (`access` ve `mails:read` DK'ya da), `skymail:mails:approve` yalnız YK'ya
 (onaycı YK kökü) aynı biçimde bir kez tohumlanır; uzlaştırıcı onları oluşturmaz, realm'de olanı
 tohumlar. `skymail:announcements:send` listeden çıktı (okuyan yok; ekip-yetkileri bilet 03), var olan
 eşlemeleri kalır (runbook §25).
@@ -712,6 +712,9 @@ ADMIN, YK ve DK'ya bir kez tohumlanır; okuma rolüdür, DK'da kalır (runbook �
 `skymail:audit:read` (maskeli içeriği kimin açtığını gösteren kayıt; skymail-frontend-rewrite 32) aynı
 biçimde oluşturulur ve yalnız DK'ya bir kez tohumlanır: içeriği açabilen roller kendi açışlarının
 kaydını okumaz (Purview Audit Reader, NIST AU-9(4); runbook §25).
+DK her şeyi okur (Yusuf, 2026-11-22): `skymail:access` ve `skymail:mails:read` ADMIN ve YK'nın yanında
+DK'ya da verilir; önceden tohumlanmış realm'de bunu operatörün `core-roles` adımındaki bir kezlik tohum
+eki yapar (`SKYMAIL_PRIVILEGED_SEED_ADDITIONS`). İkisi de içerik açmaz, yazmaz (runbook §25).
 `skymail:suppressions:manage` (bastırma listesi, kalıcı ret kaydını kaldırma, bounce oranı; ADR 0073)
 ve `skymail:unsubscribes:reactivate` (kimliği olmayan adresin çıkışını kişi isteyince ya da hata
 olunca gerekçeyle geri alma; ADR 0072 karar 7) aynı biçimde oluşturulur ve yalnız ADMIN ve YK'ya bir

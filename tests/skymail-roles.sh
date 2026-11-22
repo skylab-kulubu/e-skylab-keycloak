@@ -11,8 +11,9 @@
 # 2026-11-22: an audit role of its own, as Purview's Audit Reader) is made the same way and goes to
 # DK alone: ADMIN and YK, who may open the content, do not read its record. skymail:suppressions:manage (ADR 0073, skymail-bounce-isleme 06) and
 # skymail:unsubscribes:reactivate (ADR 0072 decision 7, abonelik-cikisi 10) are made the same way and
-# go to ADMIN and YK alone (write roles: DK none). SkyMail's own roles of the code area (ekip-yetkileri ticket 03): skymail:access,
-# skymail:templates:read, skymail:lists:read, skymail:mails:read, skymail:mails:send and
+# go to ADMIN and YK alone (write roles: DK none). SkyMail's own roles of the code area (ekip-yetkileri ticket 03): skymail:access and
+# skymail:mails:read to ADMIN, YK and DK (DK since 2026-11-22; a realm seeded before gets DK through the
+# seed addition, tests/dk-read-only.sh), skymail:templates:read, skymail:lists:read, skymail:mails:send and
 # skymail:mails:write to ADMIN and YK, skymail:mails:approve to YK alone (S2), are never created here:
 # each is seeded once it exists. The fixture realm has skymail:access and skymail:lists:read (and the
 # mailer stage makes skymail:mails:send), /ADMIN and /UYELER/YK, no DK; the core-roles stage's
@@ -28,8 +29,10 @@ SR_AUDIT_ROLE=skymail:audit:read
 SR_SUPPRESS_ROLE=skymail:suppressions:manage
 SR_REACTIVATE_ROLE=skymail:unsubscribes:reactivate
 SR_GONE_ROLE=skymail:announcements:send
-# SkyMail's own roles the fixture has when the operator seeds (skymail:mails:send from the mailer stage).
-SR_OWN_ROLES=(skymail:access skymail:lists:read skymail:mails:send)
+# SkyMail's own roles the fixture has when the operator seeds (skymail:mails:send from the mailer stage),
+# ADMIN and YK alone; skymail:access goes to DK too (Yusuf, 2026-11-22: DK reads the sends).
+SR_OWN_ROLES=(skymail:lists:read skymail:mails:send)
+SR_SEAT_ROLE=skymail:access
 # Every role seeded to ADMIN and YK alone when the operator seeds.
 SR_ADMIN_YK_ROLES=("$SR_SUPPRESS_ROLE" "$SR_REACTIVATE_ROLE" "${SR_OWN_ROLES[@]}")
 SR_ABSENT='skymail:templates:read skymail:mails:read skymail:mails:send skymail:mails:write skymail:mails:approve'
@@ -101,6 +104,9 @@ stage_skymail_roles_seeded_by_operator() {
     || fail "$SR_ROLE lacks its seed mark after the operator step (got: $(sr_seed_mark))"
   [[ $(sr_seed_mark "$SR_TRACK_ROLE") =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\ /ADMIN,/UYELER/YK,/UYELER/DK$ ]] \
     || fail "$SR_TRACK_ROLE lacks its seed mark after the operator step (got: $(sr_seed_mark "$SR_TRACK_ROLE"))"
+  # Unmarked until now, so seeded with its whole set at once: no seed addition after it.
+  [[ $(sr_seed_mark "$SR_SEAT_ROLE") =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\ /ADMIN,/UYELER/YK,/UYELER/DK$ ]] \
+    || fail "$SR_SEAT_ROLE was not seeded to ADMIN, YK and DK at once (got: $(sr_seed_mark "$SR_SEAT_ROLE"))"
   for role in "${SR_ADMIN_YK_ROLES[@]}"; do
     [[ $(sr_seed_mark "$role") =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\ /ADMIN,/UYELER/YK$ ]] \
       || fail "$role was not seeded to ADMIN and YK alone (got: $(sr_seed_mark "$role"))"
@@ -114,7 +120,7 @@ stage_skymail_roles_seeded_by_operator() {
     json_assert "$(sr_group_roles "$path")" 'index($a) == null' "$path got $SR_AUDIT_ROLE (DK alone reads the record)" \
       --arg a "$SR_AUDIT_ROLE"
   done
-  want=$(printf '%s\n' "$SR_ROLE" "$SR_TRACK_ROLE" "${SR_ADMIN_YK_ROLES[@]}" | jq -R . | jq -sc .)
+  want=$(printf '%s\n' "$SR_ROLE" "$SR_TRACK_ROLE" "$SR_SEAT_ROLE" "${SR_ADMIN_YK_ROLES[@]}" | jq -R . | jq -sc .)
   for path in "${SR_PRIVILEGED[@]}"; do
     json_assert "$(sr_group_roles "$path")" '. as $held | $want | all(. as $r | $held | index($r) != null)' \
       "$path did not get the skymail code area roles" --argjson want "$want"

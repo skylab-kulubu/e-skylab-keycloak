@@ -3216,7 +3216,9 @@ kaydını da okur. NIST SP 800-53 AU-9(4)'ün görevler ayrılığından (denetl
 Purview'daki ayrımdan bilinçli sapmadır; gerekçe Yusuf'un kararıdır. Telafi: DK'nın açışları da
 `sent_content_views`'a yazılır ve "Kim açtı"da görünür kalır; kayıt yalnız eklenir, hiçbir rol onu
 gizlemez ya da silemez (yalnız `SENT_CONTENT_VIEWS_RETENTION_DAYS` sonunda süpürülür). ADMIN ve YK
-içeriği açar, kaydı okumaz.
+içeriği açar, kaydı okumaz. DK'nın `system-mails:read`'i bugüne kadar `skymail:access` ve
+`skymail:mails:read` olmadığı için fiilen çalışmıyordu; bu yayınla DK maskeli içerik dahil bütün
+gönderimleri açabilir hale gelir (Yusuf kararı).
 
 **DK'nın SkyMail okuması: `skymail:access` ve `skymail:mails:read` (Yusuf, 2026-11-22).** DK her şeyi
 okur, hiçbir şeyi değiştirmez (Entra Global Reader; denetim kaydı için Audit Reader karşılığı

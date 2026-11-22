@@ -3209,6 +3209,15 @@ ya da tohumlanmadan SkyMail'in ucu kimseye açık değildir (zararsız; kayıt y
 DK'nın SkyMail'e girmesi için `skymail:access`, gönderim sayfasını açması için `skymail:mails:read`
 gerekir; ikisi de aşağıdaki tohum ekiyle DK'ya verilir.
 
+**Bilinçli sapma: DK hem içeriği açar hem açılış kaydını okur (Yusuf, 2026-11-22).** DK
+`skymail:system-mails:read`'i (ADMIN, YK, DK) korur: "DK her şeyin sahibi, her şeyi görebilmeli"; DK
+kulübün denetim organıdır, tam görünürlük ister. Bu rol maskeli içeriği açar, yani DK kendi açışlarının
+kaydını da okur. NIST SP 800-53 AU-9(4)'ün görevler ayrılığından (denetlenen kendi kaydını okumaz) ve
+Purview'daki ayrımdan bilinçli sapmadır; gerekçe Yusuf'un kararıdır. Telafi: DK'nın açışları da
+`sent_content_views`'a yazılır ve "Kim açtı"da görünür kalır; kayıt yalnız eklenir, hiçbir rol onu
+gizlemez ya da silemez (yalnız `SENT_CONTENT_VIEWS_RETENTION_DAYS` sonunda süpürülür). ADMIN ve YK
+içeriği açar, kaydı okumaz.
+
 **DK'nın SkyMail okuması: `skymail:access` ve `skymail:mails:read` (Yusuf, 2026-11-22).** DK her şeyi
 okur, hiçbir şeyi değiştirmez (Entra Global Reader; denetim kaydı için Audit Reader karşılığı
 `skymail:audit:read`). Bu yüzden iki rolün kümesi `ADMIN YK DK` oldu. İkisi de içerik açmaz:

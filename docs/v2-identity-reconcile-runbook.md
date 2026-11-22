@@ -415,11 +415,11 @@ alınır: 1.16.0'dan eski bir imaja dönmeden önce, onu kullanan her istemcide
 `sky-group-overage-mapper` yerleşik Group Membership mapper'ına geri çevrilir; yoksa Keycloak eksik
 mapper'ı sessizce atlar ve token'lar `groups` claim'ini kaybeder.
 
-Uzlaştırma oturumunun (tek JVM'de kcadm okumaları ve ReconcileJson, README) geri dönüşü imaj
+Uzlaştırma oturumunun (tek JVM'de kcadm okumaları, yazmaları ve ReconcileJson, README) geri dönüşü imaj
 gerektirmez: aynı imajla koşuya `KEYCLOAK_RECONCILE_SESSION=off` verilir; her kcadm ve ReconcileJson
 çağrısı yine kendi JVM'ini açar (eski davranış, yalnız yavaş). Oturum koşu ortasında ölürse koşu
-yeni bir istek göndermeden exit 1 ile durur; aynı koşu `KEYCLOAK_RECONCILE_SESSION=off` ile yeniden
-yapılır. Aynı oturumu kullanan operatör betikleri (`config/app-assignments.sh`, `role-groups.sh`,
+yeni bir istek göndermeden exit 1 ile durur (o anki yazmanın Keycloak'a ulaşıp ulaşmadığı bilinmez;
+yazmalar yakınsar); aynı koşu `KEYCLOAK_RECONCILE_SESSION=off` ile yeniden yapılır. Aynı oturumu kullanan operatör betikleri (`config/app-assignments.sh`, `role-groups.sh`,
 `dk-read-only.sh`, `master-console.sh`, `leader-app-roles.sh`, site ve CMS betikleri, README;
 uzlaştırıcının `app-assignments`, `tohum-atamalar`, `role-groups` ve `leader-app-roles` adımlarında
 betik değişkeni ortamdan alır) için de geri dönüş aynıdır:

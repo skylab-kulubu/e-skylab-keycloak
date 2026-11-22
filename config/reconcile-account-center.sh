@@ -2021,11 +2021,13 @@ reconcile_obs_post_broker_flow() {
 }
 
 # keycloak-yayin 02: deletes each of BROKER_FLOWS_TO_DELETE that nothing binds (see above). What
-# binds a flow: the realm's seven flow bindings and an identity provider's first or post broker
-# login flow (by alias), a client's flow overrides (by id). Exit 1 before any delete when one is
-# bound, built in or not a top-level flow.
+# binds a flow: the realm's seven flow bindings, an identity provider's first or post broker login
+# flow and another flow's subflow execution (by alias), a client's flow overrides (by id). Every
+# identity provider is read, a page of BROKER_FLOWS_IDP_PAGE at a time (Keycloak returns at most 100
+# without max). Exit 1 before any delete when one is bound, built in or not a top-level flow.
+BROKER_FLOWS_IDP_PAGE=100
 delete_unbound_broker_flows() {
-  local alias flow_id flow_file realm_file idps_file clients_file uses binding value
+  local alias flow_id flow_file realm_file idps_file page_file flows_file clients_file uses binding value first count
   local deletable=()
   for alias in "${BROKER_FLOWS_TO_DELETE[@]}"; do
     if flow_id=$(optional_lookup flow_id_by_alias "$alias"); then
@@ -2052,14 +2054,28 @@ delete_unbound_broker_flows() {
       [[ $value != "$alias" ]] || uses="${uses:+$uses, }realm $binding"
     done
     idps_file=$(mktemp "$WORK_DIR/idp-bindings.XXXXXX")
-    if ! kcadm get identity-provider/instances -r "$TARGET_REALM" \
-      --fields alias,firstBrokerLoginFlowAlias,postBrokerLoginFlowAlias >"$idps_file"; then
-      printf 'Identity providers are not readable with this session; nothing was deleted\n' >&2
-      return 1
-    fi
+    page_file=$(mktemp "$WORK_DIR/idp-page.XXXXXX")
+    first=0
+    while :; do
+      if ! kcadm get identity-provider/instances -r "$TARGET_REALM" -q "first=$first" -q "max=$BROKER_FLOWS_IDP_PAGE" \
+        --fields alias,firstBrokerLoginFlowAlias,postBrokerLoginFlowAlias >"$page_file"; then
+        printf 'Identity providers are not readable with this session; nothing was deleted\n' >&2
+        return 1
+      fi
+      cat "$page_file" >>"$idps_file"
+      count=$(grep -Ec '^[[:space:]]*"alias"[[:space:]]*:' "$page_file" || true)
+      ((count >= BROKER_FLOWS_IDP_PAGE)) || break
+      first=$((first + BROKER_FLOWS_IDP_PAGE))
+    done
     # A JSON string value: the alias is matched whole, its trailing space too.
     if grep -Fq "\"$alias\"" "$idps_file"; then
       uses="${uses:+$uses, }an identity provider's first or post broker login flow"
+    fi
+    # A subflow execution names its flow by alias (pretty JSON: key and value on one line).
+    flows_file=$(mktemp "$WORK_DIR/flow-subflows.XXXXXX")
+    kcadm_json authentication/flows -r "$TARGET_REALM" >"$flows_file"
+    if grep -F "\"$alias\"" "$flows_file" | grep -Eq '"flowAlias"[[:space:]]*:'; then
+      uses="${uses:+$uses, }a subflow of another flow"
     fi
     clients_file=$(mktemp "$WORK_DIR/client-bindings.XXXXXX")
     kcadm_json clients -r "$TARGET_REALM" --fields 'clientId,authenticationFlowBindingOverrides(*)' >"$clients_file"
@@ -2076,9 +2092,9 @@ delete_unbound_broker_flows() {
   while (($#)); do
     kcadm delete "authentication/flows/$1" -r "$TARGET_REALM" >/dev/null
     if [[ $CHECK_WRITES == true ]]; then
-      log "authentication flow '$2': would be deleted (bound nowhere: no realm binding, identity provider or client override)"
+      log "authentication flow '$2': would be deleted (bound nowhere: no realm binding, identity provider, client override or parent flow)"
     else
-      log "authentication flow '$2': deleted (bound nowhere: no realm binding, identity provider or client override)"
+      log "authentication flow '$2': deleted (bound nowhere: no realm binding, identity provider, client override or parent flow)"
     fi
     shift 2
   done

@@ -331,7 +331,7 @@ kaldırılır (adı OBS'ye not edilir, akış silinmez); `off` onu geri yazar (b
 `KEYCLOAK_RECONCILE_ONLY=broker-flows`, kuru koşusu `KEYCLOAK_RECONCILE_CHECK=true`): OBS'nin post broker
 login akışı `post-broker-passkey-offer` yalnız passkey teklifini (REQUIRED) taşır, hiç çalışmayan
 "cond 2fa" alt akışı (tek koşulu DISABLED) kaldırılır; bağsız `first broker login + http ` kopyası,
-hiçbir realm bağı, IdP ya da istemci geçersiz kılması onu göstermiyorsa silinir. Bağlıysa ya da alt
+hiçbir realm bağı, IdP, istemci geçersiz kılması ya da üst akış onu göstermiyorsa silinir. Bağlıysa ya da alt
 akışta etkin bir koşul varsa adım hiçbir şey değiştirmeden durur (exit 1). Runbook §22.
 
 SPI 1.27.0, gerçek e-posta kaydından sonra isteğe bağlı YTÜ bağlama ve native erişim anahtarı/parola

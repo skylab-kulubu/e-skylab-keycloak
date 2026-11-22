@@ -2494,7 +2494,9 @@ OBS'yi elle kopyaya bağlamayın; realm bağlaması yeter. OBS'nin geri kalanı 
   akışa bağlıysa `WARNING: identity provider OBS keeps its own post broker login flow '…'` ve dokunulmaz.
   OBS yoksa (sandbox) `identity provider OBS post broker login flow: unchanged (absent)`.
 - `first broker login + http `: realm'in yedi akış bağından hiçbiri, hiçbir IdP'nin first/post broker
-  login akışı ve hiçbir istemcinin akış geçersiz kılması onu göstermiyorsa silinir. Biri gösteriyorsa
+  login akışı (IdP'lerin hepsi, 100'lük sayfalarla okunur), hiçbir istemcinin akış geçersiz kılması onu
+  göstermiyorsa ve başka bir akışta alt akış olarak kullanılmıyorsa silinir. Boşluksuz adlı bir kardeş
+  akış (`first broker login + http`) varsa ona dokunulmaz. Biri gösteriyorsa
   `Authentication flow 'first broker login + http ' is bound (…); nothing was deleted` ve exit 1.
   Silme geri alınmaz (akış hiçbir yerde kullanılmıyordu); geri dönüş gerekmez.
 
@@ -2503,7 +2505,7 @@ Beklenen satırlar, kuru koşu (yayından sonra ilk kez):
 ```text
 [reconcile] post broker login flow 'post-broker-passkey-offer': would remove subflow 'cond 2fa' (CONDITIONAL; no enabled condition: it never runs)
 [reconcile] identity provider OBS post broker login flow: unchanged ('post-broker-passkey-offer')
-[reconcile] authentication flow 'first broker login + http ': would be deleted (bound nowhere: no realm binding, identity provider or client override)
+[reconcile] authentication flow 'first broker login + http ': would be deleted (bound nowhere: no realm binding, identity provider, client override or parent flow)
 Broker flows are checked; nothing was written (2 write(s) withheld).
 ```
 

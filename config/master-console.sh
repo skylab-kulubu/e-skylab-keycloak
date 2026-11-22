@@ -74,7 +74,7 @@
 # Environment: KEYCLOAK_ADMIN_URL (default http://keycloak:8080), KEYCLOAK_MASTER_CONSOLE_ADMIN_USERNAME
 # (or --admin-user), KEYCLOAK_MASTER_CONSOLE_FILE (default config/master-console.json next to this
 # script), KEYCLOAK_MASTER_ADMIN_MAX (default 3), KEYCLOAK_CONSOLE_WRITERS_MAX (default 6),
-# KEYCLOAK_RECONCILE_SESSION (on, the default: every kcadm read and ReconcileJson call in one JVM,
+# KEYCLOAK_RECONCILE_SESSION (on, the default: every kcadm and ReconcileJson call in one JVM,
 # config/reconcile-session.sh; off: a JVM a call, as before; required: the tests).
 # Output: "[master-console] ..." lines, then "check: N change(s) pending, W warning(s), P problem(s)" or
 # "applied N change(s), ...". Exit 0 unless a PROBLEM (1) or a usage error or an invalid file (2).
@@ -225,7 +225,7 @@ summary() {
   fi
 }
 
-# A read (get) in the session when it runs (config/reconcile-session.sh), a write in its own JVM.
+# In the session when it runs (config/reconcile-session.sh), reads and writes alike.
 kcadm() {
   session_kcadm "$@"
 }

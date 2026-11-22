@@ -501,7 +501,7 @@ rabbit_api -X PUT -H 'content-type: application/json' -d '{"durable":true,"auto_
 rabbit_api -X POST -H 'content-type: application/json' -d '{"routing_key":"KK.EVENT.CLIENT.#","arguments":{}}' \
   "$RABBITMQ_URL/api/bindings/%2F/e/keycloak.events/q/$RABBITMQ_QUEUE" >/dev/null
 docker run --rm -d --name "$CONTAINER" --network "$NETWORK" --memory "$MEMORY" --tmpfs /opt/keycloak/data:rw,size=512m,mode=1777 -p "127.0.0.1:$PORT:$PORT" \
-  -e KC_OPTS="$KCADM_JVM_OPTS" \
+  -e KC_OPTS="$KCADM_JVM_STANDALONE_OPTS" \
   -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
   -e SKY_HARNESS=1 -e SKY_MAIL_ENABLED=true -e "SKY_MAIL_BASE_URL=http://$SKYMAIL_CONTAINER:8080" \
   -e SKY_MAIL_CLIENT_ID=keycloak-mailer -e "SKY_MAIL_CLIENT_SECRET=$MAILER_SECRET" -e SKY_MAIL_TIMEOUT_MILLISECONDS=3000 \
@@ -518,6 +518,7 @@ for _ in $(seq 1 120); do
 done
 curl -fsS "$BASE_URL/realms/master" >/dev/null || { docker logs "$CONTAINER" 2>&1 | tail -n 40 >&2; fail "Keycloak did not start ($IMAGE)"; }
 sessions_login
+kcadm_jvm_dump "$CONTAINER" "$ADMIN_CONFIG"
 printf '    stock Keycloak in dev mode with the SPI jar (%s), the RabbitMQ provider (%s), SkyMail fixture, Mailpit, RabbitMQ\n' \
   "$(basename -- "$SPI_JAR")" "$(basename -- "$RABBITMQ_JAR")"
 

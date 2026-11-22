@@ -111,7 +111,7 @@
 # KEYCLOAK_ADMIN_REALM (default master), KEYCLOAK_APP_ASSIGNMENTS_ADMIN_USERNAME (or --admin-user),
 # KEYCLOAK_APP_ASSIGNMENTS_FILE (default config/app-assignments.json next to this script),
 # KEYCLOAK_APP_ASSIGNMENTS_BACKUP_FILE (--seed --apply's backup when --backup-file is not given),
-# KEYCLOAK_RECONCILE_SESSION (on, the default: every kcadm read and ReconcileJson call in one JVM,
+# KEYCLOAK_RECONCILE_SESSION (on, the default: every kcadm and ReconcileJson call in one JVM,
 # config/reconcile-session.sh; off: a JVM a call, as before; required: the tests).
 # Output: "[app-assignments] ..." lines (group paths, role names and counts, never a person), then
 # "check: N change(s) pending, W warning(s), P problem(s)" or "applied N change(s), ...".
@@ -299,7 +299,7 @@ problem() {
   log "PROBLEM: $1"
 }
 
-# A read (get) in the session when it runs (config/reconcile-session.sh), a write in its own JVM.
+# In the session when it runs (config/reconcile-session.sh), reads and writes alike.
 kcadm() {
   session_kcadm "$@"
 }

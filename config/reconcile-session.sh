@@ -1,18 +1,22 @@
 # shellcheck shell=bash
-# The reconciliation session (config/ReconcileSession.java): every kcadm read and every ReconcileJson
-# call of a run in one JVM. A kcadm.sh call starts a JVM of its own: a whole reconciliation made some
-# two hundred of them (about 8.5 minutes in production, 2026-10-27), app-assignments.sh --check two a
-# role (18 minutes in production, 2026-10-31). The session runs each call as that JVM's main would,
-# and session_call gives back the same bytes on stdout and stderr, in the same order, and the same
-# exit status, so every line, warning, dry run line and exit status of a run stays the same (the tests
-# compare whole runs both ways: tests/run-integration.sh, tests/role-groups.sh, tests/dk-read-only.sh,
-# tests/master-console.sh). Writes (create, update, delete and every other kcadm command) still start
-# kcadm.sh, one JVM a call: whether a write reached Keycloak is then never in doubt, and a lost session
-# cannot leave a write half sent.
+# The reconciliation session (config/ReconcileSession.java): every kcadm call (reads and writes) and
+# every ReconcileJson call of a run in one JVM. A kcadm.sh call starts a JVM of its own: a whole
+# reconciliation made some two hundred of them (about 8.5 minutes in production, 2026-10-27; a first,
+# writing reconciliation a hundred more), app-assignments.sh --check two a role (18 minutes in
+# production, 2026-10-31). The session runs each call as that JVM's main would, and session_call gives
+# back the same bytes on stdout and stderr, in the same order, and the same exit status, so every line,
+# warning, dry run line and exit status of a run stays the same (the tests compare whole runs both
+# ways, writing runs among them, and the realm they leave: tests/run-integration.sh,
+# tests/role-groups.sh, tests/dk-read-only.sh, tests/master-console.sh, tests/site-clients.sh).
+# SESSION_KCADM_COMMANDS are the kcadm commands the session takes; every other one (config, the
+# login; set-password, which may prompt) starts kcadm.sh, one JVM a call. A session lost during a write
+# leaves it unknown whether that write reached Keycloak, as a kcadm.sh JVM killed during one would:
+# nothing more is sent and the run stops (session_lost); every write of these scripts converges, so the
+# same run again (or with KEYCLOAK_RECONCILE_SESSION=off) finishes the work.
 #
 # Sourced by config/reconcile-account-center.sh and by the operator scripts that read many times
 # (config/app-assignments.sh, role-groups.sh, dk-read-only.sh, master-console.sh, and those of kcadm
-# reads alone: site-clients.sh and the others that source this file). Such a script:
+# calls alone: site-clients.sh and the others that source this file). Such a script:
 #   - sets SESSION_MODE=${KEYCLOAK_RECONCILE_SESSION:-on} at its top and checks it before its login
 #     (session_mode_valid): on (the default; a JVM per call when the session cannot start, with one
 #     line on stderr), off (a JVM per call: as before, the rollback and the comparison base) or
@@ -22,7 +26,7 @@
 #     ReconcileJson, JSON_TOOL_CLASSPATH once it has compiled config/ReconcileJson.java into
 #     $WORK_DIR/classes (with config/ReconcileSession.java in the same javac call when session_wanted);
 #     a script without ReconcileJson leaves JSON_TOOL_CLASSPATH unset or empty, and start_session
-#     compiles config/ReconcileSession.java alone (a session of kcadm reads);
+#     compiles config/ReconcileSession.java alone (a session of kcadm calls);
 #   - calls start_session once, at its top level after its login and before its reads, sends its kcadm
 #     calls through session_kcadm and its ReconcileJson calls to session_call json when
 #     session_takes json, and calls stop_session in its EXIT trap.
@@ -222,13 +226,17 @@ session_guard() {
   fi
 }
 
-# session_kcadm COMMAND ARG...: kcadm COMMAND --config KCADM_CONFIG ARG...: a read (get) in the session
-# when it runs, anything else (and every call without the session) in kcadm.sh's own JVM.
+# The kcadm commands the session takes (session_kcadm).
+SESSION_KCADM_COMMANDS=' get create update delete add-roles remove-roles get-roles '
+
+# session_kcadm COMMAND ARG...: kcadm COMMAND --config KCADM_CONFIG ARG...: in the session when it runs
+# and takes COMMAND (SESSION_KCADM_COMMANDS), otherwise (and every call without the session) in
+# kcadm.sh's own JVM.
 session_kcadm() {
   local command=$1
   shift
   session_guard
-  if [[ $command == get ]] && session_takes kcadm "$@"; then
+  if [[ $SESSION_KCADM_COMMANDS == *" $command "* ]] && session_takes kcadm "$@"; then
     session_call kcadm "$command" --config "$KCADM_CONFIG" "$@"
     return
   fi

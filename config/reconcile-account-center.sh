@@ -3662,9 +3662,13 @@ FORMS_SERVICE_ROLE_DEFINITIONS=(
 # grant record is not on the role as for the others but on each listed client
 # (REALM_MANAGEMENT_GRANT_ATTRIBUTE = "<timestamp> <role>,<role>"); without it the reconciler
 # identity, which cannot read a service account's roles, would warn on every run.
+# core's service account also gets view-events (core docs/user-accounts.md, ADR-0079 decision 6): the
+# admin panel's person card shows a person's recent sign-ins from GET /events?user=…; without it core
+# says the events cannot be read and nothing fails. It reads; it changes nothing.
 REALM_MANAGEMENT_SERVICE_ROLE_DEFINITIONS=(
   "view-users|skymail-backend|shared|"
   "view-clients|skymail-backend|shared|"
+  "view-events|core|shared|"
 )
 CORE_SERVICE_ROLE_GRANT_ATTRIBUTE=skylab.granted-service-accounts
 REALM_MANAGEMENT_GRANT_ATTRIBUTE=skylab.granted-realm-management-roles

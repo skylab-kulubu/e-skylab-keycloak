@@ -666,7 +666,8 @@ stage_v2_identity_guardrails() {
   [[ -n $service_user && $service_user != null ]] || fail 'the core fixture has no service account'
   roles_before=$(kcadm get "users/$service_user/role-mappings/clients/$realm_management_uuid" -r "$V2_REALM" -c \
     | jq -c '[.[].name] | sort')
-  json_assert "$roles_before" '. == ["manage-clients","manage-users","query-clients","query-groups","query-users","view-clients","view-users"]' \
+  # view-events: granted by the service-roles step (core-service-roles.sh) earlier in this group.
+  json_assert "$roles_before" '. == ["manage-clients","manage-users","query-clients","query-groups","query-users","view-clients","view-events","view-users"]' \
     'the core service account fixture does not start with production realm-management roles'
 
   kcadm delete identity-provider/instances/OBS -r "$V2_REALM" >/dev/null 2>&1 || true
@@ -741,7 +742,7 @@ stage_v2_identity_guardrails() {
   [[ $idp_after == "$idp_before" ]] || fail 'identity guardrails changed the OBS identity provider itself'
   roles_after=$(kcadm get "users/$service_user/role-mappings/clients/$realm_management_uuid" -r "$V2_REALM" -c \
     | jq -c '[.[].name] | sort')
-  json_assert "$roles_after" '. == ["manage-users","query-clients","query-groups","query-users","view-clients","view-users"]' \
+  json_assert "$roles_after" '. == ["manage-users","query-clients","query-groups","query-users","view-clients","view-events","view-users"]' \
     'the core service account did not lose exactly manage-clients (it must keep view-clients and query-clients)'
   json_assert "$(kcadm get "users/$service_user/role-mappings/clients/$realm_management_uuid/composite" -r "$V2_REALM" -c)" \
     '([.[].name] | index("manage-clients")) == null' \

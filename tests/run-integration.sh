@@ -1859,7 +1859,12 @@ stage_event_retention_before_first_reconciliation
 
 CURRENT_STAGE='first reconciliation'
 # KEYCLOAK_RABBITMQ_EVENTS: off here, on in the second reconciliation, keep after (tests/event-retention.sh).
-"${COMPOSE[@]}" run --rm --no-deps -e KEYCLOAK_RABBITMQ_EVENTS=off keycloak-config >"$TEST_STATE_DIR/reconcile-first.log" 2>&1
+# On failure the reconciler's last lines and Keycloak's errors are printed: the log stays on the runner.
+"${COMPOSE[@]}" run --rm --no-deps -e KEYCLOAK_RABBITMQ_EVENTS=off keycloak-config >"$TEST_STATE_DIR/reconcile-first.log" 2>&1 || {
+  tail -n 40 "$TEST_STATE_DIR/reconcile-first.log" >&2
+  "${COMPOSE[@]}" logs --no-color --tail 400 keycloak 2>&1 | grep -E 'ERROR|WARN|Exception|denylist|blacklist' | tail -n 40 >&2
+  false
+}
 
 assert_account_center_uses_the_realm_browser_flow() {
   local client_json

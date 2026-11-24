@@ -11,10 +11,10 @@ import org.keycloak.models.RealmModel;
 import java.net.URI;
 
 /**
- * Registers the {@code sky-mail} e-mail sender and holds everything that outlives one mail: the
+ * Registers the {@code skynotify} e-mail sender and holds everything that outlives one mail: the
  * validated environment configuration, the HTTP client and the client-credentials token cache.
  *
- * <p>{@link #init(Config.Scope)} reads and validates the environment once. {@code SKY_MAIL_ENABLED}
+ * <p>{@link #init(Config.Scope)} reads and validates the environment once. {@code SKYNOTIFY_ENABLED}
  * defaults to {@code false}, so building the optimized image — which initialises every factory
  * without the runtime environment — neither validates nor needs a secret. A malformed value is an
  * operator mistake and fails initialisation; a missing or empty secret file fails closed instead,
@@ -23,14 +23,14 @@ import java.net.URI;
  * <p>{@link #order()} is above Keycloak's own {@code default} factory, which makes this the
  * realm's e-mail sender without a build option.</p>
  */
-public final class SkyMailEmailSenderProviderFactory implements EmailSenderProviderFactory {
+public final class SkyNotifyEmailSenderProviderFactory implements EmailSenderProviderFactory {
 
-    public static final String PROVIDER_ID = "sky-mail";
+    public static final String PROVIDER_ID = "skynotify";
 
-    private static final Logger LOG = Logger.getLogger(SkyMailEmailSenderProviderFactory.class);
+    private static final Logger LOG = Logger.getLogger(SkyNotifyEmailSenderProviderFactory.class);
 
-    private volatile SkyMailSettings settings = SkyMailSettings.disabled(SkyMailSettings.REASON_NOT_ENABLED);
-    private volatile SkyMailClient client;
+    private volatile SkyNotifySettings settings = SkyNotifySettings.disabled(SkyNotifySettings.REASON_NOT_ENABLED);
+    private volatile SkyNotifyClient client;
 
     @Override
     public String getId() {
@@ -44,37 +44,37 @@ public final class SkyMailEmailSenderProviderFactory implements EmailSenderProvi
 
     @Override
     public EmailSenderProvider create(KeycloakSession session) {
-        return new SkyMailEmailSenderProvider(
+        return new SkyNotifyEmailSenderProvider(
                 session,
                 settings,
                 client,
                 () -> session.getProvider(
-                        EmailSenderProvider.class, SkyMailEmailSenderProvider.FALLBACK_PROVIDER_ID),
+                        EmailSenderProvider.class, SkyNotifyEmailSenderProvider.FALLBACK_PROVIDER_ID),
                 () -> realmIssuer(session));
     }
 
     @Override
     public void init(Config.Scope config) {
-        settings = SkyMailSettings.fromEnvironment(System.getenv());
+        settings = SkyNotifySettings.fromEnvironment(System.getenv());
         if (settings.enabled()) {
-            client = SkyMailClient.create(settings);
-            LOG.infof("sky_mail_enabled client=%s", settings.clientId());
+            client = SkyNotifyClient.create(settings);
+            LOG.infof("skynotify_enabled client=%s", settings.clientId());
             return;
         }
         client = null;
-        if (SkyMailSettings.REASON_NOT_ENABLED.equals(settings.disabledReason())) {
-            // Nobody asked for SkyMail; stock Keycloak behaviour is not worth a warning.
-            LOG.debugf("sky_mail_disabled reason=%s", settings.disabledReason());
+        if (SkyNotifySettings.REASON_NOT_ENABLED.equals(settings.disabledReason())) {
+            // Nobody asked for SkyNotify; stock Keycloak behaviour is not worth a warning.
+            LOG.debugf("skynotify_disabled reason=%s", settings.disabledReason());
         } else {
-            // An operator asked for SkyMail and the secret is not there: say so once, loudly.
-            LOG.warnf("sky_mail_disabled reason=%s", settings.disabledReason());
+            // An operator asked for SkyNotify and the secret is not there: say so once, loudly.
+            LOG.warnf("skynotify_disabled reason=%s", settings.disabledReason());
         }
     }
 
     /**
      * The realm issuer of the request this mail belongs to. A mail sent without an active request
      * context has no issuer to derive a token endpoint from; the sender then falls back to SMTP
-     * unless the operator pinned {@code SKY_MAIL_TOKEN_URL}.
+     * unless the operator pinned {@code SKYNOTIFY_TOKEN_URL}.
      */
     private static URI realmIssuer(KeycloakSession session) {
         try {
@@ -82,7 +82,7 @@ public final class SkyMailEmailSenderProviderFactory implements EmailSenderProvi
             if (realm == null) {
                 return null;
             }
-            return SkyMailEmailSenderProvider.realmIssuer(
+            return SkyNotifyEmailSenderProvider.realmIssuer(
                     session.getContext().getUri().getBaseUri(), realm.getName());
         } catch (RuntimeException exception) {
             return null;

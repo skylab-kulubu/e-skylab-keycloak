@@ -29,7 +29,7 @@ Gerçek Keycloak için ağır runtime yuvası ayrıca koordine edilir.
 8. Başarılı Sudo 5dk, sub+sid bağlı; tarayıcı yanıtta kod veya Sudo token görmez.
    Mail failure, 429 ve kilit yanıtı tekrar deneme davranışını korur.
 
-Yayın: purpose=sudo SkyMail şablonu hazır → Keycloak (fiziksel Touch ID dahil
+Yayın: purpose=sudo SkyNotify şablonu hazır → Keycloak (fiziksel Touch ID dahil
 mevcut kapılar) → Account center. Üretim e-posta gönderimi, template seed,
 realm akışı açma ve yayın bu kod değişikliğinin parçası değildir.
 
@@ -38,7 +38,7 @@ Otomatik gerçek Keycloak kabulü: `mvn -f spi/pom.xml package` ardından
 `bash tests/sudo-email-code.sh` (yerel pinned stock imajlar önceden bulunmalı;
 `theme/node_modules/@playwright/test` veya `SUDO_EMAIL_PLAYWRIGHT_MODULE` gerekir).
 Wrapper kendine ait üç container/network/tmpfs açıp kapatır; imaj çekmez. Native
-single-use store, SkyMail fixture ve SMTP Mailpit, gerçek virtual passkey,
+single-use store, SkyNotify fixture ve SMTP Mailpit, gerçek virtual passkey,
 3/saat + 10/15dk bütçesi, brute-force kilidi, primary ve pending-personal hedefleri,
 sub/sid, replay ve 10dk expiry sınanır. Clock kontrolü yalnız ayrı test JAR'ında
 ve `SKY_HARNESS=1` + özel fixture realm'inde bulunur; production SPI'da olmadığı

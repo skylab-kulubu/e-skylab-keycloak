@@ -22,14 +22,14 @@ import java.util.Map;
  * before. The mail goes where that person's Login codes would go ({@link EmailCodeAuthenticator#mailbox})
  * and at most once an hour to an address: the first notice keeps a store entry under a keyed hash of
  * the address ({@link BudgetKeys}) for {@value #WINDOW_SECONDS} seconds. It is Keycloak's generic
- * template send of {@value #MAIL_TEMPLATE}, which the SkyMail provider routes to SkyMail's
+ * template send of {@value #MAIL_TEMPLATE}, which the SkyNotify provider routes to SkyNotify's
  * {@code account.deletion-in-progress} and Keycloak's own SMTP renders from this extension's copy
- * when SkyMail is unreachable. It carries no code, link or name, and asks SkyMail to keep no record
- * of it ({@code erase_after_send}): the person's Erasure command may have run in SkyMail already.
+ * when SkyNotify is unreachable. It carries no code, link or name, and asks SkyNotify to keep no record
+ * of it ({@code erase_after_send}): the person's Erasure command may have run in SkyNotify already.
  */
 public final class AccountErasureNotice {
 
-    /** The mail ({@code theme-resources/templates/{text,html}/}); the SkyMail provider routes it by this name. */
+    /** The mail ({@code theme-resources/templates/{text,html}/}); the SkyNotify provider routes it by this name. */
     public static final String MAIL_TEMPLATE = "sky-account-erasure-notice.ftl";
     static final String SUBJECT_KEY = "skyAccountErasureNoticeSubject";
     /** At most one notice to an address in this many seconds. */

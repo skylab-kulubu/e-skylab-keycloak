@@ -197,11 +197,11 @@ SKYFORMS_CORE_SCOPE_NAME=skyforms-core-audience
 # Both write the same attributes and the same mapper (config/skycms-audience-mappers.json is
 # site-clients.sh's audience_mapper_body); tests/login-clients.sh proves that neither changes what
 # the other wrote. They differ only on another mapper in the scope: this step prunes it, as in every
-# scope it owns, while site-clients.sh stops on a foreign audience. SkyMail's login client is also
-# SkyMail's API client (SKYMAIL_CLIENT_ID, mailer-client-contract.sh): its own scope names it as the
+# scope it owns, while site-clients.sh stops on a foreign audience. SkyNotify's login client is also
+# SkyNotify's API client (SKYNOTIFY_CLIENT_ID, mailer-client-contract.sh): its own scope names it as the
 # audience.
 SKYCMS_SCOPE_NAME=skycms-audience
-SKYMAIL_SCOPE_NAME=skymail-api-audience
+SKYNOTIFY_SCOPE_NAME=skynotify-api-audience
 # The admin panel's login client (ADR-0058; see reconcile_admin_panel_client): admin, superadmin in
 # the sandbox realm (as in inscribed-cms-roles.sh); KEYCLOAK_ADMIN_PANEL_CLIENT_ID names another.
 if [[ $TARGET_REALM == e-skylab-sandbox ]]; then
@@ -2746,14 +2746,14 @@ reconcile_skyapp_audience() {
     "$CONFIG_DIR/skyapp-account-center-audience-mappers.json"
   skyapp_scope_uuid=$ENSURED_SCOPE_ID
   ensure_default_client_scope "$skyapp_client_uuid" "$skyapp_scope_uuid" "$SKYAPP_SCOPE_NAME"
-  # The person's own SkyMail endpoints (the in-app inbox, GET /v1/me/inbox; iletisim-servisi 04 and
-  # 08) take a person's token with aud skymail and no role. sky-app's access token gets it from the
-  # same scope the SkyMail UI's does (skymail-api-audience: one Audience mapper, access token and
-  # introspection only), kept among sky-app's default scopes. The scope is shared by skymail and
-  # skyapp from here on: a mapper added to config/skymail-api-audience-mappers.json reaches sky-app's
-  # token too, so that file must stay the skymail audience alone.
-  ensure_default_audience_scope "$SKYAPP_CLIENT_ID" "$skyapp_client_uuid" "$SKYMAIL_SCOPE_NAME" \
-    "$CONFIG_DIR/skymail-api-audience-mappers.json"
+  # The person's own SkyNotify endpoints (the in-app inbox, GET /v1/me/inbox; iletisim-servisi 04 and
+  # 08) take a person's token with aud skynotify and no role. sky-app's access token gets it from the
+  # same scope the SkyNotify UI's does (skynotify-api-audience: one Audience mapper, access token and
+  # introspection only), kept among sky-app's default scopes. The scope is shared by skynotify and
+  # skyapp from here on: a mapper added to config/skynotify-api-audience-mappers.json reaches sky-app's
+  # token too, so that file must stay the skynotify audience alone.
+  ensure_default_audience_scope "$SKYAPP_CLIENT_ID" "$skyapp_client_uuid" "$SKYNOTIFY_SCOPE_NAME" \
+    "$CONFIG_DIR/skynotify-api-audience-mappers.json"
 }
 
 # A login client whose access token must carry the audience of the API it calls, for every
@@ -2810,17 +2810,17 @@ ensure_default_audience_scope() {
 #     full-path groups, the teams collection among them) and core POST /v1/media for images (aud
 #     core, no core role); the sites' editor gate looks for cms:access in any client of
 #     resource_access, so with full scope another site's cms:access opened this site's editor;
-#   skymail (the SkyMail UI) calls SkyMail only, which reads the client's own roles
-#     (resource_access.skymail) and sub, name and e-mail from Keycloak's userinfo, and no groups
-#     (mailing lists read groups with SkyMail's own service account).
+#   skynotify (the SkyNotify UI) calls SkyNotify only, which reads the client's own roles
+#     (resource_access.skynotify) and sub, name and e-mail from Keycloak's userinfo, and no groups
+#     (mailing lists read groups with SkyNotify's own service account).
 # The contract per client: the API audiences come from hardcoded Audience mappers in default scopes
 # (a person without a role of the API keeps them; audience-resolve adds nothing once the full scope
 # is off, and production's skycms reached the sites' tokens only through it), no realm role and no
 # other client's role in the role scope (the client's own roles always pass Keycloak's filter, so
-# cms:access, content:* and the skymail:* roles stay), "Full scope allowed" off. The sites keep
-# their full-path groups (inscribed reads them); SkyMail's token carries none: every default or
-# optional scope writing the claim groups is detached from skymail only (the realm scope and every
-# other client keep it) and a mapper of skymail itself writing it is deleted. The order keeps the
+# cms:access, content:* and the skynotify:* roles stay), "Full scope allowed" off. The sites keep
+# their full-path groups (inscribed reads them); SkyNotify's token carries none: every default or
+# optional scope writing the claim groups is detached from skynotify only (the realm scope and every
+# other client keep it) and a mapper of skynotify itself writing it is deleted. The order keeps the
 # apps working during the run: audiences first, full scope off last. The client's secret, URIs,
 # flags and other mappers are not touched. A missing client is skipped with a warning (the sandbox
 # realm may lack one); the operator runs this step alone there (KEYCLOAK_RECONCILE_ONLY=login-clients).
@@ -2831,8 +2831,8 @@ reconcile_login_clients() {
   reconcile_narrowed_login_client "$FRONTEND_ARGE_CLIENT_ID" keep-groups \
     "$FRONTEND_ARGE_SCOPE_NAME=$CONFIG_DIR/frontend-arge-core-audience-mappers.json" \
     "$SKYCMS_SCOPE_NAME=$CONFIG_DIR/skycms-audience-mappers.json"
-  reconcile_narrowed_login_client "$SKYMAIL_CLIENT_ID" drop-groups \
-    "$SKYMAIL_SCOPE_NAME=$CONFIG_DIR/skymail-api-audience-mappers.json"
+  reconcile_narrowed_login_client "$SKYNOTIFY_CLIENT_ID" drop-groups \
+    "$SKYNOTIFY_SCOPE_NAME=$CONFIG_DIR/skynotify-api-audience-mappers.json"
 }
 
 # reconcile_narrowed_login_client CLIENT keep-groups|drop-groups SCOPE=MAPPERS_FILE...
@@ -2988,7 +2988,7 @@ role_reference() {
 }
 
 # The role scope of a login client whose full scope is turned off: every role of the API clients
-# given after its id and uuid (the admin panel: core, forms; the sites and SkyMail: none), no other
+# given after its id and uuid (the admin panel: core, forms; the sites and SkyNotify: none), no other
 # client role and no realm role. The client's own roles always pass Keycloak's filter and need no
 # mapping. A missing API client is reported; its roles are added once it exists.
 reconcile_role_scope() {
@@ -3213,7 +3213,7 @@ reconcile_core_roles() {
       privileged+=("$name")
     fi
   done
-  # One call per set of Privileged groups (as SkyMail's roles), the write roles' set
+  # One call per set of Privileged groups (as SkyNotify's roles), the write roles' set
   # (CORE_PRIVILEGED_NAMES) first, then the others in the order of the list.
   local group_names known set_names=() sets=("${CORE_PRIVILEGED_NAMES[*]}")
   for name in ${privileged[@]+"${privileged[@]}"}; do
@@ -3263,9 +3263,9 @@ core_role_rename_source() {
 
 # seed_privileged_client_roles LABEL CLIENT_UUID GROUP_NAMES NAME...: grants each client role to the
 # Privileged groups named in GROUP_NAMES (space separated: ADMIN YK DK or fewer) once and marks it
-# (operator session). Nothing is written unless every check passes. LABEL (core, skymail, forms)
+# (operator session). Nothing is written unless every check passes. LABEL (core, skynotify, forms)
 # names the roles in the messages ("<LABEL> role <name>: seeded once to ..."). core's resource roles
-# (runbook §19), SkyMail's Privileged roles (§25) and Forms' (§28) share it.
+# (runbook §19), SkyNotify's Privileged roles (§25) and Forms' (§28) share it.
 seed_privileged_client_roles() {
   local label=$1 client_uuid=$2 group_names=$3
   shift 3
@@ -3540,12 +3540,12 @@ core_rename_list() {
 #   url:forms           form-bound short links, /v1/urls/forms/{formId} and GET /v1/urls/availability.
 #   users:read          GET /v1/users/{id}.
 #   audience:read       POST /v1/audiences/resolve: who a News send goes to (core #242,
-#                       docs/news-audience.md); SkyMail's service account (client skymail-backend,
-#                       skymail-backend's KEYCLOAK_SERVICE_CLIENT_ID) only (duyuru-haber ticket 04).
+#                       docs/news-audience.md); SkyNotify's service account (client skynotify-backend,
+#                       skynotify-backend's KEYCLOAK_SERVICE_CLIENT_ID) only (duyuru-haber ticket 04).
 #   communication-preferences:read
-#                       POST /internal/v1/communication-preferences/tracking:resolve: whom SkyMail may
-#                       track (core #256, docs/communication-preferences.md); SkyMail's service
-#                       account (skymail-backend) only, core refuses a person's token whatever it
+#                       POST /internal/v1/communication-preferences/tracking:resolve: whom SkyNotify may
+#                       track (core #256, docs/communication-preferences.md); SkyNotify's service
+#                       account (skynotify-backend) only, core refuses a person's token whatever it
 #                       carries (iletisim-servisi ticket 17).
 #   consent:record      POST /v1/consents, /v1/consents/withdrawals and /v1/consents/lookup: a
 #                       product records the contact consent (Davet onayı, ADR-0062) a person gave in
@@ -3558,14 +3558,14 @@ core_rename_list() {
 #                       place:place-service, not the default place:place). Guessr has no client; it is
 #                       added here once it has a service account.
 #   consent:audience:read
-#                       GET /v1/consents/audience and POST /v1/consents/renewal-requests: who SkyMail
+#                       GET /v1/consents/audience and POST /v1/consents/renewal-requests: who SkyNotify
 #                       may send an invitation or a promotional mail to (core docs/contact-consents.md,
-#                       KVKK s6 tickets 11 and 12); SkyMail's service account (skymail-backend) only.
+#                       KVKK s6 tickets 11 and 12); SkyNotify's service account (skynotify-backend) only.
 # core refuses a person's token on both consent routes whatever it carries.
 # url:forms and users:read were granted to the forms service account by hand before (forms-url-role
 # wizard, Java era); they are codified here with the other two.
-# The same step grants SkyMail's client roles to core's own service account (client core), which
-# calls SkyMail: SKYMAIL_SERVICE_ROLE_DEFINITIONS below, granted by hand until 2026-10-13.
+# The same step grants SkyNotify's client roles to core's own service account (client core), which
+# calls SkyNotify: SKYNOTIFY_SERVICE_ROLE_DEFINITIONS below, granted by hand until 2026-10-13.
 #
 # Every run creates a missing role (manage-clients; the description is written only then) and, for
 # a listed client whose fullScopeAllowed is false, maps the role in the client's role scope, or it
@@ -3595,46 +3595,46 @@ CORE_SERVICE_ROLE_DEFINITIONS=(
   "ticket:forms|forms|services|Forms reports its answers (POST /v1/forms/{formId}/responses, core docs/form-response-tickets.md); core writes the Tickets an accepted answer to an Event's form earns. Service accounts only; never a person or a group."
   "url:forms|forms|services|Forms service account: form-bound short links (/v1/urls/forms/{formId}) and GET /v1/urls/availability only. Grants nothing on the generic /v1/urls endpoints."
   "users:read|forms|shared|Reads a person's profile (GET /v1/users/{id}); held by the Forms service account."
-  "audience:read|skymail-backend|services|SkyMail asks who a News send goes to (POST /v1/audiences/resolve, core docs/news-audience.md). SkyMail's service account only; never a person or a group."
-  "communication-preferences:read|skymail-backend|services|SkyMail asks whom it may track (POST /internal/v1/communication-preferences/tracking:resolve, core docs/communication-preferences.md). SkyMail's service account only; never a person or a group."
+  "audience:read|skynotify-backend|services|SkyNotify asks who a News send goes to (POST /v1/audiences/resolve, core docs/news-audience.md). SkyNotify's service account only; never a person or a group."
+  "communication-preferences:read|skynotify-backend|services|SkyNotify asks whom it may track (POST /internal/v1/communication-preferences/tracking:resolve, core docs/communication-preferences.md). SkyNotify's service account only; never a person or a group."
   "consent:record|forms place-service|services|A product records, withdraws and looks up the contact consents its users gave (POST /v1/consents, /v1/consents/withdrawals, /v1/consents/lookup; core docs/contact-consents.md). Service accounts only; never a person or a group."
-  "consent:audience:read|skymail-backend|services|SkyMail reads who consented to invitations and promotional mail (GET /v1/consents/audience, POST /v1/consents/renewal-requests; core docs/contact-consents.md). SkyMail's service account only; never a person or a group."
+  "consent:audience:read|skynotify-backend|services|SkyNotify reads who consented to invitations and promotional mail (GET /v1/consents/audience, POST /v1/consents/renewal-requests; core docs/contact-consents.md). SkyNotify's service account only; never a person or a group."
 )
-# SkyMail's client roles that core's service account (client core) holds: core sends single mails
-# (POST /v1/mail_tasks/single: skymail:access and skymail:mails:send, core internal/mail/mail.go) and
-# keeps the event mailing lists (POST/DELETE /v1/mailing_lists... need skymail:lists:write, GET
-# skymail:lists:read; core internal/mail/lists.go, SkyMail main.go route table). People hold these
-# roles too (shared). The roles are SkyMail's own: a missing one is reported, never created here.
-# skymail:mails:write also allows the single send; a core service account that holds it is reported
+# SkyNotify's client roles that core's service account (client core) holds: core sends single mails
+# (POST /v1/mail_tasks/single: skynotify:access and skynotify:mails:send, core internal/mail/mail.go) and
+# keeps the event mailing lists (POST/DELETE /v1/mailing_lists... need skynotify:lists:write, GET
+# skynotify:lists:read; core internal/mail/lists.go, SkyNotify main.go route table). People hold these
+# roles too (shared). The roles are SkyNotify's own: a missing one is reported, never created here.
+# skynotify:mails:write also allows the single send; a core service account that holds it is reported
 # in a NOTE and keeps it.
-# skymail:tracking:withdraw (iletisim-servisi ticket 17): core withdraws a person's mail tracking
-# when they turn it off (PUT /internal/v1/tracking-withdrawals/{sub}, skymail-backend #75, core
-# #256). SkyMail checks azp core, aud skymail and this role, not that the token is a service
+# skynotify:tracking:withdraw (iletisim-servisi ticket 17): core withdraws a person's mail tracking
+# when they turn it off (PUT /internal/v1/tracking-withdrawals/{sub}, skynotify-backend #75, core
+# #256). SkyNotify checks azp core, aud skynotify and this role, not that the token is a service
 # account's, so the role is core's service account's only (services): a person, a group, a
 # composite role or the default role holding it is reported (review condition B2). It and
-# skymail:templates:system are the lines with a description: nothing else makes them, so the step
+# skynotify:templates:system are the lines with a description: nothing else makes them, so the step
 # creates them like core's roles.
-# skymail:notifications:send (iletisim-servisi ticket 04, ADR 0070): core posts a Notification, what
-# happened and to whom, and SkyMail picks the channels (POST /v1/notifications, skymail-backend #79;
-# core's new Ticket's Notification, iletisim-servisi 06). SkyMail takes it from a service account's
+# skynotify:notifications:send (iletisim-servisi ticket 04, ADR 0070): core posts a Notification, what
+# happened and to whom, and SkyNotify picks the channels (POST /v1/notifications, skynotify-backend #79;
+# core's new Ticket's Notification, iletisim-servisi 06). SkyNotify takes it from a service account's
 # token only (client_id = azp), so the role is core's service account's only (services), made by the
 # step like tracking:withdraw (its line has a description). Forms and keycloak-mailer keep
 # /v1/mail_tasks/single and do not get it.
-# skymail:templates:system: the Template seed (skymail-frontend seed-templates.yml, client
-# skymail-seed) marks a template as a system template or takes the mark away (PUT
-# /v1/templates/by-key/{key}, skymail-backend README "Keycloak"). An account.* or keycloak.* system
-# template goes past SkyMail's suppression list, so skymail:templates:write no longer changes the
-# mark (Yusuf, 2026-10-21): the role is skymail-seed's service account's only (services).
-# skymail-seed itself, and its other three skymail roles, are made by sky_lab_genel
-# ops/wizards/skymail-seed-github-wizard.sh.
-SKYMAIL_SERVICE_ROLE_DEFINITIONS=(
-  "skymail:access|core|shared|"
-  "skymail:mails:send|core|shared|"
-  "skymail:lists:read|core|shared|"
-  "skymail:lists:write|core|shared|"
-  "skymail:notifications:send|core|services|core tells SkyMail what happened and to whom (POST /v1/notifications, skymail-backend docs/notifications.md). core's service account only; never a person, a group, a composite or the default role."
-  "skymail:tracking:withdraw|core|services|core withdraws a person's mail tracking (PUT /internal/v1/tracking-withdrawals/{sub}, skymail-backend README). core's service account only; never a person, a group, a composite or the default role."
-  "skymail:templates:system|skymail-seed|services|The Template seed marks a template as a system template or takes the mark away (PUT /v1/templates/by-key/{key}, skymail-backend README). skymail-seed's service account only; never a person, a group, a composite or the default role."
+# skynotify:templates:system: the Template seed (skynotify-frontend seed-templates.yml, client
+# skynotify-seed) marks a template as a system template or takes the mark away (PUT
+# /v1/templates/by-key/{key}, skynotify-backend README "Keycloak"). An account.* or keycloak.* system
+# template goes past SkyNotify's suppression list, so skynotify:templates:write no longer changes the
+# mark (Yusuf, 2026-10-21): the role is skynotify-seed's service account's only (services).
+# skynotify-seed itself, and its other three skynotify roles, are made by sky_lab_genel
+# ops/wizards/skynotify-seed-github-wizard.sh.
+SKYNOTIFY_SERVICE_ROLE_DEFINITIONS=(
+  "skynotify:access|core|shared|"
+  "skynotify:mails:send|core|shared|"
+  "skynotify:lists:read|core|shared|"
+  "skynotify:lists:write|core|shared|"
+  "skynotify:notifications:send|core|services|core tells SkyNotify what happened and to whom (POST /v1/notifications, skynotify-backend docs/notifications.md). core's service account only; never a person, a group, a composite or the default role."
+  "skynotify:tracking:withdraw|core|services|core withdraws a person's mail tracking (PUT /internal/v1/tracking-withdrawals/{sub}, skynotify-backend README). core's service account only; never a person, a group, a composite or the default role."
+  "skynotify:templates:system|skynotify-seed|services|The Template seed marks a template as a system template or takes the mark away (PUT /v1/templates/by-key/{key}, skynotify-backend README). skynotify-seed's service account only; never a person, a group, a composite or the default role."
 )
 # Forms' client roles that core's service account (client core) holds:
 # skyforms:responses:read-service (forms-posta-core ticket 04; ADR 0071's internal read role, ADR
@@ -3642,7 +3642,7 @@ SKYMAIL_SERVICE_ROLE_DEFINITIONS=(
 #                     responses, a response, the overdue reviews and the respondents with the
 #                     sender's role), which Forms serves from the internal network only. The line has
 #                     a description: Forms does not make the role, so the step creates it on forms
-#                     like skymail:tracking:withdraw. core's service account only (services): a person,
+#                     like skynotify:tracking:withdraw. core's service account only (services): a person,
 #                     a group, a composite role or the default role holding it is reported. aud forms
 #                     comes from the default scope roles (audience resolve), verified by the step, no
 #                     new audience mapper. core reads a person's effective forms roles (skyforms:*,
@@ -3651,12 +3651,12 @@ SKYMAIL_SERVICE_ROLE_DEFINITIONS=(
 FORMS_SERVICE_ROLE_DEFINITIONS=(
   "skyforms:responses:read-service|core|services|core reads Forms' internal endpoints: a form, its responses and respondents, the overdue reviews (internal network only; ADR 0071, ADR 0075). core's service account only; never a person, a group, a composite or the default role."
 )
-# realm-management roles of SkyMail's service account (client skymail-backend): SkyMail reads
+# realm-management roles of SkyNotify's service account (client skynotify-backend): SkyNotify reads
 # people through the Admin REST API: group members and the holders of its approver roles, and the
 # one Keycloak account of a single mail's address for tracking (GET /users?email=…&exact=true,
-# skymail-backend #85, iletisim-servisi 14/15); that needs view-users (query-users alone does not
+# skynotify-backend #85, iletisim-servisi 14/15); that needs view-users (query-users alone does not
 # return the users) and view-clients (the client and its roles). Granted by hand in production on
-# 2026-09-23 (skymail-frontend-prod-release-wizard.sh checks it); codified here, so the operator
+# 2026-09-23 (skynotify-frontend-prod-release-wizard.sh checks it); codified here, so the operator
 # step only reports them held. Keycloak's own roles, never created here (existing); people and
 # groups hold them too (shared). Keycloak refuses to update a realm-management role (403), so the
 # grant record is not on the role as for the others but on each listed client
@@ -3666,8 +3666,8 @@ FORMS_SERVICE_ROLE_DEFINITIONS=(
 # admin panel's person card shows a person's recent sign-ins from GET /events?user=…; without it core
 # says the events cannot be read and nothing fails. It reads; it changes nothing.
 REALM_MANAGEMENT_SERVICE_ROLE_DEFINITIONS=(
-  "view-users|skymail-backend|shared|"
-  "view-clients|skymail-backend|shared|"
+  "view-users|skynotify-backend|shared|"
+  "view-clients|skynotify-backend|shared|"
   "view-events|core|shared|"
 )
 CORE_SERVICE_ROLE_GRANT_ATTRIBUTE=skylab.granted-service-accounts
@@ -3708,7 +3708,7 @@ service_role_change() {
 # The composite roles of the realm, read once per operator step for both resources: the role id of
 # each child -> ",<container>/<name>" of every composite role that holds it directly (container is
 # realm or a clientId). The default role default-roles-<realm> is left out: its own check names it.
-# A role of the services class must sit in none (review condition B2 of skymail-backend #75): every
+# A role of the services class must sit in none (review condition B2 of skynotify-backend #75): every
 # holder of such a composite holds the role. A failed read stops the step before it writes anything.
 declare -A SERVICE_ROLE_PARENTS=()
 SERVICE_ROLE_PARENTS_READ=false
@@ -3741,9 +3741,9 @@ service_role_composite_parents() {
 }
 
 # reconcile_service_roles RESOURCE DEFINITIONS CREATE: the service roles of one resource client
-# (core's, SkyMail's): DEFINITIONS names the array of name|clients|holders|description lines; CREATE
+# (core's, SkyNotify's): DEFINITIONS names the array of name|clients|holders|description lines; CREATE
 # is create (a missing role is created) or existing (a missing role without a description is reported
-# and skipped: SkyMail's roles are SkyMail's catalogue, made with the client skymail; a line with a
+# and skipped: SkyNotify's roles are SkyNotify's catalogue, made with the client skynotify; a line with a
 # description is a role nothing else makes, created as with create). Changes add up in
 # SERVICE_ROLE_CHANGES; the caller resets it and logs the total.
 reconcile_service_roles() {
@@ -4021,13 +4021,13 @@ reconcile_service_roles() {
   done
 }
 
-# The service-roles step: core's service roles, then SkyMail's and Forms' roles of core's service
-# account, then the realm-management roles of SkyMail's service account, and for the operator one
+# The service-roles step: core's service roles, then SkyNotify's and Forms' roles of core's service
+# account, then the realm-management roles of SkyNotify's service account, and for the operator one
 # total of the changes.
 reconcile_core_service_roles() {
   SERVICE_ROLE_CHANGES=0
   reconcile_service_roles "$CORE_CLIENT_ID" CORE_SERVICE_ROLE_DEFINITIONS create
-  reconcile_service_roles "$SKYMAIL_CLIENT_ID" SKYMAIL_SERVICE_ROLE_DEFINITIONS existing
+  reconcile_service_roles "$SKYNOTIFY_CLIENT_ID" SKYNOTIFY_SERVICE_ROLE_DEFINITIONS existing
   reconcile_service_roles "$FORMS_CLIENT_ID" FORMS_SERVICE_ROLE_DEFINITIONS existing
   reconcile_service_roles realm-management REALM_MANAGEMENT_SERVICE_ROLE_DEFINITIONS existing
   [[ -n $OPERATOR_KCADM_CONFIG ]] || return 0
@@ -4038,32 +4038,32 @@ reconcile_core_service_roles() {
   fi
 }
 
-# SkyMail's Privileged roles (runbook §25): client roles of skymail that go to the Privileged groups,
+# SkyNotify's Privileged roles (runbook §25): client roles of skynotify that go to the Privileged groups,
 # with the same one-time seeding as core's resource roles (CORE_ROLE_SEED_ATTRIBUTE,
-# core_privileged_groups, the default-group refusal). This is the code area of SkyMail's roles
+# core_privileged_groups, the default-group refusal). This is the code area of SkyNotify's roles
 # (ekip-yetkileri ticket 03, YETKI-MATRISI §6.1 and §6.2): what the Privileged roots hold. Where else
-# skymail:access and skymail:templates:read (app roles) are held is the panel's (config/app-assignments.json,
+# skynotify:access and skynotify:templates:read (app roles) are held is the panel's (config/app-assignments.json,
 # core's Uygulamalar page) and never touched here. A role with a description is made by this step when
 # it is missing (manage-clients; the description is written only then); a role whose description is
-# "-" is SkyMail's own (SkyMail's M1 makes it): never created here, seeded once it exists, and a realm
+# "-" is SkyNotify's own (SkyNotify's M1 makes it): never created here, seeded once it exists, and a realm
 # without it says so in the "unchanged" line. The operator's core-roles step (KEYCLOAK_RECONCILE_ONLY=
 # core-roles) grants an unmarked role to its Privileged groups once and marks it
 # (seed_privileged_client_roles, shared with core); a mapping changed later in the SKY LAB admin panel
 # or the Keycloak Admin Console stays that way (the code area's check, KEYCLOAK_RECONCILE_ONLY=
-# app-assignments, reports it). Nothing here removes a mapping or a role. skymail is SkyMail's login
-# client too, and its own roles always pass its role scope, so a Privileged person's SkyMail token
+# app-assignments, reports it). Nothing here removes a mapping or a role. skynotify is SkyNotify's login
+# client too, and its own roles always pass its role scope, so a Privileged person's SkyNotify token
 # carries them.
 # name|Privileged groups (space separated names, each at /<NAME> and/or /UYELER/<NAME>)|description
-# (written only when the role is created; "-": SkyMail's own role, never created here).
-#   skymail:system-mails:read      ADMIN, YK, DK: reading is for all three (skymail-backend #61).
-#   skymail:mails:tracking:read    ADMIN, YK, DK: the per-person opening and click report of any send
+# (written only when the role is created; "-": SkyNotify's own role, never created here).
+#   skynotify:system-mails:read      ADMIN, YK, DK: reading is for all three (skynotify-backend #61).
+#   skynotify:mails:tracking:read    ADMIN, YK, DK: the per-person opening and click report of any send
 #                                  (iletisim-servisi tickets 14b/17, decision T2; e-skylab ADR 0074
 #                                  addendum 2026-11-08). A reading role, so DK holds it too. Without
 #                                  it the sender sees only the totals of their own send
-#                                  (skymail-backend #129; SKYMAIL_SENDER_SEES_RECIPIENTS=on gives the
-#                                  sender their own recipients back). skymail:mails:read still sees
+#                                  (skynotify-backend #129; SKYNOTIFY_SENDER_SEES_RECIPIENTS=on gives the
+#                                  sender their own recipients back). skynotify:mails:read still sees
 #                                  the recipients and their delivery status, not opens and clicks.
-#   skymail:audit:read             DK only: who opened a masked mail's content, the record SkyMail
+#   skynotify:audit:read             DK only: who opened a masked mail's content, the record SkyNotify
 #                                  writes on every opening (sent_content_views; GET
 #                                  /v1/mail_tasks/{id}/content-views; hub ticket
 #                                  skymail-frontend-rewrite 32). Yusuf, 2026-11-22: a role of its own,
@@ -4072,47 +4072,47 @@ reconcile_core_service_roles() {
 #                                  Workspace's Reports privilege and NIST SP 800-53 AU-9(4)
 #                                  (separation of duties: those audited do not read their own audit
 #                                  trail). A reading role, so DK keeps it (config/dk-read-only.sh).
-#   skymail:suppressions:manage    ADMIN and YK: the suppression list (addresses), removing a
+#   skynotify:suppressions:manage    ADMIN and YK: the suppression list (addresses), removing a
 #                                  permanent failure (bounce) from it and the bounce rate
-#                                  (skymail-backend internal/handlers/suppressions.go,
+#                                  (skynotify-backend internal/handlers/suppressions.go,
 #                                  SuppressionsManageRole; e-skylab ADR 0073; hub ticket
 #                                  skymail-bounce-isleme 06). A write role: DK none of it.
-#   skymail:unsubscribes:reactivate
+#   skynotify:unsubscribes:reactivate
 #                                  ADMIN and YK: reverses an address's own unsubscribe, only when the
 #                                  person asks or after a mistake, with a recorded reason (ADR 0072
 #                                  decision 7, UnsubscribesReactivateRole; hub ticket abonelik-cikisi
-#                                  10). A write role. Both have a description: SkyMail checks them and
+#                                  10). A write role. Both have a description: SkyNotify checks them and
 #                                  nothing else makes them. Until they exist and are seeded, nobody
 #                                  reads the list or reverses an unsubscribe in production.
-#   skymail:templates:read, skymail:lists:read, skymail:mails:send, skymail:mails:write
+#   skynotify:templates:read, skynotify:lists:read, skynotify:mails:send, skynotify:mails:write
 #                                  ADMIN and YK (ekip-yetkileri ticket 03; ADR 0067: YK sends directly,
 #                                  everyone else through Mail approval). DK reads and does not write
 #                                  (grup-yonetimi GY1): none of them. Sub-groups inherit the mapping.
-#   skymail:access, skymail:mails:read
-#                                  ADMIN, YK and DK: SkyMail's seat and the sends (their recipients and
+#   skynotify:access, skynotify:mails:read
+#                                  ADMIN, YK and DK: SkyNotify's seat and the sends (their recipients and
 #                                  delivery). DK got them on 2026-11-22 (Yusuf: DK reads everything;
-#                                  SKYMAIL_PRIVILEGED_SEED_ADDITIONS gives them to a realm seeded
+#                                  SKYNOTIFY_PRIVILEGED_SEED_ADDITIONS gives them to a realm seeded
 #                                  before). Neither opens a send's content.
-#   skymail:mails:approve          YK only (Yusuf, 2026-10-23, S2: the approver of Mail approval is the
+#   skynotify:mails:approve          YK only (Yusuf, 2026-10-23, S2: the approver of Mail approval is the
 #                                  YK root, so it follows the term's handover; until then one named
-#                                  person in /ROLLER/SKYMAIL-MAILS-APPROVE approved).
-# skymail:announcements:send left the list (ticket 03, YETKI-MATRISI §3 D-1): no service reads it (YK
+#                                  person in /ROLLER/SKYNOTIFY-MAILS-APPROVE approved).
+# skynotify:announcements:send left the list (ticket 03, YETKI-MATRISI §3 D-1): no service reads it (YK
 # sends directly with mails:write and mails:send), so it only misled. Taken off the list, a new realm
 # never gets it; the role and its mappings stay where they are (nothing here removes anything): the
 # code area's check reports them as not in code, and the reset window (ticket 06 c2) takes them away.
-SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS=(
-  'skymail:system-mails:read|ADMIN YK DK|Tekil sistem postalarının (doğrulama, bildirim) içeriğini görür (skymail-backend #61)'
-  'skymail:mails:tracking:read|ADMIN YK DK|Her gönderimin kişi bazındaki açılma ve tıklama raporunu görür (iletisim-servisi 14b/17, T2; gönderen yalnız toplamları görür)'
-  'skymail:audit:read|DK|Maskeli içeriği kimin açtığını görür (gönderim başına açılış kaydı; denetim, içeriği açan rollerden ayrı)'
-  'skymail:suppressions:manage|ADMIN YK|SkyMail: bastırma listesini görür, kalıcı ret (bounce) kaydını kaldırır, bounce oranını okur (ADR 0073)'
-  'skymail:unsubscribes:reactivate|ADMIN YK|SkyMail: kimliği olmayan adresin kendi çıkışını, kişi isteyince ya da hata olunca, gerekçeyle geri alır (ADR 0072)'
-  'skymail:access|ADMIN YK DK|-'
-  'skymail:templates:read|ADMIN YK|-'
-  'skymail:lists:read|ADMIN YK|-'
-  'skymail:mails:read|ADMIN YK DK|-'
-  'skymail:mails:send|ADMIN YK|-'
-  'skymail:mails:write|ADMIN YK|-'
-  'skymail:mails:approve|YK|-'
+SKYNOTIFY_PRIVILEGED_ROLE_DEFINITIONS=(
+  'skynotify:system-mails:read|ADMIN YK DK|Tekil sistem postalarının (doğrulama, bildirim) içeriğini görür (skynotify-backend #61)'
+  'skynotify:mails:tracking:read|ADMIN YK DK|Her gönderimin kişi bazındaki açılma ve tıklama raporunu görür (iletisim-servisi 14b/17, T2; gönderen yalnız toplamları görür)'
+  'skynotify:audit:read|DK|Maskeli içeriği kimin açtığını görür (gönderim başına açılış kaydı; denetim, içeriği açan rollerden ayrı)'
+  'skynotify:suppressions:manage|ADMIN YK|SkyNotify: bastırma listesini görür, kalıcı ret (bounce) kaydını kaldırır, bounce oranını okur (ADR 0073)'
+  'skynotify:unsubscribes:reactivate|ADMIN YK|SkyNotify: kimliği olmayan adresin kendi çıkışını, kişi isteyince ya da hata olunca, gerekçeyle geri alır (ADR 0072)'
+  'skynotify:access|ADMIN YK DK|-'
+  'skynotify:templates:read|ADMIN YK|-'
+  'skynotify:lists:read|ADMIN YK|-'
+  'skynotify:mails:read|ADMIN YK DK|-'
+  'skynotify:mails:send|ADMIN YK|-'
+  'skynotify:mails:write|ADMIN YK|-'
+  'skynotify:mails:approve|YK|-'
 )
 # Seed additions (role|Privileged names): a Privileged name added to a role's set after the role was
 # seeded. The one-time seed (the mark) never runs again, so a marked role whose mark names no path of
@@ -4121,18 +4121,18 @@ SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS=(
 # its paths (a realm seeded with the name in its set, or the addition already made) is left alone, and
 # a mapping the panel removes after the addition stays removed. An unmarked role is seeded with its
 # whole set as before.
-#   skymail:access, skymail:mails:read  DK (Yusuf, 2026-11-22): DK reads everything and changes
+#   skynotify:access, skynotify:mails:read  DK (Yusuf, 2026-11-22): DK reads everything and changes
 #       nothing (Microsoft Entra's Global Reader with the Reports/Audit Reader of
-#       skymail:audit:read): SkyMail's seat and the sends, their recipients and delivery. Neither opens
-#       a send's content (skymail-backend mayRead: the sender, skymail:system-mails:read, or
-#       skymail:mails:write for a send to many) nor writes anything; config/dk-read-only.sh counts
+#       skynotify:audit:read): SkyNotify's seat and the sends, their recipients and delivery. Neither opens
+#       a send's content (skynotify-backend mayRead: the sender, skynotify:system-mails:read, or
+#       skynotify:mails:write for a send to many) nor writes anything; config/dk-read-only.sh counts
 #       both as reading roles.
-SKYMAIL_PRIVILEGED_SEED_ADDITIONS=(
-  'skymail:access|DK'
-  'skymail:mails:read|DK'
+SKYNOTIFY_PRIVILEGED_SEED_ADDITIONS=(
+  'skynotify:access|DK'
+  'skynotify:mails:read|DK'
 )
 
-# Forms' Privileged roles (runbook §28), the same way as SkyMail's (same list format):
+# Forms' Privileged roles (runbook §28), the same way as SkyNotify's (same list format):
 #   skyforms:read-all  DK: DK reads every form, its answers and workflows in Forms and writes nothing
 #                      (Yusuf, 2026-10-12 22:15; grup-yonetimi ticket 08, Entra's Global Reader). An
 #                      admin role (club-wide personal data). Nothing reads it yet: forms-backend opens
@@ -4156,7 +4156,7 @@ FORMS_PRIVILEGED_ROLE_DEFINITIONS=(
   'skyforms:*|YK|-'
 )
 
-# SkyCloud's Privileged role (runbook §33.6), the same way as SkyMail's own roles (same list format):
+# SkyCloud's Privileged role (runbook §33.6), the same way as SkyNotify's own roles (same list format):
 #   admin    ADMIN and YK (Yusuf, 2026-10-24: the SkyCloud, Nextcloud, administrators are /ADMIN and
 #            /UYELER/YK). An admin role, so the code area's (YETKI-MATRISI §6.2); the named people of
 #            /ROLLER/SKYCLOUD-ADMIN keep it there (config/role-groups.json). Seeded once before the
@@ -4322,7 +4322,7 @@ reconcile_privileged_app_roles() {
 # write_privileged_expectations FILE: the code area's Privileged expectations that only this file
 # holds, for config/app-assignments.sh (KEYCLOAK_RECONCILE_ONLY=app-assignments and tohum-atamalar):
 # "privileged<TAB>NAMES<TAB>client<TAB>role" per role of CORE_ROLE_DEFINITIONS (its seed groups),
-# SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS, FORMS_PRIVILEGED_ROLE_DEFINITIONS,
+# SKYNOTIFY_PRIVILEGED_ROLE_DEFINITIONS, FORMS_PRIVILEGED_ROLE_DEFINITIONS,
 # SKYCLOUD_PRIVILEGED_ROLE_DEFINITIONS and ADMIN_PANEL_PRIVILEGED_ROLE_DEFINITIONS (on this realm's
 # ADMIN_PANEL_CLIENT_ID); NAMES is the space
 # separated Privileged names (ADMIN, YK, DK), each at /<NAME> and /UYELER/<NAME>.
@@ -4333,9 +4333,9 @@ write_privileged_expectations() {
     name=${definition%%|*}
     printf 'privileged\t%s\t%s\t%s\n' "$(core_role_seed_names "$name")" "$CORE_CLIENT_ID" "$name" >>"$file"
   done
-  for definition in "${SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS[@]}"; do
+  for definition in "${SKYNOTIFY_PRIVILEGED_ROLE_DEFINITIONS[@]}"; do
     groups=${definition#*|}
-    printf 'privileged\t%s\t%s\t%s\n' "${groups%%|*}" "$SKYMAIL_CLIENT_ID" "${definition%%|*}" >>"$file"
+    printf 'privileged\t%s\t%s\t%s\n' "${groups%%|*}" "$SKYNOTIFY_CLIENT_ID" "${definition%%|*}" >>"$file"
   done
   for definition in "${FORMS_PRIVILEGED_ROLE_DEFINITIONS[@]}"; do
     groups=${definition#*|}
@@ -4548,9 +4548,9 @@ reconcile_default_roles() {
   fi
 }
 
-reconcile_skymail_privileged_roles() {
-  reconcile_privileged_app_roles "$SKYMAIL_CLIENT_ID" skymail "SkyMail's" SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS '§25' \
-    SKYMAIL_PRIVILEGED_SEED_ADDITIONS
+reconcile_skynotify_privileged_roles() {
+  reconcile_privileged_app_roles "$SKYNOTIFY_CLIENT_ID" skynotify "SkyNotify's" SKYNOTIFY_PRIVILEGED_ROLE_DEFINITIONS '§25' \
+    SKYNOTIFY_PRIVILEGED_SEED_ADDITIONS
 }
 
 reconcile_forms_privileged_roles() {
@@ -4633,12 +4633,12 @@ EOF
 }
 
 # The keycloak-mailer service-account client (K5) is provisioned by the operator with
-# create-mailer-client.sh because assigning its SkyMail roles needs user permissions the
+# create-mailer-client.sh because assigning its SkyNotify roles needs user permissions the
 # reconciler identity deliberately lacks. Here the client is verified only: a missing client
 # or roles the reconciler cannot read produce a warning with the command to run, wrong flags
 # or a missing roles scope fail the run (the fix is the same command).
 verify_mailer_client() {
-  local mailer_uuid live_flags skymail_uuid service_user_id assigned expected scope_roles
+  local mailer_uuid live_flags skynotify_uuid service_user_id assigned expected scope_roles
   if ! mailer_uuid=$(optional_lookup client_id_by_client_id "$MAILER_CLIENT_ID"); then
     return 2
   fi
@@ -4659,13 +4659,13 @@ verify_mailer_client() {
     return 1
   fi
   log "client $MAILER_CLIENT_ID: verified (confidential service account, $MAILER_FLAG_FIELDS=$MAILER_FLAG_VALUES, roles scope attached)"
-  skymail_uuid=$(optional_lookup client_id_by_client_id "$SKYMAIL_CLIENT_ID")
-  if [[ -z $skymail_uuid ]]; then
-    warn "client $SKYMAIL_CLIENT_ID does not exist; $MAILER_CLIENT_ID cannot hold SkyMail roles yet; run after SkyMail exists: $MAILER_CREATE_COMMAND"
+  skynotify_uuid=$(optional_lookup client_id_by_client_id "$SKYNOTIFY_CLIENT_ID")
+  if [[ -z $skynotify_uuid ]]; then
+    warn "client $SKYNOTIFY_CLIENT_ID does not exist; $MAILER_CLIENT_ID cannot hold SkyNotify roles yet; run after SkyNotify exists: $MAILER_CREATE_COMMAND"
     return 0
   fi
   expected=$(mailer_expected_roles)
-  scope_roles=$(mailer_scope_mapping_roles "$mailer_uuid" "$skymail_uuid")
+  scope_roles=$(mailer_scope_mapping_roles "$mailer_uuid" "$skynotify_uuid")
   if [[ $scope_roles != "$expected" ]]; then
     warn "scope mappings of $MAILER_CLIENT_ID are '${scope_roles:-none}' instead of '$expected'; run: $MAILER_CREATE_COMMAND"
   fi
@@ -4678,7 +4678,7 @@ verify_mailer_client() {
     warn "the $MAILER_CLIENT_ID service-account user could not be resolved; run: $MAILER_CREATE_COMMAND"
     return 0
   fi
-  if ! assigned=$(mailer_service_account_roles "$service_user_id" "$skymail_uuid" 2>/dev/null); then
+  if ! assigned=$(mailer_service_account_roles "$service_user_id" "$skynotify_uuid" 2>/dev/null); then
     warn "service-account roles of $MAILER_CLIENT_ID are not readable with the reconciler identity (no user permissions); expected '$expected', verify with an administrator: $MAILER_CREATE_COMMAND"
     return 0
   fi
@@ -4802,10 +4802,10 @@ if [[ $CHECK_WRITES == true ]]; then
 fi
 if [[ $RECONCILE_ONLY == core-roles ]]; then
   reconcile_core_roles
-  # SkyMail's, Forms', SkyCloud's and the admin panel's Privileged roles have the same operator step
+  # SkyNotify's, Forms', SkyCloud's and the admin panel's Privileged roles have the same operator step
   # (runbook §25, §28, §33.6, §33.7); SkyCloud's and the admin panel's have this step alone (see
   # SKYCLOUD_PRIVILEGED_ROLE_DEFINITIONS and ADMIN_PANEL_PRIVILEGED_ROLE_DEFINITIONS).
-  reconcile_skymail_privileged_roles
+  reconcile_skynotify_privileged_roles
   reconcile_forms_privileged_roles
   reconcile_skycloud_privileged_roles
   reconcile_admin_panel_privileged_roles
@@ -4827,7 +4827,7 @@ if [[ $RECONCILE_ONLY == default-roles ]]; then
 fi
 if [[ $RECONCILE_ONLY == app-assignments || $RECONCILE_ONLY == tohum-atamalar ]]; then
   # config/app-assignments.sh with the Privileged expectations of this file (core's resource roles,
-  # SkyMail's, Forms', SkyCloud's and the admin panel's Privileged roles), which only the reconciler
+  # SkyNotify's, Forms', SkyCloud's and the admin panel's Privileged roles), which only the reconciler
   # knows.
   write_privileged_expectations "$WORK_DIR/privileged-expected.tsv"
   app_arguments=(--kcadm-config "$OPERATOR_KCADM_CONFIG" --privileged-file "$WORK_DIR/privileged-expected.tsv")
@@ -4939,7 +4939,7 @@ verify_mailer_client
 verify_erasure_client
 # Before the admin panel's step, so that a core role created here enters its scope in this run.
 reconcile_core_roles
-reconcile_skymail_privileged_roles
+reconcile_skynotify_privileged_roles
 # Before the admin panel's step too: a forms role created here enters its scope in this run.
 reconcile_forms_privileged_roles
 # Place's service client first, so that the service-roles step below maps consent:record into its

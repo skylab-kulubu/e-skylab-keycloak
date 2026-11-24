@@ -51,15 +51,15 @@ services:
       KK_TO_RMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-keycloak.events}
       KK_TO_RMQ_USE_TLS: ${RABBITMQ_USE_TLS:-false}
 
-      # System mail through SkyMail (ADR-0045). Disabled by default; Keycloak's own SMTP
-      # stays the fallback and keeps sending while SkyMail is off or unreachable.
-      SKY_MAIL_ENABLED: ${SKY_MAIL_ENABLED:-false}
-      SKY_MAIL_BASE_URL: ${SKY_MAIL_BASE_URL:-}
-      SKY_MAIL_CLIENT_ID: ${SKY_MAIL_CLIENT_ID:-keycloak-mailer}
-      SKY_MAIL_CLIENT_SECRET_FILE: /run/secrets/sky-mail/client.secret
-      SKY_MAIL_TIMEOUT_MILLISECONDS: ${SKY_MAIL_TIMEOUT_MILLISECONDS:-5000}
+      # System mail through SkyNotify (ADR-0045). Disabled by default; Keycloak's own SMTP
+      # stays the fallback and keeps sending while SkyNotify is off or unreachable.
+      SKYNOTIFY_ENABLED: ${SKYNOTIFY_ENABLED:-false}
+      SKYNOTIFY_BASE_URL: ${SKYNOTIFY_BASE_URL:-}
+      SKYNOTIFY_CLIENT_ID: ${SKYNOTIFY_CLIENT_ID:-keycloak-mailer}
+      SKYNOTIFY_CLIENT_SECRET_FILE: /run/secrets/skynotify/client.secret
+      SKYNOTIFY_TIMEOUT_MILLISECONDS: ${SKYNOTIFY_TIMEOUT_MILLISECONDS:-5000}
     volumes:
-      - ${SKY_MAIL_CLIENT_SECRET_HOST_FILE:-/opt/weblab/account-center-keycloak/credentials/mailer-client.secret}:/run/secrets/sky-mail/client.secret:ro
+      - ${SKYNOTIFY_CLIENT_SECRET_HOST_FILE:-/opt/weblab/account-center-keycloak/credentials/mailer-client.secret}:/run/secrets/skynotify/client.secret:ro
     depends_on:
       keycloak-preflight:
         condition: service_completed_successfully

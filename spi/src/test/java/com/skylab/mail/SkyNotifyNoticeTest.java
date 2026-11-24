@@ -24,35 +24,35 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-class SkyMailNoticeTest {
+class SkyNotifyNoticeTest {
 
     private final Map<String, Object> attributes = new HashMap<>();
-    private final KeycloakSession session = SkyMailEmailTemplateProviderTest.sessionWithAttributes(attributes);
+    private final KeycloakSession session = SkyNotifyEmailTemplateProviderTest.sessionWithAttributes(attributes);
     private final EmailSenderProvider sender = mock(EmailSenderProvider.class);
-    private final RealmModel realm = SkyMailMessageTest.realm("e-skylab", "SKY LAB");
-    private final UserModel admin = SkyMailMessageTest.user("Ada", "Yönetici", "ada", "ops@example.org");
+    private final RealmModel realm = SkyNotifyMessageTest.realm("e-skylab", "SKY LAB");
+    private final UserModel admin = SkyNotifyMessageTest.user("Ada", "Yönetici", "ada", "ops@example.org");
 
     // The sender takes the recorded message off the session while sending; it routes the alarm to
-    // SkyMail's template, or falls back to SMTP with the plain text handed over here.
+    // SkyNotify's template, or falls back to SMTP with the plain text handed over here.
     @Test
-    void sendsTheLoginCodeAlarmAsSkyMailsTemplateWithAPlainTextFallback() throws EmailException {
+    void sendsTheLoginCodeAlarmAsSkyNotifysTemplateWithAPlainTextFallback() throws EmailException {
         when(session.getProvider(EmailSenderProvider.class)).thenReturn(sender);
         when(realm.getSmtpConfig()).thenReturn(Map.of("host", "smtp.example.invalid"));
-        AtomicReference<SkyMailMessage> seen = new AtomicReference<>();
+        AtomicReference<SkyNotifyMessage> seen = new AtomicReference<>();
         doAnswer(call -> {
-            seen.set((SkyMailMessage) attributes.get(SkyMailMessage.SESSION_ATTRIBUTE));
+            seen.set((SkyNotifyMessage) attributes.get(SkyNotifyMessage.SESSION_ATTRIBUTE));
             return null;
         }).when(sender).send(any(), anyString(), anyString(), anyString(), isNull());
 
-        SkyMailNotice.sendLoginCodeAlarm(session, realm, "skyLoginCodeAlarmHalfSubject",
+        SkyNotifyNotice.sendLoginCodeAlarm(session, realm, "skyLoginCodeAlarmHalfSubject",
                 admin, "konu", "metin");
 
         verify(sender).send(eq(Map.of("host", "smtp.example.invalid")), eq("ops@example.org"), eq("konu"), eq("metin"), isNull());
-        assertEquals(SkyMailTemplates.LOGIN_CODE_ALARM, seen.get().templateKey());
-        assertEquals("skyLoginCodeAlarmHalfSubject", seen.get().variables().get(SkyMailMessage.SUBJECT_KEY));
-        assertEquals("SKY LAB", seen.get().variables().get(SkyMailMessage.REALM_DISPLAY_NAME));
+        assertEquals(SkyNotifyTemplates.LOGIN_CODE_ALARM, seen.get().templateKey());
+        assertEquals("skyLoginCodeAlarmHalfSubject", seen.get().variables().get(SkyNotifyMessage.SUBJECT_KEY));
+        assertEquals("SKY LAB", seen.get().variables().get(SkyNotifyMessage.REALM_DISPLAY_NAME));
         assertEquals("Ada Yönetici", seen.get().recipientFullName());
-        assertFalse(attributes.containsKey(SkyMailMessage.SESSION_ATTRIBUTE), "nothing is left for the next mail");
+        assertFalse(attributes.containsKey(SkyNotifyMessage.SESSION_ATTRIBUTE), "nothing is left for the next mail");
     }
 
     @Test
@@ -60,8 +60,8 @@ class SkyMailNoticeTest {
         when(session.getProvider(EmailSenderProvider.class)).thenReturn(sender);
         doThrow(new EmailException("down")).when(sender).send(any(), anyString(), anyString(), anyString(), isNull());
 
-        assertThrows(EmailException.class, () -> SkyMailNotice.sendLoginCodeAlarm(session, realm,
+        assertThrows(EmailException.class, () -> SkyNotifyNotice.sendLoginCodeAlarm(session, realm,
                 "skyLoginCodeAlarmFullSubject", admin, "konu", "metin"));
-        assertFalse(attributes.containsKey(SkyMailMessage.SESSION_ATTRIBUTE));
+        assertFalse(attributes.containsKey(SkyNotifyMessage.SESSION_ATTRIBUTE));
     }
 }

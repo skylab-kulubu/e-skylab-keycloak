@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-class SkyMailMessageTest {
+class SkyNotifyMessageTest {
 
     static UserModel user(String firstName, String lastName, String username, String email) {
         UserModel user = mock(UserModel.class);
@@ -30,10 +30,10 @@ class SkyMailMessageTest {
     }
 
     @Test
-    void carriesEveryVariableSkyMailCanRenderWith() throws Exception {
-        SkyMailMessage message = SkyMailMessage.of(
-                SkyMailTemplates.VERIFY_EMAIL,
-                SkyMailTemplates.VERIFY_EMAIL_SUBJECT_KEY,
+    void carriesEveryVariableSkyNotifyCanRenderWith() throws Exception {
+        SkyNotifyMessage message = SkyNotifyMessage.of(
+                SkyNotifyTemplates.VERIFY_EMAIL,
+                SkyNotifyTemplates.VERIFY_EMAIL_SUBJECT_KEY,
                 "https://e.yildizskylab.com/verify?key=abc",
                 "60",
                 user("Ada", "Yıldız", "ada", "ada@yildizskylab.com"),
@@ -46,7 +46,7 @@ class SkyMailMessageTest {
         assertEquals("keycloak.verify-email", body.get("template_key").textValue());
         assertEquals("ada@yildizskylab.com", body.get("recipient_email").textValue());
         assertEquals("Ada Yıldız", body.get("recipient_full_name").textValue());
-        assertEquals(SkyMailMessage.VARIABLE_NAMES.size(), variables.size());
+        assertEquals(SkyNotifyMessage.VARIABLE_NAMES.size(), variables.size());
         assertEquals("https://e.yildizskylab.com/verify?key=abc", variables.get("link").textValue());
         assertEquals("60", variables.get("linkExpirationMinutes").textValue());
         assertEquals("Ada", variables.get("firstName").textValue());
@@ -55,11 +55,11 @@ class SkyMailMessageTest {
         assertEquals("emailVerificationSubject", variables.get("subjectKey").textValue());
     }
 
-    // The Account erasure notice goes after the person's Erasure command may have run in SkyMail:
-    // SkyMail erases its row once sent (erase_after_send), and it carries no name meanwhile.
+    // The Account erasure notice goes after the person's Erasure command may have run in SkyNotify:
+    // SkyNotify erases its row once sent (erase_after_send), and it carries no name meanwhile.
     @Test
     void theErasureNoticeKeepsNoRecordAndCarriesNoName() throws Exception {
-        SkyMailMessage message = SkyMailMessage.of(SkyMailTemplates.ACCOUNT_DELETION_IN_PROGRESS,
+        SkyNotifyMessage message = SkyNotifyMessage.of(SkyNotifyTemplates.ACCOUNT_DELETION_IN_PROGRESS,
                 "skyAccountErasureNoticeSubject", "", "", "", "", "",
                 user("Ada", "Yıldız", "ada", "ada@yildizskylab.com"), realm("e-skylab", "SKY LAB"));
 
@@ -71,7 +71,7 @@ class SkyMailMessageTest {
         assertEquals("", body.get("body_variables").get("username").textValue());
         assertEquals("SKY LAB", body.get("body_variables").get("realmDisplayName").textValue());
 
-        JsonNode code = JsonSerialization.mapper.readTree(SkyMailMessage.of(SkyMailTemplates.LOGIN_CODE,
+        JsonNode code = JsonSerialization.mapper.readTree(SkyNotifyMessage.of(SkyNotifyTemplates.LOGIN_CODE,
                 "skyLoginCodeSubject", "", "", "123456", "10", "login",
                 user("Ada", "Yıldız", "ada", "ada@yildizskylab.com"), realm("e-skylab", "SKY LAB"))
                 .toRequestBody("ada@yildizskylab.com"));
@@ -81,15 +81,15 @@ class SkyMailMessageTest {
 
     @Test
     void sendsEveryVariableAsAnEmptyStringWhenKeycloakDoesNotKnowIt() throws Exception {
-        SkyMailMessage message = SkyMailMessage.of(
-                SkyMailTemplates.GENERIC, "eventUpdatePasswordSubject", null, null,
+        SkyNotifyMessage message = SkyNotifyMessage.of(
+                SkyNotifyTemplates.GENERIC, "eventUpdatePasswordSubject", null, null,
                 user(null, null, "ada", "ada@yildizskylab.com"), realm("e-skylab", null));
 
         JsonNode variables = JsonSerialization.mapper
                 .readTree(message.toRequestBody("ada@yildizskylab.com"))
                 .get("body_variables");
 
-        for (String name : SkyMailMessage.VARIABLE_NAMES) {
+        for (String name : SkyNotifyMessage.VARIABLE_NAMES) {
             assertTrue(variables.has(name), name + " must always be sent");
             assertTrue(variables.get(name).isTextual(), name + " must be a string");
         }
@@ -105,15 +105,15 @@ class SkyMailMessageTest {
 
     @Test
     void carriesACodeInsteadOfALinkWhenTheMailIsACode() throws Exception {
-        SkyMailMessage message = SkyMailMessage.ofCode(
-                SkyMailTemplates.PERSONAL_EMAIL_CONFIRM, "skyPersonalEmailConfirmSubject", "048213", "10",
+        SkyNotifyMessage message = SkyNotifyMessage.ofCode(
+                SkyNotifyTemplates.PERSONAL_EMAIL_CONFIRM, "skyPersonalEmailConfirmSubject", "048213", "10",
                 user("Ada", "Yıldız", "ada", "ada@yildizskylab.com"), realm("e-skylab", "SKY LAB"));
 
         JsonNode variables = JsonSerialization.mapper
                 .readTree(message.toRequestBody("kisisel@example.com"))
                 .get("body_variables");
 
-        assertEquals(SkyMailMessage.VARIABLE_NAMES.size(), variables.size());
+        assertEquals(SkyNotifyMessage.VARIABLE_NAMES.size(), variables.size());
         assertEquals("048213", variables.get("code").textValue());
         assertEquals("10", variables.get("codeExpirationMinutes").textValue());
         assertEquals("", variables.get("link").textValue());
@@ -122,29 +122,29 @@ class SkyMailMessageTest {
 
     @Test
     void survivesAMailWithNeitherUserNorRealm() throws Exception {
-        SkyMailMessage message = SkyMailMessage.of(
-                SkyMailTemplates.GENERIC, "emailTestSubject", "", "", null, null);
+        SkyNotifyMessage message = SkyNotifyMessage.of(
+                SkyNotifyTemplates.GENERIC, "emailTestSubject", "", "", null, null);
 
         JsonNode body = JsonSerialization.mapper.readTree(message.toRequestBody(null));
 
         assertEquals("", body.get("recipient_email").textValue());
         assertEquals("", body.get("recipient_full_name").textValue());
-        assertEquals(SkyMailMessage.VARIABLE_NAMES.size(), body.get("body_variables").size());
+        assertEquals(SkyNotifyMessage.VARIABLE_NAMES.size(), body.get("body_variables").size());
     }
 
     @Test
     void namesTheRecipientByUsernameWhenTheProfileHasNoName() {
-        assertEquals("ada", SkyMailMessage.fullName(user(null, null, "ada", "ada@yildizskylab.com")));
-        assertEquals("Ada", SkyMailMessage.fullName(user("Ada", null, "ada", "ada@yildizskylab.com")));
-        assertEquals("", SkyMailMessage.fullName(null));
+        assertEquals("ada", SkyNotifyMessage.fullName(user(null, null, "ada", "ada@yildizskylab.com")));
+        assertEquals("Ada", SkyNotifyMessage.fullName(user("Ada", null, "ada", "ada@yildizskylab.com")));
+        assertEquals("", SkyNotifyMessage.fullName(null));
     }
 
     @Test
     void rendersTheLinkExpirationOnlyWhenKeycloakSetsOne() {
-        assertEquals("60", SkyMailMessage.minutes(60L));
-        assertEquals("", SkyMailMessage.minutes(0L));
-        assertEquals("15", SkyMailMessage.minutes((Object) Integer.valueOf(15)));
-        assertEquals("", SkyMailMessage.minutes((Object) null));
-        assertEquals("", SkyMailMessage.minutes((Object) "soon"));
+        assertEquals("60", SkyNotifyMessage.minutes(60L));
+        assertEquals("", SkyNotifyMessage.minutes(0L));
+        assertEquals("15", SkyNotifyMessage.minutes((Object) Integer.valueOf(15)));
+        assertEquals("", SkyNotifyMessage.minutes((Object) null));
+        assertEquals("", SkyNotifyMessage.minutes((Object) "soon"));
     }
 }

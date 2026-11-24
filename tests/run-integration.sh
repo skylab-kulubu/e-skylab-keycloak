@@ -19,7 +19,7 @@ ADMIN_CONFIG=/tmp/integration-kcadm.config
 # ends with the mailer flag drift stage, which leaves the realm as it found it; only erasure runs it.
 #   erasure         mailer flag drift, core-erasure client contract, legacy personal e-mail
 #                   adoption, erasure event PII
-#   roles           (core-erasure fixture) admin panel tokens, core resource roles, SkyMail
+#   roles           (core-erasure fixture) admin panel tokens, core resource roles, SkyNotify
 #                   Privileged roles, group overage mapper
 #   roles-noop      (core-erasure fixture, operator state without core's service roles) core
 #                   service roles, exchange claims, no-op reconciliation, identity guardrails, the
@@ -84,16 +84,16 @@ docker image inspect "$TEST_IMAGE" >/dev/null 2>&1 || {
 
 trap 'status=$?; printf "integration command failed during %s (line %s)\n" "$CURRENT_STAGE" "$LINENO" >&2; exit "$status"' ERR
 
-CURRENT_STAGE='SkyMail sender secret mount setup'
-# The sky-mail sender validates its secret file when Keycloak starts, but the
+CURRENT_STAGE='SkyNotify sender secret mount setup'
+# The skynotify sender validates its secret file when Keycloak starts, but the
 # keycloak-mailer secret only exists once the operator script has run. The mount starts
 # with a placeholder and the K5 stage writes the real secret into it; the provider reads
 # the file on every token request, which is also how an operator rotates it.
-sky_mail_dir="$TEST_STATE_DIR/sky-mail"
-mkdir -p "$sky_mail_dir"
-chmod 0755 "$sky_mail_dir"
-printf 'placeholder-until-the-operator-script-runs\n' >"$sky_mail_dir/client.secret"
-chmod 0644 "$sky_mail_dir/client.secret"
+skynotify_dir="$TEST_STATE_DIR/skynotify"
+mkdir -p "$skynotify_dir"
+chmod 0755 "$skynotify_dir"
+printf 'placeholder-until-the-operator-script-runs\n' >"$skynotify_dir/client.secret"
+chmod 0644 "$skynotify_dir/client.secret"
 
 # kcadm's JVM options and AppCDS archive (tests/kcadm-jvm.sh): the keycloak service writes the
 # archive into this directory once Keycloak is up (its user is not the runner's, hence 0777, as the
@@ -149,12 +149,12 @@ source "$SCRIPT_DIR/group-overage-mapper.sh"
 # core's per-resource client roles and their one-time seeding (ADR-0059); stages called below.
 # shellcheck source=core-roles.sh
 source "$SCRIPT_DIR/core-roles.sh"
-# SkyMail's Privileged role skymail:system-mails:read, seeded by the same operator step; stages
+# SkyNotify's Privileged role skynotify:system-mails:read, seeded by the same operator step; stages
 # called below.
-# shellcheck source=skymail-roles.sh
-source "$SCRIPT_DIR/skymail-roles.sh"
+# shellcheck source=skynotify-roles.sh
+source "$SCRIPT_DIR/skynotify-roles.sh"
 # core's service roles (media:attach, ticket:forms, url:forms, users:read, consent:record) on the
-# forms service account, SkyMail's and core's service roles; stages called below.
+# forms service account, SkyNotify's and core's service roles; stages called below.
 # shellcheck source=core-service-roles.sh
 source "$SCRIPT_DIR/core-service-roles.sh"
 # The realm's user and admin event retention (account erasure ticket 09); stages called below.
@@ -344,13 +344,13 @@ v2_identity_guardrails() {
 # Runs after the first reconciliation. The reconciler must not create the
 # keycloak-mailer client (it has no user permissions to assign its roles); it
 # warns with the operator command instead. The harness then runs that script:
-# dry run first, then apply. The fixture SkyMail client lacks skymail:mails:send
-# (the role SkyMail creates in M1), which the script must report without creating
+# dry run first, then apply. The fixture SkyNotify client lacks skynotify:mails:send
+# (the role SkyNotify creates in M1), which the script must report without creating
 # it; the harness creates the role afterwards so the second pass proves the
 # assignment.
 stage_v2_after_first_reconciliation() {
   CURRENT_STAGE='v2 relying party id switch record and mailer client provisioning by the operator script'
-  local skymail_uuid mailer_uuid service_user roles output
+  local skynotify_uuid mailer_uuid service_user roles output
   # The fixture realm starts without a passwordless relying party id; the first run is the
   # switch production will see and must record its moment for the legacy passkey cleanup.
   grep -Fq "passkey relying party id switches from '(empty)' to 'localhost': realm attribute $V2_SWITCH_ATTRIBUTE=" \
@@ -381,18 +381,18 @@ stage_v2_after_first_reconciliation() {
   [[ -z $(v2_client_uuid keycloak-mailer) ]] \
     || fail 'the refused mailer run created the client'
   # The dry run of a missing client plans the whole provisioning: client, roles scope, the
-  # existing skymail:access assignment and scope mapping; skymail:mails:send is reported.
+  # existing skynotify:access assignment and scope mapping; skynotify:mails:send is reported.
   output=$(v2_create_mailer_client)
   grep -Fq 'would create confidential service-account client keycloak-mailer' <<<"$output" \
     || { printf '%s\n' "$output" >&2; fail 'mailer dry run did not plan the client creation'; }
   grep -Fq 'would attach the roles default scope to keycloak-mailer' <<<"$output" \
     || { printf '%s\n' "$output" >&2; fail 'mailer dry run did not plan the roles default scope'; }
-  grep -Fq 'would assign role skymail:access to the keycloak-mailer service account' <<<"$output" \
-    || { printf '%s\n' "$output" >&2; fail 'mailer dry run did not plan the skymail:access assignment'; }
-  grep -Fq 'would add scope mapping skymail:access to keycloak-mailer' <<<"$output" \
-    || { printf '%s\n' "$output" >&2; fail 'mailer dry run did not plan the skymail:access scope mapping'; }
-  grep -Fq 'WARNING: client skymail lacks the roles skymail:mails:send' <<<"$output" \
-    || { printf '%s\n' "$output" >&2; fail 'mailer dry run did not report the missing skymail:mails:send role'; }
+  grep -Fq 'would assign role skynotify:access to the keycloak-mailer service account' <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'mailer dry run did not plan the skynotify:access assignment'; }
+  grep -Fq 'would add scope mapping skynotify:access to keycloak-mailer' <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'mailer dry run did not plan the skynotify:access scope mapping'; }
+  grep -Fq 'WARNING: client skynotify lacks the roles skynotify:mails:send' <<<"$output" \
+    || { printf '%s\n' "$output" >&2; fail 'mailer dry run did not report the missing skynotify:mails:send role'; }
   grep -Fq 'dry run: 4 change(s) pending' <<<"$output" \
     || { printf '%s\n' "$output" >&2; fail 'mailer dry run did not count the client, scope and role steps'; }
   [[ -z $(v2_client_uuid keycloak-mailer) ]] \
@@ -401,29 +401,29 @@ stage_v2_after_first_reconciliation() {
   printf '%s\n' "$output" >"$TEST_STATE_DIR/create-mailer-apply-1.log"
   grep -Fq 'client keycloak-mailer: created' <<<"$output" \
     || { printf '%s\n' "$output" >&2; fail 'mailer script did not create the client'; }
-  grep -Fq 'WARNING: client skymail lacks the roles skymail:mails:send' <<<"$output" \
-    || fail 'mailer script did not warn about the missing skymail:mails:send role'
-  skymail_uuid=$(v2_client_uuid skymail)
-  [[ $(kcadm get "clients/$skymail_uuid/roles" -r "$V2_REALM" -c \
-    | jq '[.[] | select(.name == "skymail:mails:send")] | length') == 0 ]] \
-    || fail 'mailer script created a SkyMail client role on its own'
+  grep -Fq 'WARNING: client skynotify lacks the roles skynotify:mails:send' <<<"$output" \
+    || fail 'mailer script did not warn about the missing skynotify:mails:send role'
+  skynotify_uuid=$(v2_client_uuid skynotify)
+  [[ $(kcadm get "clients/$skynotify_uuid/roles" -r "$V2_REALM" -c \
+    | jq '[.[] | select(.name == "skynotify:mails:send")] | length') == 0 ]] \
+    || fail 'mailer script created a SkyNotify client role on its own'
   mailer_uuid=$(v2_client_uuid keycloak-mailer)
   [[ -n $mailer_uuid ]] || fail 'keycloak-mailer client was not created'
   service_user=$(kcadm get "clients/$mailer_uuid/service-account-user" -r "$V2_REALM" -c | jq -r .id)
-  roles=$(kcadm get "users/$service_user/role-mappings/clients/$skymail_uuid" -r "$V2_REALM" -c)
-  json_assert "$roles" '[.[].name] == ["skymail:access"]' \
-    'keycloak-mailer service account did not receive the existing skymail:access role'
+  roles=$(kcadm get "users/$service_user/role-mappings/clients/$skynotify_uuid" -r "$V2_REALM" -c)
+  json_assert "$roles" '[.[].name] == ["skynotify:access"]' \
+    'keycloak-mailer service account did not receive the existing skynotify:access role'
   output=$(v2_create_mailer_client)
   grep -Fq 'dry run: 0 change(s) pending' <<<"$output" \
     || { printf '%s\n' "$output" >&2; fail 'mailer script is not idempotent after apply'; }
-  kcadm create "clients/$skymail_uuid/roles" -r "$V2_REALM" -s name=skymail:mails:send >/dev/null
+  kcadm create "clients/$skynotify_uuid/roles" -r "$V2_REALM" -s name=skynotify:mails:send >/dev/null
 }
 
 # Drift injected before the second reconciliation, covering every v2 resource.
 stage_v2_inject_drift() {
   CURRENT_STAGE='v2 drift injection'
   local scope_uuid core_mapper_uuid sky_mapper_uuid client_uuid account_uuid
-  local mailer_uuid skymail_uuid service_user
+  local mailer_uuid skynotify_uuid service_user
   # A foreign realm attribute must survive the reconciler's own attribute write (Keycloak
   # drops every attribute a PUT with "attributes" leaves out).
   kcadm update "realms/$V2_REALM" \
@@ -463,21 +463,21 @@ stage_v2_inject_drift() {
   mailer_uuid=$(v2_client_uuid keycloak-mailer)
   kcadm update "clients/$mailer_uuid" -r "$V2_REALM" \
     -s standardFlowEnabled=true -s directAccessGrantsEnabled=true -s fullScopeAllowed=true >/dev/null
-  skymail_uuid=$(v2_client_uuid skymail)
+  skynotify_uuid=$(v2_client_uuid skynotify)
   service_user=$(kcadm get "clients/$mailer_uuid/service-account-user" -r "$V2_REALM" -c | jq -r .id)
-  kcadm delete "users/$service_user/role-mappings/clients/$skymail_uuid" \
-    -r "$V2_REALM" -b "$(v2_role_body "$skymail_uuid" skymail:access)" >/dev/null
+  kcadm delete "users/$service_user/role-mappings/clients/$skynotify_uuid" \
+    -r "$V2_REALM" -b "$(v2_role_body "$skynotify_uuid" skynotify:access)" >/dev/null
   local output
   output=$(v2_create_mailer_client --apply)
   printf '%s\n' "$output" >"$TEST_STATE_DIR/create-mailer-apply-2.log"
   grep -Fq 'update client keycloak-mailer flags' <<<"$output" \
     || { printf '%s\n' "$output" >&2; fail 'mailer script did not repair the drifted flags'; }
-  grep -Fq 'assign role skymail:access' <<<"$output" \
-    || fail 'mailer script did not re-assign skymail:access'
-  grep -Fq 'assign role skymail:mails:send' <<<"$output" \
-    || fail 'mailer script did not assign the newly created skymail:mails:send'
-  if grep -Fq 'WARNING: client skymail lacks' <<<"$output"; then
-    fail 'mailer script still warns about SkyMail roles after they were created'
+  grep -Fq 'assign role skynotify:access' <<<"$output" \
+    || fail 'mailer script did not re-assign skynotify:access'
+  grep -Fq 'assign role skynotify:mails:send' <<<"$output" \
+    || fail 'mailer script did not assign the newly created skynotify:mails:send'
+  if grep -Fq 'WARNING: client skynotify lacks' <<<"$output"; then
+    fail 'mailer script still warns about SkyNotify roles after they were created'
   fi
 }
 
@@ -575,11 +575,11 @@ stage_v2_assert_account_api_scope() {
   json_assert "$mappers" \
     '[.[] | select(.name == "account-api-core-audience" and .protocolMapper == "oidc-audience-mapper" and .config["included.client.audience"] == "core" and .config["access.token.claim"] == "true" and .config["id.token.claim"] == "false")] | length == 1' \
     'core audience mapper differs'
-  # The person's own SkyMail endpoints (the in-app inbox, iletisim-servisi 04 and 07): aud skymail in
+  # The person's own SkyNotify endpoints (the in-app inbox, iletisim-servisi 04 and 07): aud skynotify in
   # the access token and introspection, not the ID token or userinfo.
   json_assert "$mappers" \
-    '[.[] | select(.name == "account-api-skymail-audience" and .protocolMapper == "oidc-audience-mapper" and .config["included.client.audience"] == "skymail" and .config["access.token.claim"] == "true" and .config["id.token.claim"] == "false" and .config["userinfo.token.claim"] == "false" and .config["introspection.token.claim"] == "true")] | length == 1' \
-    'skymail audience mapper differs'
+    '[.[] | select(.name == "account-api-skynotify-audience" and .protocolMapper == "oidc-audience-mapper" and .config["included.client.audience"] == "skynotify" and .config["access.token.claim"] == "true" and .config["id.token.claim"] == "false" and .config["userinfo.token.claim"] == "false" and .config["introspection.token.claim"] == "true")] | length == 1' \
+    'skynotify audience mapper differs'
   json_assert "$mappers" \
     '[.[] | select(.name == "account-api-manage-account-links" and .protocolMapper == "oidc-hardcoded-role-mapper" and .config.role == "account.manage-account-links")] | length == 1' \
     'manage-account-links role mapper differs'
@@ -605,20 +605,20 @@ stage_v2_assert_account_api_scope() {
 
 stage_v2_assert_mailer_client() {
   CURRENT_STAGE='v2 keycloak-mailer service account'
-  local mailer_uuid mailer skymail_uuid service_user roles scope_roles secret token payload
+  local mailer_uuid mailer skynotify_uuid service_user roles scope_roles secret token payload
   mailer_uuid=$(v2_client_uuid keycloak-mailer)
   mailer=$(kcadm get "clients/$mailer_uuid" -r "$V2_REALM" -c)
   json_assert "$mailer" \
     '.publicClient == false and .serviceAccountsEnabled == true and .standardFlowEnabled == false and .directAccessGrantsEnabled == false and .implicitFlowEnabled == false and .fullScopeAllowed == false and .clientAuthenticatorType == "client-secret"' \
     'keycloak-mailer client contract differs'
-  skymail_uuid=$(v2_client_uuid skymail)
+  skynotify_uuid=$(v2_client_uuid skynotify)
   service_user=$(kcadm get "clients/$mailer_uuid/service-account-user" -r "$V2_REALM" -c | jq -r .id)
   [[ -n $service_user && $service_user != null ]] || fail 'keycloak-mailer service-account user is missing'
-  roles=$(kcadm get "users/$service_user/role-mappings/clients/$skymail_uuid" -r "$V2_REALM" -c)
-  json_assert "$roles" '([.[].name] | sort) == ["skymail:access", "skymail:mails:send"]' \
+  roles=$(kcadm get "users/$service_user/role-mappings/clients/$skynotify_uuid" -r "$V2_REALM" -c)
+  json_assert "$roles" '([.[].name] | sort) == ["skynotify:access", "skynotify:mails:send"]' \
     'keycloak-mailer service account roles differ'
-  scope_roles=$(kcadm get "clients/$mailer_uuid/scope-mappings/clients/$skymail_uuid" -r "$V2_REALM" -c)
-  json_assert "$scope_roles" '([.[].name] | sort) == ["skymail:access", "skymail:mails:send"]' \
+  scope_roles=$(kcadm get "clients/$mailer_uuid/scope-mappings/clients/$skynotify_uuid" -r "$V2_REALM" -c)
+  json_assert "$scope_roles" '([.[].name] | sort) == ["skynotify:access", "skynotify:mails:send"]' \
     'keycloak-mailer scope mappings differ'
   grep -Fq 'client keycloak-mailer: verified' "$TEST_STATE_DIR/reconcile-second.log" \
     || fail 'reconciler did not verify the provisioned mailer client'
@@ -645,8 +645,8 @@ stage_v2_assert_mailer_client() {
   esac
   payload=$(tr '_-' '/+' <<<"$payload" | base64 --decode)
   json_assert "$payload" \
-    '.azp == "keycloak-mailer" and (.resource_access.skymail.roles | sort) == ["skymail:access", "skymail:mails:send"] and (.resource_access | keys) == ["skymail"]' \
-    'keycloak-mailer token does not carry exactly the SkyMail roles'
+    '.azp == "keycloak-mailer" and (.resource_access.skynotify.roles | sort) == ["skynotify:access", "skynotify:mails:send"] and (.resource_access | keys) == ["skynotify"]' \
+    'keycloak-mailer token does not carry exactly the SkyNotify roles'
 }
 
 # Wrong mailer flags are a security drift the reconciler cannot repair itself; it must
@@ -971,11 +971,11 @@ reconcile_session_run() {
 }
 
 v2_state_snapshot() {
-  local client_uuid mailer_uuid account_uuid skymail_uuid service_user scope_uuid
+  local client_uuid mailer_uuid account_uuid skynotify_uuid service_user scope_uuid
   client_uuid=$(v2_client_uuid account-center)
   mailer_uuid=$(v2_client_uuid keycloak-mailer)
   account_uuid=$(v2_client_uuid account)
-  skymail_uuid=$(v2_client_uuid skymail)
+  skynotify_uuid=$(v2_client_uuid skynotify)
   service_user=$(kcadm get "clients/$mailer_uuid/service-account-user" -r "$V2_REALM" -c | jq -r .id)
   {
     kcadm get "realms/$V2_REALM" -c
@@ -985,8 +985,8 @@ v2_state_snapshot() {
     kcadm get "clients/$mailer_uuid" -r "$V2_REALM" -c
     kcadm get "clients/$client_uuid/default-client-scopes" -r "$V2_REALM" -c
     kcadm get "clients/$client_uuid/scope-mappings/clients/$account_uuid" -r "$V2_REALM" -c
-    kcadm get "users/$service_user/role-mappings/clients/$skymail_uuid" -r "$V2_REALM" -c
-    kcadm get "clients/$mailer_uuid/scope-mappings/clients/$skymail_uuid" -r "$V2_REALM" -c
+    kcadm get "users/$service_user/role-mappings/clients/$skynotify_uuid" -r "$V2_REALM" -c
+    kcadm get "clients/$mailer_uuid/scope-mappings/clients/$skynotify_uuid" -r "$V2_REALM" -c
     for scope_uuid in $(v2_scope_uuid account-center-account-api) $(v2_scope_uuid account-center-core-claims) $(v2_scope_uuid skyapp-account-center-audience); do
       kcadm get "client-scopes/$scope_uuid" -r "$V2_REALM" -c
       kcadm get "client-scopes/$scope_uuid/protocol-mappers/models" -r "$V2_REALM" -c
@@ -1004,8 +1004,8 @@ stage_v2_assert_token_contract() {
   CURRENT_STAGE='v2 access token audience and sky_authorization contract'
   local payload=$1
   json_assert "$payload" \
-    '((.aud | if type == "array" then . else [.] end) | sort) == ["account", "core", "skymail"]' \
-    'access token audience is not exactly account, core and skymail'
+    '((.aud | if type == "array" then . else [.] end) | sort) == ["account", "core", "skynotify"]' \
+    'access token audience is not exactly account, core and skynotify'
   json_assert "$payload" \
     '.sky_authorization.core.roles == ["url:create"]' \
     'sky_authorization does not carry the fixture client role'
@@ -1015,7 +1015,7 @@ stage_v2_assert_token_contract() {
   json_assert "$payload" \
     '((.resource_access.account.roles | index("manage-account")) != null) and ((.resource_access.account.roles | index("view-profile")) != null) and ((.resource_access.account.roles | index("manage-account-links")) != null)' \
     'access token lacks the account roles'
-  # SkyMail's person endpoints refuse a token carrying client_id (a service account's, azp =
+  # SkyNotify's person endpoints refuse a token carrying client_id (a service account's, azp =
   # client_id: 403 auth.person_required); a person's token must not carry one.
   json_assert "$payload" 'has("client_id") | not' 'the person access token carries client_id'
 }
@@ -1054,7 +1054,7 @@ stage_v2_admin_rest_is_not_reachable_with_account_center_tokens() {
     '.sky_authorization == {"core": {"roles": ["url:create"]}} and (.sky_authorization | has("realm-management") | not)' \
     'sky_authorization must list the core roles and never the realm-management client'
   json_assert "$V2_ACCESS_PAYLOAD" \
-    '((.aud | if type == "array" then . else [.] end) | sort) == ["account", "core", "skymail"] and (.resource_access | keys) == ["account"] and .realm_access == null' \
+    '((.aud | if type == "array" then . else [.] end) | sort) == ["account", "core", "skynotify"] and (.resource_access | keys) == ["account"] and .realm_access == null' \
     'the view-users holder token widened its audience or roles'
   kcadm delete "users/$V2_FIXTURE_USER_UUID/role-mappings/clients/$realm_management_uuid" \
     -r "$V2_REALM" -b "$role_body" >/dev/null
@@ -1184,23 +1184,23 @@ v2_register_passkey_after_switch() {
 # delete exactly the passkeys registered before that switch: never with a later cutover, never
 # silently when a deletion fails.
 # ---------------------------------------------------------------------------
-# K5 (ADR-0045): Keycloak's system mails are templated in SkyMail and sent by it,
-# with the realm's own SMTP as the fallback. The fixture `skymail` service is both
-# the SkyMail single-mail task API and the SMTP sink the fallback delivers to, so
+# K5 (ADR-0045): Keycloak's system mails are templated in SkyNotify and sent by it,
+# with the realm's own SMTP as the fallback. The fixture `skynotify` service is both
+# the SkyNotify single-mail task API and the SMTP sink the fallback delivers to, so
 # one stage proves the whole path: the real keycloak-mailer service account obtains
 # a real client-credentials token against this Keycloak, the sender posts the mapped
 # template key with every variable, and a refused mail still reaches the recipient.
 # ---------------------------------------------------------------------------
-sky_mail_fixture_records() {
-  "${COMPOSE[@]}" logs --no-color --no-log-prefix skymail 2>/dev/null \
-    | sed -n 's/^SKYMAIL_FIXTURE //p'
+skynotify_fixture_records() {
+  "${COMPOSE[@]}" logs --no-color --no-log-prefix skynotify 2>/dev/null \
+    | sed -n 's/^SKYNOTIFY_FIXTURE //p'
 }
 
 # Prints the last fixture record of $1 for recipient $2, waiting for it to arrive.
-sky_mail_await_record() {
+skynotify_await_record() {
   local event=$1 recipient=$2 attempt record
   for attempt in $(seq 1 45); do
-    record=$(sky_mail_fixture_records \
+    record=$(skynotify_fixture_records \
       | jq -c --arg event "$event" --arg recipient "$recipient" \
         'select(.event == $event and ((.recipient_email // (.recipients // [])[0]) == $recipient))' \
       | tail -n 1)
@@ -1213,35 +1213,35 @@ sky_mail_await_record() {
   return 1
 }
 
-sky_mail_send_verify_email() {
+skynotify_send_verify_email() {
   local user_uuid=$1
   kcadm update "users/$user_uuid/send-verify-email" -r "$V2_REALM" -n -b '{}' >/dev/null
 }
 
-sky_mail_create_user() {
+skynotify_create_user() {
   local username=$1 address=$2
   kcadm create users -r "$V2_REALM" -i \
     -s "username=$username" -s enabled=true -s emailVerified=false \
-    -s firstName=Sky -s lastName=Mail -s "email=$address"
+    -s firstName=Sky -s lastName=Notify -s "email=$address"
 }
 
-stage_k5_system_mail_through_skymail() {
-  CURRENT_STAGE='K5 Keycloak system mail through SkyMail'
+stage_k5_system_mail_through_skynotify() {
+  CURRENT_STAGE='K5 Keycloak system mail through SkyNotify'
   local mailer_uuid secret realm_display sent_uuid missing_uuid fallback_uuid
   local task keycloak_log smtp_record posted user_uuid
 
   mailer_uuid=$(v2_client_uuid keycloak-mailer)
   secret=$(kcadm get "clients/$mailer_uuid/client-secret" -r "$V2_REALM" -c | jq -r .value)
   [[ -n $secret && $secret != null ]] \
-    || fail 'keycloak-mailer secret is not readable for the SkyMail sender'
-  printf '%s\n' "$secret" >"$sky_mail_dir/client.secret"
-  chmod 0644 "$sky_mail_dir/client.secret"
+    || fail 'keycloak-mailer secret is not readable for the SkyNotify sender'
+  printf '%s\n' "$secret" >"$skynotify_dir/client.secret"
+  chmod 0644 "$skynotify_dir/client.secret"
 
   realm_display=$(kcadm get "realms/$V2_REALM" -c | jq -r '.displayName // ""')
-  [[ -n $realm_display ]] || fail 'the fixture realm has no display name to send to SkyMail'
+  [[ -n $realm_display ]] || fail 'the fixture realm has no display name to send to SkyNotify'
   # The fallback must genuinely deliver, so the realm points at the fixture SMTP sink.
   kcadm update "realms/$V2_REALM" \
-    -s smtpServer.host=skymail \
+    -s smtpServer.host=skynotify \
     -s smtpServer.port=1025 \
     -s smtpServer.from=noreply@yildizskylab.com \
     -s 'smtpServer.fromDisplayName=SKY LAB' \
@@ -1249,24 +1249,24 @@ stage_k5_system_mail_through_skymail() {
     -s smtpServer.starttls=false \
     -s smtpServer.auth=false >/dev/null
 
-  # --- the mapped mail leaves through SkyMail -------------------------------------------
-  sent_uuid=$(sky_mail_create_user skymail-fixture skymail-fixture@example.invalid)
-  sky_mail_send_verify_email "$sent_uuid"
-  task=$(sky_mail_await_record mail_task skymail-fixture@example.invalid) \
-    || fail 'SkyMail fixture did not receive the verify-email mail task'
+  # --- the mapped mail leaves through SkyNotify -------------------------------------------
+  sent_uuid=$(skynotify_create_user skynotify-fixture skynotify-fixture@example.invalid)
+  skynotify_send_verify_email "$sent_uuid"
+  task=$(skynotify_await_record mail_task skynotify-fixture@example.invalid) \
+    || fail 'SkyNotify fixture did not receive the verify-email mail task'
   json_assert "$task" '.template_key == "keycloak.verify-email"' \
-    'the verify-email mail did not carry the mapped SkyMail template key'
-  json_assert "$task" '.recipient_full_name == "Sky Mail"' \
+    'the verify-email mail did not carry the mapped SkyNotify template key'
+  json_assert "$task" '.recipient_full_name == "Sky Notify"' \
     'the mail task did not name the recipient'
   json_assert "$task" '.missing_variables == []' \
-    'SkyMail would render <no value>: a body variable was omitted'
+    'SkyNotify would render <no value>: a body variable was omitted'
   json_assert "$task" \
     '(.body_variables | keys | sort) == ["code","codeExpirationMinutes","firstName","link","linkExpirationMinutes","purpose","realmDisplayName","subjectKey","username"]' \
     'the mail task did not carry exactly the nine agreed body variables'
   json_assert "$task" '.body_variables.code == "" and .body_variables.codeExpirationMinutes == "" and .body_variables.purpose == ""' \
     'a link mail must send the code variables empty'
   json_assert "$task" \
-    '.body_variables.subjectKey == "emailVerificationSubject" and .body_variables.firstName == "Sky" and .body_variables.username == "skymail-fixture"' \
+    '.body_variables.subjectKey == "emailVerificationSubject" and .body_variables.firstName == "Sky" and .body_variables.username == "skynotify-fixture"' \
     'the mail task body variables differ from the Keycloak mail'
   json_assert "$task" '.body_variables.realmDisplayName == $display' \
     'the mail task did not carry the realm display name' --arg display "$realm_display"
@@ -1274,42 +1274,42 @@ stage_k5_system_mail_through_skymail() {
     '(.body_variables.link | contains("/realms/e-skylab-test/login-actions/action-token")) and (.body_variables.linkExpirationMinutes | test("^[0-9]+$"))' \
     'the mail task did not carry the action link and its expiration'
   json_assert "$task" \
-    '.azp == "keycloak-mailer" and (.roles | sort) == ["skymail:access", "skymail:mails:send"]' \
+    '.azp == "keycloak-mailer" and (.roles | sort) == ["skynotify:access", "skynotify:mails:send"]' \
     'the mail task was not authorized by the keycloak-mailer service account'
-  posted=$(sky_mail_fixture_records | jq -c 'select(.event == "mail_task")' | wc -l | tr -d ' ')
-  [[ $posted == 1 ]] || fail "the verify-email mail reached SkyMail $posted times instead of once"
-  [[ -z $(sky_mail_fixture_records | jq -c 'select(.event == "smtp_message")') ]] \
+  posted=$(skynotify_fixture_records | jq -c 'select(.event == "mail_task")' | wc -l | tr -d ' ')
+  [[ $posted == 1 ]] || fail "the verify-email mail reached SkyNotify $posted times instead of once"
+  [[ -z $(skynotify_fixture_records | jq -c 'select(.event == "smtp_message")') ]] \
     || fail 'an accepted mail was also delivered over SMTP'
 
   # --- an archived or unknown template key falls back, it does not vanish ---------------
-  missing_uuid=$(sky_mail_create_user skymail-missing-fixture skymail-missing@example.invalid)
-  sky_mail_send_verify_email "$missing_uuid"
-  sky_mail_await_record smtp_message skymail-missing@example.invalid >/dev/null \
-    || fail 'a mail SkyMail answered 404 for never reached the recipient'
+  missing_uuid=$(skynotify_create_user skynotify-missing-fixture skynotify-missing@example.invalid)
+  skynotify_send_verify_email "$missing_uuid"
+  skynotify_await_record smtp_message skynotify-missing@example.invalid >/dev/null \
+    || fail 'a mail SkyNotify answered 404 for never reached the recipient'
 
-  # --- an unavailable SkyMail falls back ------------------------------------------------
-  fallback_uuid=$(sky_mail_create_user skymail-fallback-fixture skymail-fallback@example.invalid)
-  sky_mail_send_verify_email "$fallback_uuid"
-  smtp_record=$(sky_mail_await_record smtp_message skymail-fallback@example.invalid) \
-    || fail 'the SMTP fallback did not deliver the mail SkyMail refused'
+  # --- an unavailable SkyNotify falls back ------------------------------------------------
+  fallback_uuid=$(skynotify_create_user skynotify-fallback-fixture skynotify-fallback@example.invalid)
+  skynotify_send_verify_email "$fallback_uuid"
+  smtp_record=$(skynotify_await_record smtp_message skynotify-fallback@example.invalid) \
+    || fail 'the SMTP fallback did not deliver the mail SkyNotify refused'
   json_assert "$smtp_record" '.bytes > 0' 'the fallback delivered an empty message'
 
   keycloak_log=$("${COMPOSE[@]}" logs --no-color --no-log-prefix keycloak 2>/dev/null \
-    | grep -F 'sky_mail_' || true)
-  grep -Fq 'sky_mail_fallback reason=template_missing template=keycloak.verify-email' \
+    | grep -F 'skynotify_' || true)
+  grep -Fq 'skynotify_fallback reason=template_missing template=keycloak.verify-email' \
     <<<"$keycloak_log" \
     || { printf '%s\n' "$keycloak_log" >&2; fail 'the 404 fallback did not record its own reason'; }
-  grep -Fq 'sky_mail_fallback reason=unavailable template=keycloak.verify-email' \
+  grep -Fq 'skynotify_fallback reason=unavailable template=keycloak.verify-email' \
     <<<"$keycloak_log" \
     || { printf '%s\n' "$keycloak_log" >&2; fail 'the 500 fallback did not record its own reason'; }
   while IFS= read -r line; do
     [[ -n $line ]] || continue
-    [[ $line != *"@example.invalid"* ]] || fail 'a sky_mail log line carried a recipient address'
-    [[ $line != *"login-actions/action-token"* ]] || fail 'a sky_mail log line carried an action link'
-    [[ $line != *"$secret"* ]] || fail 'a sky_mail log line carried the client secret'
+    [[ $line != *"@example.invalid"* ]] || fail 'a skynotify log line carried a recipient address'
+    [[ $line != *"login-actions/action-token"* ]] || fail 'a skynotify log line carried an action link'
+    [[ $line != *"$secret"* ]] || fail 'a skynotify log line carried the client secret'
   done <<<"$keycloak_log"
-  [[ $(sky_mail_fixture_records | jq -c 'select(.event == "mail_task")' | wc -l | tr -d ' ') == 3 ]] \
-    || fail 'SkyMail did not receive exactly the three triggered mails'
+  [[ $(skynotify_fixture_records | jq -c 'select(.event == "mail_task")' | wc -l | tr -d ' ') == 3 ]] \
+    || fail 'SkyNotify did not receive exactly the three triggered mails'
 
   # Leave the realm and its users exactly as this stage found them.
   for user_uuid in "$sent_uuid" "$missing_uuid" "$fallback_uuid"; do
@@ -1895,7 +1895,7 @@ stage_v2_after_first_reconciliation
 stage_login_audiences_after_first_reconciliation
 stage_admin_panel_after_first_reconciliation
 stage_core_roles_after_first_reconciliation
-stage_skymail_roles_after_first_reconciliation
+stage_skynotify_roles_after_first_reconciliation
 stage_core_service_roles_after_first_reconciliation
 stage_event_retention_after_first_reconciliation
 
@@ -2169,7 +2169,7 @@ skyapp_scope_count=$(kcadm get client-scopes -r e-skylab-test -c \
 [[ $skyapp_scope_count == 1 ]] || fail "skyapp audience scope is missing or duplicated"
 
 built_in_scope_after=$(kcadm get client-scopes -r e-skylab-test -c \
-  | jq -c '[.[] | select(.name != "account-center-account-api" and .name != "account-center-core-claims" and .name != "skyapp-account-center-audience" and .name != "skyforms-forms-audience" and .name != "skyforms-groups" and .name != "skyforms-core-audience" and .name != "frontend-main-core-audience" and .name != "frontend-arge-core-audience" and .name != "skycms-audience" and .name != "skymail-api-audience" and .name != "admin-panel-api-audience") | {id, name}] | sort_by(.id)')
+  | jq -c '[.[] | select(.name != "account-center-account-api" and .name != "account-center-core-claims" and .name != "skyapp-account-center-audience" and .name != "skyforms-forms-audience" and .name != "skyforms-groups" and .name != "skyforms-core-audience" and .name != "frontend-main-core-audience" and .name != "frontend-arge-core-audience" and .name != "skycms-audience" and .name != "skynotify-api-audience" and .name != "admin-panel-api-audience") | {id, name}] | sort_by(.id)')
 [[ $built_in_scope_after == "$built_in_scope_snapshot" ]] \
   || fail "a built-in client scope id or name was mutated"
 
@@ -2178,7 +2178,7 @@ while IFS= read -r built_in_scope_uuid; do
     "client-scopes/$built_in_scope_uuid/protocol-mappers/models" \
     -r e-skylab-test -c)
   json_assert "$built_in_mappers" \
-    '[.[] | select(.name == "account-api-audience" or .name == "account-api-core-audience" or .name == "account-api-skymail-audience" or .name == "account-api-manage-account" or .name == "account-api-view-profile" or .name == "account-api-manage-account-links" or .name == "account-api-roles" or .name == "account-api-sky-authorization" or .name == "account-center-audience" or .name == "sky_session_lifetime" or .name == "sky_embed")] | length == 0' \
+    '[.[] | select(.name == "account-api-audience" or .name == "account-api-core-audience" or .name == "account-api-skynotify-audience" or .name == "account-api-manage-account" or .name == "account-api-view-profile" or .name == "account-api-manage-account-links" or .name == "account-api-roles" or .name == "account-api-sky-authorization" or .name == "account-center-audience" or .name == "sky_session_lifetime" or .name == "sky_embed")] | length == 0' \
     "an Account Center mapper was injected into built-in scope $built_in_scope_uuid"
 done < <(jq -r '.[].id' <<<"$built_in_scope_snapshot")
 
@@ -2248,20 +2248,20 @@ json_assert "$skyapp_default_scopes" \
   '[.[] | select(.id == $scope and .name == "skyapp-account-center-audience")] | length == 1' \
   'skyapp audience scope is not attached as a default scope' \
   --arg scope "$skyapp_scope_uuid"
-# The in-app inbox (iletisim-servisi 04, 08): sky-app's access token also names skymail, from the
-# SkyMail UI's own audience scope, kept among sky-app's default scopes.
-skyapp_skymail_scope_uuid=$(kcadm get client-scopes -r e-skylab-test -c \
-  | jq -r '.[] | select(.name == "skymail-api-audience") | .id')
-[[ -n $skyapp_skymail_scope_uuid && $skyapp_skymail_scope_uuid != *$'\n'* ]] \
-  || fail 'the skymail-api-audience scope is missing or duplicated'
+# The in-app inbox (iletisim-servisi 04, 08): sky-app's access token also names skynotify, from the
+# SkyNotify UI's own audience scope, kept among sky-app's default scopes.
+skyapp_skynotify_scope_uuid=$(kcadm get client-scopes -r e-skylab-test -c \
+  | jq -r '.[] | select(.name == "skynotify-api-audience") | .id')
+[[ -n $skyapp_skynotify_scope_uuid && $skyapp_skynotify_scope_uuid != *$'\n'* ]] \
+  || fail 'the skynotify-api-audience scope is missing or duplicated'
 json_assert "$skyapp_default_scopes" \
   '[.[] | select(.id == $scope)] | length == 1' \
-  'skymail-api-audience is not a default scope of skyapp' \
-  --arg scope "$skyapp_skymail_scope_uuid"
+  'skynotify-api-audience is not a default scope of skyapp' \
+  --arg scope "$skyapp_skynotify_scope_uuid"
 json_assert "$(kcadm get "clients/$skyapp_client_uuid/optional-client-scopes" -r e-skylab-test -c)" \
   '[.[] | select(.id == $scope)] | length == 0' \
-  'skymail-api-audience is an optional scope of skyapp' \
-  --arg scope "$skyapp_skymail_scope_uuid"
+  'skynotify-api-audience is an optional scope of skyapp' \
+  --arg scope "$skyapp_skynotify_scope_uuid"
 stage_login_audiences_after_second_reconciliation
 stage_admin_panel_after_second_reconciliation
 
@@ -2321,7 +2321,7 @@ fi
 # Account erasure (ADR-0051, ticket 03): the operator script builds the core-erasure client, its
 # erase scopes and roles; the reconciler verifies them. It runs before the no-op reconciliation so
 # that run proves the verification writes nothing. The other groups get only the state it leaves
-# (core's SkyMail roles, skycms and forms, core-erasure applied, one full reconciliation).
+# (core's SkyNotify roles, skycms and forms, core-erasure applied, one full reconciliation).
 if group_runs erasure; then
   CURRENT_STAGE='core-erasure client operator script and reconciler verification'
   ERASURE_COMPOSE_FILE="$COMPOSE_FILE" \
@@ -2343,8 +2343,8 @@ if group_runs roles; then
   stage_admin_panel_tokens
   # The operator seeds core's resource roles; the no-op reconciliation after it must leave them.
   stage_core_roles_seeded_by_operator
-  # The same operator runs seeded SkyMail's Privileged role.
-  stage_skymail_roles_seeded_by_operator
+  # The same operator runs seeded SkyNotify's Privileged role.
+  stage_skynotify_roles_seeded_by_operator
 elif group_runs roles-noop; then
   # What the roles group's operator stages leave, but core's service roles, which come next.
   setup_operator_state without-service-roles
@@ -2638,7 +2638,7 @@ case $((${#token_payload_segment} % 4)) in
 esac
 token_payload=$(tr '_-' '/+' <<<"$token_payload_segment" | base64 --decode)
 json_assert "$token_payload" \
-  '((.aud | if type == "array" then . else [.] end) | sort) == ["account", "core", "skymail"] and .azp == "account-center" and .scope == "openid" and ((.resource_access.account.roles | index("manage-account")) != null) and ((.resource_access.account.roles | index("view-profile")) != null)' \
+  '((.aud | if type == "array" then . else [.] end) | sort) == ["account", "core", "skynotify"] and .azp == "account-center" and .scope == "openid" and ((.resource_access.account.roles | index("manage-account")) != null) and ((.resource_access.account.roles | index("view-profile")) != null)' \
   'issued token differs from the exact audience, authorized-party, scope or required-role contract'
 stage_v2_assert_token_contract "$token_payload"
 
@@ -2713,11 +2713,11 @@ stage_v2_passkey_cleanup "$client_secret"
 
 # K5 runs before the sky-account contract on purpose: it writes the real keycloak-mailer
 # secret into the sender's mount. Afterwards the contract's personal e-mail code travels the
-# production path (a SkyMail task under keycloak.personal-email-confirm) and the contract reads
+# production path (a SkyNotify task under keycloak.personal-email-confirm) and the contract reads
 # it there; run later, the sender still holds the placeholder, falls back to SMTP, and the
 # contract would only prove the fallback.
-stage_k5_system_mail_through_skymail
-# K4b after K5: its reset mails leave through SkyMail and the stage reads them there.
+stage_k5_system_mail_through_skynotify
+# K4b after K5: its reset mails leave through SkyNotify and the stage reads them there.
 stage_reset_by_either_email "$client_secret"
 # eskylab-login-ux 23: the reset asks a person with OTP for the code, never for a new authenticator.
 stage_reset_verifies_otp "$client_secret"
@@ -2738,7 +2738,7 @@ SUDO_EMAIL_BASE_URL=http://127.0.0.1:18080 \
   SUDO_EMAIL_ADMIN_PASSWORD=integration-admin-password \
   SUDO_EMAIL_MAIL_URL=http://127.0.0.1:18025 \
   SUDO_EMAIL_MAIL_CONTAINER=mailpit \
-  SUDO_EMAIL_SKYMAIL_CONTAINER="$("${COMPOSE[@]}" ps -q skymail)" \
+  SUDO_EMAIL_SKYNOTIFY_CONTAINER="$("${COMPOSE[@]}" ps -q skynotify)" \
   SUDO_EMAIL_KEYCLOAK_CONTAINER="$("${COMPOSE[@]}" ps -q keycloak)" \
   SUDO_EMAIL_PLAYWRIGHT_MODULE="$SCRIPT_DIR/../theme/node_modules/@playwright/test/index.mjs" \
   node "$SCRIPT_DIR/sudo-email-code.mjs"

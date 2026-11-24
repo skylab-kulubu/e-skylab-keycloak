@@ -23,24 +23,24 @@ entegrasyon testi bunu doğrular.
 | Olay saklama süresi (hesap silme 09; değerler betiğin başındaki `EVENT_RETENTION_*` sabitlerinde) | `eventsEnabled=true`, `eventsExpiration=2592000`, `adminEventsEnabled=true`, `adminEventsDetailsEnabled=true` ve realm özniteliği `adminEventsExpiration=2592000`: kullanıcı ve admin olayları 30 gün sonra silinir, admin olay ayrıntıları denetim için açık kalır (Yusuf'un seçimi). Neden: Keycloak silinen kişinin olaylarını silmez. `CREATE`/`UPDATE` admin olayları kişinin tam temsilini (e-posta, ad, okul ve kişisel e-posta), `DELETE` kullanıcı adını, `LOGIN`/`LOGIN_ERROR` yazılan adresi tutar. Süre kapatılırsa bunlar süresiz kalır; 30 gün KVKK'nın başvuruyu sonuçlandırma süresidir. Öznitelik, canlı öznitelik haritasının üstüne birleştirilerek yazılır. Dinleyiciler ve kaydedilen olay türleri yönetilmez. Yetki: realm PUT'u `manage-realm` ister, uzlaştırıcı kimliğinde var; `events/config` uç noktası (`manage-events`) kullanılmaz. Üretimde bu değerler 2026-09-26'dan önce elle kurulmuştu; ilk koşuda `[reconcile] realm event retention (…): unchanged` beklenir, `updated (…)` görülürse biri ayarı değiştirmiştir, not edin. Harness: `tests/event-retention.sh`. |
 | Şifresiz passkey politikası (`account-center-passkey-policy.json` + ortam) | `webAuthnPolicyPasswordlessRpId=yildizskylab.com`, `webAuthnPolicyPasswordlessExtraOrigins=["https://my.yildizskylab.com"]`; entity name `SKY LAB`, ES256/RS256, resident key ve kullanıcı doğrulaması zorunlu, passkeys açık, conditional mediation; diğer alanlar Keycloak varsayılanları. Relying party id gerçekten değişiyorsa politika yazılmadan önce realm özniteliği `skylab.passkeyRpIdSwitchedAt=<ISO-8601 UTC>` kaydedilir (öznitelik haritası canlı halinin üstüne birleştirilir, başka öznitelik silinmez) ve `[reconcile] passkey relying party id switches from '…' to '…'` satırı basılır; §5'teki temizlik bu anı cutover alır. İki faktörlü (`webAuthnPolicy*`) politika yönetilmez. `attributes` taşımayan realm PUT'ları CIBA/PAR sürelerini ve cihaz kodu ömrünü (`oauth2DeviceCodeLifespan`) Keycloak varsayılanına sıfırlar (önceden de böyleydi). |
 | User Profile (`account-center-user-profile.json`) | Canlı yapı korunur (gruplar, açıklamalar, mesaj anahtarları, ek öznitelikler); `firstName`, `lastName`, `email` kişi için salt okunur (`edit=[admin]`, `view=[admin,user]`); `username` izinleri olduğu gibi; `schoolEmail`, `personalEmail`, `skyNumber`, `department`, `university`, `skyMail`, `usernameChangedAt` `view=[admin,user]`, `edit=[admin]`; e-posta özniteliklerinde `email`, `usernameChangedAt` için ISO-8601 UTC `pattern` doğrulayıcısı; eksik Türkçe görünen adlar eklenir, mevcutlar korunur; `unmanagedAttributePolicy=ADMIN_VIEW` (asla `ENABLED`) |
-| `account-center-account-api` kapsamı | `account-api-audience` (`account`), `account-api-core-audience` (`core`), `account-api-skymail-audience` (`skymail`; kişinin kendi SkyMail uçları, uygulama içi kutu `GET /v1/me/inbox`, iletisim-servisi 04 ve 07: SkyMail bu uçlarda rol değil `aud ∋ skymail` ve kişi token'ı ister), `account-api-manage-account`, `account-api-view-profile`, `account-api-manage-account-links` (sabit roller), `account-api-roles` (`resource_access.account.roles`), `account-api-sky-authorization` (SPI mapper'ı `sky-authorization-mapper`: `sky_authorization.<istemci>.roles`, yalnız access token ve introspection; ID token/userinfo'da yok; `realm-management`, `broker`, `account`, `account-console`, `security-admin-console`, `admin-cli`, `*-realm` hariç; sıralı; 64 istemci / 256 rol sınırı; rol yoksa claim yok). Audience-resolve mapper yoktur; `aud` tam olarak `["account","core","skymail"]` kalır. |
+| `account-center-account-api` kapsamı | `account-api-audience` (`account`), `account-api-core-audience` (`core`), `account-api-skynotify-audience` (`skynotify`; kişinin kendi SkyNotify uçları, uygulama içi kutu `GET /v1/me/inbox`, iletisim-servisi 04 ve 07: SkyNotify bu uçlarda rol değil `aud ∋ skynotify` ve kişi token'ı ister), `account-api-manage-account`, `account-api-view-profile`, `account-api-manage-account-links` (sabit roller), `account-api-roles` (`resource_access.account.roles`), `account-api-sky-authorization` (SPI mapper'ı `sky-authorization-mapper`: `sky_authorization.<istemci>.roles`, yalnız access token ve introspection; ID token/userinfo'da yok; `realm-management`, `broker`, `account`, `account-console`, `security-admin-console`, `admin-cli`, `*-realm` hariç; sıralı; 64 istemci / 256 rol sınırı; rol yoksa claim yok). Audience-resolve mapper yoktur; `aud` tam olarak `["account","core","skynotify"]` kalır. |
 | `account-center-core-claims` kapsamı (`account-center-core-claims-mappers.json`) | `sub`, `auth_time`, `sky_session_lifetime` (`sky_session_started`/`sky_session_expires`), `sky_embed` (ayrıntı `docs/sky-handoff-api.md`) ve C2'den beri `university`, `department` (`oidc-usermodel-attribute-mapper`, aynı adlı kullanıcı özniteliğinden, `jsonType.label=String`, `multivalued=false`: realm'in `department_ve_university_to_jwt` kapsamıyla aynı biçim, düz metin; yalnız access token ve introspection; ID token/userinfo'da yok; öznitelik yoksa claim yok). core bu iki claim'i taşıyan her token'da kişinin üniversite, bölüm ve fakültesini yeniler ve `ytu_linked` yapar (§9). Kapsamdaki diğer mapper'lar silinir. |
 | `frontend-main-core-audience`, `frontend-arge-core-audience` ve `skyforms-forms-audience` kapsamları | `frontend-main`, `frontend-arge` ve `skyforms` giriş istemcilerinin varsayılan kapsamları; access token'ın `aud`'una `core`, `core` ve `forms` ekler. Üretimde elle kuruldular, uzlaştırıcı adlarıyla devralır. İstemci realm'de yoksa uyarı yazılır ve o kalem atlanır (§0.1). |
 | `skyforms-groups` kapsamı (`config/skyforms-groups-mappers.json`) | `skyforms`'un varsayılan kapsamı; tek mapper `groups` (Group Membership, `claim.name=groups`, `full.path=true`, `multivalued=true`; yalnız access token ve introspection, ID token/userinfo'da yok). Forms kenar çubuğundaki rol etiketi kişinin tam yollu gruplarını (`/UYELER/YK` gibi; core ve inscribed'ın okuduğu biçim) access token'dan okur (Fatih, 2026-10-15). Realm'in `groups` kapsamı da `skyforms`'a ulaşıyorsa Keycloak çok değerli claim'i birleştirir, yol tekrarlanmaz. İstemci yoksa uyarı yazılır ve atlanır. |
-| `skyapp`'te `skymail-api-audience` kapsamı (`config/skymail-api-audience-mappers.json`) | SkyMail arayüzünün (`skymail`) kendi audience kapsamı `skyapp`'in de varsayılan kapsamıdır (`reconcile_skyapp_audience`; opsiyonel kapsamlardaysa oradan çıkarılır): sky-app'in access token'ı `aud ∋ skymail` taşır, kişinin uygulama içi kutusu (`GET /v1/me/inbox`, iletisim-servisi 04 ve 08) rol istemez. Tek mapper `skymail-audience`; ID token'da yok |
-| Giriş istemcilerinin dar token'ı (`frontend-main`, `frontend-arge`, `skymail`; ADR-0058, ADR-0059; §21) | Elle kurulmuş istemciler yerinde daraltılır: audience'lar varsayılan kapsamlardaki sabit mapper'lardan (sitelerde kendi `core` kapsamı ve ortak `skycms-audience`, SkyMail'de `skymail-api-audience`), rol kapsamında realm rolü ve başka istemcinin rolü yok, `fullScopeAllowed=false`. Siteler tam yollu `groups`'u tutar; `groups` yazan kapsamlar yalnız `skymail`'den ayrılır, `skymail`'in grup mapper'ı silinir. İstemci yoksa uyarı yazılır ve atlanır. |
+| `skyapp`'te `skynotify-api-audience` kapsamı (`config/skynotify-api-audience-mappers.json`) | SkyNotify arayüzünün (`skynotify`) kendi audience kapsamı `skyapp`'in de varsayılan kapsamıdır (`reconcile_skyapp_audience`; opsiyonel kapsamlardaysa oradan çıkarılır): sky-app'in access token'ı `aud ∋ skynotify` taşır, kişinin uygulama içi kutusu (`GET /v1/me/inbox`, iletisim-servisi 04 ve 08) rol istemez. Tek mapper `skynotify-audience`; ID token'da yok |
+| Giriş istemcilerinin dar token'ı (`frontend-main`, `frontend-arge`, `skynotify`; ADR-0058, ADR-0059; §21) | Elle kurulmuş istemciler yerinde daraltılır: audience'lar varsayılan kapsamlardaki sabit mapper'lardan (sitelerde kendi `core` kapsamı ve ortak `skycms-audience`, SkyNotify'da `skynotify-api-audience`), rol kapsamında realm rolü ve başka istemcinin rolü yok, `fullScopeAllowed=false`. Siteler tam yollu `groups`'u tutar; `groups` yazan kapsamlar yalnız `skynotify`'dan ayrılır, `skynotify`'ın grup mapper'ı silinir. İstemci yoksa uyarı yazılır ve atlanır. |
 | Admin panelinin istemcisi (`admin`, sandbox'ta `superadmin`; ADR-0058) | Elle kurulmuş gizli istemci yerinde daraltılır: `fullScopeAllowed=false`, `standard.token.exchange.enabled=true`, `client.session.max.lifespan=28800` (panelin istemci oturumu beni-hatırla olsa da başladığından en çok 8 saat sonra biter; istemci değeri realm'in ve beni-hatırlanın önüne geçer), rol kapsamında yalnız `core` ve `forms`'un her rolü, varsayılan kapsam `admin-panel-api-audience` (sabit `core`, `forms`, `skycms` audience'ı). Adım en son koşar. İstemci yoksa uyarı; public ise koşu ona yazmadan hata verir (§16). |
 | core'un kaynak rolleri (ADR-0059, §19) | `core` istemcisinde 16 rol her koşuda var edilir (yoksa açıklamasıyla oluşturulur; varsa dokunulmaz). Yazma rolleri `ADMIN` ve `YK`'ya, `global:read` `DK`'ya, `audit:read` üçüne (`/<AD>` ya da `/UYELER/<AD>`, hangileri varsa; grup-yonetimi 08, §28) **bir kez** verilir ve rol özniteliği `skylab.seeded-group-mappings` bunu kaydeder; işaretli role sonraki koşular eşleme eklemez, hiçbir koşu eşleme ya da rol silmez. Gruba rol vermek kullanıcı yetkisi ister: uzlaştırıcı kimliği yalnız rolleri oluşturur ve işaretsiz rolleri uyarıyla bildirir; tohumlamayı operatör `KEYCLOAK_RECONCILE_ONLY=core-roles` ile yapar. `competition:manage` (`competitor:manage`'ın yeni adı, ADR-0068) Privileged gruplara değil, eski rolün bulunduğu her yere bir kez verilir (§19.1). Adım admin panelinin adımından önce koşar. |
 | `account-center` istemcisi | v1 sözleşmesi, `fullScopeAllowed=false` **kalır**: Keycloak Admin REST `AdminAuth.hasAppRole = user.hasRole && client.hasScope` ile yetkilendirir ve tam kapsam açıkken `client.hasScope` her rol için doğrudur; `realm-management` rolü olan bir kişinin `my.` token'ı Admin REST'te geçerli olurdu. `sky_authorization` bu yüzden kapsamdan bağımsız SPI mapper'ından gelir ve token'ın yetkisini genişletmez (harness: `view-users` sahibinin `account-center` token'ı ile `GET /admin/realms/{realm}/users` → 403; tam kapsamla 200 alırdı). Token'daki `resource_access` yalnız `account` rollerini içerir, `core` rolü taşımaz (test edilir). `account` istemci rolü scope mapping izin listesi: `manage-account`, `view-profile`, `manage-account-links` (AIA `idp_link` `client.hasScope` denetimi için). |
 | `keycloak-mailer` istemcisi (K5) | Uzlaştırıcı **yalnız doğrular**: istemci yoksa uyarı ve çalıştırılacak komut; bayraklar (gizli, yalnız service account, standard flow / direct grant / implicit kapalı, `fullScopeAllowed=false`, `roles` varsayılan kapsamı) yanlışsa koşu hata ile durur; service account rolleri uzlaştırıcı kimliğiyle okunamadığından (kullanıcı yetkisi yok) uyarı olarak raporlanır. İstemciyi ve rolleri operatör `config/create-mailer-client.sh` ile oluşturur (§6). Gizli anahtarı Keycloak üretir, hiçbir betik yazdırmaz. |
-| `core-erasure` istemcisi (hesap silme, ADR-0051) | Uzlaştırıcı **yalnız doğrular** (`keycloak-mailer` gibi): istemci yoksa uyarı ve çalıştırılacak komut. Şunlardan biri sözleşmeden farklıysa koşu hata ile durur ve operatör komutunu yazar: bayraklar (gizli, yalnız service account, standard flow / direct grant / implicit kapalı, `fullScopeAllowed=false`), varsayılan kapsamlar (tam olarak `basic` ve `roles`; Keycloak'ın eklediği `service_account` hoş görülür), isteğe bağlı kapsamlar (tam olarak üç `account-erase-*`), doğrudan scope mapping (olmamalı), her erase kapsamının tek audience mapper'ı ve tek rolü, servis istemcilerinin (`skymail`, `skycms`, `forms`) varlığı. Service account rolleri uzlaştırıcı kimliğiyle okunamadığından uyarı olarak raporlanır. İstemciyi, kapsamları ve rolleri operatör `config/create-erasure-client.sh` ile kurar (§11). |
+| `core-erasure` istemcisi (hesap silme, ADR-0051) | Uzlaştırıcı **yalnız doğrular** (`keycloak-mailer` gibi): istemci yoksa uyarı ve çalıştırılacak komut. Şunlardan biri sözleşmeden farklıysa koşu hata ile durur ve operatör komutunu yazar: bayraklar (gizli, yalnız service account, standard flow / direct grant / implicit kapalı, `fullScopeAllowed=false`), varsayılan kapsamlar (tam olarak `basic` ve `roles`; Keycloak'ın eklediği `service_account` hoş görülür), isteğe bağlı kapsamlar (tam olarak üç `account-erase-*`), doğrudan scope mapping (olmamalı), her erase kapsamının tek audience mapper'ı ve tek rolü, servis istemcilerinin (`skynotify`, `skycms`, `forms`) varlığı. Service account rolleri uzlaştırıcı kimliğiyle okunamadığından uyarı olarak raporlanır. İstemciyi, kapsamları ve rolleri operatör `config/create-erasure-client.sh` ile kurar (§11). |
 | Parola formu (K4, §15) | Realm tarayıcı akışı `browser plus passkey`'deki `auth-username-password-form`'un yerine aynı alt akışta, aynı öncelik ve `REQUIRED` ile `sky-username-password-form` konur; akışın geri kalanına dokunulmaz. İki formdan tam olarak biri yoksa, form `REQUIRED` değilse ya da yanındaki bir yürütmeyle aynı önceliği paylaşıyorsa koşu hiçbir şey yazmadan durur. `KEYCLOAK_PASSWORD_FORM=auth-username-password-form` Keycloak'ın formunu geri koyar. |
 | Parola sıfırlamanın kişi seçme adımı (K4b, §17) | Realm'in `reset credentials` akışındaki `reset-credentials-choose-user`'ın yerine aynı öncelik ve `REQUIRED` ile `sky-reset-credentials-choose-user` konur. Keycloak'ın yerleşik akışı değiştirilemediği için realm yerleşik bir akışa bağlıysa akış bir kez `sky reset credentials` adıyla kopyalanır, adım kopyada değiştirilir, realm ancak ondan sonra kopyaya bağlanır. Durdurma kuralları parola formununkiyle aynıdır. `KEYCLOAK_RESET_CHOOSE_USER=reset-credentials-choose-user` Keycloak'ın adımını bağlı akışa geri koyar. |
 | Parola sıfırlamanın OTP adımı (eskylab-login-ux 23, §17.1) | Bağlı (düzenlenebilir) sıfırlama akışının "Reset - Conditional OTP" alt akışında `reset-otp`'nin yerine aynı öncelik ve `REQUIRED` ile `auth-otp-form` konur; koşul `conditional-user-configured` aynen kalır. Durdurma kuralları parola formununkiyle aynıdır; yarıda kalmış değişim ve Admin Console'un acil yolunun bıraktığı hâl (DISABLED `reset-otp` yanında REQUIRED `auth-otp-form`) tamamlanır. Keycloak'ın yerleşik akışına dokunulmaz. `KEYCLOAK_RESET_OTP_STEP=reset` Keycloak'ın adımını geri koyar. |
 | Kimlik korumaları: core sertifika rolleri, OBS `department mapper`, core'un `manage-clients` rolü | Uzlaştırıcı **dokunmaz**: kimliğinin kullanıcı ve kimlik sağlayıcısı yetkisi yoktur. Operatör `config/identity-guardrails.sh` ile uygular (§8). |
-| Forms'un Privileged rolü (§28) | `forms` istemcisinde `skyforms:read-all` (DK'nın Forms okuması; forms-backend henüz okumuyor) her koşuda var edilir; SkyMail'inkiler gibi yalnız `DK`'ya **bir kez** verilir (operatörün `core-roles` koşusu). |
-| SkyMail'in Privileged rolleri (§25) | `skymail` istemcisinde `skymail:system-mails:read` ve `skymail:mails:tracking:read` (ADMIN, YK, DK; kişi bazındaki takip raporu, iletisim-servisi 17) ile `skymail:audit:read` (yalnız DK; maskeli içeriği kimin açtığı, skymail-frontend-rewrite 32) her koşuda var edilir; `skymail:access` ve `skymail:mails:read` 2026-11-22'den beri DK'ya da gider (önceden tohumlanmış realm'de bir kezlik tohum eki) (yoksa açıklamasıyla oluşturulur); SkyMail'in kendi rolleri `skymail:access`, `templates:read`, `lists:read`, `mails:read`, `mails:send`, `mails:write` (ADMIN, YK) ve `mails:approve` (yalnız YK) oluşturulmaz, varsa tohumlanır (ekip-yetkileri 03; `announcements:send` listeden çıktı). core'un kaynak rolleri gibi kendi Privileged gruplarına **bir kez** verilir ve `skylab.seeded-group-mappings` ile işaretlenir; tohumlamayı operatörün `KEYCLOAK_RECONCILE_ONLY=core-roles` koşusu yapar. Kişilerin diğer `skymail:*` rolleri `/ROLLER` rol gruplarına taşınır (§26). |
-| Servis hesaplarının rolleri (§20, §20.1, §20.2) | `place-service` istemcisini oluşturur (gizli, yalnız client credentials, §20.2); `forms`'a core'un beş servis rolü (`consent:record` dahil), `place-service`'e yalnız `consent:record`, `skymail-backend`'e core'un `audience:read`'i, `communication-preferences:read`'i ve `consent:audience:read`'i ile `realm-management`'ın `view-users` ve `view-clients`'ı, `core`'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`, `skymail:lists:read`, `skymail:lists:write`, `skymail:tracking:withdraw` rolleri ile Forms'un `skyforms:responses:read-service`'i, `skymail-seed`'in servis hesabına `skymail:templates:system`. Uzlaştırıcı kimliği core rollerini, `skymail:tracking:withdraw`'u, `skymail:templates:system`'ı ve `skyforms:responses:read-service`'i oluşturur ve raporlar; vermeyi operatör `KEYCLOAK_RECONCILE_ONLY=service-roles` ile yapar. SkyMail'in öbür rolleri oluşturulmaz. Yalnız servis hesaplarının rolünü taşıyan kişi, grup, varsayılan rol ve bileşik rol bildirilir. |
+| Forms'un Privileged rolü (§28) | `forms` istemcisinde `skyforms:read-all` (DK'nın Forms okuması; forms-backend henüz okumuyor) her koşuda var edilir; SkyNotify'ınkiler gibi yalnız `DK`'ya **bir kez** verilir (operatörün `core-roles` koşusu). |
+| SkyNotify'ın Privileged rolleri (§25) | `skynotify` istemcisinde `skynotify:system-mails:read` ve `skynotify:mails:tracking:read` (ADMIN, YK, DK; kişi bazındaki takip raporu, iletisim-servisi 17) ile `skynotify:audit:read` (yalnız DK; maskeli içeriği kimin açtığı, skymail-frontend-rewrite 32) her koşuda var edilir; `skynotify:access` ve `skynotify:mails:read` 2026-11-22'den beri DK'ya da gider (önceden tohumlanmış realm'de bir kezlik tohum eki) (yoksa açıklamasıyla oluşturulur); SkyNotify'ın kendi rolleri `skynotify:access`, `templates:read`, `lists:read`, `mails:read`, `mails:send`, `mails:write` (ADMIN, YK) ve `mails:approve` (yalnız YK) oluşturulmaz, varsa tohumlanır (ekip-yetkileri 03; `announcements:send` listeden çıktı). core'un kaynak rolleri gibi kendi Privileged gruplarına **bir kez** verilir ve `skylab.seeded-group-mappings` ile işaretlenir; tohumlamayı operatörün `KEYCLOAK_RECONCILE_ONLY=core-roles` koşusu yapar. Kişilerin diğer `skynotify:*` rolleri `/ROLLER` rol gruplarına taşınır (§26). |
+| Servis hesaplarının rolleri (§20, §20.1, §20.2) | `place-service` istemcisini oluşturur (gizli, yalnız client credentials, §20.2); `forms`'a core'un beş servis rolü (`consent:record` dahil), `place-service`'e yalnız `consent:record`, `skynotify-backend`'e core'un `audience:read`'i, `communication-preferences:read`'i ve `consent:audience:read`'i ile `realm-management`'ın `view-users` ve `view-clients`'ı, `core`'un servis hesabına SkyNotify'ın `skynotify:access`, `skynotify:mails:send`, `skynotify:lists:read`, `skynotify:lists:write`, `skynotify:tracking:withdraw` rolleri ile Forms'un `skyforms:responses:read-service`'i, `skynotify-seed`'in servis hesabına `skynotify:templates:system`. Uzlaştırıcı kimliği core rollerini, `skynotify:tracking:withdraw`'u, `skynotify:templates:system`'ı ve `skyforms:responses:read-service`'i oluşturur ve raporlar; vermeyi operatör `KEYCLOAK_RECONCILE_ONLY=service-roles` ile yapar. SkyNotify'ın öbür rolleri oluşturulmaz. Yalnız servis hesaplarının rolünü taşıyan kişi, grup, varsayılan rol ve bileşik rol bildirilir. |
 | Rol grupları `/ROLLER/<UYGULAMA>-<ROL>` (§26) ve Leader gruplarının uygulama rolleri (§27) | Uzlaştırıcı **dokunmaz** (gruba rol eşlemek kullanıcı yetkisi ister). Operatör `config/role-groups.sh` ve `config/leader-app-roles.sh` (ya da `KEYCLOAK_RECONCILE_ONLY=role-groups` / `leader-app-roles`) ile kurar; kuru koşu varsayılandır, `--apply` yazar; üye hiç eklenmez. |
 
 Ortam değişkenleri: `KEYCLOAK_PASSKEY_RP_ID` (varsayılan `yildizskylab.com`) ve
@@ -102,9 +102,9 @@ onarımını, rolsüz bir kişinin iki token'ını ve no-op koşuyu doğrular.
 2. `keycloak-mailer` istemcisi uzlaştırıcı tarafından değil, operatör
    tarafından `config/create-mailer-client.sh` ile oluşturulur (§6);
    uzlaştırıcı istemci yokken yalnız `WARNING: client keycloak-mailer does not
-   exist; run: ...` yazar ve sürümü engellemez. SkyMail'in
-   `skymail:mails:send` istemci rolü (M1) henüz yoksa betik
-   `WARNING: client skymail lacks the roles skymail:mails:send` yazar; rol
+   exist; run: ...` yazar ve sürümü engellemez. SkyNotify'ın
+   `skynotify:mails:send` istemci rolü (M1) henüz yoksa betik
+   `WARNING: client skynotify lacks the roles skynotify:mails:send` yazar; rol
    oluşturulduktan sonra betik yeniden koşulur (idempotent).
 3. Yedek + geri yükleme provası (`keycloak-26.7.4-upgrade-runbook.md` §1 ve
    §8) bu sürüm için yeniden yapılır; RP ID değişikliği geri alınabilir
@@ -346,14 +346,14 @@ hatası sıfır dışı çıkışla raporlanır.
 Uzlaştırıcı kimliğinin kullanıcı yetkisi yoktur (`manage-users` bilerek
 verilmez: parola sıfırlama ve kullanıcı silme gücü, gizli anahtarı sunucuda
 duran bir istemciye ait olmamalıdır). Bu yüzden `keycloak-mailer` istemcisini,
-`roles` varsayılan kapsamını ve service account'un `skymail:access` +
-`skymail:mails:send` rollerini operatör, imajdaki idempotent
+`roles` varsayılan kapsamını ve service account'un `skynotify:access` +
+`skynotify:mails:send` rollerini operatör, imajdaki idempotent
 `config/create-mailer-client.sh` betiğiyle oluşturur. Betik varsayılan olarak
 kuru koşudur (istemci henüz yokken de istemci, `roles` kapsamı ve rol
 adımlarının tamamını sayar), `--apply` ile uygular; yönetici parolası kcadm'ın
 kendi prompt'una yazılır (K0 sihirbazındaki gibi), betikten geçmez
 (`KEYCLOAK_MAILER_ADMIN_PASSWORD` yalnız `SKY_HARNESS=1` ile kabul edilir,
-aksi halde betik durur); gizli anahtarı yazdırmaz; `skymail` rolleri yoksa
+aksi halde betik durur); gizli anahtarı yazdırmaz; `skynotify` rolleri yoksa
 uyarır, asla oluşturmaz; rol listesi dışındaki atamaları kaldırır.
 
 ```bash
@@ -373,7 +373,7 @@ docker compose -f docker-compose.yml run --rm --no-deps keycloak-config
 
 Keycloak gizli anahtarı üretir; hiçbir betik bu değeri yazdırmaz. Yetkili
 operatör değeri bir kez, kabuk geçmişi ve terminal kaydı kapalıyken okur ve
-SkyMail sağlayıcısının okuyacağı gizli dosyaya (`SKY_MAIL_CLIENT_SECRET` dosya
+SkyNotify sağlayıcısının okuyacağı gizli dosyaya (`SKYNOTIFY_CLIENT_SECRET` dosya
 bağı, K5) yazar:
 
 ```bash
@@ -385,10 +385,10 @@ client_id=$(/opt/keycloak/bin/kcadm.sh get clients -r e-skylab -q clientId=keycl
 /opt/keycloak/bin/kcadm.sh get "clients/$client_id/client-secret" -r e-skylab
 ```
 
-Döndürme: Admin Console'dan yeni anahtar üretilir, SkyMail sağlayıcısının
+Döndürme: Admin Console'dan yeni anahtar üretilir, SkyNotify sağlayıcısının
 gizli dosyası güncellenir, Keycloak yeniden başlatılır; eski değer geçersiz
-kalır. `keycloak-mailer` service account'ının yalnız `skymail:access` ve
-`skymail:mails:send` rollerini taşıdığı token'ın `resource_access` alanından
+kalır. `keycloak-mailer` service account'ının yalnız `skynotify:access` ve
+`skynotify:mails:send` rollerini taşıdığı token'ın `resource_access` alanından
 doğrulanır (entegrasyon testi aynı kontrolü yapar).
 
 ## 7. Geri dönüş
@@ -699,13 +699,13 @@ yedeğidir.
 
 ## 11. Hesap silme: `core-erasure` istemcisi ve servislerin erase rolleri (ADR-0051)
 
-core bir hesabı silerken SkyMail, CMS ve Forms'a birer silme komutu gönderir
+core bir hesabı silerken SkyNotify, CMS ve Forms'a birer silme komutu gönderir
 (ADR-0051; komut sözleşmesi core-backend `docs/account-erasure-command.md`). Her
 komutun token'ı ayrı bir Keycloak istemcisinden, `core-erasure`'dan gelir. Kural:
 bir servise giden token başka bir servisin erase rolünü taşımaz. Taşısaydı token'ı
 alan servis onu öbür servise gönderip silme yaptırabilirdi. core'un kendi istemcisi
 (`core`) bu iş için kullanılmaz: onda `fullScopeAllowed` açıktır ve kapatmak core'un
-bugünkü token'larını (SkyMail gönderimi, Admin REST) etkiler.
+bugünkü token'larını (SkyNotify gönderimi, Admin REST) etkiler.
 
 Sözleşme `config/erasure-client-contract.sh`'tadır; operatör betiği ve uzlaştırıcı
 aynı dosyayı okur.
@@ -714,9 +714,9 @@ aynı dosyayı okur.
 | --- | --- |
 | `core-erasure` istemcisi | Gizli (`client-secret`), yalnız service account (standard flow, implicit ve direct grant kapalı), `fullScopeAllowed=false`, doğrudan scope mapping yok, `redirectUris` ve `webOrigins` boş |
 | Varsayılan kapsamlar | Tam olarak `basic` ve `roles`. `basic` `sub`'ı verir: servislerin hesap erişim kapısı çağıranın kendi `sub`'ını okur, `sub`'sız token 401 alır (cms-backend #13). `roles` `resource_access`'i verir. Keycloak 26 `service_account` kapsamını her service account istemcisine ekler ve istemcinin her güncellemesinde (Admin Console'da kaydetme, rotatorun secret yazması) yeniden ekler; bu yüzden hoş görülür. Yalnız `client_id`, `clientHost` ve `clientAddress` verir. |
-| İsteğe bağlı kapsamlar | Tam olarak `account-erase-skymail`, `account-erase-cms`, `account-erase-forms` |
+| İsteğe bağlı kapsamlar | Tam olarak `account-erase-skynotify`, `account-erase-cms`, `account-erase-forms` |
 | Her erase kapsamı | `openid-connect`. Tek mapper: `<kapsam>-audience` (`oidc-audience-mapper`, `included.client.audience=<servis istemcisi>`, access token ve introspection'da; ID token ve userinfo'da yok). Tek rol scope mapping'i: o servisin erase rolü. |
-| Erase rolleri | `skymail` üzerinde `skymail:account:erase`, `skycms` üzerinde `cms:account:erase`, `forms` üzerinde `skyforms:account:erase`. Yalnız `service-account-core-erasure` taşır. |
+| Erase rolleri | `skynotify` üzerinde `skynotify:account:erase`, `skycms` üzerinde `cms:account:erase`, `forms` üzerinde `skyforms:account:erase`. Yalnız `service-account-core-erasure` taşır. |
 
 Token isteği `grant_type=client_credentials`, `scope=openid account-erase-<servis>`
 biçimindedir. Örneğin `account-erase-cms` token'ında `azp=core-erasure`,
@@ -733,7 +733,7 @@ yazmaz ve hiçbir admin olayı üretmez; yönetici parolası kcadm'ın kendi pro
 yazılır (`KEYCLOAK_ERASURE_ADMIN_PASSWORD` yalnız `SKY_HARNESS=1` ile kabul edilir).
 Sırası:
 
-1. `skymail`, `skycms` ve `forms` istemcileri ile `basic` ve `roles` kapsamları var
+1. `skynotify`, `skycms` ve `forms` istemcileri ile `basic` ve `roles` kapsamları var
    olmalıdır. Biri yoksa betik hiçbir şey yazmadan durur ve eksikleri adıyla yazar;
    servis istemcilerini servisler kurar.
 2. Eksik erase rollerini oluşturur.
@@ -789,7 +789,7 @@ okur.
    dağıtımı; `/health/ready` yeşil). Uzlaştırıcı o andan itibaren
    `WARNING: client core-erasure does not exist; run: ...` yazar; bu sürümü
    engellemez.
-2. `skymail`, `skycms` ve `forms` istemcilerinin iki realm'de de var olduğu
+2. `skynotify`, `skycms` ve `forms` istemcilerinin iki realm'de de var olduğu
    doğrulanır. Betik eksik olanı adıyla yazar ve durur.
 3. Sunucuda wizard koşulur; nasıl kopyalanacağı başında
    yazar: `sudo bash ~/openbao-setup/core-erasure-client-wizard.sh`. Geçici bir
@@ -816,7 +816,7 @@ okur.
    `ACCOUNT_ERASURE_WORKER_ENABLED=false` iken okumaz bile.
 
 Geri dönüş: istemci, kapsamlar ve roller başka hiçbir istemcinin token'ını
-değiştirmez (entegrasyon testi core'un SkyMail gönderim token'ının ve Admin REST
+değiştirmez (entegrasyon testi core'un SkyNotify gönderim token'ının ve Admin REST
 erişiminin aynı kaldığını doğrular). Gerekirse Admin Console'dan `core-erasure`
 istemcisi, üç `account-erase-*` kapsamı ve üç erase rolü silinir; core'un
 ortamındaki iki satır ve OpenBao'daki yol kaldırılır. Uzlaştırıcı istemci yokken
@@ -893,7 +893,7 @@ değiştirilebilir. Realm'de olmayan istemci `NOTE` ile atlanır. Her istemci i�
 
 Eski CMS etkilenmez: cms-backend `resource_access[azp].roles`'u `roles` claim'lerine
 kopyalar ve yalnız `cms:access`'e bakar; düz `roles` claim'i ona aynı değerlerin bir
-kopyasını ekler. core, forms-backend, skymail-backend, account-center, core-frontend
+kopyasını ekler. core, forms-backend, skynotify-backend, account-center, core-frontend
 ve siteler düz `roles`'u okumaz (2026-09-27 taraması, origin/main).
 
 Uzlaştırıcı bu kalemleri doğrulamaz (service account'a rol atamak kullanıcı yetkisi
@@ -1504,14 +1504,14 @@ Harness (`tests/admin-panel-client.sh`, `run-integration.sh` çağırır): fixtu
 production'ın biçimindedir (gizli, tam kapsam, `inscribed-roles` ve tam yollu `groups`
 mapper'ları). Tam kapsamlı kontrol token'ı kişinin yabancı rollerini taşır; ilk koşu istemciyi
 yerinde (aynı id, aynı secret) daraltır ve `forms` yokluğunu bildirir; kaymalar (tam kapsam,
-exchange kapalı, eksik `core` rolü, realm ve `skymail` rolü, isteğe bağlı kapsam, bozuk ve yabancı
+exchange kapalı, eksik `core` rolü, realm ve `skynotify` rolü, isteğe bağlı kapsam, bozuk ve yabancı
 mapper) ikinci koşuda onarılır. `forms` oluştuktan sonra adım operatör oturumuyla tek başına koşar:
 eksik istemci uyarıyla atlanır, public istemci reddedilir ve değişmez, adımsız operatör oturumu
 reddedilir, yeni `forms` rolü kapsama girer. Gerçek authorization code girişinde `aud` tam
 `core`, `forms`, `skycms`, `realm_access` yok, `resource_access` tam kişinin `admin`, `core`,
 `forms` rolleri, `roles` ve `groups` duruyor, `azp` ve `sid` var; hiç API rolü olmayan bir
 kişinin token'ı da üç audience'ı taşır; token exchange `core`, `forms`
-ve `skycms` için tek audience verir, `skymail` için `400 invalid_request`. Değişiklik üretmeyen
+ve `skycms` için tek audience verir, `skynotify` için `400 invalid_request`. Değişiklik üretmeyen
 koşu bu istemcinin durumunu da karşılaştırır; ardından web handoff sözleşmesi daraltılmış
 istemcinin token'ıyla admin uçlarını dener.
 
@@ -1545,7 +1545,7 @@ Bağlantı her zaman kişinin birincil e-postasına (Keycloak `email`) gider, ya
 değil. Bunu Keycloak'ın sonraki adımı `reset-credential-email` yapar; K4b ona dokunmaz.
 
 - Birincil e-posta, kişinin okul ve kişisel e-postasından posta almak için seçtiği adrestir
-  (CONTEXT.md, Primary e-mail); token'lar, core, SkyMail ve bildirimler de onu görür.
+  (CONTEXT.md, Primary e-mail); token'lar, core, SkyNotify ve bildirimler de onu görür.
 - Keycloak bağlantının action token'ını bu adrese bağlar (`eml`): birincil adres değişirse
   bağlantı geçersizleşir. Bağlantı izlenince `emailVerified=true` yazar; bu, bağlantının gittiği
   adres için doğrudur. Yazılan adrese göndermek iki güvenceyi de bozardı ve bu adımın da
@@ -1638,11 +1638,11 @@ Yarıda kalmış bir koşu (realm yerleşik akışa geri bağlı, kopyada Keyclo
 uzlaştırmada aynı kopyayla tamamlanır; no-op koşu sessizdir. Geri dönüş ve yeniden ileri, K4'ün
 koşularıyla birlikte (`tests/login-by-either-email.sh`): geri dönüşte kişisel e-posta kimseyi
 bulmaz, kullanıcı adı bulur; ileride kişisel e-posta birincil adrese posta başlatır; geçersiz
-bayrak durdurulur. K5'ten sonra, postalar SkyMail'den çıkarken: okul e-postası (karışık harfli
+bayrak durdurulur. K5'ten sonra, postalar SkyNotify'dan çıkarken: okul e-postası (karışık harfli
 kayıt, boşluklu ve büyük harfli girdi) ve kişisel e-posta sıfırlama postasını birincil adrese
 yollatır; kullanıcı adı Keycloak'ın yoluyla çalışır; bilinmeyen, iki kişide olan, kanıtsız
 kişisel, bağlantısız okul e-postası ve devre dışı hesap aynı sayfayı alır, posta gitmez ve olayları
-Keycloak'ınki gibidir; SkyMail tam olarak üç posta alır. Postadaki bağlantı, isteyen tarayıcıda
+Keycloak'ınki gibidir; SkyNotify tam olarak üç posta alır. Postadaki bağlantı, isteyen tarayıcıda
 yeni parolayı kurar ve kişi okul e-postası ile yeni parolasıyla girer; adresleri değişmez.
 
 ### 17.1 Sıfırlamada kayıtlı OTP ile doğrulama (eskylab-login-ux 23)
@@ -2137,9 +2137,9 @@ rolü ya da istemciyi listeden çıkaran sürümdür. Rollerin kendisi zararsız
 için geri dönüş yoktur: bir kişinin `forms`'la girmesi core'un ürün varsayımını bozar; gerekirse
 Admin Console → Clients → `forms` → Capability config'den açılır, operatör adımı yeniden kapatır.
 
-Bileşik roller (iletisim-servisi 17, skymail-backend #75 inceleme koşulu B2): operatör adımı
+Bileşik roller (iletisim-servisi 17, skynotify-backend #75 inceleme koşulu B2): operatör adımı
 okumaların sonunda realm'in ve her istemcinin bileşik rollerini bir kez okur (`roles-by-id/<id>/composites`;
-iki kaynak, core ve SkyMail, aynı taramayı paylaşır). Yalnız servis hesaplarının bir rolü bir bileşik
+iki kaynak, core ve SkyNotify, aynı taramayı paylaşır). Yalnız servis hesaplarının bir rolü bir bileşik
 rolün içindeyse `WARNING: <rol> is in the composite roles <kap>/<ad> (nothing was removed; every
 holder of them holds it, remove it in the Admin Console)` yazılır (`kap` `realm` ya da istemci adı;
 varsayılan rol kendi satırıyla bildirildiği için burada sayılmaz). Tarama okuması düşerse koşu
@@ -2168,7 +2168,7 @@ kuru koşu `0 change(s) pending`. `fullScopeAllowed=false` yapılınca roller to
 Değişiklik üretmeyen tam koşu `forms`'un bayraklarını, rol kapsamını, servis hesabının `core`
 rollerini ve kayıtları da karşılaştırır.
 
-## 21. Giriş istemcilerinin dar token'ı: `frontend-main`, `frontend-arge`, `skymail` (ADR-0058, ADR-0059)
+## 21. Giriş istemcilerinin dar token'ı: `frontend-main`, `frontend-arge`, `skynotify` (ADR-0058, ADR-0059)
 
 Üç giriş istemcisi production'da elle ve "Full scope allowed" açık kuruldu. Token kişinin bütün
 audience'larını, realm rollerini ve başka istemcilerin rollerini taşıyordu; çoğunu hiçbir servis
@@ -2176,15 +2176,15 @@ okumuyordu. Uzlaştırıcı (`reconcile_login_clients`) her istemciyi uygulaman�
 daraltır (admin-token-authz 16, 17, 18; admin paneli için §16'nın deseni).
 
 **Ölçüm** (uygulamaların ve API'lerin `origin/main`'i, 2026-10-05: skylab-site `cbf670c`, arge
-`74e3969`, `@skylab-kulubu/inscribed-auth` 0.3.1 (npm, `6994873`), skymail-frontend `f394739`,
-skymail-backend `d9d6874`, core-backend `a6cec45` (production `3cbb235` bu dosyalarda aynı),
+`74e3969`, `@skylab-kulubu/inscribed-auth` 0.3.1 (npm, `6994873`), skynotify-frontend `f394739`,
+skynotify-backend `d9d6874`, core-backend `a6cec45` (production `3cbb235` bu dosyalarda aynı),
 inscribed-dotnet `2ecc548`):
 
 | İstemci | Token'ın gittiği API | Okunan | Daraltılmış token |
 | --- | --- | --- | --- |
 | `frontend-main` (ana site ve CMS editörü) | inscribed `/api/cms/cms/*` (tarayıcıdan, editörün ve oturum açmış her kişinin token'ı); core `POST /v1/media` (`/api/cms-media` köprüsü, amaç gönderilmez → `legacy`, kural `authenticated`) | inscribed: `aud ∋ skycms`, tenant `azp`, düz `roles` (`content:*`, `client:admin` + `email`), koleksiyon kuralları tam yollu `groups` (`teams`: `…/<TAKIM>/(LIDERLER\|KOORDINATORLER)`; `news`: Privileged yolları); core: imza, `iss`, `aud ∋ core`, UUID `sub` (rol ve grup gerekmez); site: herhangi bir istemcinin `resource_access` rollerinde `cms:access` (editör kapısı), ID token'dan ad ve e-posta | `aud` tam `core`, `skycms`; `realm_access` yok; `resource_access` yalnız `frontend-main`; `roles`, `groups`, `sub`, `azp`, ad ve e-posta aynı |
 | `frontend-arge` (arge) | aynı iki API (köprü önce `cms:access`'e bakar) | aynı; arge'nin takımlar bölümü `teams` koleksiyonunu kullanır | `aud` tam `core`, `skycms`; `resource_access` yalnız `frontend-arge`; gerisi aynı |
-| `skymail` (SkyMail arayüzü) | yalnız SkyMail `/api/skymail/v1` | SkyMail her `/v1` isteğinde token'la Keycloak userinfo'yu çağırır (`openid`, `sub`, `name`, `email`, `email_verified`); roller `resource_access.skymail.roles`; `aud`, `azp`, `realm_access`, `groups` okunmaz; posta listelerinin grupları SkyMail'in kendi servis hesabıyla okunur | `aud` tam `skymail`; `resource_access` yalnız `skymail`; `realm_access` ve `groups` yok |
+| `skynotify` (SkyNotify arayüzü) | yalnız SkyNotify `/api/skynotify/v1` | SkyNotify her `/v1` isteğinde token'la Keycloak userinfo'yu çağırır (`openid`, `sub`, `name`, `email`, `email_verified`); roller `resource_access.skynotify.roles`; `aud`, `azp`, `realm_access`, `groups` okunmaz; posta listelerinin grupları SkyNotify'ın kendi servis hesabıyla okunur | `aud` tam `skynotify`; `resource_access` yalnız `skynotify`; `realm_access` ve `groups` yok |
 
 Sitelerin servis hesabı token'ı (arge her sunucu çizimde, ana site `cms-sync`'te) da aynı istemciden
 çıkar: `aud ∋ skycms`, `roles` = `content:read`, `schema:sync`; daraltmadan sonra da öyledir.
@@ -2194,10 +2194,10 @@ in realm <realm>; skipped client scope <kapsamlar> and its token narrowing` ve s
 
 | Ne | Durum |
 | --- | --- |
-| Audience kapsamları | `frontend-main`: `frontend-main-core-audience` (`core`) ve `skycms-audience` (`skycms`); `frontend-arge`: `frontend-arge-core-audience` ve `skycms-audience`; `skymail`: `skymail-api-audience` (`skymail`, `config/skymail-api-audience-mappers.json`). §0.1 düzeni: kapsam adla devralınır, `include.in.token.scope=false`, tek `oidc-audience-mapper` (access token ve introspection, ID token değil), başka mapper silinir, varsayılan kapsamdır (isteğe bağlı listeden alınır) |
+| Audience kapsamları | `frontend-main`: `frontend-main-core-audience` (`core`) ve `skycms-audience` (`skycms`); `frontend-arge`: `frontend-arge-core-audience` ve `skycms-audience`; `skynotify`: `skynotify-api-audience` (`skynotify`, `config/skynotify-api-audience-mappers.json`). §0.1 düzeni: kapsam adla devralınır, `include.in.token.scope=false`, tek `oidc-audience-mapper` (access token ve introspection, ID token değil), başka mapper silinir, varsayılan kapsamdır (isteğe bağlı listeden alınır) |
 | Ortak `skycms-audience` | Etkinlik sitelerinin (`site-clients.sh`) ve SkyApp'in (`skyapp-cms-editor.sh`) de kullandığı realm kapsamı; uzlaştırıcı onu `site-clients.sh`'in biçimine getirir (`config/skycms-audience-mappers.json`, mapper adı `skycms-audience`). Production'daki tek mapper (`audience-mapper`) hiçbir audience adlandırmıyordu: sitelerin `skycms`'i yalnız audience-resolve'dan, yani tam kapsamdan ve kişinin bir `skycms` rolünden geliyordu. O mapper silinir, `skycms-audience` eklenir; etkisi `skycms-audience`'ı taşıyan her istemcide herkese `aud skycms` (e-skylab-keycloak#71 aynı onarımı `site-clients.sh --shared-scope` ile yapar; ikisi aynı sonuca varır) |
-| Rol kapsamı | Boş: realm rolü ve başka istemcinin rolü yok, elle konmuş eşlemeler kaldırılır. İstemcinin kendi rolleri (`cms:access`, `content:*`, `schema:sync`, `client:admin`, `skymail:*`) Keycloak'ta her zaman geçer; core rolü gerekmez (core `/v1/media` yüklemesi rol istemez) |
-| `groups` | Sitelerde dokunulmaz (inscribed okur). `skymail`'de `groups` yazan (Group Membership, `sky-group-overage-mapper` ya da claim'i `groups` olan; `microprofile-jwt` realm rollerini oraya yazar) her varsayılan ve isteğe bağlı kapsam yalnız `skymail`'den ayrılır, realm'de ve diğer istemcilerde kalır; `skymail`'in kendi böyle bir mapper'ı silinir (ADR-0059: grup okumayan uygulama grup almaz) |
+| Rol kapsamı | Boş: realm rolü ve başka istemcinin rolü yok, elle konmuş eşlemeler kaldırılır. İstemcinin kendi rolleri (`cms:access`, `content:*`, `schema:sync`, `client:admin`, `skynotify:*`) Keycloak'ta her zaman geçer; core rolü gerekmez (core `/v1/media` yüklemesi rol istemez) |
+| `groups` | Sitelerde dokunulmaz (inscribed okur). `skynotify`'da `groups` yazan (Group Membership, `sky-group-overage-mapper` ya da claim'i `groups` olan; `microprofile-jwt` realm rollerini oraya yazar) her varsayılan ve isteğe bağlı kapsam yalnız `skynotify`'dan ayrılır, realm'de ve diğer istemcilerde kalır; `skynotify`'ın kendi böyle bir mapper'ı silinir (ADR-0059: grup okumayan uygulama grup almaz) |
 | İstemci | `fullScopeAllowed=false`; başka alana (secret, adresler, bayraklar, istemcinin diğer mapper'ları) dokunulmaz |
 
 Sıra uygulamaları bozmaz: önce audience'lar (tam kapsam açıkken zararsız), en son tam kapsamın
@@ -2220,7 +2220,7 @@ Bilinçli davranış değişiklikleri:
   `client:admin`) ve `aud skyapp` taşır. Hiçbir servis bunları site token'ından okumaz (inscribed düz
   `roles`'a, yani `frontend-main`'in kendi rollerine bakar; editör kapısı aynı kişilerde açıktır);
   editör olmayanın token'ında yoktur. Harness bunu `skyapp-cms-editor.sh --apply`'dan sonra sınar.
-- SkyMail token'ı `aud skymail` taşır (önceden SkyMail kendi adını `aud`'da görmüyordu; okumuyor da,
+- SkyNotify token'ı `aud skynotify` taşır (önceden SkyNotify kendi adını `aud`'da görmüyordu; okumuyor da,
   RFC 9068 §2.2 ve ADR-0019'un "token API'yi `aud`'da adlandırır" kuralına uyum için).
 
 ### Operatör oturumuyla tek adım (sandbox)
@@ -2228,7 +2228,7 @@ Bilinçli davranış değişiklikleri:
 Sandbox realm'inde uzlaştırıcı kimliği yoktur (§16). Operatör adımı kendi kcadm oturumuyla tek başına
 koşar; sandbox `frontend-main`'i (`site-clients.sh --site main`, #65) zaten bu biçimdedir ve
 değişmez, `frontend-arge`'a (`sandbox-site-clients.sh`) `skycms-audience` eklenir ve eski kurulumda
-tam kapsam kapanır, sandbox'ta `skymail` varsa daralır:
+tam kapsam kapanır, sandbox'ta `skynotify` varsa daralır:
 
 ```bash
 read -r -p 'master realm geçici yönetici: ' OPERATOR_USER
@@ -2252,7 +2252,7 @@ Son satır `Login client configuration is reconciled.` İkinci koşu hiçbir şe
    (Clients → istemci → Client scopes → Evaluate, `openid email profile`; bir Privileged kişi, bir
    takım lideri, bir üye): payload baytı, `aud`, `resource_access` anahtarları, `realm_access` rol
    sayısı, `groups` yol sayısı (§16'daki wizard'ın `measure` düzeni; token ve kişisel alan
-   basılmaz). Ayrıca `frontend-main` ve `frontend-arge`'ın `fullScopeAllowed`'ı, `skymail`'in
+   basılmaz). Ayrıca `frontend-main` ve `frontend-arge`'ın `fullScopeAllowed`'ı, `skynotify`'ın
    varsayılan ve isteğe bağlı kapsamları ve kendi mapper'ları not edilir (geri dönüş için).
 3. Uzlaştırıcı iki kez koşar. İlk koşuda beklenen satırlar (production'ın bilinen hâline göre):
    `client scope frontend-main-core-audience: unchanged` (ya da `updated (attributes)`),
@@ -2261,10 +2261,10 @@ Son satır `Login client configuration is reconciled.` İkinci koşu hiçbir şe
    scope skycms-audience attached to client <frontend-arge id>` (ana sitede zaten bağlıysa yalnız
    arge), `role scope mappings of <istemci> (none: only its own roles): unchanged` (elle eşleme varsa
    `updated (-…)`), `client frontend-main (no full scope): updated (fullScopeAllowed)` (arge tam
-   kapsamı zaten kapalıysa onunki `unchanged`), `client scope skymail-api-audience: created`,
-   `protocol mappers of scope <id>: updated (+skymail-audience)`, `default client scope
-   skymail-api-audience attached to client <skymail id>`, `groups claim of skymail (none): updated
-   (-default scope groups …)` (kapsamın ya da mapper'ın adı canlıdakine göre), `client skymail (no
+   kapsamı zaten kapalıysa onunki `unchanged`), `client scope skynotify-api-audience: created`,
+   `protocol mappers of scope <id>: updated (+skynotify-audience)`, `default client scope
+   skynotify-api-audience attached to client <skynotify id>`, `groups claim of skynotify (none): updated
+   (-default scope groups …)` (kapsamın ya da mapper'ın adı canlıdakine göre), `client skynotify (no
    full scope): updated (fullScopeAllowed)`. İkinci koşuda hepsi `unchanged`. `#71` daha önce
    uygulandıysa `skycms-audience` satırları `unchanged` olur.
 4. **Sonra:** 2. adımdaki ölçüm aynı kişilerle; önce/sonra satırı spec'e (admin-token-authz) yazılır.
@@ -2274,12 +2274,12 @@ Son satır `Login client configuration is reconciled.` İkinci koşu hiçbir şe
      DK üyesi editörü görür; oturum açmış editör olmayan biri sayfaları görür;
    - arge: lider editörü görür, bir takım kaydını düzenler, görsel yükler; sayfalar açılır
      (servis hesabıyla sunucu çizimi); DK üyesi editörü görmez (beklenen);
-   - SkyMail: giriş, şablon listesi, posta görevleri özeti, onaylar ekranı (approver); sandbox'ta bir
+   - SkyNotify: giriş, şablon listesi, posta görevleri özeti, onaylar ekranı (approver); sandbox'ta bir
      deneme gönderimi;
    - SkyApp'ten haber/takım düzenleme kurulduysa (`skyapp-cms-editor.sh`, #62) bir düzenleme.
 
 Geri dönüş (istemci başına, Admin Console): Clients → istemci → Client scopes →
-`<istemci>-dedicated` → Scope → "Full scope allowed" açılır; `skymail`'in grupları için not edilen
+`<istemci>-dedicated` → Scope → "Full scope allowed" açılır; `skynotify`'ın grupları için not edilen
 `groups` kapsamı yeniden varsayılan kapsam yapılır. Token bir sonraki girişte (ya da yenilemede) eski
 hâline döner; audience kapsamları kalabilir (zararsız). Uzlaştırıcı bir sonraki koşuda yeniden
 daraltır; geri dönüş kalıcı olacaksa bu adımı içermeyen sürüme dönülür.
@@ -2293,23 +2293,23 @@ rollerini ve grupları taşır; rolsüz üyenin ana site token'ında `skycms` yo
 editörünü ana sitenin `cms:access`'iyle açar. Adımdan sonra gerçek girişlerde (PKCE, `openid email
 profile`) siteler `aud` tam `core`, `skycms`, `realm_access` yok, `resource_access` yalnız sitenin
 kendisi; sitenin, core'un ve inscribed'ın okuduğu claim'ler (Privileged kişi, lider, DK üyesi, üye)
-öncekiyle aynı; servis hesabı token'ları `aud skycms` ve `content:read` + `schema:sync`; SkyMail `aud`
-tam `skymail`, aynı roller, grup ve realm rolü yok, userinfo `sub`, ad ve e-postayı verir; her token
+öncekiyle aynı; servis hesabı token'ları `aud skycms` ve `content:read` + `schema:sync`; SkyNotify `aud`
+tam `skynotify`, aynı roller, grup ve realm rolü yok, userinfo `sub`, ad ve e-postayı verir; her token
 küçülür. İkinci koşu admin olayı üretmez; `inscribed-cms-roles.sh --check` değişiklik planlamaz;
 `skyapp-cms-editor.sh --apply` artık geçer, SkyApp `cms:access`'i `frontend-main` üzerinden alır;
 editörün site token'ı yalnız kendi bileşenlerinden gelen SkyApp rollerini ekler, üyeninki eklemez.
-Adımdan önce açılmış oturumlar (ana site, arge, SkyMail) bir sonraki yenilemede dar token alır,
+Adımdan önce açılmış oturumlar (ana site, arge, SkyNotify) bir sonraki yenilemede dar token alır,
 yeniden giriş gerekmez. Kaymalar onarılır. Sandbox realm'inde `site-clients.sh` ve
 `sandbox-site-clients.sh`'in kurduğu istemcilerde adım yalnız `skycms-audience`'ı arge'ye ekler ve
 üç betiğin `--check`'i sonra sıfır değişiklik planlar. Tam uzlaştırma yolu `run-integration.sh`'te
-(`tests/login-client-audiences.sh`): `skymail` ilk koşuda, siteler ikinci koşuda daralır, değişiklik
+(`tests/login-client-audiences.sh`): `skynotify` ilk koşuda, siteler ikinci koşuda daralır, değişiklik
 üretmeyen koşu bu istemcilerin durumunu da karşılaştırır.
 
 ## 22. İlk YTÜ girişinde okul adresi birincil (eskylab-login-ux 07, ADR-0063)
 
 `MicrosoftMapper` her YTÜ girişinde aracı e-postasını boşaltır (bağlı hesabın birincil adresi
 hiçbir girişte değişmesin diye). Bu yüzden ilk YTÜ girişiyle açılan hesap birincil e-postasız
-kalıyordu; Forms kopyaları, takım ve SkyMail postaları bu kişilere 400 ile düşüyordu (bilet 06
+kalıyordu; Forms kopyaları, takım ve SkyNotify postaları bu kişilere 400 ile düşüyordu (bilet 06
 eldekileri bir kez düzeltti). SPI 1.17.0'daki `sky-ytu-first-login`
 (`com.skylab.authenticator.SkyYtuFirstLogin`) first broker login akışının ilk adımıdır ve yeni
 hesabın birincil adresini okul adresi yapar. `MicrosoftMapper` değişmedi.
@@ -2600,7 +2600,7 @@ sonunda bir kez, atlanabilir bir sayfa çıkar: "Mezun olunca okul adresin kapan
 e-postanı ekle." Adres kutusu, [Kod gönder], [Şimdilik geç]. Kod aynı sayfada yazılır; doğruysa
 `personalEmail` doğrulanmış olarak yazılır, birincil okul adresi kalır (Hesap Merkezi'nden
 değişir), giriş uygulamaya döner. my.'ya yönlendirme yoktur. Hatırlatma hoş geldin postasındadır
-(bilet 21 (c), skymail-frontend) ve Hesap Merkezi'nin uyarısındadır; sayfa yeniden sorulmaz.
+(bilet 21 (c), skynotify-frontend) ve Hesap Merkezi'nin uyarısındadır; sayfa yeniden sorulmaz.
 
 ### Ne zaman çıkar
 
@@ -2623,8 +2623,8 @@ Biri tutmazsa giriş sayfasız sürer. Bu yüzden sayfa bağlanan hesapta, adres
 
 Hesap Merkezi'nin `email/change-request` / `email/confirm`'üyle aynı ortak parça
 (`PersonalEmailVerification`, `PendingEmailChanges`): 6 hane, 10 dakika, 5 yanlışta ölür, tek
-kullanım, depoda yalnız tuzlu SHA-256 özeti, aynı `sky-personal-email-confirm` postası (SkyMail'de
-`keycloak.personal-email-confirm`, SkyMail yoksa Keycloak SMTP). Depodaki kayıt kullanıcıya değil,
+kullanım, depoda yalnız tuzlu SHA-256 özeti, aynı `sky-personal-email-confirm` postası (SkyNotify'da
+`keycloak.personal-email-confirm`, SkyNotify yoksa Keycloak SMTP). Depodaki kayıt kullanıcıya değil,
 bu giriş oturumunun notundaki rastgele bir tutamağa bağlıdır: kod başka bir oturumda ya da Hesap
 Merkezi'nde çalışmaz, oturum bitince ölür. Başka hesabın `email`, `schoolEmail` ya da
 `personalEmail`'i ya da kullanıcı adı (büyük/küçük harf gözetmeden) `email_taken`; kişinin kendi
@@ -2736,11 +2736,11 @@ Uzlaştırıcı kimliğinin `manage-realm` rolü yeter.
 
    (`KEYCLOAK_YTU_FIRST_LOGIN` verilmezse `keep`: §22'nin bağlaması olduğu gibi kalır.)
 3. Sandbox yürüyüşü: yeni bir YTÜ kimliği Microsoft'tan sonra öneriyi görür; kişisel bir adrese kod
-   gider (SkyMail gönderim kaydı), kod yazılınca uygulamaya dönülür; Admin Console'da
+   gider (SkyNotify gönderim kaydı), kod yazılınca uygulamaya dönülür; Admin Console'da
    `personalEmail` ve `personalEmailVerifiedAt` dolu, `email` okul adresi. İkinci bir kimlikle
-   "Şimdilik geç": uygulamaya dönülür, ikinci girişte sayfa yok. SkyMail'in
+   "Şimdilik geç": uygulamaya dönülür, ikinci girişte sayfa yok. SkyNotify'ın
    `keycloak.personal-email-confirm` metni "Hesap Merkezi'nde açık olan sayfaya" der; giriş
-   sayfası için de doğru olsun diye skymail-frontend'de metin genelleştirilmeli (açık iş).
+   sayfası için de doğru olsun diye skynotify-frontend'de metin genelleştirilmeli (açık iş).
 4. Canlı: aynı komut `KEYCLOAK_REALM=e-skylab` ile; sonra `docker exec "$kc" rm -f /tmp/fbl-kcadm.config`.
 5. Sonraki tam uzlaştırmalar (`keep`) eylemi olduğu gibi bırakır.
 
@@ -2908,89 +2908,89 @@ kullanıcısız eski oturum, realm'de beni-hatırla kapalı, elle konmuş eylem,
 testindedir (`SkyStaySignedInTest`). Tema sayfası: `StaySignedIn.test.tsx`, `Template.test.tsx` ve
 görsel temeller (`sky-stay-signed-in-{desktop,mobile}`).
 
-### 20.1 SkyMail'in servis hesabı ve core'un SkyMail rolleri (duyuru-haber 04)
+### 20.1 SkyNotify'ın servis hesabı ve core'un SkyNotify rolleri (duyuru-haber 04)
 
 Aynı adım iki servis hesabını daha yönetir:
 
 | Rol | Hangi istemcide | Sahibi | Ne için |
 | --- | --- | --- | --- |
-| `audience:read` | `core` (adım oluşturur) | yalnız `skymail-backend`'in servis hesabı | `POST /v1/audiences/resolve`: bir haber ya da duyuru gönderiminin kime gideceği (core #242, core `docs/news-audience.md`). core rolü yalnız servis hesabı token'ından okur; `skymail-backend` SkyMail'in `KEYCLOAK_SERVICE_CLIENT_ID`'sidir |
-| `skymail:access`, `skymail:mails:send` | `skymail` (oluşturulmaz) | `core`'un servis hesabı (kişiler de taşır) | core'un tekil postaları, `POST /v1/mail_tasks/single` (core `internal/mail/mail.go`) |
-| `skymail:lists:read`, `skymail:lists:write` | `skymail` (oluşturulmaz) | `core`'un servis hesabı (kişiler de taşır) | core'un etkinlik posta listeleri: `GET /v1/mailing_lists/…` okuma, `POST`/`DELETE` yazma (core `internal/mail/lists.go`, SkyMail `main.go` rota tablosu) |
-| `consent:audience:read` | `core` (adım oluşturur) | yalnız `skymail-backend`'in servis hesabı | `GET /v1/consents/audience` ve `POST /v1/consents/renewal-requests`: rıza kaydının davet ve tanıtım kitlesi (core `docs/contact-consents.md`). Ayrıntı ve yayın sırası §20.2 |
-| `communication-preferences:read` | `core` (adım oluşturur) | yalnız `skymail-backend`'in servis hesabı | `POST /internal/v1/communication-preferences/tracking:resolve`: SkyMail takipli bir gönderimi kuyruğa koymadan önce kimi takip edebileceğini sorar (core #256, core `docs/communication-preferences.md`). core kişi token'ını rol taşısa da 403 ile reddeder |
-| `view-users`, `view-clients` | `realm-management` (Keycloak'ın; oluşturulmaz) | `skymail-backend`'in servis hesabı (kişiler ve gruplar da taşır) | SkyMail kişileri Admin REST'ten okur: grup üyeleri, onay rollerinin sahipleri ve tekil postada takip için adresin tek Keycloak hesabı (`GET /users?email=…&exact=true`, skymail-backend #85). `view-users` gerekir (yalnız `query-users` kullanıcıları döndürmez), `view-clients` istemciyi ve rollerini okur. Production'da 2026-09-23'te elle verildi; burada kodlandı |
+| `audience:read` | `core` (adım oluşturur) | yalnız `skynotify-backend`'in servis hesabı | `POST /v1/audiences/resolve`: bir haber ya da duyuru gönderiminin kime gideceği (core #242, core `docs/news-audience.md`). core rolü yalnız servis hesabı token'ından okur; `skynotify-backend` SkyNotify'ın `KEYCLOAK_SERVICE_CLIENT_ID`'sidir |
+| `skynotify:access`, `skynotify:mails:send` | `skynotify` (oluşturulmaz) | `core`'un servis hesabı (kişiler de taşır) | core'un tekil postaları, `POST /v1/mail_tasks/single` (core `internal/mail/mail.go`) |
+| `skynotify:lists:read`, `skynotify:lists:write` | `skynotify` (oluşturulmaz) | `core`'un servis hesabı (kişiler de taşır) | core'un etkinlik posta listeleri: `GET /v1/mailing_lists/…` okuma, `POST`/`DELETE` yazma (core `internal/mail/lists.go`, SkyNotify `main.go` rota tablosu) |
+| `consent:audience:read` | `core` (adım oluşturur) | yalnız `skynotify-backend`'in servis hesabı | `GET /v1/consents/audience` ve `POST /v1/consents/renewal-requests`: rıza kaydının davet ve tanıtım kitlesi (core `docs/contact-consents.md`). Ayrıntı ve yayın sırası §20.2 |
+| `communication-preferences:read` | `core` (adım oluşturur) | yalnız `skynotify-backend`'in servis hesabı | `POST /internal/v1/communication-preferences/tracking:resolve`: SkyNotify takipli bir gönderimi kuyruğa koymadan önce kimi takip edebileceğini sorar (core #256, core `docs/communication-preferences.md`). core kişi token'ını rol taşısa da 403 ile reddeder |
+| `view-users`, `view-clients` | `realm-management` (Keycloak'ın; oluşturulmaz) | `skynotify-backend`'in servis hesabı (kişiler ve gruplar da taşır) | SkyNotify kişileri Admin REST'ten okur: grup üyeleri, onay rollerinin sahipleri ve tekil postada takip için adresin tek Keycloak hesabı (`GET /users?email=…&exact=true`, skynotify-backend #85). `view-users` gerekir (yalnız `query-users` kullanıcıları döndürmez), `view-clients` istemciyi ve rollerini okur. Production'da 2026-09-23'te elle verildi; burada kodlandı |
 | `view-events` | `realm-management` (Keycloak'ın; oluşturulmaz) | `core`'un servis hesabı (`service-account-core`) | Yönetim panelinin kişi kartı kişinin son girişlerini gösterir: `GET /events?user=…&type=LOGIN…&max=10` (core `docs/user-accounts.md`; ADR-0079 karar 6'nın olay okuma rolü). Yalnız okur. Rol yokken core "okunamıyor" der, hiçbir şey bozulmaz. Kayıt `core` istemcisinin `skylab.granted-realm-management-roles` özniteliğidir |
-| `skymail:tracking:withdraw` | `skymail` (**adım oluşturur**; açıklamalı SkyMail satırı) | yalnız `core`'un servis hesabı (`service-account-core`) | `PUT /internal/v1/tracking-withdrawals/{sub}`: kişi takibi kapatınca core SkyMail'deki olaylarını sildirir (skymail-backend #75, core #256). SkyMail `azp=core`, `aud ∋ skymail` ve bu rolü ister, token'ın servis hesabınınki olduğuna bakmaz: rol hiçbir kişiye, gruba, bileşik role ya da varsayılan role girmez (B2) |
-| `skymail:notifications:send` | `skymail` (**adım oluşturur**; açıklamalı SkyMail satırı) | yalnız `core`'un servis hesabı (`service-account-core`) | `POST /v1/notifications`: core ne olduğunu ve kime olduğunu söyler, SkyMail kanalı ve metni seçer (ADR 0070; skymail-backend #79, `docs/notifications.md`; core'un yeni bilet bildirimi, iletisim-servisi 06). SkyMail bu ucu yalnız servis hesabı token'ından (`client_id` = `azp`) kabul eder; Forms ve `keycloak-mailer` almaz, `/v1/mail_tasks/single` ile devam eder. Rol hiçbir kişiye, gruba, bileşik role ya da varsayılan role girmez |
+| `skynotify:tracking:withdraw` | `skynotify` (**adım oluşturur**; açıklamalı SkyNotify satırı) | yalnız `core`'un servis hesabı (`service-account-core`) | `PUT /internal/v1/tracking-withdrawals/{sub}`: kişi takibi kapatınca core SkyNotify'daki olaylarını sildirir (skynotify-backend #75, core #256). SkyNotify `azp=core`, `aud ∋ skynotify` ve bu rolü ister, token'ın servis hesabınınki olduğuna bakmaz: rol hiçbir kişiye, gruba, bileşik role ya da varsayılan role girmez (B2) |
+| `skynotify:notifications:send` | `skynotify` (**adım oluşturur**; açıklamalı SkyNotify satırı) | yalnız `core`'un servis hesabı (`service-account-core`) | `POST /v1/notifications`: core ne olduğunu ve kime olduğunu söyler, SkyNotify kanalı ve metni seçer (ADR 0070; skynotify-backend #79, `docs/notifications.md`; core'un yeni bilet bildirimi, iletisim-servisi 06). SkyNotify bu ucu yalnız servis hesabı token'ından (`client_id` = `azp`) kabul eder; Forms ve `keycloak-mailer` almaz, `/v1/mail_tasks/single` ile devam eder. Rol hiçbir kişiye, gruba, bileşik role ya da varsayılan role girmez |
 | `skyforms:responses:read-service` | `forms` (**adım oluşturur**; açıklamalı Forms satırı, `FORMS_SERVICE_ROLE_DEFINITIONS`) | yalnız `core`'un servis hesabı (`service-account-core`) | Forms'un iç okuma uçları (ADR 0071'deki dar rol, ADR 0075; forms-posta-core 04): form, yanıtlar, tek yanıt, gecikmiş değerlendirmeler ve gönderenin rolüyle yanıtlayanlar. Forms bu uçları yalnız iç ağdan sunar. `aud ∋ forms` varsayılan `roles` kapsamının audience resolve'undan gelir, yeni eşleyici yok. Rol hiçbir kişiye, gruba, bileşik role ya da varsayılan role girmez. core bir kişinin `forms` etkin rollerini (`skyforms:*`, ADR 0075 karar 6) zaten taşıdığı `realm-management` rolleriyle okur (site istemcilerindeki gibi, core `docs/keycloak-admin-permissions.md`); burada ek yetki verilmez |
-| `skymail:templates:system` | `skymail` (**adım oluşturur**; açıklamalı SkyMail satırı) | yalnız `skymail-seed`'in servis hesabı (`service-account-skymail-seed`) | `PUT /v1/templates/by-key/{key}`: bir şablonu sistem şablonu yapmak ya da işareti kaldırmak (skymail-backend README "Keycloak"). `account.*`/`keycloak.*` sistem şablonu bastırma listesini atladığı için `skymail:templates:write` artık işareti değiştirmez (Yusuf, 2026-10-21). `skymail-seed` istemcisini ve öbür üç SkyMail rolünü sky_lab_genel `ops/wizards/skymail-seed-github-wizard.sh` kurar; adım o istemci yoksa uyarır. Rol hiçbir kişiye, gruba, bileşik role ya da varsayılan role girmez |
+| `skynotify:templates:system` | `skynotify` (**adım oluşturur**; açıklamalı SkyNotify satırı) | yalnız `skynotify-seed`'in servis hesabı (`service-account-skynotify-seed`) | `PUT /v1/templates/by-key/{key}`: bir şablonu sistem şablonu yapmak ya da işareti kaldırmak (skynotify-backend README "Keycloak"). `account.*`/`keycloak.*` sistem şablonu bastırma listesini atladığı için `skynotify:templates:write` artık işareti değiştirmez (Yusuf, 2026-10-21). `skynotify-seed` istemcisini ve öbür üç SkyNotify rolünü sky_lab_genel `ops/wizards/skynotify-seed-github-wizard.sh` kurar; adım o istemci yoksa uyarır. Rol hiçbir kişiye, gruba, bileşik role ya da varsayılan role girmez |
 
-Liste `CORE_SERVICE_ROLE_DEFINITIONS` (core), `SKYMAIL_SERVICE_ROLE_DEFINITIONS` (SkyMail),
+Liste `CORE_SERVICE_ROLE_DEFINITIONS` (core), `SKYNOTIFY_SERVICE_ROLE_DEFINITIONS` (SkyNotify),
 `FORMS_SERVICE_ROLE_DEFINITIONS` (Forms) ve `REALM_MANAGEMENT_SERVICE_ROLE_DEFINITIONS`
 (realm-management) dizilerindedir; dördü aynı gövdeyle (`reconcile_service_roles`) yürür ve operatör adımının sonunda tek
-toplam yazılır (`check: N change(s) pending…` / `applied N change(s)`). SkyMail'in rolleri SkyMail'in
-kataloğudur: yoksa `WARNING: client role <rol> of skymail does not exist in realm …; it is not granted
+toplam yazılır (`check: N change(s) pending…` / `applied N change(s)`). SkyNotify'ın rolleri SkyNotify'ın
+kataloğudur: yoksa `WARNING: client role <rol> of skynotify does not exist in realm …; it is not granted
 to core` yazılır ve o rol atlanır. Bunlar bugüne kadar elle verilmişti; kuru koşu production'daki
-farkı gösterir. `core`'un servis hesabı `skymail:mails:write` da taşıyorsa `NOTE: service account
-service-account-core also holds the skymail roles skymail:mails:write …` yazılır, rol alınmaz (tekil
-gönderim için `skymail:mails:send` yeter; geniş rolü kaldırmak ayrı bir karardır).
+farkı gösterir. `core`'un servis hesabı `skynotify:mails:write` da taşıyorsa `NOTE: service account
+service-account-core also holds the skynotify roles skynotify:mails:write …` yazılır, rol alınmaz (tekil
+gönderim için `skynotify:mails:send` yeter; geniş rolü kaldırmak ayrı bir karardır).
 
 **`roles` varsayılan kapsamı.** core `aud ∋ core` ister (`internal/authn/jwt.go`); bunu ve
 `resource_access`'i servis token'ına varsayılan `roles` kapsamı koyar. Listelenen bir istemcide
-(`forms`, `skymail-backend`, `core`) bu kapsam yoksa adım onu ekler (istemci ayarı, `manage-clients`:
+(`forms`, `skynotify-backend`, `core`) bu kapsam yoksa adım onu ekler (istemci ayarı, `manage-clients`:
 uzlaştırıcı kimliği de yapar): `default client scope roles of <istemci>: added …`, kuru koşuda `would
 add the default client scope roles to client …`. Realm'de `roles` kapsamı hiç yoksa yalnız uyarır.
 Ekleme okuma döngüsünün içinde yapılır ve tam uzlaştırmada da kuru koşusuz çalışır. Yayından sonraki otomatik tam uzlaştırma operatör kuru koşusundan önce koştuğu için,
 eksik kapsamı o ekler. Bu yüzden önizleme, o tam uzlaştırmanın çıktısıdır: `default client scope
-roles of <istemci>: verified` ya da `added …` satırlarına (`forms`, `skymail-backend`, `core`) bakılır.
+roles of <istemci>: verified` ya da `added …` satırlarına (`forms`, `skynotify-backend`, `core`) bakılır.
 Sonraki `service-roles` kuru koşusu yalnız `verified` gösterir. Ekleme idempotenttir ve yalnız bu üç
-servis istemcisine dokunur. Bu kontrol, SkyMail'in kitle çağrısını açan yayından önce yapılır.
+servis istemcisine dokunur. Bu kontrol, SkyNotify'ın kitle çağrısını açan yayından önce yapılır.
 
 **Sıra.** `audience:read` core #242'nin ucunu açar; uç rol yokken 403 `audience_role_missing` döner
-(zararsız). Rolün Keycloak'ta oluşması ve `skymail-backend`'e verilmesi SkyMail'in kitle çağrısını
+(zararsız). Rolün Keycloak'ta oluşması ve `skynotify-backend`'e verilmesi SkyNotify'ın kitle çağrısını
 açan yayından önce yapılır.
 
-**Template seed'in rolü (`skymail:templates:system`).** skymail-backend'in sistem işaretini
-`skymail:templates:write`'tan ayıran sürümü bu rol olmadan da güvenle açılır: var olan şablonları
+**Template seed'in rolü (`skynotify:templates:system`).** skynotify-backend'in sistem işaretini
+`skynotify:templates:write`'tan ayıran sürümü bu rol olmadan da güvenle açılır: var olan şablonları
 aynı işaretle yeniden yazan seed çalışır, yalnız işareti değiştiren (yeni bir sistem şablonu ekleyen
 ya da işaret kaldıran) seed `403 server.forbidden` (`params.missing_roles`) alır. Seed'in yeni sistem
 şablonu ekleyebilmesi için sıra: bu Keycloak yayını → tam uzlaştırma (rol oluşur, `WARNING:
-skymail:templates:system is not yet granted to service account service-account-skymail-seed by the
-operator step`) → operatörün `service-roles` kuru koşusu (`would grant skymail:templates:system to
-service account service-account-skymail-seed` ve `would record the grant of …`) ve gerçek koşusu
-(önce sandbox, sonra production) → SkyMail yayını. `skymail-seed`'in servis hesabı öbür üç SkyMail
-rolünü de taşıdığı için operatör adımı `NOTE: service account service-account-skymail-seed also
-holds the skymail roles skymail:access, skymail:templates:read, skymail:templates:write …` yazar;
+skynotify:templates:system is not yet granted to service account service-account-skynotify-seed by the
+operator step`) → operatörün `service-roles` kuru koşusu (`would grant skynotify:templates:system to
+service account service-account-skynotify-seed` ve `would record the grant of …`) ve gerçek koşusu
+(önce sandbox, sonra production) → SkyNotify yayını. `skynotify-seed`'in servis hesabı öbür üç SkyNotify
+rolünü de taşıdığı için operatör adımı `NOTE: service account service-account-skynotify-seed also
+holds the skynotify roles skynotify:access, skynotify:templates:read, skynotify:templates:write …` yazar;
 bir şey alınmaz.
 
 **Açılma ve tıklama takibinin iki rolü (iletisim-servisi 17).** `aud` için ayrı eşleyici eklenmez:
-`skymail-backend` zaten core rolü (`audience:read`) taşıdığı için token'ında `aud ∋ core`, `core`
-SkyMail rolleri taşıdığı için token'ında `aud ∋ skymail` vardır (varsayılan `roles` kapsamının
-audience resolve'u; adım kapsamı doğrular). `SKYMAIL_SERVICE_ROLE_DEFINITIONS`'ta açıklaması olan
-satırın rolü yoksa oluşturulur (`client role skymail:tracking:withdraw of skymail: created`); öbür
-SkyMail satırları eskisi gibi yalnız bildirilir. Yayından sonraki tam uzlaştırma iki rolü oluşturur
+`skynotify-backend` zaten core rolü (`audience:read`) taşıdığı için token'ında `aud ∋ core`, `core`
+SkyNotify rolleri taşıdığı için token'ında `aud ∋ skynotify` vardır (varsayılan `roles` kapsamının
+audience resolve'u; adım kapsamı doğrular). `SKYNOTIFY_SERVICE_ROLE_DEFINITIONS`'ta açıklaması olan
+satırın rolü yoksa oluşturulur (`client role skynotify:tracking:withdraw of skynotify: created`); öbür
+SkyNotify satırları eskisi gibi yalnız bildirilir. Yayından sonraki tam uzlaştırma iki rolü oluşturur
 ve `WARNING: communication-preferences:read is not yet granted to service account
-service-account-skymail-backend by the operator step`, `WARNING: skymail:tracking:withdraw is not
+service-account-skynotify-backend by the operator step`, `WARNING: skynotify:tracking:withdraw is not
 yet granted to service account service-account-core by the operator step` yazar. Operatör
 `service-roles` kuru koşusunda (önce sandbox, sonra production) bu iki rol için beklenen satırlar
 şunlardır: `would grant communication-preferences:read to service account
-service-account-skymail-backend`, `would grant skymail:tracking:withdraw to service account
+service-account-skynotify-backend`, `would grant skynotify:tracking:withdraw to service account
 service-account-core` ve ikisinin `would record the grant of …`'u. Şu durumlarda başka satırlar da
 gelebilir:
 - Realm'de roller henüz yoksa (o realm'de tam uzlaştırma koşmadıysa) kuru koşu iki `would create
   client role …` satırı daha gösterir; rolleri uygulayan koşu oluşturur.
-- `skymail-backend` ya da `core`'da `fullScopeAllowed=false` ise `would map … in the role scope of …`
+- `skynotify-backend` ya da `core`'da `fullScopeAllowed=false` ise `would map … in the role scope of …`
   satırları gelir.
 - Bileşik tarama bu yayınla geldiği için, mevcut başka bir servis rolünü (ör. `media:attach`,
   `audience:read`) içeren bir bileşik rol varsa onun için de ilk kez `WARNING: … is in the composite
   roles …` görünebilir.
 Bileşik rol, grup ya da kişi uyarısı çıkarsa uygulamadan önce Admin Console'dan kaldırılır.
 
-Sıra: roller zararsızdır (SkyMail'in bayrağı kapalıyken kimse takip edilmez; core'un geri alma işi
-rol yokken 403'te 15 dakikada bir yeniden dener, SkyMail'in `tracking:resolve` çağrısı 403'te o
+Sıra: roller zararsızdır (SkyNotify'ın bayrağı kapalıyken kimse takip edilmez; core'un geri alma işi
+rol yokken 403'te 15 dakikada bir yeniden dener, SkyNotify'ın `tracking:resolve` çağrısı 403'te o
 gönderimde kimseyi takip etmez). Keycloak yayını ve operatör adımı production'da core #256'dan ve
-SkyMail'in `SKYMAIL_TRACKING=on`'undan önce yapılır. Geri dönüş: Admin Console'dan rol servis
+SkyNotify'ın `SKYNOTIFY_TRACKING=on`'undan önce yapılır. Geri dönüş: Admin Console'dan rol servis
 hesabından kaldırılır ve `skylab.granted-service-accounts` özniteliği silinir; kalıcı geri dönüş
 satırı listeden çıkaran sürümdür.
 
@@ -3014,15 +3014,15 @@ Forms'tan okuyan sürümü (forms-posta-core 05–07) açılmadan önce yapılı
 Console'dan rol `service-account-core`'dan kaldırılır ve rolün `skylab.granted-service-accounts`
 özniteliği silinir; kalıcı geri dönüş satırı listeden çıkaran sürümdür.
 
-**`realm-management` rolleri.** Production'da `service-account-skymail-backend` iki rolü 2026-09-23'ten
+**`realm-management` rolleri.** Production'da `service-account-skynotify-backend` iki rolü 2026-09-23'ten
 beri taşıdığı için operatör kuru koşusu bunlar için yalnız `service account
-service-account-skymail-backend: view-users unchanged (held)` (ve `view-clients`) ile ilk kez bir
-`would record the grant of realm-management roles view-clients,view-users on client skymail-backend
+service-account-skynotify-backend: view-users unchanged (held)` (ve `view-clients`) ile ilk kez bir
+`would record the grant of realm-management roles view-clients,view-users on client skynotify-backend
 (skylab.granted-realm-management-roles=<now> view-clients,view-users)` satırı gösterir. Keycloak
 realm-management rollerinin güncellenmesini reddettiği (403) için kayıt, öbür rollerdeki gibi rolün
-değil `skymail-backend` istemcisinin özniteliğidir; izin değiştirmez. `skymail-backend`'de
+değil `skynotify-backend` istemcisinin özniteliğidir; izin değiştirmez. `skynotify-backend`'de
 `fullScopeAllowed=false` ise ve rol kapsamında eşli değilse `would map realm-management/view-users in
-the role scope of skymail-backend …` da gelir (Admin REST rolü token'ın kapsamından da ister). `would
+the role scope of skynotify-backend …` da gelir (Admin REST rolü token'ın kapsamından da ister). `would
 grant view-users …` görünürse production'da rol yok demektir: uygulamadan önce durulur. Bu iki rol
 için `NOTE: … also holds …` yazılmaz (etkin rollerde `query-users`, `query-groups`, `query-clients`
 bileşen olarak gelir). Uzlaştırıcı kimliği servis hesabının rollerini okuyamadığı için kayıt
@@ -3036,11 +3036,11 @@ Console'dan rol `service-account-core`'dan kaldırılır ve `core` istemcisinin
 gösterir.
 
 Harness (`tests/core-service-roles.sh`): ilk tam koşu iki rolü açıklamasıyla oluşturur, kimseye
-vermez ve uyarır; `skymail:tracking:withdraw` bir realm rolünün bileşeniyken operatörün kuru ve
+vermez ve uyarır; `skynotify:tracking:withdraw` bir realm rolünün bileşeniyken operatörün kuru ve
 uygulayan koşusu bunu uyarır ve silmez (bileşik okuması düşerse koşu yazmadan durur). Sonra
-`skymail-backend`'in gerçek client-credentials token'ında `aud ∋ core` ve
-`communication-preferences:read`, `core`'unkinde `azp=core`, `aud ∋ skymail` ve
-`skymail:tracking:withdraw` var, `core-erasure`'ınkinde ikisi de yok; her rolü yalnız kendi servis
+`skynotify-backend`'in gerçek client-credentials token'ında `aud ∋ core` ve
+`communication-preferences:read`, `core`'unkinde `azp=core`, `aud ∋ skynotify` ve
+`skynotify:tracking:withdraw` var, `core-erasure`'ınkinde ikisi de yok; her rolü yalnız kendi servis
 hesabı taşır: başka kullanıcı, grup, bileşik rol (realm'in ve her istemcinin rolleri taranır) ve
 varsayılan rol yok (B2). `skyforms:responses:read-service`'i `forms`'u ilk gören tam uzlaştırma
 oluşturur (ilk koşu `forms` yokken adımı atladığını yazar); operatör adımından sonra `core`'un gerçek
@@ -3057,7 +3057,7 @@ kişilere ve gruplara **verilmez**. core bu uçlarda kişi token'ını rol taş�
 | Rol | Sahibi | core'da ne açar |
 | --- | --- | --- |
 | `consent:record` | yalnız `service-account-forms` ve `service-account-place-service` | `POST /v1/consents` (kaydet), `POST /v1/consents/withdrawals` (kutuyu kaldırdı), `POST /v1/consents/lookup` (durum). core ayrıca `azp`'nin `CONTACT_CONSENT_SERVICE_CLIENTS`'te bir kaynağa eşli olmasını ister (`forms:forms`; yoksa `403 consent_source_unknown`) |
-| `consent:audience:read` | yalnız `service-account-skymail-backend` | `GET /v1/consents/audience` (davet ve tanıtım kitlesi) ve `POST /v1/consents/renewal-requests` (yenileme sorusu gönderildi); SkyMail bilet 11 ve 12 (KVKK s6) |
+| `consent:audience:read` | yalnız `service-account-skynotify-backend` | `GET /v1/consents/audience` (davet ve tanıtım kitlesi) ve `POST /v1/consents/renewal-requests` (yenileme sorusu gönderildi); SkyNotify bilet 11 ve 12 (KVKK s6) |
 
 **Place'in servis istemcisi `place-service`** (Yusuf, 2026-10-25). `place` Place'in BFF giriş
 istemcisidir ve servis hesabı kapalı kalır (`config/create-place-client.sh` kapalı tutar); Place'in
@@ -3105,7 +3105,7 @@ core onun isteğini `403 consent_source_unknown` ile reddeder. Kutu yazıldığ�
 `place:place-service` (varsayılan `place:place` değil) eklenir. Guessr'ın istemcisi yoktur; kutusu
 yazıldığında aynı biçimde kurulur.
 
-**Audience.** Yeni audience mapper yok: `forms`, `skymail-backend` ve `place-service` core rolü
+**Audience.** Yeni audience mapper yok: `forms`, `skynotify-backend` ve `place-service` core rolü
 taşıdığı için token'larında `aud ∋ core` vardır (varsayılan `roles` kapsamının audience resolve'u; adım
 kapsamı doğrular, yoksa ekler). İstemci `fullScopeAllowed=false` ise adım rolü rol kapsamına ekler.
 
@@ -3115,21 +3115,21 @@ istemcisini oluşturur (`client place-service: created`, `client place-service: 
 updated (+core/consent:record; fullScopeAllowed is false)`) ve `WARNING: consent:record is not yet
 granted to service account service-account-forms by the operator step`, aynısı
 `service-account-place-service` için, `WARNING: consent:audience:read is not yet granted to service
-account service-account-skymail-backend by the operator step` yazar → operatörün `service-roles`
+account service-account-skynotify-backend by the operator step` yazar → operatörün `service-roles`
 kuru koşusu (önce sandbox, sonra production): beklenen satırlar `would grant consent:record to
 service account service-account-forms`, `would grant consent:record to service account
 service-account-place-service`, `would grant consent:audience:read to service account
-service-account-skymail-backend`, `would record the grant of consent:record
+service-account-skynotify-backend`, `would record the grant of consent:record
 (skylab.granted-service-accounts=<now> service-account-forms,service-account-place-service)` ve
 `would record the grant of consent:audience:read (…)`; production'da tam uzlaştırma koştuysa toplam
 `check: 5 change(s) pending`. Sandbox'ta tam uzlaştırma ve `place-service` olmadığı için beklenen
 satırlar farklıdır ve DUR sayılmaz: `WARNING: client place-service does not exist in realm
 e-skylab-sandbox; its core service roles are not granted to its service account`, `forms`'a ve
-`skymail-backend`'e iki `would grant`, `consent:record` kaydı yalnız `service-account-forms`'u
+`skynotify-backend`'e iki `would grant`, `consent:record` kaydı yalnız `service-account-forms`'u
 adlandırır (`would record the grant of consent:record (skylab.granted-service-accounts=<now>
 service-account-forms)`), roller henüz yoksa iki `would create client role … of core`, tam kapsam
 kapalıysa `would map …`; rolleri sandbox'ta uygulayan operatör koşusu oluşturur. `forms` ya da
-`skymail-backend`'de `fullScopeAllowed=false` ise rol kapsamı eşlemesini uzlaştırıcı kimliği de
+`skynotify-backend`'de `fullScopeAllowed=false` ise rol kapsamı eşlemesini uzlaştırıcı kimliği de
 yazar: yayının tam uzlaştırması koştuysa eşleme orada `role scope of <istemci>: updated
 (+core/<rol>; fullScopeAllowed is false)` olarak çıkar ve operatör kuru koşusunda görünmez. Production'da
 tam uzlaştırma koşmadıysa `place-service` yoktur: kuru koşu iki `would create client role …`
@@ -3144,11 +3144,11 @@ listeyle çalışır, `consent:record`'u tanımaz; yeniden kullanılmaz. Sandbox
 `config/sandbox-admin-local-client.sh`'nin bir sonraki koşusu `add the core roles
 consent:audience:read, consent:record to the role scope of admin-local` der: beklenen, zararsız.
 
-**Doğrulama.** Admin Console → Clients → `forms` (ve `skymail-backend`, `place-service`) → Client
-scopes → Evaluate → kullanıcı `service-account-forms` (`service-account-skymail-backend`,
+**Doğrulama.** Admin Console → Clients → `forms` (ve `skynotify-backend`, `place-service`) → Client
+scopes → Evaluate → kullanıcı `service-account-forms` (`service-account-skynotify-backend`,
 `service-account-place-service`): access token'da `aud` `core`'u, `resource_access.core.roles`
 `consent:record`'u (`consent:audience:read`'i) içerir; `forms`'unki `consent:audience:read`'i,
-`skymail-backend`'inki `consent:record`'u içermez; `place-service`'inki yalnız `core`
+`skynotify-backend`'inki `consent:record`'u içermez; `place-service`'inki yalnız `core`
 `consent:record`'u taşır (başka `resource_access` ve realm rolü yok).
 
 Geri dönüş: §20 ile aynı (rol servis hesabından kaldırılır, `skylab.granted-service-accounts`
@@ -3177,20 +3177,20 @@ Harness (`tests/core-service-roles.sh`): ilk tam koşu iki rolü açıklamasıyl
 (bayraklar, servis hesabı, rol kapsamında tam olarak `core/consent:record`, realm rolü yok; sırrı
 çıktıda yok) oluşturur, kimseye vermez ve uyarır; operatörün kuru koşusu verilecekleri yazar ve hiçbir şey yazmaz, uygulayan koşu
 verir ve kaydeder, ikinci koşu 0 değişiklik. `forms`'un gerçek client-credentials token'ında
-`consent:record` var, `consent:audience:read` yok; `skymail-backend`'inkinde tersi, `aud ∋ core`;
+`consent:record` var, `consent:audience:read` yok; `skynotify-backend`'inkinde tersi, `aud ∋ core`;
 `core-erasure`'ınkinde ikisi de yok; `place-service`'inkinde `azp` = `client_id` = `place-service`,
 `aud ∋ core` ve yalnız `consent:record`, servis hesabında başka istemci rolü yok. Her rolü yalnız
 kendi servis hesapları taşır (`consent:record`: `forms` ve `place-service`): başka kullanıcı, grup,
 bileşik rol ve varsayılan rol yok.
 
-## 25. SkyMail'in Privileged rolü: `skymail:system-mails:read` (skymail-backend #61)
+## 25. SkyNotify'ın Privileged rolü: `skynotify:system-mails:read` (skynotify-backend #61)
 
-skymail-backend #61 tekil sistem postalarının (doğrulama, bildirim gibi tek alıcılı postalar)
-içeriğini ayrı bir role bağlar: `skymail:system-mails:read`. Karar (Yusuf): rol YK, DK ve ADMIN'de
+skynotify-backend #61 tekil sistem postalarının (doğrulama, bildirim gibi tek alıcılı postalar)
+içeriğini ayrı bir role bağlar: `skynotify:system-mails:read`. Karar (Yusuf): rol YK, DK ve ADMIN'de
 olsun. Bu yüzden rol §19'daki core kaynak rolleriyle aynı biçimde yönetilir:
 
-- Her koşu `skymail` istemcisinde rolü var eder (yoksa açıklamasıyla oluşturur; varsa dokunmaz).
-  `skymail` istemcisi yoksa uyarıyla atlanır.
+- Her koşu `skynotify` istemcisinde rolü var eder (yoksa açıklamasıyla oluşturur; varsa dokunmaz).
+  `skynotify` istemcisi yoksa uyarıyla atlanır.
 - Rol Privileged gruplara (`/ADMIN`, `/YK`, `/DK`, `/UYELER/ADMIN`, `/UYELER/YK`, `/UYELER/DK`;
   hangileri varsa) **bir kez** verilir; rolün `skylab.seeded-group-mappings` özniteliği zamanı ve
   yolları kaydeder. İşaretli role eşleme eklenmez, sonradan SKY LAB admin panelinde ya da Keycloak Admin
@@ -3199,145 +3199,145 @@ olsun. Bu yüzden rol §19'daki core kaynak rolleriyle aynı biçimde yönetilir
   da bir Privileged grubun okunması "yok" dışında bir nedenle başarısız olursa hiçbir şey yazılmaz
   (§19'un denetimleri; iki adım aynı `seed_privileged_client_roles` gövdesini kullanır, eksik
   Privileged grup ad başına uyarılır).
-- Uzlaştırıcı kimliği yalnız rolü oluşturur ve `WARNING: skymail roles not yet granted to the
-  Privileged groups: skymail:system-mails:read …` yazar. Tohumlamayı operatörün §19'daki
-  `KEYCLOAK_RECONCILE_ONLY=core-roles` koşusu yapar (aynı komut; core rollerinden sonra SkyMail
-  rolünü de tohumlar): `skymail role skymail:system-mails:read: seeded once to <yollar> (granted to:
-  …)`. Sonraki koşularda iki satır da `unchanged`'dir (`Privileged roles of skymail (1): unchanged`,
-  `group mappings of the skymail Privileged roles: unchanged (…)`).
-- `skymail` SkyMail'in giriş istemcisidir; istemcinin kendi rolleri dar rol kapsamından (§21) her
-  zaman geçer, yani Privileged bir kişinin SkyMail token'ındaki `resource_access.skymail.roles` rolü
+- Uzlaştırıcı kimliği yalnız rolü oluşturur ve `WARNING: skynotify roles not yet granted to the
+  Privileged groups: skynotify:system-mails:read …` yazar. Tohumlamayı operatörün §19'daki
+  `KEYCLOAK_RECONCILE_ONLY=core-roles` koşusu yapar (aynı komut; core rollerinden sonra SkyNotify
+  rolünü de tohumlar): `skynotify role skynotify:system-mails:read: seeded once to <yollar> (granted to:
+  …)`. Sonraki koşularda iki satır da `unchanged`'dir (`Privileged roles of skynotify (1): unchanged`,
+  `group mappings of the skynotify Privileged roles: unchanged (…)`).
+- `skynotify` SkyNotify'ın giriş istemcisidir; istemcinin kendi rolleri dar rol kapsamından (§21) her
+  zaman geçer, yani Privileged bir kişinin SkyNotify token'ındaki `resource_access.skynotify.roles` rolü
   taşır. Ek kapsam eşlemesi gerekmez.
 
-**SkyMail'in kod alanı rolleri (ekip-yetkileri bilet 03, 2026-10-23).** Aynı listede
-(`SKYMAIL_PRIVILEGED_ROLE_DEFINITIONS`, `rol|Privileged adlar|açıklama`) SkyMail'in kendi rolleri de
-var: `skymail:templates:read`, `skymail:lists:read`, `skymail:mails:send` ve `skymail:mails:write`
-`ADMIN` ve `YK`'ya (ADR 0067: YK doğrudan gönderir), `skymail:access` ve `skymail:mails:read`
+**SkyNotify'ın kod alanı rolleri (ekip-yetkileri bilet 03, 2026-10-23).** Aynı listede
+(`SKYNOTIFY_PRIVILEGED_ROLE_DEFINITIONS`, `rol|Privileged adlar|açıklama`) SkyNotify'ın kendi rolleri de
+var: `skynotify:templates:read`, `skynotify:lists:read`, `skynotify:mails:send` ve `skynotify:mails:write`
+`ADMIN` ve `YK`'ya (ADR 0067: YK doğrudan gönderir), `skynotify:access` ve `skynotify:mails:read`
 `ADMIN`, `YK` ve `DK`'ya (DK 2026-11-22'den beri, aşağıda),
-`skymail:mails:approve` yalnız `YK`'ya (S2: Mail onayının onaycısı YK kökü; dönem devrinde
-kendiliğinden değişir). Açıklama sütunu `-` olan rol SkyMail'indir: uzlaştırıcı onu **oluşturmaz**,
-realm'de varsa bir kez tohumlar, yoksa `Privileged roles of skymail (9): unchanged; not in the
+`skynotify:mails:approve` yalnız `YK`'ya (S2: Mail onayının onaycısı YK kökü; dönem devrinde
+kendiliğinden değişir). Açıklama sütunu `-` olan rol SkyNotify'ındır: uzlaştırıcı onu **oluşturmaz**,
+realm'de varsa bir kez tohumlar, yoksa `Privileged roles of skynotify (9): unchanged; not in the
 realm, the application makes them, seeded once they exist: …` satırında adını yazar. DK yazma
-rollerinin hiçbirini almaz (GY1). `skymail:access` ve `skymail:templates:read` uygulama rolüdür: köklerin
+rollerinin hiçbirini almaz (GY1). `skynotify:access` ve `skynotify:templates:read` uygulama rolüdür: köklerin
 dışındaki atamaları panelindir (§33), uzlaştırıcı onlara dokunmaz.
 
-**`skymail:announcements:send` listeden çıktı (bilet 03, YETKI-MATRISI §3 D-1).** Okuyan servis yok;
+**`skynotify:announcements:send` listeden çıktı (bilet 03, YETKI-MATRISI §3 D-1).** Okuyan servis yok;
 YK'nın doğrudan gönderimi `mails:write`/`mails:send` ile. Listeden çıkınca yeni bir realm onu almaz;
 var olan rol ve ADMIN/YK eşlemeleri yerinde kalır (uzlaştırıcı bir şey silmez), §33'ün denetimi
 onları "kodda yok" diye bildirir, sıfırlama penceresi (bilet 06 c2) kaldırır.
 
-**`skymail:mails:tracking:read` (iletisim-servisi 14b/17, karar T2).** Aynı listede üçüncü rol:
-gönderimlerin kişi bazındaki açılma ve tıklama raporunu okur (skymail-backend
+**`skynotify:mails:tracking:read` (iletisim-servisi 14b/17, karar T2).** Aynı listede üçüncü rol:
+gönderimlerin kişi bazındaki açılma ve tıklama raporunu okur (skynotify-backend
 `internal/handlers/tracking_read.go`, `TrackingReadRole`). Aydınlatma metni kişi bazındaki bilgiyi
 YK'nın, DK'nın, sistem yöneticilerinin ve postayı gönderen yetkilinin göreceğini söylüyor; anahtar
 kapalıyken (varsayılan) gönderen bunu görmediği için metin gerçekte olandan fazlasını söyler. Bu
 yüzden rol `ADMIN`, `YK` ve `DK`'ya (`/ADMIN`, `/YK`, `/DK`, `/UYELER/ADMIN`, `/UYELER/YK`,
 `/UYELER/DK`; hangileri varsa) bir kez verilir. Okuma rolüdür, DK salt okur kuralıyla uyumludur
 (`config/dk-read-only.sh` onu okuma rolü sayar ve DK'da bırakır). Gönderen kendi gönderiminde yalnız
-toplamları görür; SkyMail'de `SKYMAIL_SENDER_SEES_RECIPIENTS=on` ona kendi gönderiminin kişilerini
-geri açar (skymail-backend #129; e-skylab ADR 0074 2026-11-08 eki). Kişi bazında açma-tıklama yalnız
-bu rolle görülür; `skymail:mails:read` (`/ROLLER/SKYMAIL-MAILS-READ`) gönderimleri ve kuyrukta
+toplamları görür; SkyNotify'da `SKYNOTIFY_SENDER_SEES_RECIPIENTS=on` ona kendi gönderiminin kişilerini
+geri açar (skynotify-backend #129; e-skylab ADR 0074 2026-11-08 eki). Kişi bazında açma-tıklama yalnız
+bu rolle görülür; `skynotify:mails:read` (`/ROLLER/SKYNOTIFY-MAILS-READ`) gönderimleri ve kuyrukta
 alıcıların adını, adresini ve teslim durumunu görür, açma-tıklama görmez. Rol kişiye doğrudan
 verilmez, yalnız bu gruplara verilir. Bu yayında `core-roles` öncesindeki uyarı satırında beklenen
-rol budur: `WARNING: skymail roles not yet granted to the Privileged groups:
-skymail:mails:tracking:read`. Operatör çıktısı `skymail role skymail:mails:tracking:read: seeded
-once to <yollar> (granted to: …)`. Rol yokken SkyMail'in kişi bazındaki rapor ucu kimseye açık
+rol budur: `WARNING: skynotify roles not yet granted to the Privileged groups:
+skynotify:mails:tracking:read`. Operatör çıktısı `skynotify role skynotify:mails:tracking:read: seeded
+once to <yollar> (granted to: …)`. Rol yokken SkyNotify'ın kişi bazındaki rapor ucu kimseye açık
 değildir; anahtar `on` ise yalnız gönderene açıktır (zararsız).
 
-**`skymail:audit:read` (hub bileti skymail-frontend-rewrite 32; Yusuf, 2026-11-22).** Aynı listede bir
+**`skynotify:audit:read` (hub bileti skymail-frontend-rewrite 32; Yusuf, 2026-11-22).** Aynı listede bir
 okuma rolü: maskeli (hassas) bir postanın içeriğini kimin, ne zaman, hangi alıcının satırında açtığını
-okur. SkyMail her açılışı `sent_content_views`'a yazar; rol yalnız bu kaydı okuyan uca açar
-(skymail-backend `GET /v1/mail_tasks/{id}/content-views`, `AuditReadRole`). İçeriği açan roller
-(`skymail:system-mails:read`, toplu gönderimde `skymail:mails:write`, gönderimin sahibi) bu rolü
+okur. SkyNotify her açılışı `sent_content_views`'a yazar; rol yalnız bu kaydı okuyan uca açar
+(skynotify-backend `GET /v1/mail_tasks/{id}/content-views`, `AuditReadRole`). İçeriği açan roller
+(`skynotify:system-mails:read`, toplu gönderimde `skynotify:mails:write`, gönderimin sahibi) bu rolü
 kendiliğinden **almaz**: kaydın konusu onlardır. Rol yalnız `DK`'ya (`/DK`, `/UYELER/DK`; hangisi
 varsa) bir kez verilir; ADMIN ve YK'ya verilmez. Sektör karşılığı: Microsoft Purview'da denetim kaydını
 okumak içerik yetkisinden ayrı bir roldür (Audit Reader / View-Only Audit Logs), Google Workspace'te
 denetim raporları ayrı bir yönetici yetkisidir (Reports), NIST SP 800-53 AU-9(4) denetim kaydına
 erişimi ayrıcalıklı kullanıcıların küçük bir alt kümesine bırakır (görevler ayrılığı). Okuma rolüdür,
 DK salt okur kuralıyla uyumludur (`config/dk-read-only.sh` onu okuma rolü sayar). Açıklaması var:
-SkyMail onu yalnız denetler, her koşu yoksa açıklamasıyla oluşturur. Uzlaştırıcı kimliğinin uyarı
-satırı onu da sayar (`WARNING: skymail roles not yet granted to the Privileged groups: …
-skymail:audit:read …`); operatör çıktısı `skymail role skymail:audit:read: seeded once to /UYELER/DK
+SkyNotify onu yalnız denetler, her koşu yoksa açıklamasıyla oluşturur. Uzlaştırıcı kimliğinin uyarı
+satırı onu da sayar (`WARNING: skynotify roles not yet granted to the Privileged groups: …
+skynotify:audit:read …`); operatör çıktısı `skynotify role skynotify:audit:read: seeded once to /UYELER/DK
 (granted to: /UYELER/DK)`. Realm'de DK grubu yoksa rol tohumlanmaz ve uyarılır (`no Privileged group
-(DK, at /<NAME> or under /UYELER) exists in realm …; nothing was granted, the skymail Privileged roles
+(DK, at /<NAME> or under /UYELER) exists in realm …; nothing was granted, the skynotify Privileged roles
 stay unseeded`). Tohumdan sonra eşleme paneldir: DK'nın
 alt grubundaki eşleme `BILGI|S2-tohum`, ADMIN ya da YK'daki eşleme `SAPMA|S2-fazla` (§33). Rol yokken
-ya da tohumlanmadan SkyMail'in ucu kimseye açık değildir (zararsız; kayıt yazılmaya devam eder).
-DK'nın SkyMail'e girmesi için `skymail:access`, gönderim sayfasını açması için `skymail:mails:read`
+ya da tohumlanmadan SkyNotify'ın ucu kimseye açık değildir (zararsız; kayıt yazılmaya devam eder).
+DK'nın SkyNotify'a girmesi için `skynotify:access`, gönderim sayfasını açması için `skynotify:mails:read`
 gerekir; ikisi de aşağıdaki tohum ekiyle DK'ya verilir.
 
 **Bilinçli sapma: DK hem içeriği açar hem açılış kaydını okur (Yusuf, 2026-11-22).** DK
-`skymail:system-mails:read`'i (ADMIN, YK, DK) korur: "DK her şeyin sahibi, her şeyi görebilmeli"; DK
+`skynotify:system-mails:read`'i (ADMIN, YK, DK) korur: "DK her şeyin sahibi, her şeyi görebilmeli"; DK
 kulübün denetim organıdır, tam görünürlük ister. Bu rol maskeli içeriği açar, yani DK kendi açışlarının
 kaydını da okur. NIST SP 800-53 AU-9(4)'ün görevler ayrılığından (denetlenen kendi kaydını okumaz) ve
 Purview'daki ayrımdan bilinçli sapmadır; gerekçe Yusuf'un kararıdır. Telafi: DK'nın açışları da
 `sent_content_views`'a yazılır ve "Kim açtı"da görünür kalır; kayıt yalnız eklenir, hiçbir rol onu
 gizlemez ya da silemez (yalnız `SENT_CONTENT_VIEWS_RETENTION_DAYS` sonunda süpürülür). ADMIN ve YK
-içeriği açar, kaydı okumaz. DK'nın `system-mails:read`'i bugüne kadar `skymail:access` ve
-`skymail:mails:read` olmadığı için fiilen çalışmıyordu; bu yayınla DK maskeli içerik dahil bütün
+içeriği açar, kaydı okumaz. DK'nın `system-mails:read`'i bugüne kadar `skynotify:access` ve
+`skynotify:mails:read` olmadığı için fiilen çalışmıyordu; bu yayınla DK maskeli içerik dahil bütün
 gönderimleri açabilir hale gelir (Yusuf kararı).
 
-**DK'nın SkyMail okuması: `skymail:access` ve `skymail:mails:read` (Yusuf, 2026-11-22).** DK her şeyi
+**DK'nın SkyNotify okuması: `skynotify:access` ve `skynotify:mails:read` (Yusuf, 2026-11-22).** DK her şeyi
 okur, hiçbir şeyi değiştirmez (Entra Global Reader; denetim kaydı için Audit Reader karşılığı
-`skymail:audit:read`). Bu yüzden iki rolün kümesi `ADMIN YK DK` oldu. İkisi de içerik açmaz:
-skymail-backend bir gönderimin içeriğini yalnız göndereninine, `skymail:system-mails:read` sahibine ve
-toplu gönderimde `skymail:mails:write` sahibine açar (`mayRead`); `mails:read` gönderimleri, alıcıları
-ve teslim durumunu gösterir. Onaya gönderme `skymail:templates:read` ister; DK almaz. İki rol de yazma
+`skynotify:audit:read`). Bu yüzden iki rolün kümesi `ADMIN YK DK` oldu. İkisi de içerik açmaz:
+skynotify-backend bir gönderimin içeriğini yalnız göndereninine, `skynotify:system-mails:read` sahibine ve
+toplu gönderimde `skynotify:mails:write` sahibine açar (`mayRead`); `mails:read` gönderimleri, alıcıları
+ve teslim durumunu gösterir. Onaya gönderme `skynotify:templates:read` ister; DK almaz. İki rol de yazma
 rolü değildir (`config/dk-read-only.sh` okuma rolü sayar).
 
 İki rol production'da ADMIN ve YK'ya çoktan tohumlandı (işaretli); tohum bir kez çalıştığı için yeni
-küme kendiliğinden DK'ya gitmez. **Tohum eki** (`SKYMAIL_PRIVILEGED_SEED_ADDITIONS`, `rol|ad`) bunu bir
+küme kendiliğinden DK'ya gitmez. **Tohum eki** (`SKYNOTIFY_PRIVILEGED_SEED_ADDITIONS`, `rol|ad`) bunu bir
 kez yapar: işaretli bir rolün işareti eklenen adın hiçbir yolunu (`/DK`, `/UYELER/DK`) anmıyorsa,
 operatörün `core-roles` adımı rolü o adın gruplarına verir ve işareti eski değeri önde kalarak
-`<eski işaret>; <zaman> /UYELER/DK` yapar. Çıktı: `skymail role skymail:access: seed addition, once to
-/UYELER/DK (granted to: /UYELER/DK)`, aynısı `skymail:mails:read` için. İşaret yolu andığında (ek
+`<eski işaret>; <zaman> /UYELER/DK` yapar. Çıktı: `skynotify role skynotify:access: seed addition, once to
+/UYELER/DK (granted to: /UYELER/DK)`, aynısı `skynotify:mails:read` için. İşaret yolu andığında (ek
 yapılmış ya da realm küme DK'yı içerirken tohumlanmış) bir şey yapılmaz; ekten sonra panelden kaldırılan
 eşleme kaldırılmış kalır. İşaretsiz rol eskisi gibi bütün kümesiyle tohumlanır. Operatör oturumu yokken
-uyarı satırı eki de sayar: `WARNING: skymail roles not yet granted to the Privileged groups: …
-skymail:access(DK) skymail:mails:read(DK) …`. Sapma bekçisi (§33) DK'daki iki eşlemeyi beklenen sayar;
+uyarı satırı eki de sayar: `WARNING: skynotify roles not yet granted to the Privileged groups: …
+skynotify:access(DK) skynotify:mails:read(DK) …`. Sapma bekçisi (§33) DK'daki iki eşlemeyi beklenen sayar;
 eksiği tohumdan sonra `BILGI|S2-tohum`.
 
-**`skymail:suppressions:manage` ve `skymail:unsubscribes:reactivate` (ADR 0073, ADR 0072 karar 7).**
-Aynı listede iki yazma rolü. `suppressions:manage` SkyMail'in bastırma listesini (adresler) okur,
-kalıcı ret (bounce) kaydını listeden kaldırır ve bounce oranını okur (skymail-backend
+**`skynotify:suppressions:manage` ve `skynotify:unsubscribes:reactivate` (ADR 0073, ADR 0072 karar 7).**
+Aynı listede iki yazma rolü. `suppressions:manage` SkyNotify'ın bastırma listesini (adresler) okur,
+kalıcı ret (bounce) kaydını listeden kaldırır ve bounce oranını okur (skynotify-backend
 `internal/handlers/suppressions.go`, `SuppressionsManageRole`; hub bileti skymail-bounce-isleme 06).
 `unsubscribes:reactivate` kimliği olmayan bir adresin kendi çıkışını yalnız kişi isteyince ya da bir
 hata olunca, gerekçeyle geri alır ve geri almaları okur (`UnsubscribesReactivateRole`; hub bileti
-abonelik-cikisi 10). İkisinin de açıklaması var: SkyMail onları yalnız denetler, başka bir şey
+abonelik-cikisi 10). İkisinin de açıklaması var: SkyNotify onları yalnız denetler, başka bir şey
 oluşturmaz, bu yüzden her koşu yoksa açıklamasıyla oluşturur. `ADMIN` ve `YK`'ya (`/ADMIN`, `/YK`,
 `/UYELER/ADMIN`, `/UYELER/YK`; hangileri varsa) bir kez verilir, DK'ya verilmez (yazma rolleri;
 `config/dk-read-only.sh` onları yazma rolü sayar). Uzlaştırıcı kimliğinin uyarı satırı onları da
-sayar: `WARNING: skymail roles not yet granted to the Privileged groups: … skymail:suppressions:manage
-skymail:unsubscribes:reactivate …`; operatör çıktısı `skymail role skymail:suppressions:manage: seeded
-once to <yollar> (granted to: …)`. Rol yokken SkyMail'in bastırma listesi uçları kimseye açık
+sayar: `WARNING: skynotify roles not yet granted to the Privileged groups: … skynotify:suppressions:manage
+skynotify:unsubscribes:reactivate …`; operatör çıktısı `skynotify role skynotify:suppressions:manage: seeded
+once to <yollar> (granted to: …)`. Rol yokken SkyNotify'ın bastırma listesi uçları kimseye açık
 değildir (zararsız: liste uygulanmaya devam eder, yalnız görülemez ve kaldırılamaz). Grup seçimi
 öneridir (bilet 06: Yönetim Kurulu ve ADMIN); başka bir küme istenirse eşlemeler tohumdan sonra SKY
 LAB admin panelinden değişir.
 
 **Kuru koşu (bilet 03'ten beri).** `KEYCLOAK_RECONCILE_CHECK=true` ile `core-roles` adımı hiçbir şey
 yazmaz: her yazma `[reconcile] would kcadm VERB YOL …` satırıdır, adımın kendi satırları gerçek
-koşunun yazacağını söyler (`skymail role …: seeded once to … (granted to: …)`), son satır `Core
+koşunun yazacağını söyler (`skynotify role …: seeded once to … (granted to: …)`), son satır `Core
 resource roles are checked; nothing was written (N write(s) withheld).` Wizard kuru koşuyu planla
 karşılaştırır, eşleşirse gerçek koşuyu yapar, sonra kuru koşu 0 olmalıdır (§33.4).
 
-**Sıra.** Rol SkyMail'de yalnız bir yetkiyi açar; rol yokken #61'in kapısı kapalı kalır (içerik
-gizli). Bu yüzden Keycloak yayını ve operatör tohumlaması skymail-backend #61'in yayınından önce
+**Sıra.** Rol SkyNotify'da yalnız bir yetkiyi açar; rol yokken #61'in kapısı kapalı kalır (içerik
+gizli). Bu yüzden Keycloak yayını ve operatör tohumlaması skynotify-backend #61'in yayınından önce
 yapılırsa YK/DK/ADMIN #61 yayınlandığı an içeriği görür; sonra yapılırsa arada içerik kimseye
 görünmez (zararsız, yalnız gecikme).
 
 Geri dönüş: eşlemeler SKY LAB admin panelinin grup sayfasından (core'un `/v1/client-roles`'u
-her istemcinin rollerini, `skymail`'inkileri de listeler) ya da Keycloak Admin Console'dan kaldırılır;
+her istemcinin rollerini, `skynotify`'ınkileri de listeler) ya da Keycloak Admin Console'dan kaldırılır;
 işaret kaldığı
 için uzlaştırıcı onları geri koymaz.
 
-Harness (`tests/skymail-roles.sh`, `run-integration.sh` çağırır, `roles` grubu): ilk tam koşu iki okuma
-rolünü açıklamasıyla oluşturur, SkyMail'in kendi rollerini oluşturmaz, kimseye vermez, işaretlemez ve
+Harness (`tests/skynotify-roles.sh`, `run-integration.sh` çağırır, `roles` grubu): ilk tam koşu iki okuma
+rolünü açıklamasıyla oluşturur, SkyNotify'ın kendi rollerini oluşturmaz, kimseye vermez, işaretlemez ve
 uyarır; operatörün `core-roles` koşusu rolleri `/ADMIN` ve `/UYELER/YK`'ya verir ve işaretler (fixture'da
-olan `skymail:access`, `skymail:lists:read`, `skymail:mails:send` da); YK üyesinin etkin `skymail`
-rolleri tam bunlar, gruba üye olmayan kişide rol yok. Sonradan oluşan `skymail:mails:approve` yalnız
+olan `skynotify:access`, `skynotify:lists:read`, `skynotify:mails:send` da); YK üyesinin etkin `skynotify`
+rolleri tam bunlar, gruba üye olmayan kişide rol yok. Sonradan oluşan `skynotify:mails:approve` yalnız
 `/UYELER/YK`'ya gider, `/ADMIN` ve `/DK` almaz. Gruptan kaldırılan eşleme sonraki koşuda geri gelmez;
 işareti silinen rol yalnız eksik gruba yeniden verilir. Değişiklik üretmeyen tam koşu rolleri,
-işaretleri ve grupların `skymail` eşlemelerini de karşılaştırır.
+işaretleri ve grupların `skynotify` eşlemelerini de karşılaştırır.
 
 ## 26. Rol grupları: `/ROLLER/<UYGULAMA>-<ROL>` (rol-temizligi 05)
 
@@ -3350,7 +3350,7 @@ rolünü `/ROLLER` altındaki bir yaprağa üye olarak alır; yaprak tek bir ist
 | --- | --- |
 | `FORMS-ACCESS`, `FORMS-ALL` | `forms` `skyforms:access`, `skyforms:*` |
 | `PLACE-ADMIN`, `PLACE-MODERATOR` | `place` `place:admin`, `place:moderator` |
-| `SKYMAIL-ACCESS`, `SKYMAIL-TEMPLATES-READ`, `SKYMAIL-TEMPLATES-WRITE`, `SKYMAIL-LISTS-READ`, `SKYMAIL-LISTS-WRITE`, `SKYMAIL-MAILS-READ`, `SKYMAIL-MAILS-WRITE`, `SKYMAIL-MAILS-APPROVE` | `skymail` `skymail:<rol>` (her rol için bir yaprak) |
+| `SKYNOTIFY-ACCESS`, `SKYNOTIFY-TEMPLATES-READ`, `SKYNOTIFY-TEMPLATES-WRITE`, `SKYNOTIFY-LISTS-READ`, `SKYNOTIFY-LISTS-WRITE`, `SKYNOTIFY-MAILS-READ`, `SKYNOTIFY-MAILS-WRITE`, `SKYNOTIFY-MAILS-APPROVE` | `skynotify` `skynotify:<rol>` (her rol için bir yaprak) |
 | `CF-ZERO-TRUST-ACCESS` | `cloudflare-zero-trust` `cloudflare:zero-trust:access` |
 | `SKYCLOUD-ACCESS`, `SKYCLOUD-ADMIN` | `skycloud` `skycloud:access`, `admin` (SkyCloud/Nextcloud yöneticisi) |
 
@@ -3380,7 +3380,7 @@ kez geçer, tek istemci taşır (`ReconcileJson role-groups` dosyayı okurken re
 ekibin (Leader grupları hariç) kodunu alt dize olarak içermez (içerirse o yaprak `PROBLEM` ile
 atlanır). Yeni rol grubu: `role-groups.json`'a bir nesne eklenir, PR
 açılır, yayından sonra betik önce kuru, sonra `--apply` koşulur. Kuru koşuda `PROBLEM … team code`
-görülürse (ör. `AI` gibi kısa bir alt ekip kodu `SKYMAIL-*` yapraklarının adında geçer) `--apply`
+görülürse (ör. `AI` gibi kısa bir alt ekip kodu `SKYNOTIFY-*` yapraklarının adında geçer) `--apply`
 koşulmadan önce ekip ya da yaprak adı ad kuralına göre değiştirilir; değiştirilmezse o yaprak atlanır,
 öbürleri uygulanır ve betik 1 ile çıkar.
 
@@ -3398,7 +3398,7 @@ durur: `leader-app-roles.sh --print-expected`'in her en üst ekibe verdiği rol 
 sitenin `cms:access`'i yalnız o sitenin kendi ekiplerinde (`site-editor-grants.sh --print-expected`:
 etkinlik sitelerinin lab ve organizasyon ekibi, ana sitenin Ek-2 listesi) ve kararı bekleyen
 `frontend-arge`; başka bir sitenin `cms:access`'i K4'e yazılır. core'un varsayılanı altı köktür, production'da üçü vardır; core
-`AUTHZ_PRIVILEGED_ROOTS` ile daraltılırsa bu liste de daraltılır. Kim hangi SkyMail rolünü
+`AUTHZ_PRIVILEGED_ROOTS` ile daraltılırsa bu liste de daraltılır. Kim hangi SkyNotify rolünü
 elle taşıyor sorusunun (duyuru-haber 04 madde 3) sayı cevabı da buradadır; adları rol-temizligi F0
 wizard'ı yalnız Yusuf'un terminalinde gösterir.
 
@@ -3473,7 +3473,7 @@ aynı betiği koşar):
 
 **Ne zaman koşulur.** Her yeni en üst ekip ya da Leader grubu açıldığında (site editörlüğüyle aynı yer,
 §18), F5'ten sonra ve F3'ten (realm rollerinin kaldırılması) önce. Yeni ekibin uygulama atamalarını
-(Forms, SkyMail) YK panelden yapar (§33). En üst ekip Leader grubunu yalnız
+(Forms, SkyNotify) YK panelden yapar (§33). En üst ekip Leader grubunu yalnız
 Privileged değiştirir; devir kuralı değişmez.
 
 ```bash
@@ -3514,12 +3514,12 @@ Entra'dan sapma: Global Reader herkese ayrı ayrı atanabilir, bizde yalnız DK 
 | `core` `audit:read` | ADMIN, YK, DK | `core-roles` adımı, bir kez (ekip-yetki-devri 09; S11'in "DK görmez"i GY1 ile düştü) |
 | `forms` `skyforms:read-all` | DK | `core-roles` adımı, bir kez (`FORMS_PRIVILEGED_ROLE_DEFINITIONS`); forms-backend henüz okumuyor, zararsız (Yusuf, Y4: şimdi eşlenir) |
 | `core` `url:access` (uygulama rolü: kendi kısa linkleri) | ADMIN, YK, DK | production'da zaten eşli ve işaretli; yeni realm'de `core-roles` adımı (Y1: DK'da kalır) |
-| `skymail` `skymail:system-mails:read` | ADMIN, YK, DK | §25 (değişmedi) |
-| `skymail` `skymail:mails:tracking:read` | ADMIN, YK, DK | §25 (iletisim-servisi 17; okuma rolü, DK'da kalır) |
+| `skynotify` `skynotify:system-mails:read` | ADMIN, YK, DK | §25 (değişmedi) |
+| `skynotify` `skynotify:mails:tracking:read` | ADMIN, YK, DK | §25 (iletisim-servisi 17; okuma rolü, DK'da kalır) |
 | etkinlik sitelerinin `content:read` | DK | `site-editor-grants.sh` (§18), `cms:access` yerine |
 
 Yazma rolleri artık yalnız ADMIN ve YK'ya tohumlanır (`CORE_PRIVILEGED_NAMES=(ADMIN YK)`): bu yalnız
-işaretsiz (yeni ya da yeni realm'deki) rolleri etkiler. `skymail:announcements:send` (§25) ve
+işaretsiz (yeni ya da yeni realm'deki) rolleri etkiler. `skynotify:announcements:send` (§25) ve
 `client:admin` (§18) zaten DK'ya verilmiyordu; `site-editor-grants.sh` artık `cms:access`'i de DK'ya
 vermez, DK'da bulursa `WARNING` yazar ve bu bölümün betiğini adlandırır.
 
@@ -3544,7 +3544,7 @@ kökünün (`/DK`, `/UYELER/DK`; hangisi varsa) doğrudan eşlemelerini okur ve 
   kipinde `global:read`'den alır; ayrı rol gerekmez, okuma kaybı yoktur (Y2, Y3). Ayrıca her istemcide
   `cms:access`, `content:write`, `client:admin` (istemcide `content:read` varsa ve kök taşımıyorsa
   onların yerine `content:read` verilir; `frontend-main`/`frontend-arge`'da elle verilmiş olanlar da
-  böylece okumaya döner), SkyMail'in gönderme/yazma rolleri ve Place'in rolleri.
+  böylece okumaya döner), SkyNotify'ın gönderme/yazma rolleri ve Place'in rolleri.
 - **Uygulama rolü (kalır):** kişinin kendisine bağlı core uygulama rolleri (core `role_classes.go`
   `AppRoles`): `url:access` (ve `url:create`/`get`/`update`/`delete`): DK üyesi kendi kısa linklerini
   oluşturur ve yönetir; bu yönetim değildir (Yusuf, Y1; Entra'da Global Reader kişinin kendi uygulama
@@ -3554,7 +3554,7 @@ kökünün (`/DK`, `/UYELER/DK`; hangisi varsa) doğrudan eşlemelerini okur ve 
 - **Forms yöneticisi (şimdilik kalır):** `skyforms:*` ve `skyforms:feedback:*` (core `AdminRoles` ile
   aynı). forms-backend `skyforms:read-all`'u okumadan kaldırılırsa DK Forms'u okuyamaz; Fatih'in teyidi
   bekleniyor. `--forms` yalnız bu ikisini yazma sayar; kökte `forms/skyforms:read-all` yoksa `PROBLEM`.
-- **Okuma (kalır):** `global:read`, `audit:read`, `users:read`, SkyMail'in okuma rolleri
+- **Okuma (kalır):** `global:read`, `audit:read`, `users:read`, SkyNotify'ın okuma rolleri
   (`system-mails:read` ve `mails:tracking:read` dahil), her istemcinin `content:read`'i, `skyforms:read-all`.
 - **Diğer:** başka her client rolü ve her realm rolü (ör. Java döneminin `DK`'sı, gruba eşliyse;
   rol-temizligi F3 kaldırır) `WARNING` olur ve kalır.
@@ -3639,7 +3639,7 @@ aynı Keycloak konteynerindedir.
 
    Production kuru koşusunda beklenen: `/UYELER/DK` için 13 core rolünün `would take … away` satırı,
    DK'nın elinde ne varsa site istemcilerinin `cms:access`'i ve yerine `content:read`, `read roles
-   kept: core/audit:read, core/global:read, forms/skyforms:read-all, skymail/skymail:system-mails:read`,
+   kept: core/audit:read, core/global:read, forms/skyforms:read-all, skynotify/skynotify:system-mails:read`,
    `app roles kept (…): core/url:access` (DK'da varsa Forms koltuğu da), `NOTE: … Forms roles kept …
    forms/skyforms:*` (DK'da varsa); realm rolü `DK` gruba eşliyse onun için `WARNING`. Başka bir
    `WARNING` (beklenmeyen rol, alt grup ya da üst gruptan gelen yazma) Yusuf'a ayrıca gösterilir.
@@ -3671,14 +3671,14 @@ Okuma rollerinin eşlemeleri admin panelinden ya da Admin Console'dan kaldırıl
 oldukları için uzlaştırıcı geri koymaz.
 
 **Harness.** `tests/dk-read-only.sh` (CI işi `dk-read-only`, stok Keycloak, dev modu): production'ın
-bu değişiklikten önceki biçimini kurar (core'un 14 rolü (13 yazma rolü ve `url:access`) ADMIN, YK ve DK'da işaretli, SkyMail'in iki
-rolü ve DK'da elle `skymail:mails:approve`, etkinlik sitesinde `cms:access`, DK'da `skyforms:*`, Forms
+bu değişiklikten önceki biçimini kurar (core'un 14 rolü (13 yazma rolü ve `url:access`) ADMIN, YK ve DK'da işaretli, SkyNotify'ın iki
+rolü ve DK'da elle `skynotify:mails:approve`, etkinlik sitesinde `cms:access`, DK'da `skyforms:*`, Forms
 koltuğu ve realm rolü `DK`, DK'nın alt grubu); `core-roles`'dan önce betik `PROBLEM` verir ve yazmaz;
 `core-roles` okuma rollerini bir kez doğru köklere tohumlar, yazma rollerine dokunmaz; kuru koşu 15
-kaldırma (13 core rolü, `cms:access`, `skymail:mails:approve`) + 1 `content:read` planlar, `url:access`
+kaldırma (13 core rolü, `cms:access`, `skynotify:mails:approve`) + 1 `content:read` planlar, `url:access`
 ve koltuğu planlamaz, yazmaz (admin olayı yok); `--apply` yedeği ilk satırda adlandırır ve 0600 yazar,
 yalnız onları kaldırır, ADMIN ve YK değişmez; DK üyesinin token'ında core `[audit:read, global:read,
-url:access]`, site `[content:read]`, SkyMail `[system-mails:read]`, Forms `[skyforms:*, skyforms:access,
+url:access]`, site `[content:read]`, SkyNotify `[system-mails:read]`, Forms `[skyforms:*, skyforms:access,
 skyforms:read-all]`; DK'nın alt grubundaki kişi aynısını miras alır; YK üyesininki yalnız `audit:read`
 kazanır; hem DK hem YK üyesi YK'nın yazma rollerini korur; sonraki kuru koşu `write roles held: none`
 ve 0 değişiklik, ikinci `--apply` yazmaz; `--restore` kuru koşar, `--apply` ile 15 eşlemeyi geri verir,
@@ -3772,7 +3772,7 @@ browser plus passkey forms (ALTERNATIVE)
   gönderilmiş, hâlâ geçerli kodlar artık denetlenmez: deneme yazılanla karşılaştırılmadan yanlış sayılır
   (sayfa yine `wrong_code`; olay `wrong_code_ceiling`), böylece günde ancak yaklaşık 10 tahmin olur (aynı anda tahmin eden birkaç oturum, sayaç dolmadan birkaç deneme daha yapabilir). Tavana
   ulaşan her hesap `sky_email_code_wrong_ceiling accounts=N ceiling=10 realm=…` WARN satırı yazar (kişi
-  yok); günün ilk hesabı alarm grubuna (`/ADMIN`) bir posta atar (SkyMail `keycloak.login-code-alarm`,
+  yok); günün ilk hesabı alarm grubuna (`/ADMIN`) bir posta atar (SkyNotify `keycloak.login-code-alarm`,
   `subjectKey=skyLoginCodeAlarmCeilingSubject`; kişi adı, adres, IP yok). Parola, passkey ve YTÜ girişi
   etkilenmez; bedeli: saldırgan 10 yanlış kodla bir hesabın o günkü kodla girişini kapatabilir (bunun
   için kurbana en az iki kod postası gider, kod başına beş deneme; saldırı görünürdür).
@@ -3807,10 +3807,10 @@ browser plus passkey forms (ALTERNATIVE)
 - Alarm: genel bütçenin ortadaki ve son dilimini alan istek, günde birer kez,
   `sky_email_code_budget level=half|full daily_limit=… realm=…` WARN satırı yazar ve alarm grubunun
   (`SKY_EMAIL_CODE_ALARM_GROUP`, varsayılan `/ADMIN`; Yusuf'un kararı 2026-10-15: "bana ya da adminlere")
-  etkin ve e-posta adresi olan her üyesine, en çok 50 kişiye, birer posta atar (SkyMail
-  `keycloak.login-code-alarm`; SkyMail yoksa realm SMTP'si düz metinle). Gönderim `keycloak-mailer`'ın
-  mevcut `skymail:mails:send` yetkisiyle kişi başına tek postadır: SkyMail'in kendi grup gönderimi
-  (`POST /v1/mail_tasks`) `skymail:mails:write` ister, servis hesabına bu yetki verilmedi. Grup realm'de
+  etkin ve e-posta adresi olan her üyesine, en çok 50 kişiye, birer posta atar (SkyNotify
+  `keycloak.login-code-alarm`; SkyNotify yoksa realm SMTP'si düz metinle). Gönderim `keycloak-mailer`'ın
+  mevcut `skynotify:mails:send` yetkisiyle kişi başına tek postadır: SkyNotify'ın kendi grup gönderimi
+  (`POST /v1/mail_tasks`) `skynotify:mails:write` ister, servis hesabına bu yetki verilmedi. Grup realm'de
   yoksa ya da üyesi yoksa yalnız log (`sky_email_code_alarm_unsent reason=no_recipient`). Postada kod
   isteyen kişi, adres ya da IP yoktur.
 - Olaylar: başarılı giriş Keycloak'ın `LOGIN` olayı, ayrıntısı `sky_method=email_code` (alt akışın
@@ -3822,7 +3822,7 @@ browser plus passkey forms (ALTERNATIVE)
   `invalid_code`, `expired_code`, `sky_email_code_rate_limited`, `user_not_found`, `user_disabled`,
   `user_temporarily_disabled`, `invalid_config`. Bu olaylarda IP (`ipAddress`) ve yazılan tanımlayıcı (`username`) yoktur
   (spec §7.5): jboss-logging dinleyicisi olayları sunucu günlüğüne de yazar. Kodun gönderilmesi
-  Keycloak olayı değildir; gönderim kaydı SkyMail'dedir (`keycloak.login-code`). Ölçüm (spec §11):
+  Keycloak olayı değildir; gönderim kaydı SkyNotify'dadır (`keycloak.login-code`). Ölçüm (spec §11):
   `LOGIN` ve `details.sky_method == "email_code"`; reddedilenler `LOGIN_ERROR` ve
   `details.sky_email_code`.
 
@@ -3881,8 +3881,8 @@ ve alt akışların öncelikleri) 2026-09-21 olgularından; ilk `on`'dan önce A
 
 1. SPI 1.21.0'ı taşıyan imaj yayımlanır (`main` → `production`, Touch ID kapısı). Bu imajla hiçbir şey
    değişmez: adım bir akışa konmadıkça çalışmaz.
-2. SkyMail şablonları (`keycloak.login-code`, `keycloak.login-code-alarm`) skymail-frontend'den
-   tohumlanır. Önce `on` edilirse posta SkyMail 404 ile SMTP'ye düşer (`sky_mail_fallback
+2. SkyNotify şablonları (`keycloak.login-code`, `keycloak.login-code-alarm`) skynotify-frontend'den
+   tohumlanır. Önce `on` edilirse posta SkyNotify 404 ile SMTP'ye düşer (`skynotify_fallback
    reason=template_missing`), yine gider.
 3. Tema PR'ı (ilk ekrandaki "E-postayla devam et" ve kod sayfaları, SPI 1.22.0 ile "Bu cihazda
    oturumum açık kalsın mı?" kod girişinde de) yayımlanır. O olmadan alt akış açılsa da SKY LAB
@@ -3943,9 +3943,9 @@ imajda): Admin Console → Authentication → `browser plus passkey` → `sky em
 ### Harness
 
 `tests/login-by-email-code.sh` (CI'da `login-by-email-code` işi): stok Keycloak imajı dev kipinde, SPI
-jar'ı, production'ın akış biçimi, sayfalar SPI'nın yedek şablonları. Posta production'daki gibi SkyMail'e
-gider (entegrasyon harness'ının SkyMail fixture'ı, `keycloak-mailer`'ın gerçek token'ı;
-`SKY_MAIL_TOKEN_URL` verilmez, token adresi istekten türetilir: arka plandaki gönderim isteğin adresini
+jar'ı, production'ın akış biçimi, sayfalar SPI'nın yedek şablonları. Posta production'daki gibi SkyNotify'a
+gider (entegrasyon harness'ının SkyNotify fixture'ı, `keycloak-mailer`'ın gerçek token'ı;
+`SKYNOTIFY_TOKEN_URL` verilmez, token adresi istekten türetilir: arka plandaki gönderim isteğin adresini
 taşır); fixture'ın reddettiği bir alıcı SMTP yedeğini (Mailpit) kanıtlar. Sınananlar: `keep` eklemez; `on` uzlaştırıcı kimliğiyle alt akışı kurar, parola alt akışına
 dokunmaz, ikinci koşu değiştirmez; kodla giriş (kullanıcı adı), TOTP sayfası yok, token'ın `aud` ve
 claim'leri parolalı girişinkiyle aynı, `LOGIN` olayında `sky_method=email_code`; okul ve kişisel adresle
@@ -3955,7 +3955,7 @@ doğru kodla giremez; bir adrese 15 dakikada dördüncü kod gitmez (aynı sayfa
 tavanına ulaşınca (harness'ta 6) ona kod postalanmaz, sayfa hesapsız girdininkiyle aynı, önceden
 postalanmış kodun doğrusu denetlenmez (`wrong_code`), `/ADMIN` üyelerine bir tavan alarmı ve günlük
 satırı; operatör alarmı
-yarıda ve dolunca gider, kodlar gitmeye devam eder; SkyMail reddedince kod SMTP'den (FreeMarker kopyası,
+yarıda ve dolunca gider, kodlar gitmeye devam eder; SkyNotify reddedince kod SMTP'den (FreeMarker kopyası,
 bağlantısız, konuda kod yok) gelir ve çalışır, `config`/`token` geri düşüşü yoktur; TOTP'li kişiye koddan sonra TOTP; "Parolanla gir"
 parola formuna götürür; sunucu günlüğünde kod, adres ve istemci IP'si yok; `off` kapatır ve Keycloak
 adımı artık sunmaz; `on` kesilmiş alt akışı tamamlar; yanında REQUIRED yürütme olan akış yazılmadan
@@ -3980,7 +3980,7 @@ alan `sign-up`). Yürütme ve ayar realm'e özel olduğu için sandbox ve canlı
 
 - Adres sayfası (§29) aynı. Ayar açıkken hiçbir hesaba çıkmayan (`LoginIdentifiers`: kullanıcı adı,
   birincil, YTÜ bağlı hesabın okul adresi, kanıtlı kişisel adres) ve geçerli bir e-posta adresi olan
-  girdiye **kayıt kodu** gider: yazılan adrese, küçük harfle, SkyMail `keycloak.login-code`
+  girdiye **kayıt kodu** gider: yazılan adrese, küçük harfle, SkyNotify `keycloak.login-code`
   (`purpose=signup`, `subjectKey=skySignUpCodeSubject`, konu "SKY LAB hesap açma kodun"). Kullanıcı adı
   biçimindeki ya da e-posta olmayan girdiye yine hiçbir şey gitmez. Kod sayfası her durumda aynıdır;
   hesabın olup olmadığı ancak doğru koddan sonra belli olur (spec §7.4).
@@ -4091,7 +4091,7 @@ kullanılmaz. Satırlar:
    çıkış, kodla yeniden giriş; YTÜ adresiyle deneme (YTÜ aşaması); var olan adresle "Hesap aç".
 6. Bir hafta "Hesap aç" bağlantısı yalnız sandbox'ta, sonra canlı: aynı komut `KEYCLOAK_REALM=e-skylab`
    ile; sonra `docker exec "$kc" rm -f /tmp/fbl-kcadm.config`. 7 gün sonra spec §11'in sayıları
-   (`REGISTER` `email_code`, doğrulanmayan kayıt kodu oranı: SkyMail `purpose=signup` gönderimleri ile
+   (`REGISTER` `email_code`, doğrulanmayan kayıt kodu oranı: SkyNotify `purpose=signup` gönderimleri ile
    `REGISTER` + `school_domain` karşılaştırması; Turnstile eşikleri spec §8).
 
 ### Geri dönüş
@@ -4105,16 +4105,16 @@ bırakır). §29'un `off`'u (alt akış DISABLED) kaydı da kapatır.
 ### Harness
 
 `tests/sign-up-by-email-code.sh` (CI'da `sign-up-by-email-code` işi), §29'un harness'ı gibi: stok imaj
-dev kipinde, SPI jar'ı, production'ın akış biçimi ve User Profile'ı, SkyMail fixture'ı ve Mailpit. Sınananlar:
+dev kipinde, SPI jar'ı, production'ın akış biçimi ve User Profile'ı, SkyNotify fixture'ı ve Mailpit. Sınananlar:
 `keep` adımsızken ve kapalıyken bildirir; adımsız `on` yazmadan reddedilir; `on` uzlaştırıcı kimliğiyle
 ayarı kurar, ikinci `on` değiştirmez, `registrationAllowed` kapalı kalır; kapalıyken hesapsız adrese posta
-yok; yeni adres: kayıt kodu SkyMail'e (`purpose=signup`, bağlantısız), form, hesap (doğrulanmış birincil ve
+yok; yeni adres: kayıt kodu SkyNotify'a (`purpose=signup`, bağlantısız), form, hesap (doğrulanmış birincil ve
 kanıtlı kişisel adres, `ayse.yilmaz` kullanıcı adı, kimlik bilgisi, grup ve ek rol yok, `REGISTER` ve `LOGIN`
 olayları, core JIT'in okuduğu claim'ler), sonra kodla yeniden giriş; dolu kullanıcı adına sayı eklenir;
 yasak karakterli ad formu tutar, hesap açmaz; hesaplı ve hesapsız adreste kod sayfası aynı (süreler
 yazdırılır: ilk yerel koşuda medyan 17,7 ms ve 14,2 ms); "Hesap aç" + var olan hesap: giriş kodu,
 `existing`, [Devam et] ile giriş, ikinci hesap yok; YTÜ adresi: `ytu` aşaması, OBS bağlantısı, hesap yok,
-`REGISTER_ERROR school_domain`; aynı adresin iki kaydı aynı anda: tek hesap, sunucu hatası yok; SkyMail
+`REGISTER_ERROR school_domain`; aynı adresin iki kaydı aynı anda: tek hesap, sunucu hatası yok; SkyNotify
 reddedince kayıt kodu SMTP'den kayıt metniyle, sayfanın dilinde (Türkçe ya da İngilizce); sunucu
 günlüğünde kod, adres ve istemci IP'si yok; `off` sonrası posta yok, açılan hesaplar girer. Tavanlar,
 genel bütçe duraklaması, yarış pencereleri, kanıtın ömrü ve sayfa yenileme birim testindedir
@@ -4226,7 +4226,7 @@ bilgi satırıdır, `BILGI|S2-tohum|<grup yolu>|<istemci>|<rol>|<eksik|fazla>`; 
 Tohumlanmamış (işaretsiz) rolün eksik eşlemesi kodun bekleyen işidir: `S2-eksik`. Privileged kökte
 hiçbir listenin tohumlamadığı rol (`--privileged-file`'da olmayan istemci, yönetici ya da realm rolü)
 kodundur: `S2-fazla`. Tohumlanmış rol de kendi tohum kümesi dışındaki bir Privileged köke (ya da
-altındaki gruba) verilirse `S2-fazla`dır (ör. yalnız YK'ya tohumlanan `skymail:mails:approve` ADMIN'de);
+altındaki gruba) verilirse `S2-fazla`dır (ör. yalnız YK'ya tohumlanan `skynotify:mails:approve` ADMIN'de);
 DK'ya ya da altındaki gruba verilen her yazma rolü (`config/dk-read-only.sh` `WRITE_ROLES`,
 `--print-write-roles`) de öyle: DK okur, yazmaz (ekip-yetkileri bilet 17). DK'nın geçici Forms
 yönetici rollerinin (`geçici`, `dk-read-only.sh --forms`'un alacağı) yokluğu hedef durumdur: tek bir
@@ -4293,8 +4293,8 @@ da `applied N change(s)`. Sıra: kuru → uygula → kuru 0.
 ### 33.3 Tek seferlik başlangıç ataması: `KEYCLOAK_RECONCILE_ONLY=tohum-atamalar`
 
 `config/app-assignments.json`'ın `initialAssignments`'ı (YETKI-MATRISI §6.3, Yusuf K1): SkyForms
-`skyforms:access` bütün en üst ekiplere (`/UYELER/<alan>/<ekip>`, alt ekipler miras alır); SkyMail
-`skymail:access` + `skymail:templates:read` bütün en üst ekiplerin `LIDERLER`/`KOORDINATORLER`
+`skyforms:access` bütün en üst ekiplere (`/UYELER/<alan>/<ekip>`, alt ekipler miras alır); SkyNotify
+`skynotify:access` + `skynotify:templates:read` bütün en üst ekiplerin `LIDERLER`/`KOORDINATORLER`
 gruplarına ve `/UYELER/ARGE/ALGOLAB`'a. Kuru koşu (`KEYCLOAK_RECONCILE_CHECK=true`) her eksik ataması
 için `YENI ATAMA <yol> <istemci> <rol> (<n> etkin üye)` yazar; grup ya da üst grubu rolü zaten
 taşıyorsa atlar, hiçbir şeyi kaldırmaz. Uygulama önce yedeği yazar
@@ -4335,7 +4335,7 @@ retler ve okuma hatası, `default-roles` (kuru → uygula → kuru 0). Tam uzla�
 
 Yusuf'un kararı (2026-10-24): SkyCloud (Nextcloud) yöneticileri `/ADMIN` ve `/UYELER/YK`. `skycloud`
 istemcisinin `admin` rolü yönetici rolüdür, kod alanındadır (YETKI-MATRISI §6.2). `core-roles` operatör
-adımı onu §25'teki SkyMail rolleri gibi iki köke **bir kez** verir ve işaretler
+adımı onu §25'teki SkyNotify rolleri gibi iki köke **bir kez** verir ve işaretler
 (`skylab.seeded-group-mappings`); sonraki değişiklik panelden ya da konsoldan kalır, adım geri almaz.
 `/ROLLER/SKYCLOUD-ADMIN`'in adlı kişileri yaprakta kalır (§26). Sıfırlama penceresi (ekip-yetkileri bilet
 06) Java dönemi realm rolü composite'lerinden gelen `admin`'i kaldırmadan önce bu tohum koşulur.
@@ -4583,3 +4583,37 @@ yazılır.
   yılda bir, dönem devriyle.
 - Sunucuda tek kişi vardır: Keycloak'ın kendisi bozulursa onarım sunucu yöneticisini bekler. Panel ve
   konsol üzerinden yapılabilen işleri konsol yazıcıları yürütür.
+
+## 36. SkyMail'den SkyNotify'a ad taşıması (ADR 0091, skynotify-ad 07)
+
+Bildirim servisinin Keycloak'taki adları tek pencerede SkyNotify olur. Bu sürümün uzlaştırıcısı ve
+SPI'ı (1.29.0) yalnız yeni adları bilir; eski adlı nesneleri `config/skynotify-rename.sh` yerinde
+taşır (README "SkyMail'den SkyNotify'a ad taşıması").
+
+| Eski | Yeni |
+| --- | --- |
+| istemciler `skymail`, `skymail-backend`, `skymail-seed` | `skynotify`, `skynotify-backend`, `skynotify-seed` (uuid, gizli anahtar, service account korunur) |
+| roller `skymail:*` | `skynotify:*` (id korunur) |
+| gruplar `/ROLLER/SKYMAIL-*` | `/ROLLER/SKYNOTIFY-*` (`display_name_tr`, `description_tr` metinleriyle) |
+| kapsamlar `skymail-api-audience`, `account-erase-skymail` | `skynotify-api-audience`, `account-erase-skynotify` |
+| eşleyiciler (ör. `account-api-skymail-audience`, `included.client.audience=skymail`) | `account-api-skynotify-audience`, `included.client.audience=skynotify` |
+| SPI `sky-mail`, ortam `SKY_MAIL_*`, `/run/secrets/sky-mail/` | `skynotify`, `SKYNOTIFY_*`, `/run/secrets/skynotify/` |
+
+Sıra (pencere sihirbazı, sky_lab_genel bilet 10):
+1. Sandbox realm'i (S6): betik `--realm e-skylab-sandbox` önce kuru, sonra `--apply`. İmaj yayını
+   yok; sandbox realm'inde uzlaştırıcı koşmaz.
+2. Production realm'i (P4): eski imaj ayaktayken betik `--realm e-skylab` önce kuru, sonra
+   `--apply`. Ardından tek Keycloak dağıtımı: yeni imaj, `SKYNOTIFY_*` ortamı ve
+   `/run/secrets/skynotify/client.secret` bağlaması aynı anda; Touch ID yayın kapısı geçerli. İki
+   realm aynı Keycloak'ta olduğundan girişler kısa süre etkilenir.
+3. Uzlaştırıcı yeni imajla koşar; taşınmış realm'de yeni bir nesne kurmaz (eşleyiciler adıyla
+   bulunur).
+
+Betik eski imajda da koşar (kcadm, JDK ve Jackson yeter); sihirbaz onu çalışan konteynere kopyalar.
+Kuru koşu her taşımayı ve taşınan her rolün kullanıcı ve grup sayısını basar; bir PROBLEM satırı
+varsa hiçbir şey yazılmaz. Pencereden önce iki realm'de de salt okur kuru koşu önerilir: beklenmeyen
+bir nesne (ör. `sky-mail` yazımı, yeni adın zaten var olması) pencereyi durdurmadan önce görülür.
+
+Geri alma (spec §4 geri alma 3): aynı betik `--reverse --apply`, önce eski imaj ve `SKY_MAIL_*`
+ortamı dönmeden. Nesneler ve metinler birebir eski hâline döner; id'ler değişmediği için eşlemeler
+yerinde kalır.

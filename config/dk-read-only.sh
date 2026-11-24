@@ -20,17 +20,17 @@
 #          the groups mode and through global:read in the both and roles modes), any client's
 #          cms:access, content:write and client:admin (a Site client's editor and tenant roles: where the
 #          client has content:read and the root lacks it, content:read is granted in their place),
-#          SkyMail's sending and writing roles and Place's roles;
+#          SkyNotify's sending and writing roles and Place's roles;
 #   forms  Forms' admin roles (FORMS_ROLES: skyforms:*, skyforms:feedback:*, as core's AdminRoles):
 #          kept until forms-backend reads skyforms:read-all (Fatih); --forms takes them away then;
-#   read   kept (READ_ROLES): core global:read, audit:read, users:read; SkyMail's reading roles;
+#   read   kept (READ_ROLES): core global:read, audit:read, users:read; SkyNotify's reading roles;
 #          content:read of any client; forms skyforms:read-all. "Kept" means this step never takes
 #          them away, not that the code expects them on DK: that is config/app-assignments.sh's (the
 #          reconciler's Privileged lists and config/site-editor-grants.sh). core users:read (the Forms
 #          service account's role, a Java era leftover on people; DK reads people through global:read)
-#          and SkyMail's templates:read and lists:read are not expected on DK, so the reset window
-#          (ekip-yetkileri ticket 06 c2) takes them away. SkyMail's skymail:access and mails:read are
-#          (Yusuf, 2026-11-22: DK reads the sends, and with skymail:audit:read who opened masked
+#          and SkyNotify's templates:read and lists:read are not expected on DK, so the reset window
+#          (ekip-yetkileri ticket 06 c2) takes them away. SkyNotify's skynotify:access and mails:read are
+#          (Yusuf, 2026-11-22: DK reads the sends, and with skynotify:audit:read who opened masked
 #          content; the reconciler's seed addition gives them): neither opens a send's content nor
 #          writes;
 #   app    kept (APP_ROLES, core's app roles bound to the holder; Yusuf 2026-10-14, Y1 and Y5): core's
@@ -107,7 +107,7 @@ READER_NAMES=(DK)
 # The lists are read through listed's nameref.
 # shellcheck disable=SC2034
 # client|role ("*": any client). core's are the contract table's (core-backend internal/authz/roles.go)
-# but global:read and url:access; the Site roles are inscribed's (ADR-0056); SkyMail's and Place's
+# but global:read and url:access; the Site roles are inscribed's (ADR-0056); SkyNotify's and Place's
 # write or send.
 WRITE_ROLES=(
   'core|event:manage' 'core|season:manage' 'core|ticket:manage' 'core|ticket:validate'
@@ -115,9 +115,9 @@ WRITE_ROLES=(
   'core|certificate:manage' 'core|users:manage' 'core|groups:manage' 'core|github:activity:read'
   'core|url:moderator'
   '*|cms:access' '*|content:write' '*|client:admin'
-  'skymail|skymail:announcements:send' 'skymail|skymail:templates:write' 'skymail|skymail:lists:write'
-  'skymail|skymail:mails:write' 'skymail|skymail:mails:send' 'skymail|skymail:mails:approve'
-  'skymail|skymail:suppressions:manage' 'skymail|skymail:unsubscribes:reactivate'
+  'skynotify|skynotify:announcements:send' 'skynotify|skynotify:templates:write' 'skynotify|skynotify:lists:write'
+  'skynotify|skynotify:mails:write' 'skynotify|skynotify:mails:send' 'skynotify|skynotify:mails:approve'
+  'skynotify|skynotify:suppressions:manage' 'skynotify|skynotify:unsubscribes:reactivate'
   'place|place:admin' 'place|place:moderator'
 )
 # Forms' admin roles (core-backend role_classes.go AdminRoles): kept until --forms.
@@ -133,9 +133,9 @@ APP_ROLES=(
 # shellcheck disable=SC2034
 READ_ROLES=(
   'core|global:read' 'core|audit:read' 'core|users:read'
-  'skymail|skymail:system-mails:read' 'skymail|skymail:access' 'skymail|skymail:templates:read'
-  'skymail|skymail:lists:read' 'skymail|skymail:mails:read' 'skymail|skymail:mails:tracking:read'
-  'skymail|skymail:audit:read'
+  'skynotify|skynotify:system-mails:read' 'skynotify|skynotify:access' 'skynotify|skynotify:templates:read'
+  'skynotify|skynotify:lists:read' 'skynotify|skynotify:mails:read' 'skynotify|skynotify:mails:tracking:read'
+  'skynotify|skynotify:audit:read'
   '*|content:read'
   'forms|skyforms:read-all'
 )
@@ -614,7 +614,7 @@ for path in "${roots[@]}"; do
     ancestor=${ancestor%/*}
   done
   declare -A reached=()
-  for client in core skymail place forms; do
+  for client in core skynotify place forms; do
     [[ $client != forms || $FORMS == remove ]] || continue
     lookup_client "$client"
     uuid=$CLIENT_UUID

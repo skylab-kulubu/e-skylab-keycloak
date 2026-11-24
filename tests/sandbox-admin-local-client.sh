@@ -5,7 +5,7 @@
 # volume, runs the script inside that container the way the wizard does and reads real tokens.
 #
 # Fixtures: realm e-skylab (production; must stay untouched) and realm e-skylab-sandbox with clients
-# core (roles event:manage, url:moderator), forms (forms:manage), skycms, skymail (skymail:access)
+# core (roles event:manage, url:moderator), forms (forms:manage), skycms, skynotify (skynotify:access)
 # and the panel's client superadmin shaped as the reconciler and inscribed-cms-roles.sh leave it:
 # confidential, fullScopeAllowed=false, every core and forms role in its role scope, the default
 # scopes admin-panel-api-audience (made from config/admin-panel-api-audience-mappers.json) and groups
@@ -317,12 +317,12 @@ printf '    e-skylab (by name), master and other-realm refused (exit 2) before a
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='fixture realm'
 kcadm create realms -s realm="$REALM" -s enabled=true -s adminEventsEnabled=true -s adminEventsDetailsEnabled=true >/dev/null
-for client in core forms skycms skymail; do
+for client in core forms skycms skynotify; do
   kcadm create clients -r "$REALM" -s "clientId=$client" -s publicClient=false -s standardFlowEnabled=false >/dev/null
 done
 for role in event:manage url:moderator; do kcadm create "clients/$(client_uuid core)/roles" -r "$REALM" -s "name=$role" >/dev/null; done
 kcadm create "clients/$(client_uuid forms)/roles" -r "$REALM" -s name=forms:manage >/dev/null
-kcadm create "clients/$(client_uuid skymail)/roles" -r "$REALM" -s name=skymail:access >/dev/null
+kcadm create "clients/$(client_uuid skynotify)/roles" -r "$REALM" -s name=skynotify:access >/dev/null
 # The realm scope groups writes full paths; it is not a realm default, superadmin has it by hand.
 groups_scope=$(kcadm create client-scopes -r "$REALM" -i -s name=groups -s protocol=openid-connect)
 kcadm create "client-scopes/$groups_scope/protocol-mappers/models" -r "$REALM" -b '{"name":"groups","protocol":"openid-connect","protocolMapper":"oidc-group-membership-mapper","config":{"full.path":"true","claim.name":"groups","multivalued":"true","access.token.claim":"true","id.token.claim":"true","userinfo.token.claim":"true","introspection.token.claim":"true"}}' >/dev/null
@@ -541,7 +541,7 @@ CURRENT_STAGE='drift is planned, then repaired'
 kcadm update "clients/$local_id" -r "$REALM" -s "redirectUris=[\"$CALLBACK\",\"https://evil.example/*\"]" -s 'webOrigins=["*"]' \
   -s fullScopeAllowed=true -s directAccessGrantsEnabled=true >/dev/null
 kcadm create "clients/$local_id/scope-mappings/realm" -r "$REALM" -b "$(kcadm get roles/offline_access -r "$REALM" | jq -c '[{id, name}]')" >/dev/null
-kcadm create "clients/$local_id/scope-mappings/clients/$(client_uuid skymail)" -r "$REALM" -b "$(role_ref skymail skymail:access)" >/dev/null
+kcadm create "clients/$local_id/scope-mappings/clients/$(client_uuid skynotify)" -r "$REALM" -b "$(role_ref skynotify skynotify:access)" >/dev/null
 kcadm delete "clients/$local_id/scope-mappings/clients/$(client_uuid core)" -r "$REALM" -b "$(role_ref core url:moderator)" >/dev/null
 kcadm delete "clients/$local_id/default-client-scopes/$groups_scope" -r "$REALM" >/dev/null
 kcadm update "clients/$local_id/optional-client-scopes/$(scope_uuid phone)" -r "$REALM" -n -b '{}' >/dev/null
@@ -559,7 +559,7 @@ expect_line "$drift" 'would set the web origins of admin-local to exactly http:/
 expect_line "$drift" 'would detach the optional scope phone from admin-local' 'phone not planned'
 expect_line "$drift" 'would attach the default scope groups to admin-local' 'groups not planned'
 expect_line "$drift" 'would remove the realm roles offline_access from the role scope of admin-local' 'realm role not planned'
-expect_line "$drift" 'would remove the skymail roles skymail:access from the role scope of admin-local' 'foreign role not planned'
+expect_line "$drift" 'would remove the skynotify roles skynotify:access from the role scope of admin-local' 'foreign role not planned'
 expect_line "$drift" 'would add the core roles url:moderator to the role scope of admin-local' 'missing core role not planned'
 expect_line "$drift" 'would repair mapper inscribed-roles on admin-local' 'inscribed-roles not planned'
 expect_line "$drift" 'would remove mapper stray (oidc-hardcoded-claim-mapper) from admin-local' 'stray mapper not planned'

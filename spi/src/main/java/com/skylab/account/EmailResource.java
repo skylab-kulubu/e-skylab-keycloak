@@ -32,7 +32,7 @@ import java.util.Set;
  *
  * <p>The School e-mail is never written here: it belongs to the YTÜ Microsoft link. Keycloak
  * {@code email} is the Primary e-mail, so switching the primary is a plain
- * {@link UserModel#setEmail} and every token, core and SkyMail follow it on their own.
+ * {@link UserModel#setEmail} and every token, core and SkyNotify follow it on their own.
  */
 public final class EmailResource {
 
@@ -46,7 +46,7 @@ public final class EmailResource {
     static final String SUBJECT_KEY = PersonalEmailVerification.SUBJECT_KEY;
     /**
      * {@code theme-resources/templates/{text,html}/} of this extension; no theme change needed.
-     * Public because the SkyMail mail provider routes this mail by exactly this name.
+     * Public because the SkyNotify mail provider routes this mail by exactly this name.
      */
     public static final String TEMPLATE = PersonalEmailVerification.TEMPLATE;
 
@@ -208,7 +208,7 @@ public final class EmailResource {
                 || address.equalsIgnoreCase(currentEmail);
     }
 
-    /** Chooses which of the two proven addresses Keycloak, the tokens, core and SkyMail see. */
+    /** Chooses which of the two proven addresses Keycloak, the tokens, core and SkyNotify see. */
     @POST
     @Path("primary")
     @Consumes(MediaType.APPLICATION_JSON)

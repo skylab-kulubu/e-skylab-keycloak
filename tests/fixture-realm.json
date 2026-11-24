@@ -50,8 +50,8 @@
       "serviceAccountsEnabled": true
     },
     {
-      "clientId": "skymail-backend",
-      "name": "SkyMail backend service account (fixture; production's KEYCLOAK_SERVICE_CLIENT_ID)",
+      "clientId": "skynotify-backend",
+      "name": "SkyNotify backend service account (fixture; production's KEYCLOAK_SERVICE_CLIENT_ID)",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,
@@ -61,8 +61,8 @@
       "serviceAccountsEnabled": true
     },
     {
-      "clientId": "skymail-seed",
-      "name": "SkyMail Template seed (fixture; production's is made by sky_lab_genel ops/wizards/skymail-seed-github-wizard.sh)",
+      "clientId": "skynotify-seed",
+      "name": "SkyNotify Template seed (fixture; production's is made by sky_lab_genel ops/wizards/skynotify-seed-github-wizard.sh)",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,
@@ -72,8 +72,8 @@
       "serviceAccountsEnabled": true
     },
     {
-      "clientId": "skymail",
-      "name": "SkyMail (fixture)",
+      "clientId": "skynotify",
+      "name": "SkyNotify (fixture)",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": true,
@@ -176,18 +176,18 @@
           "name": "certificate:issue"
         }
       ],
-      "skymail": [
+      "skynotify": [
         {
-          "name": "skymail:access",
-          "description": "fixture SkyMail role; skymail:mails:send is created by the harness after the first reconciliation"
+          "name": "skynotify:access",
+          "description": "fixture SkyNotify role; skynotify:mails:send is created by the harness after the first reconciliation"
         },
         {
-          "name": "skymail:lists:read",
-          "description": "fixture SkyMail role (core's service account holds it, reconciler service-roles step)"
+          "name": "skynotify:lists:read",
+          "description": "fixture SkyNotify role (core's service account holds it, reconciler service-roles step)"
         },
         {
-          "name": "skymail:lists:write",
-          "description": "fixture SkyMail role (core's service account holds it, reconciler service-roles step)"
+          "name": "skynotify:lists:write",
+          "description": "fixture SkyNotify role (core's service account holds it, reconciler service-roles step)"
         }
       ],
       "admin": [
@@ -237,14 +237,14 @@
       }
     },
     {
-      "username": "service-account-skymail-backend",
+      "username": "service-account-skynotify-backend",
       "enabled": true,
-      "serviceAccountClientId": "skymail-backend"
+      "serviceAccountClientId": "skynotify-backend"
     },
     {
-      "username": "service-account-skymail-seed",
+      "username": "service-account-skynotify-seed",
       "enabled": true,
-      "serviceAccountClientId": "skymail-seed"
+      "serviceAccountClientId": "skynotify-seed"
     },
     {
       "id": "11111111-1111-4111-8111-111111111111",
@@ -329,8 +329,8 @@
         "admin": [
           "content:read"
         ],
-        "skymail": [
-          "skymail:access"
+        "skynotify": [
+          "skynotify:access"
         ]
       },
       "groups": [

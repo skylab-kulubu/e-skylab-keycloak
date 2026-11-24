@@ -12,32 +12,32 @@ import java.util.Optional;
 import java.util.function.Supplier;
 
 /**
- * Sends Keycloak's system mails through SkyMail, and never at their expense.
+ * Sends Keycloak's system mails through SkyNotify, and never at their expense.
  *
- * <p>The mail's identity comes from {@link SkyMailEmailTemplateProvider} through the session; the
- * rendered subject and body Keycloak hands this provider are kept for the fallback. When SkyMail
+ * <p>The mail's identity comes from {@link SkyNotifyEmailTemplateProvider} through the session; the
+ * rendered subject and body Keycloak hands this provider are kept for the fallback. When SkyNotify
  * accepts the mail with {@code 201} nothing else happens. Otherwise — disabled provider, missing
- * template, refused or unreachable SkyMail, timeout, unobtainable token — the mail goes out over
- * Keycloak's own SMTP with its stock rendering and one {@code sky_mail_fallback} line records the
+ * template, refused or unreachable SkyNotify, timeout, unobtainable token — the mail goes out over
+ * Keycloak's own SMTP with its stock rendering and one {@code skynotify_fallback} line records the
  * fixed reason. The line carries the reason and the template key only: no address, link, token or
  * secret is ever logged.</p>
  */
-public final class SkyMailEmailSenderProvider implements EmailSenderProvider {
+public final class SkyNotifyEmailSenderProvider implements EmailSenderProvider {
 
     static final String FALLBACK_PROVIDER_ID = "default";
 
-    private static final Logger LOG = Logger.getLogger(SkyMailEmailSenderProvider.class);
+    private static final Logger LOG = Logger.getLogger(SkyNotifyEmailSenderProvider.class);
 
     private final KeycloakSession session;
-    private final SkyMailSettings settings;
-    private final SkyMailClient client;
+    private final SkyNotifySettings settings;
+    private final SkyNotifyClient client;
     private final Supplier<EmailSenderProvider> fallbackSender;
     private final Supplier<URI> realmIssuer;
 
-    SkyMailEmailSenderProvider(
+    SkyNotifyEmailSenderProvider(
             KeycloakSession session,
-            SkyMailSettings settings,
-            SkyMailClient client,
+            SkyNotifySettings settings,
+            SkyNotifyClient client,
             Supplier<EmailSenderProvider> fallbackSender,
             Supplier<URI> realmIssuer) {
         this.session = session;
@@ -56,8 +56,8 @@ public final class SkyMailEmailSenderProvider implements EmailSenderProvider {
     @Override
     public void send(Map<String, String> config, String address, String subject, String textBody,
             String htmlBody) throws EmailException {
-        SkyMailMessage message = takePendingMessage();
-        SkyMailFallback fallback = trySkyMail(message, address);
+        SkyNotifyMessage message = takePendingMessage();
+        SkyNotifyFallback fallback = trySkyNotify(message, address);
         if (fallback == null) {
             LOG.debug(sentLine(message));
             return;
@@ -75,34 +75,34 @@ public final class SkyMailEmailSenderProvider implements EmailSenderProvider {
      * Everything this provider says about a mail that fell back. The reason vocabulary is fixed
      * and the template key is a constant, so the line cannot carry an address, a link or a secret.
      */
-    static String fallbackLine(SkyMailFallback fallback, SkyMailMessage message) {
-        return "sky_mail_fallback reason=" + fallback.reason() + " template=" + templateKey(message);
+    static String fallbackLine(SkyNotifyFallback fallback, SkyNotifyMessage message) {
+        return "skynotify_fallback reason=" + fallback.reason() + " template=" + templateKey(message);
     }
 
-    static String sentLine(SkyMailMessage message) {
-        return "sky_mail_sent template=" + templateKey(message);
+    static String sentLine(SkyNotifyMessage message) {
+        return "skynotify_sent template=" + templateKey(message);
     }
 
-    private static String templateKey(SkyMailMessage message) {
+    private static String templateKey(SkyNotifyMessage message) {
         return message == null ? "none" : message.templateKey();
     }
 
-    /** The fallback reason, or {@code null} when SkyMail accepted the mail. */
-    private SkyMailFallback trySkyMail(SkyMailMessage message, String address) {
+    /** The fallback reason, or {@code null} when SkyNotify accepted the mail. */
+    private SkyNotifyFallback trySkyNotify(SkyNotifyMessage message, String address) {
         if (!settings.enabled() || client == null) {
-            return SkyMailFallback.DISABLED;
+            return SkyNotifyFallback.DISABLED;
         }
         if (message == null || address == null || address.isBlank()) {
-            return SkyMailFallback.NOT_MAPPED;
+            return SkyNotifyFallback.NOT_MAPPED;
         }
         URI issuer = null;
         if (settings.tokenUrl() == null) {
             issuer = realmIssuer.get();
             if (issuer == null) {
-                return SkyMailFallback.CONFIG;
+                return SkyNotifyFallback.CONFIG;
             }
         }
-        Optional<SkyMailFallback> outcome = client.send(message, address, issuer);
+        Optional<SkyNotifyFallback> outcome = client.send(message, address, issuer);
         return outcome.orElse(null);
     }
 
@@ -110,10 +110,10 @@ public final class SkyMailEmailSenderProvider implements EmailSenderProvider {
      * Takes the pending message off the session. A message is used by exactly one mail: a
      * Keycloak mail this provider does not template must not inherit the previous one.
      */
-    private SkyMailMessage takePendingMessage() {
-        Object pending = session.getAttribute(SkyMailMessage.SESSION_ATTRIBUTE);
-        session.removeAttribute(SkyMailMessage.SESSION_ATTRIBUTE);
-        return pending instanceof SkyMailMessage message ? message : null;
+    private SkyNotifyMessage takePendingMessage() {
+        Object pending = session.getAttribute(SkyNotifyMessage.SESSION_ATTRIBUTE);
+        session.removeAttribute(SkyNotifyMessage.SESSION_ATTRIBUTE);
+        return pending instanceof SkyNotifyMessage message ? message : null;
     }
 
     private EmailSenderProvider fallbackSender() throws EmailException {
@@ -131,7 +131,7 @@ public final class SkyMailEmailSenderProvider implements EmailSenderProvider {
 
     /**
      * The realm issuer this Keycloak is serving, used to derive the token endpoint when the
-     * operator did not pin {@code SKY_MAIL_TOKEN_URL}.
+     * operator did not pin {@code SKYNOTIFY_TOKEN_URL}.
      */
     static URI realmIssuer(URI baseUri, String realmName) {
         if (baseUri == null || realmName == null || realmName.isBlank()) {

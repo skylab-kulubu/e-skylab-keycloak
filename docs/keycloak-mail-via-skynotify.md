@@ -1,32 +1,38 @@
-# Keycloak sistem e-postaları SkyMail üzerinden (ADR-0045)
+# Keycloak sistem e-postaları SkyNotify üzerinden (ADR-0045)
 
 Keycloak'ın doğrulama, parola sıfırlama, e-posta değişikliği ve YTÜ bağlama
-postaları kulübün posta alanı olan SkyMail'in sistem şablonlarıyla yazılır ve
-SkyMail tarafından gönderilir. Metin değişikliği artık Keycloak sürümü
-gerektirmez. SkyMail kapalı, ulaşılamaz ya da postayı reddediyorsa posta
+postaları kulübün posta alanı olan SkyNotify'ın sistem şablonlarıyla yazılır ve
+SkyNotify tarafından gönderilir. Metin değişikliği artık Keycloak sürümü
+gerektirmez. SkyNotify kapalı, ulaşılamaz ya da postayı reddediyorsa posta
 Keycloak'ın kendi SMTP'siyle, değişmemiş stok şablonuyla yine de çıkar; güvenlik
-postaları SkyMail'i beklemez.
+postaları SkyNotify'ı beklemez.
 
 SPI iki sağlayıcı kaydeder (`e-skylab-spi`, `com.skylab.mail`):
 
 | Sağlayıcı | SPI | Kimlik | Görevi |
 | --- | --- | --- | --- |
-| `SkyMailEmailTemplateProviderFactory` | `emailTemplate` | `sky-mail` | Keycloak'ın hangi şablonu istediğini yakalar, üretimi stok `freemarker` sağlayıcısına bırakır |
-| `SkyMailEmailSenderProviderFactory` | `emailSender` | `sky-mail` | Postayı SkyMail'e POST eder, başarısızlıkta Keycloak'ın `default` göndericisine devreder |
+| `SkyNotifyEmailTemplateProviderFactory` | `emailTemplate` | `skynotify` | Keycloak'ın hangi şablonu istediğini yakalar, üretimi stok `freemarker` sağlayıcısına bırakır |
+| `SkyNotifyEmailSenderProviderFactory` | `emailSender` | `skynotify` | Postayı SkyNotify'a POST eder, başarısızlıkta Keycloak'ın `default` göndericisine devreder |
 
 İkisi de `order()` değeriyle Keycloak'ın kendi sağlayıcılarının önüne geçer;
 derleme seçeneği gerekmez. Devre dışıyken davranış birebir stok davranıştır.
+
+SPI 1.29.0'dan (ADR 0091) önce sağlayıcı kimliği `sky-mail`, ortam `SKY_MAIL_*`, gizli anahtar
+bağlaması `/run/secrets/sky-mail/client.secret` idi. Yeni imaj eski adları okumaz: production'da
+imaj, `SKYNOTIFY_*` ortamı ve `/run/secrets/skynotify/client.secret` bağlaması (Dokploy →
+Advanced → Volumes) aynı dağıtımda değişir. Eski ortamla açılan yeni imajda gönderici kapalı
+kalır ve postalar SMTP'den çıkar.
 
 ## Neden iki sağlayıcı
 
 Keycloak'ın `EmailSenderProvider` arayüzü göndericiye şablon kimliği değil,
 üretilmiş konu ve gövde verir; o noktada postanın hangi şablon olduğu
-kaybolmuştur. Bu yüzden `sky-mail` şablon sağlayıcısı stok `freemarker`
+kaybolmuştur. Bu yüzden `skynotify` şablon sağlayıcısı stok `freemarker`
 sağlayıcısını sarar: Keycloak'ın çağırdığı yöntemden (veya genel `send(...)`
-aşırı yüklemelerindeki `.ftl` adından) SkyMail şablon anahtarını ve değişkenleri
+aşırı yüklemelerindeki `.ftl` adından) SkyNotify şablon anahtarını ve değişkenleri
 çıkarır, bunları iki sağlayıcının da paylaştığı `KeycloakSession` üzerinde bir
 özniteliğe koyar ve üretimi olduğu gibi devrederek devam eder. Gönderici bu
-kaydı oturumdan alır (tek seferlik), SkyMail'e gönderir; stok üretim zaten
+kaydı oturumdan alır (tek seferlik), SkyNotify'a gönderir; stok üretim zaten
 yapılmış olduğu için geri düşüş gönderecek bir gövdeye her zaman sahiptir.
 
 Devir noktası thread-local değil oturum özniteliğidir: oturum tam olarak bir
@@ -35,9 +41,9 @@ postanın kapsamıdır, istekle birlikte atılır ve birim testinde sunucu
 
 ## Şablon eşlemesi
 
-Şablon anahtarları SkyMail'de `system: true` sistem şablonlarıdır.
+Şablon anahtarları SkyNotify'da `system: true` sistem şablonlarıdır.
 
-| Keycloak çağrısı | Keycloak gövde şablonu | SkyMail `template_key` | `subjectKey` |
+| Keycloak çağrısı | Keycloak gövde şablonu | SkyNotify `template_key` | `subjectKey` |
 | --- | --- | --- | --- |
 | `sendVerifyEmail` | `email-verification.ftl` | `keycloak.verify-email` | `emailVerificationSubject` |
 | `sendPasswordReset` | `password-reset.ftl` | `keycloak.reset-password` | `passwordResetSubject` |
@@ -46,14 +52,14 @@ postanın kapsamıdır, istekle birlikte atılır ve birim testinde sunucu
 | `send(...)` | `sky-personal-email-confirm.ftl` (`EmailResource.TEMPLATE`) | `keycloak.personal-email-confirm` | çağıranın konu anahtarı (`skyPersonalEmailConfirmSubject`) |
 | `send(...)` | `sky-login-code.ftl` (`EmailCodeAuthenticator.MAIL_TEMPLATE`) | `keycloak.login-code` | `skyLoginCodeSubject` (kayıt kodunda `skySignUpCodeSubject`) |
 | `send(...)` | `sky-account-erasure-notice.ftl` (`AccountErasureNotice.MAIL_TEMPLATE`) | `account.deletion-in-progress` | `skyAccountErasureNoticeSubject` |
-| `SkyMailNotice.sendLoginCodeAlarm` (şablon sağlayıcısız, düz metin yedekli) | — | `keycloak.login-code-alarm` | `skyLoginCodeAlarmHalfSubject` / `skyLoginCodeAlarmFullSubject` / `skyLoginCodeAlarmCeilingSubject` |
+| `SkyNotifyNotice.sendLoginCodeAlarm` (şablon sağlayıcısız, düz metin yedekli) | — | `keycloak.login-code-alarm` | `skyLoginCodeAlarmHalfSubject` / `skyLoginCodeAlarmFullSubject` / `skyLoginCodeAlarmCeilingSubject` |
 | `sendExecuteActions` | `executeActions.ftl` | `keycloak.generic` | `executeActionsSubject` |
 | `sendEvent`, `sendOrgInviteEmail`, `sendVerifiableCredentialOffer`, eşlenmemiş her `send(...)` | ilgili `.ftl` | `keycloak.generic` | Keycloak'ın konu anahtarı |
-| `sendSmtpTestEmail` | `email-test.ftl` | — (SkyMail'e gitmez) | — |
+| `sendSmtpTestEmail` | `email-test.ftl` | — (SkyNotify'a gitmez) | — |
 
 Eşlenmeyen bir posta sessizce kaybolmaz: `keycloak.generic` şablonuyla, gerçek
 Keycloak konu anahtarını `subjectKey` değişkeninde taşıyarak gider. SMTP test
-postası realm'in kendi SMTP ayarlarını kanıtlamak içindir; SkyMail'e hiç
+postası realm'in kendi SMTP ayarlarını kanıtlamak içindir; SkyNotify'a hiç
 uğramaz, bekleyen bir kayıt varsa da temizlenir.
 
 E-postayla girişin kodu (eskylab-login-ux 08) de genel `send(...)`'tan geçer ve
@@ -64,13 +70,13 @@ yer tutucu kişiyle (adres ve giriş sayfasının dili, hiçbir yere yazılmaz) 
 `skySignUpCodeSubject`, `firstName` ve `username` boş, SMTP yedeğindeki FreeMarker kopyası `purpose`'a
 göre kayıt metnini yazar. Posta istekten sonra arka planda, kendi
 oturumunda gönderilir; oturuma isteğin adresi (URI) verilir, token uç noktası ondan türetildiği için
-SkyMail yolu arka planda da çalışır. Genel günlük sınırın operatör alarmı alarm grubunun (varsayılan `/ADMIN`) her üyesine ayrı bir
-tek posta olarak gider (`keycloak-mailer`'ın `skymail:mails:send` yetkisiyle; SkyMail'in grup
-gönderimi `skymail:mails:write` isterdi): metni kodda kurulduğu için şablon sağlayıcısına uğramaz,
-SkyMail mesajı oturuma doğrudan yazılır (`SkyMailNotice`) ve SkyMail yoksa göndericiye verilen düz
-metin SMTP'den çıkar; SkyMail şablonu yarı, dolu ve yanlış kod tavanı (güvenlik incelemesi K2: günün
+SkyNotify yolu arka planda da çalışır. Genel günlük sınırın operatör alarmı alarm grubunun (varsayılan `/ADMIN`) her üyesine ayrı bir
+tek posta olarak gider (`keycloak-mailer`'ın `skynotify:mails:send` yetkisiyle; SkyNotify'ın grup
+gönderimi `skynotify:mails:write` isterdi): metni kodda kurulduğu için şablon sağlayıcısına uğramaz,
+SkyNotify mesajı oturuma doğrudan yazılır (`SkyNotifyNotice`) ve SkyNotify yoksa göndericiye verilen düz
+metin SMTP'den çıkar; SkyNotify şablonu yarı, dolu ve yanlış kod tavanı (güvenlik incelemesi K2: günün
 ilk hesabı tavana ulaştığında) durumlarını `subjectKey`'den ayırır. Sayılar (tavan, hesap sayısı) her
-postaya giden dokuz değişkende yoktur: SkyMail metni bunları sabit cümleyle söyler, düz metin yedeği
+postaya giden dokuz değişkende yoktur: SkyNotify metni bunları sabit cümleyle söyler, düz metin yedeği
 ve sunucu günlüğü (`sky_email_code_wrong_ceiling accounts=… ceiling=…`) sayıları taşır. Giriş kodu 8
 hanedir (Hesap Merkezi'nin kodu 6).
 
@@ -83,7 +89,7 @@ link değil 6 haneli bir kod taşır: `code` ve `codeExpirationMinutes`.
 
 ## Gövde değişkenleri
 
-SkyMail konuyu ve gövdeyi Go `text/template` ile üretir; eksik bir değişken
+SkyNotify konuyu ve gövdeyi Go `text/template` ile üretir; eksik bir değişken
 `<no value>` basar. Bu yüzden her posta dokuz değişkeni **her zaman** taşır,
 Keycloak bilmiyorsa boş string olarak:
 
@@ -97,12 +103,12 @@ Keycloak bilmiyorsa boş string olarak:
 | `firstName` | `user.firstName` |
 | `username` | `user.username` |
 | `realmDisplayName` | Realm görünen adı, yoksa Keycloak'ın kuralıyla baş harfi büyütülmüş realm adı |
-| `subjectKey` | Keycloak'ın konu anahtarı (konular SkyMail'de sabit Türkçe metindir) |
+| `subjectKey` | Keycloak'ın konu anahtarı (konular SkyNotify'da sabit Türkçe metindir) |
 
 İstek gövdesi:
 
 ```json
-POST {SKY_MAIL_BASE_URL}/v1/mail_tasks/single
+POST {SKYNOTIFY_BASE_URL}/v1/mail_tasks/single
 {
   "template_key": "keycloak.verify-email",
   "recipient_email": "...",
@@ -123,10 +129,10 @@ onayı gibi adres geçersiz kılan postalarda yeni adrese gider.
 
 Gönderici, realm'in token uç noktasından `keycloak-mailer` gizli istemcisiyle
 client credentials akışıyla token alır (HTTP Basic). Service account'un
-`skymail:access` ve `skymail:mails:send` rolleri ve aynı roller scope
-mapping'inde olmalıdır; token `resource_access.skymail.roles` içinde ikisini de
+`skynotify:access` ve `skynotify:mails:send` rolleri ve aynı roller scope
+mapping'inde olmalıdır; token `resource_access.skynotify.roles` içinde ikisini de
 taşır. Token bellekte, süresi dolmadan 30 saniye öncesine kadar önbelleklenir;
-SkyMail isteği reddederse önbellek hemen boşaltılır. Token hiçbir günlüğe,
+SkyNotify isteği reddederse önbellek hemen boşaltılır. Token hiçbir günlüğe,
 hiçbir `toString()` çıktısına girmez.
 
 ## Ortam değişkenleri
@@ -135,35 +141,35 @@ Hepsi fabrika ilklendirmesinde bir kez okunur ve doğrulanır.
 
 | Değişken | Varsayılan | Anlamı |
 | --- | --- | --- |
-| `SKY_MAIL_ENABLED` | `false` | `true` olmadıkça hiçbir şey doğrulanmaz, her posta SMTP'den çıkar |
-| `SKY_MAIL_BASE_URL` | — (etkinken zorunlu) | SkyMail API kökü; HTTPS, sorgu/parça ve kimlik bilgisi taşımaz. Paylaşılan bir API host'unda düz bir yol taşıyabilir (`/api/skymail`); nokta segmenti, kodlanmış karakter, boş segment ve sondaki `/v1` reddedilir. Uç nokta köke `/v1/mail_tasks/single` eklenerek kurulur |
-| `SKY_MAIL_CLIENT_ID` | `keycloak-mailer` (compose) | Gizli service account istemcisi |
-| `SKY_MAIL_CLIENT_SECRET_FILE` | `/run/secrets/sky-mail/client.secret` | Gizli anahtarın salt okunur bağlandığı mutlak dosya yolu |
-| `SKY_MAIL_CLIENT_SECRET` | — | Yalnız `SKY_HARNESS=1` ile (entegrasyon koşumu); başka yerde yok sayılır |
-| `SKY_MAIL_TOKEN_URL` | realm issuer'ından türetilir | Sabitlemek isteyen operatör için; `/protocol/openid-connect/token` ile bitmelidir |
-| `SKY_MAIL_TIMEOUT_MILLISECONDS` | `5000` | Toplam istek bütçesi, 1000–15000 arası. Bağlantı bütçesi bunun ve 2000 ms'nin küçüğüdür |
+| `SKYNOTIFY_ENABLED` | `false` | `true` olmadıkça hiçbir şey doğrulanmaz, her posta SMTP'den çıkar |
+| `SKYNOTIFY_BASE_URL` | — (etkinken zorunlu) | SkyNotify API kökü; HTTPS, sorgu/parça ve kimlik bilgisi taşımaz. Paylaşılan bir API host'unda düz bir yol taşıyabilir (`/api/skynotify`); nokta segmenti, kodlanmış karakter, boş segment ve sondaki `/v1` reddedilir. Uç nokta köke `/v1/mail_tasks/single` eklenerek kurulur |
+| `SKYNOTIFY_CLIENT_ID` | `keycloak-mailer` (compose) | Gizli service account istemcisi |
+| `SKYNOTIFY_CLIENT_SECRET_FILE` | `/run/secrets/skynotify/client.secret` | Gizli anahtarın salt okunur bağlandığı mutlak dosya yolu |
+| `SKYNOTIFY_CLIENT_SECRET` | — | Yalnız `SKY_HARNESS=1` ile (entegrasyon koşumu); başka yerde yok sayılır |
+| `SKYNOTIFY_TOKEN_URL` | realm issuer'ından türetilir | Sabitlemek isteyen operatör için; `/protocol/openid-connect/token` ile bitmelidir |
+| `SKYNOTIFY_TIMEOUT_MILLISECONDS` | `5000` | Toplam istek bütçesi, 1000–15000 arası. Bağlantı bütçesi bunun ve 2000 ms'nin küçüğüdür |
 
 Biçimi bozuk bir değer (HTTPS olmayan adres, aralık dışı süre, olanaksız istemci
 kimliği) operatör hatasıdır ve fabrikayı `IllegalStateException` ile
 başarısızlığa uğratır. Gizli anahtar dosyasının eksik ya da boş olması ise
 **kapalı tarafa düşer**: sağlayıcı devre dışı kalır, başlangıçta tek bir
-`sky_mail_disabled reason=secret_file_missing` (veya `…_empty`) uyarısı düşer ve
+`skynotify_disabled reason=secret_file_missing` (veya `…_empty`) uyarısı düşer ve
 her posta SMTP'den çıkmaya devam eder. Posta sunucusunun hiç açılmaması, geri
 düşen bir posta sunucusundan kötüdür.
 
-`SKY_MAIL_ENABLED` varsayılanı `false` olduğu için iyileştirilmiş imaj derlemesi
+`SKYNOTIFY_ENABLED` varsayılanı `false` olduğu için iyileştirilmiş imaj derlemesi
 (`kc.sh build`, her fabrikayı çalışma zamanı ortamı olmadan ilklendirir) hiçbir
 şey doğrulamaz ve gizli anahtara ihtiyaç duymaz.
 
 ## Geri düşüş
 
-201 dışındaki her yanıt gönderilmemiş sayılır. Özellikle **404**: SkyMail o
+201 dışındaki her yanıt gönderilmemiş sayılır. Özellikle **404**: SkyNotify o
 durumda kuyruk kaydı yazmaz, posta "gönderildi" sayılırsa sessizce kaybolur.
 Her geri düşüş, Keycloak'ın `default` göndericisine üretilmiş konu ve gövdeyle
 devreder ve tek satır günlük düşer:
 
 ```
-sky_mail_fallback reason=<sabit sözcük> template=<şablon anahtarı>
+skynotify_fallback reason=<sabit sözcük> template=<şablon anahtarı>
 ```
 
 | `reason` | Ne oldu | Günlük düzeyi |
@@ -172,11 +178,11 @@ sky_mail_fallback reason=<sabit sözcük> template=<şablon anahtarı>
 | `not_mapped` | Bu sağlayıcının şablonlamadığı bir posta (SMTP test postası) | DEBUG |
 | `config` | Realm issuer çözülemedi, çağrılacak token uç noktası yoktu | WARN |
 | `token` | Client credentials token'ı alınamadı | WARN |
-| `template_missing` | SkyMail 404: şablon anahtarı yok ya da arşivlenmiş | WARN |
+| `template_missing` | SkyNotify 404: şablon anahtarı yok ya da arşivlenmiş | WARN |
 | `refused` | Başka bir 4xx ya da 201 olmayan bir 2xx | WARN |
-| `unavailable` | SkyMail 5xx | WARN |
+| `unavailable` | SkyNotify 5xx | WARN |
 | `timeout` | İstek bütçesi içinde yanıt gelmedi | WARN |
-| `transport` | SkyMail'e ulaşılamadı | WARN |
+| `transport` | SkyNotify'a ulaşılamadı | WARN |
 | `response` | 201 geldi ama kullanılabilir bir görev kimliği yoktu | WARN |
 
 Sözcük dağarcığı kapalıdır ve satırda başka hiçbir şey yoktur: adres, bağlantı,
@@ -195,8 +201,8 @@ her `reason` için ayrı ayrı doğrular.
      keycloak-config --admin-user <admin> --apply
    ```
 
-   Betik `skymail` istemcisinin rollerini oluşturmaz; yoksa uyarır. SkyMail
-   tarafında `skymail:access` ve `skymail:mails:send` var olduktan sonra betiği
+   Betik `skynotify` istemcisinin rollerini oluşturmaz; yoksa uyarır. SkyNotify
+   tarafında `skynotify:access` ve `skynotify:mails:send` var olduktan sonra betiği
    yeniden çalıştırın.
 
 2. **Gizli anahtar dosyası.** Anahtarı Keycloak üretir, hiçbir betik yazdırmaz.
@@ -212,12 +218,12 @@ her `reason` için ayrı ayrı doğrular.
    chmod 0640 /opt/weblab/account-center-keycloak/credentials/mailer-client.secret
    ```
 
-   Dosya salt okunur olarak `/run/secrets/sky-mail/client.secret` yoluna
+   Dosya salt okunur olarak `/run/secrets/skynotify/client.secret` yoluna
    bağlanır. Keycloak konteynerde uid 1000, **gid 0** ile çalışır (ek grubu
    yoktur), bu yüzden dosyayı grup üzerinden okur: `root:root` sahipliği ve
    `0640` izni bunu verir. `root:1000` vermez. 1000 bir kullanıcı kimliğidir,
    sürecin grubu değildir; 2026-09-24'te production'da sağlayıcı bu yüzden
-   `sky_mail_disabled reason=secret_file_missing` dedi. `0600` de vermez.
+   `skynotify_disabled reason=secret_file_missing` dedi. `0600` de vermez.
    Dosyanın sonundaki satır sonu kırpılır.
 
    Anahtar her token isteğinde dosyadan okunur; döndürme için dosyanın içeriğini
@@ -230,25 +236,25 @@ her `reason` için ayrı ayrı doğrular.
    ve bağlama production'a ulaşmaz. Dokploy'da:
    - Advanced → Volumes → Bind Mount: host yolu
      `/opt/weblab/account-center-keycloak/credentials/mailer-client.secret`,
-     bağlama yolu `/run/secrets/sky-mail/client.secret` ("File Mount" değil:
+     bağlama yolu `/run/secrets/skynotify/client.secret` ("File Mount" değil:
      o, anahtarı Dokploy veritabanına kopyalar);
-   - Environment: `SKY_MAIL_ENABLED=true`,
-     `SKY_MAIL_BASE_URL=https://api.yildizskylab.com/api/skymail` ve
-     `SKY_MAIL_CLIENT_ID=keycloak-mailer` (Compose varsayılanı burada yoktur);
+   - Environment: `SKYNOTIFY_ENABLED=true`,
+     `SKYNOTIFY_BASE_URL=https://api.yildizskylab.com/api/skynotify` ve
+     `SKYNOTIFY_CLIENT_ID=keycloak-mailer` (Compose varsayılanı burada yoktur);
    - Deploy. Compose ile çalışan ortamlarda aynı değerler `.env`'e yazılıp
-     `keycloak` servisi yeniden başlatılır. Açılışta `sky_mail_enabled client=keycloak-mailer`
-   satırını arayın; `sky_mail_disabled reason=…` görürseniz dosya bağlaması ya
+     `keycloak` servisi yeniden başlatılır. Açılışta `skynotify_enabled client=keycloak-mailer`
+   satırını arayın; `skynotify_disabled reason=…` görürseniz dosya bağlaması ya
    da izinleri eksiktir.
 
 4. **Realm SMTP'si kalır.** Geri düşüş realm'in kendi SMTP ayarlarını kullanır;
-   `emailTheme` ve SMTP yapılandırması olduğu gibi bırakılır. SkyMail kapalıyken
+   `emailTheme` ve SMTP yapılandırması olduğu gibi bırakılır. SkyNotify kapalıyken
    davranış stok Keycloak davranışıdır.
 
-## SkyMail tarafı
+## SkyNotify tarafı
 
-Sistem şablonları SkyMail'de `system: true` işaretlidir ve arşivlenemez; arşiv
+Sistem şablonları SkyNotify'da `system: true` işaretlidir ve arşivlenemez; arşiv
 denemesi `409` döner. Yanlışlıkla arşivlenmiş ya da silinmiş bir şablonu geri
-getirmek için SkyMail'in tohumlama çağrısı yeniden çalıştırılır:
+getirmek için SkyNotify'ın tohumlama çağrısı yeniden çalıştırılır:
 `PUT /v1/templates/by-key/:key`. Bu çağrı şablonu anahtarıyla yeniden yazar, yani
 tohumlamayı yinelemek bozulmuş bir sistem şablonunu onarır. Gönderici bu arada
 404'ü `template_missing` olarak görür ve postaları SMTP'den çıkarmaya devam eder.
@@ -260,19 +266,19 @@ değişkenin her zaman gönderildiğini, 201/404/4xx/5xx/zaman aşımı sınıfl
 token önbelleğini ve yenilenmesini, gizli anahtar dosyasının okunmasını, kapalı
 tarafa düşmeyi ve günlüklerin hiçbir hassas değer taşımadığını doğrular.
 
-Entegrasyon koşumunda (`tests/run-integration.sh`, `skymail` fixture'ı) gerçek
+Entegrasyon koşumunda (`tests/run-integration.sh`, `skynotify` fixture'ı) gerçek
 `keycloak-mailer` service account'u gerçek bir token alır, doğrulama postası
 eşlenen şablon anahtarı ve altı değişkeniyle bir kez gönderilir, fixture'ın 404
 ve 500 döndüğü iki durumda geri düşüş tetiklenir ve posta fixture'ın SMTP
 havuzuna yine de ulaşır.
 
-> **`SKY_MAIL_BASE_URL` API'nin kökü olmalı, arayüzün değil.** `https://mail.yildizskylab.com`
-> SkyMail'in tek sayfalık uygulamasıdır ve her yola HTML döndürür; oraya yapılan
+> **`SKYNOTIFY_BASE_URL` API'nin kökü olmalı, arayüzün değil.** `https://mail.yildizskylab.com`
+> SkyNotify'ın tek sayfalık uygulamasıdır ve her yola HTML döndürür; oraya yapılan
 > `POST /v1/mail_tasks/single` 200 + HTML alır. Gönderici yalnız 201'i gönderildi saydığı için
-> bu hatada her posta sessizce SMTP yedeğine düşer, SkyMail hiçbir şey görmez. Doğru değer
-> core'un `SKYMAIL_URL`'siyle aynı kök: `https://api.yildizskylab.com/api/skymail`
+> bu hatada her posta sessizce SMTP yedeğine düşer, SkyNotify hiçbir şey görmez. Doğru değer
+> core'un `SKYNOTIFY_URL`'siyle aynı kök: `https://api.yildizskylab.com/api/skynotify`
 > (kimliksiz istek 403 döner — API'nin orada olduğunu gösterir).
 >
 > 2026-09-23'e kadar gönderici yol taşıyan bir kökü reddediyordu; bu değerle Keycloak
-> `SKY_MAIL_BASE_URL must carry no path.` diyerek açılmadı (Swarm eski görevi ayakta tuttu).
+> `SKYNOTIFY_BASE_URL must carry no path.` diyerek açılmadı (Swarm eski görevi ayakta tuttu).
 > SPI artık düz bir yolu kabul ediyor.

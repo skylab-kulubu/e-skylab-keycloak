@@ -20,10 +20,10 @@
 # the Admin Console made it in production, so the first reconciliation must adopt it in place.
 #
 # The sites' scopes come from reconcile_login_clients, which also narrows frontend-main,
-# frontend-arge and skymail (admin-token-authz 16-18): aud skycms from the shared skycms-audience
-# scope, no full scope, no role scope mapping, and no groups on SkyMail. The fixture's skymail is
+# frontend-arge and skynotify (admin-token-authz 16-18): aud skycms from the shared skycms-audience
+# scope, no full scope, no role scope mapping, and no groups on SkyNotify. The fixture's skynotify is
 # narrowed by the first reconciliation, the sites by the second; a real login of a person holding
-# roles of core, admin and skymail then shows the narrowed tokens. tests/login-clients.sh proves the
+# roles of core, admin and skynotify then shows the narrowed tokens. tests/login-clients.sh proves the
 # step in depth against production-shaped clients.
 #
 # skyforms also gets the groups claim from its own scope skyforms-groups (Forms' sidebar label reads
@@ -40,8 +40,8 @@ LCA_FRONTEND_ARGE_SCOPE=frontend-arge-core-audience
 LCA_SKYFORMS_REDIRECT=https://forms.yildizskylab.com/api/auth/callback/keycloak
 LCA_FRONTEND_MAIN_REDIRECT=https://yildizskylab.com/api/auth/callback/keycloak
 LCA_FRONTEND_ARGE_REDIRECT=https://arge.yildizskylab.com/api/auth/callback/keycloak
-LCA_SKYMAIL_REDIRECT=https://mail.yildizskylab.com/api/auth/callback/keycloak
-# sky-app's public client signs in with its own scheme (fixture realm); the inbox needs aud skymail (iletisim-servisi 04).
+LCA_SKYNOTIFY_REDIRECT=https://mail.yildizskylab.com/api/auth/callback/keycloak
+# sky-app's public client signs in with its own scheme (fixture realm); the inbox needs aud skynotify (iletisim-servisi 04).
 LCA_SKYAPP_REDIRECT=com.yildizskylab.skyapp:/oauth/callback
 LCA_HAND_MADE_SCOPE_UUID=''
 LCA_HAND_MADE_MAPPER_UUID=''
@@ -91,10 +91,10 @@ stage_login_audiences_after_first_reconciliation() {
     || fail 'the first reconciliation did not report skipping the missing frontend-main client'
   [[ -z $(lca_scope_uuids skycms-audience) ]] \
     || fail 'the reconciler created skycms-audience although no site client exists'
-  grep -Fq '[reconcile] client skymail (no full scope): updated (fullScopeAllowed)' "$log" \
-    || fail 'the first reconciliation did not narrow the skymail client'
-  grep -Fq '[reconcile] client scope skymail-api-audience: created' "$log" \
-    || fail 'the first reconciliation did not make the SkyMail audience scope'
+  grep -Fq '[reconcile] client skynotify (no full scope): updated (fullScopeAllowed)' "$log" \
+    || fail 'the first reconciliation did not narrow the skynotify client'
+  grep -Fq '[reconcile] client scope skynotify-api-audience: created' "$log" \
+    || fail 'the first reconciliation did not make the SkyNotify audience scope'
   grep -Fq "[reconcile] client scope $LCA_SKYFORMS_CORE_SCOPE: created" "$log" \
     || fail 'the first reconciliation did not make the skyforms core audience scope'
   [[ -z $(lca_scope_uuids "$LCA_FRONTEND_MAIN_SCOPE") ]] \
@@ -292,7 +292,7 @@ stage_login_audiences_after_second_reconciliation() {
   lca_assert_client frontend-arge "$LCA_FRONTEND_ARGE_SCOPE" core-audience core "$LCA_FRONTEND_ARGE_REDIRECT"
 
   # The narrowed login clients (reconcile_login_clients): the admin panel's fixture person holds
-  # roles of core, admin and skymail and the group /UYELER/YK.
+  # roles of core, admin and skynotify and the group /UYELER/YK.
   local client redirect
   grep -Fq '[reconcile] client scope skycms-audience: created' "$log" \
     || fail 'the second reconciliation did not make the shared skycms-audience scope'
@@ -306,44 +306,44 @@ stage_login_audiences_after_second_reconciliation() {
       '((.aud | if type == "array" then . else [.] end) | sort) == ["core", "skycms"] and (has("realm_access") | not) and ((.resource_access // {}) | length) == 0' \
       "the $client token is not narrowed to aud core and skycms without other clients' or realm roles"
   done
-  lca_login skymail "$LCA_SKYMAIL_REDIRECT" '' "$AP_USER" "$AP_PASSWORD" 'openid email profile'
+  lca_login skynotify "$LCA_SKYNOTIFY_REDIRECT" '' "$AP_USER" "$AP_PASSWORD" 'openid email profile'
   json_assert "$LCA_ACCESS_PAYLOAD" \
-    '(.aud | if type == "array" then . else [.] end) == ["skymail"] and .resource_access == {"skymail": {"roles": ["skymail:access"]}} and (has("realm_access") | not) and (has("groups") | not)' \
-    'the skymail token is not narrowed to aud skymail and its own roles without groups'
+    '(.aud | if type == "array" then . else [.] end) == ["skynotify"] and .resource_access == {"skynotify": {"roles": ["skynotify:access"]}} and (has("realm_access") | not) and (has("groups") | not)' \
+    'the skynotify token is not narrowed to aud skynotify and its own roles without groups'
 
-  # The in-app inbox (iletisim-servisi 04 and 08): a person's sky-app access token names skymail beside
-  # account-center (skymail-api-audience, a default scope of skyapp), carries no client_id (SkyMail's person
-  # endpoints refuse a token with one: 403 auth.person_required), and the ID token does not name skymail. The
-  # audience fixture person holds no skymail role: the audience comes from the scope, not audience-resolve.
+  # The in-app inbox (iletisim-servisi 04 and 08): a person's sky-app access token names skynotify beside
+  # account-center (skynotify-api-audience, a default scope of skyapp), carries no client_id (SkyNotify's person
+  # endpoints refuse a token with one: 403 auth.person_required), and the ID token does not name skynotify. The
+  # audience fixture person holds no skynotify role: the audience comes from the scope, not audience-resolve.
   lca_login skyapp "$LCA_SKYAPP_REDIRECT"
   json_assert "$LCA_ACCESS_PAYLOAD" \
-    '.azp == "skyapp" and ((.aud | if type == "array" then . else [.] end) | (index("skymail") != null and index("account-center") != null)) and (has("client_id") | not)' \
-    'the skyapp access token does not name skymail and account-center, or carries client_id'
-  json_assert "$LCA_ID_PAYLOAD" '((.aud | if type == "array" then . else [.] end) | index("skymail")) == null' \
-    'the skyapp ID token names skymail'
+    '.azp == "skyapp" and ((.aud | if type == "array" then . else [.] end) | (index("skynotify") != null and index("account-center") != null)) and (has("client_id") | not)' \
+    'the skyapp access token does not name skynotify and account-center, or carries client_id'
+  json_assert "$LCA_ID_PAYLOAD" '((.aud | if type == "array" then . else [.] end) | index("skynotify")) == null' \
+    'the skyapp ID token names skynotify'
   # Another login client's person token does not get it: frontend-main's is exactly core and skycms (above),
-  # and with the audience fixture person (no skymail role) neither does skyforms'.
+  # and with the audience fixture person (no skynotify role) neither does skyforms'.
   lca_login skyforms "$LCA_SKYFORMS_REDIRECT"
-  json_assert "$LCA_ACCESS_PAYLOAD" '((.aud | if type == "array" then . else [.] end) | index("skymail")) == null' \
-    'the skyforms access token names skymail'
+  json_assert "$LCA_ACCESS_PAYLOAD" '((.aud | if type == "array" then . else [.] end) | index("skynotify")) == null' \
+    'the skyforms access token names skynotify'
 }
 
 # Part of v2_state_snapshot: what the no-op reconciliation must leave byte for byte.
 lca_state_snapshot() {
   local client_id scope_name client_uuid scope_uuid
-  for client_id in skyforms frontend-main frontend-arge skymail; do
+  for client_id in skyforms frontend-main frontend-arge skynotify; do
     client_uuid=$(lca_client_uuid "$client_id")
     # Keycloak lists a client's scopes in hash-map order; compare them as sets.
     kcadm get "clients/$client_uuid/default-client-scopes" -r "$V2_REALM" -c | jq -c 'sort_by(.id)'
     kcadm get "clients/$client_uuid/optional-client-scopes" -r "$V2_REALM" -c | jq -c 'sort_by(.id)'
   done
-  for client_id in frontend-main frontend-arge skymail; do
+  for client_id in frontend-main frontend-arge skynotify; do
     client_uuid=$(lca_client_uuid "$client_id")
     kcadm get "clients/$client_uuid" -r "$V2_REALM" -c
     kcadm get "clients/$client_uuid/scope-mappings" -r "$V2_REALM" -c | jq -c '{realmMappings: ((.realmMappings // []) | sort_by(.id)), clientMappings: ((.clientMappings // {}) | map_values(.mappings | sort_by(.id)))}'
     kcadm get "clients/$client_uuid/protocol-mappers/models" -r "$V2_REALM" -c | jq -c 'sort_by(.id)'
   done
-  for scope_name in "$LCA_SKYFORMS_SCOPE" "$LCA_SKYFORMS_GROUPS_SCOPE" "$LCA_SKYFORMS_CORE_SCOPE" "$LCA_FRONTEND_MAIN_SCOPE" "$LCA_FRONTEND_ARGE_SCOPE" skycms-audience skymail-api-audience; do
+  for scope_name in "$LCA_SKYFORMS_SCOPE" "$LCA_SKYFORMS_GROUPS_SCOPE" "$LCA_SKYFORMS_CORE_SCOPE" "$LCA_FRONTEND_MAIN_SCOPE" "$LCA_FRONTEND_ARGE_SCOPE" skycms-audience skynotify-api-audience; do
     scope_uuid=$(lca_scope_uuids "$scope_name")
     kcadm get "client-scopes/$scope_uuid" -r "$V2_REALM" -c
     kcadm get "client-scopes/$scope_uuid/protocol-mappers/models" -r "$V2_REALM" -c

@@ -32,60 +32,60 @@
       "description_tr": "Yıldız Place'te moderatör oturumu açar (place:moderator, ADR 0060)."
     },
     {
-      "name": "SKYMAIL-ACCESS",
-      "client": "skymail",
-      "roles": ["skymail:access"],
-      "display_name_tr": "SkyMail: erişim",
-      "description_tr": "SkyMail'e girer (skymail:access); diğer SkyMail rolleri bunun üstüne eklenir."
+      "name": "SKYNOTIFY-ACCESS",
+      "client": "skynotify",
+      "roles": ["skynotify:access"],
+      "display_name_tr": "SkyNotify: erişim",
+      "description_tr": "SkyNotify'a girer (skynotify:access); diğer SkyNotify rolleri bunun üstüne eklenir."
     },
     {
-      "name": "SKYMAIL-TEMPLATES-READ",
-      "client": "skymail",
-      "roles": ["skymail:templates:read"],
-      "display_name_tr": "SkyMail: şablonları görür",
-      "description_tr": "SkyMail şablonlarını görür (skymail:templates:read)."
+      "name": "SKYNOTIFY-TEMPLATES-READ",
+      "client": "skynotify",
+      "roles": ["skynotify:templates:read"],
+      "display_name_tr": "SkyNotify: şablonları görür",
+      "description_tr": "SkyNotify şablonlarını görür (skynotify:templates:read)."
     },
     {
-      "name": "SKYMAIL-TEMPLATES-WRITE",
-      "client": "skymail",
-      "roles": ["skymail:templates:write"],
-      "display_name_tr": "SkyMail: şablon yazar",
-      "description_tr": "SkyMail şablonlarını oluşturur ve değiştirir (skymail:templates:write)."
+      "name": "SKYNOTIFY-TEMPLATES-WRITE",
+      "client": "skynotify",
+      "roles": ["skynotify:templates:write"],
+      "display_name_tr": "SkyNotify: şablon yazar",
+      "description_tr": "SkyNotify şablonlarını oluşturur ve değiştirir (skynotify:templates:write)."
     },
     {
-      "name": "SKYMAIL-LISTS-READ",
-      "client": "skymail",
-      "roles": ["skymail:lists:read"],
-      "display_name_tr": "SkyMail: listeleri görür",
-      "description_tr": "SkyMail posta listelerini ve alıcılarını görür (skymail:lists:read)."
+      "name": "SKYNOTIFY-LISTS-READ",
+      "client": "skynotify",
+      "roles": ["skynotify:lists:read"],
+      "display_name_tr": "SkyNotify: listeleri görür",
+      "description_tr": "SkyNotify posta listelerini ve alıcılarını görür (skynotify:lists:read)."
     },
     {
-      "name": "SKYMAIL-LISTS-WRITE",
-      "client": "skymail",
-      "roles": ["skymail:lists:write"],
-      "display_name_tr": "SkyMail: liste yazar",
-      "description_tr": "SkyMail posta listelerini oluşturur, değiştirir, alıcı ekler ve çıkarır (skymail:lists:write)."
+      "name": "SKYNOTIFY-LISTS-WRITE",
+      "client": "skynotify",
+      "roles": ["skynotify:lists:write"],
+      "display_name_tr": "SkyNotify: liste yazar",
+      "description_tr": "SkyNotify posta listelerini oluşturur, değiştirir, alıcı ekler ve çıkarır (skynotify:lists:write)."
     },
     {
-      "name": "SKYMAIL-MAILS-READ",
-      "client": "skymail",
-      "roles": ["skymail:mails:read"],
-      "display_name_tr": "SkyMail: gönderimleri görür",
-      "description_tr": "SkyMail gönderimlerini görür, kuyruktaki alıcı adları, adresleri ve teslim durumu dahil (skymail:mails:read)."
+      "name": "SKYNOTIFY-MAILS-READ",
+      "client": "skynotify",
+      "roles": ["skynotify:mails:read"],
+      "display_name_tr": "SkyNotify: gönderimleri görür",
+      "description_tr": "SkyNotify gönderimlerini görür, kuyruktaki alıcı adları, adresleri ve teslim durumu dahil (skynotify:mails:read)."
     },
     {
-      "name": "SKYMAIL-MAILS-WRITE",
-      "client": "skymail",
-      "roles": ["skymail:mails:write"],
-      "display_name_tr": "SkyMail: gönderim yapar",
-      "description_tr": "SkyMail'den Mail onayı olmadan gönderim yapar (skymail:mails:write)."
+      "name": "SKYNOTIFY-MAILS-WRITE",
+      "client": "skynotify",
+      "roles": ["skynotify:mails:write"],
+      "display_name_tr": "SkyNotify: gönderim yapar",
+      "description_tr": "SkyNotify'dan Mail onayı olmadan gönderim yapar (skynotify:mails:write)."
     },
     {
-      "name": "SKYMAIL-MAILS-APPROVE",
-      "client": "skymail",
-      "roles": ["skymail:mails:approve"],
-      "display_name_tr": "SkyMail: gönderim onaylar",
-      "description_tr": "Mail onayı isteklerini onaylar ya da reddeder (skymail:mails:approve, ADR-0031)."
+      "name": "SKYNOTIFY-MAILS-APPROVE",
+      "client": "skynotify",
+      "roles": ["skynotify:mails:approve"],
+      "display_name_tr": "SkyNotify: gönderim onaylar",
+      "description_tr": "Mail onayı isteklerini onaylar ya da reddeder (skynotify:mails:approve, ADR-0031)."
     },
     {
       "name": "CF-ZERO-TRUST-ACCESS",

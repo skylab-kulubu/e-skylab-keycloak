@@ -1,11 +1,11 @@
 [
   {
-    "name": "skymail-audience",
+    "name": "skynotify-audience",
     "protocol": "openid-connect",
     "protocolMapper": "oidc-audience-mapper",
     "consentRequired": false,
     "config": {
-      "included.client.audience": "skymail",
+      "included.client.audience": "skynotify",
       "id.token.claim": "false",
       "access.token.claim": "true",
       "introspection.token.claim": "true"

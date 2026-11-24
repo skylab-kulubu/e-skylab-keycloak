@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # One-off, idempotent provisioning of the core-erasure service-account client (account erasure,
-# ADR-0051, ticket 03). core sends SkyMail, CMS and Forms an Account erasure command each; the
+# ADR-0051, ticket 03). core sends SkyNotify, CMS and Forms an Account erasure command each; the
 # token for one service must not carry another service's erase role. In this order it
-#   1. requires the resource clients skymail, skycms and forms and the scopes basic and roles;
+#   1. requires the resource clients skynotify, skycms and forms and the scopes basic and roles;
 #      when one is missing it stops and writes nothing;
-#   2. creates the erase roles skymail:account:erase (skymail), cms:account:erase (skycms) and
+#   2. creates the erase roles skynotify:account:erase (skynotify), cms:account:erase (skycms) and
 #      skyforms:account:erase (forms) when they are missing;
-#   3. keeps the optional client scopes account-erase-skymail, account-erase-cms and
+#   3. keeps the optional client scopes account-erase-skynotify, account-erase-cms and
 #      account-erase-forms at exactly one audience mapper (aud = the resource client) and one
 #      role scope mapping (that service's erase role, nothing else);
 #   4. creates or repairs the confidential client core-erasure: service account only (standard,

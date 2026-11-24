@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Real-Keycloak contract for the reconciler's login client step (reconcile_login_clients in
 # config/reconcile-account-center.sh; ADR-0058, ADR-0059; admin-token-authz tickets 16, 17, 18):
-# frontend-main, frontend-arge and skymail narrowed to the APIs their apps call. Stand-alone: starts
+# frontend-main, frontend-arge and skynotify narrowed to the APIs their apps call. Stand-alone: starts
 # the stock Keycloak image this repository builds on (the Dockerfile's KEYCLOAK_IMAGE) in dev mode
 # with docker run --rm and no volume, copies config/ into it and runs the step alone with the
 # harness's kcadm session (KEYCLOAK_RECONCILE_KCADM_CONFIG + KEYCLOAK_RECONCILE_ONLY=login-clients),
@@ -13,7 +13,7 @@
 # hand-made frontend-main-core-audience scope and the shared skycms-audience scope as production has
 # it (one audience-mapper that names no audience: skycms reached the sites' tokens only through
 # audience-resolve); frontend-arge confidential with a service account and frontend-arge-core-audience;
-# skymail public (PKCE) with the realm scope groups and Keycloak's optional microprofile-jwt; the CMS
+# skynotify public (PKCE) with the realm scope groups and Keycloak's optional microprofile-jwt; the CMS
 # roles, the flat roles mapper and the groups mapper from inscribed-cms-roles.sh; skyapp (public, full
 # scope) for SkyApp's CMS editing. The people hold what the admin panel grants (runbook §12) plus, for
 # the Privileged person, roles of eight other clients and nine realm roles, as production's admin token
@@ -26,7 +26,7 @@
 #     site's cms:access although inscribed would refuse every arge write (no content:write in roles);
 #   - the step adopts the hand-made scopes in place, repairs the shared skycms-audience (the empty
 #     mapper is pruned, skycms-audience added), clears the clients' role scope (a realm and a foreign
-#     role mapped by hand), takes groups out of SkyMail's token only (the realm scope groups and
+#     role mapped by hand), takes groups out of SkyNotify's token only (the realm scope groups and
 #     microprofile-jwt stay realm defaults and stay on the sites) and turns full scope off; secrets,
 #     redirect URIs and the clients' own mappers are unchanged;
 #   - after it, real logins (authorization code, PKCE, openid email profile) give: the sites aud
@@ -34,12 +34,12 @@
 #     the sites, core and inscribed read (azp, sub, e-mail, name, flat roles, own roles, full-path
 #     groups) equal to before, for the Privileged person, a team leader and a plain member (who now
 #     also gets aud skycms); the sites' service-account tokens keep aud skycms and content:read +
-#     schema:sync; SkyMail aud exactly skymail, resource_access only skymail with the same roles, no
-#     groups, no realm_access, the same sub and scope, and Keycloak userinfo (SkyMail's backend) still
+#     schema:sync; SkyNotify aud exactly skynotify, resource_access only skynotify with the same roles, no
+#     groups, no realm_access, the same sub and scope, and Keycloak userinfo (SkyNotify's backend) still
 #     answers with sub, name and e-mail; every token is smaller;
 #   - the DK member's arge editor gate is shut after the step (the intended F15 fix), while the
 #     main site's gate stays open for them;
-#   - sessions opened before the step (main site, arge, SkyMail) get the narrowed token on their next
+#   - sessions opened before the step (main site, arge, SkyNotify) get the narrowed token on their next
 #     refresh, with the same claims: nobody has to sign in again;
 #   - a second run writes nothing (no admin event); inscribed-cms-roles.sh --check plans nothing;
 #     skyapp-cms-editor.sh --apply now passes its skycms-audience prerequisite and SkyApp gets its CMS
@@ -53,11 +53,11 @@
 #     the same scope attributes and the same mapper as the step, byte for byte, and the step then
 #     writes nothing;
 #   - drift (full scope on, a realm and a foreign role in the role scope, skycms-audience among the
-#     optional scopes and its mapper changed, a foreign mapper in it, groups back on SkyMail through
-#     the realm scope and a client mapper, SkyMail's audience scope detached) is repaired;
+#     optional scopes and its mapper changed, a foreign mapper in it, groups back on SkyNotify through
+#     the realm scope and a client mapper, SkyNotify's audience scope detached) is repaired;
 #   - in the sandbox realm, frontend-main made by site-clients.sh --site main and frontend-arge made
 #     by sandbox-site-clients.sh: the step only attaches skycms-audience to frontend-arge, warns about
-#     the missing skymail, and afterwards site-clients.sh, sandbox-site-clients.sh and
+#     the missing skynotify, and afterwards site-clients.sh, sandbox-site-clients.sh and
 #     inscribed-cms-roles.sh --check plan nothing (the scripts agree).
 # A table of the token sizes before and after is printed at the end.
 # Requirements on the host: docker, curl, jq, openssl, base64. LOGIN_CLIENTS_TEST_PORT (default
@@ -219,7 +219,7 @@ service_tokens() {
     --data-urlencode grant_type=client_credentials --data-urlencode "client_id=$1" --data-urlencode 'client_secret@-'
 }
 # refresh CLIENT RESPONSE [REALM]: the refresh grant of a session (no scope parameter, as the sites'
-# NextAuth and SkyMail's Auth.js send it); a confidential client sends its secret on stdin.
+# NextAuth and SkyNotify's Auth.js send it); a confidential client sends its secret on stdin.
 refresh() {
   local client=$1 realm=${3:-$REALM} token
   token=$(jq -r .refresh_token <<<"$2")
@@ -241,8 +241,8 @@ AUD='((.aud // []) | if type == "array" then . else [.] end | sort)'
 # What the sites, core and inscribed read from a site token (measured on the apps' origin/main,
 # 2026-10-05): must be the same before and after the step.
 SITE_VIEW='{azp, sub, email, name, preferred_username, roles: ((.roles // []) | sort), groups: ((.groups // []) | sort), own: ((.resource_access[.azp].roles // []) | sort)}'
-# What SkyMail's UI and backend read from its access token (the rest comes from userinfo).
-MAIL_VIEW='{azp, sub, own: ((.resource_access.skymail.roles // []) | sort), scope: ((.scope // "") | split(" ") | map(select(. == "openid" or . == "profile" or . == "email")) | sort)}'
+# What SkyNotify's UI and backend read from its access token (the rest comes from userinfo).
+MAIL_VIEW='{azp, sub, own: ((.resource_access.skynotify.roles // []) | sort), scope: ((.scope // "") | split(" ") | map(select(. == "openid" or . == "profile" or . == "email")) | sort)}'
 # The sites' editor gate (@skylab-kulubu/inscribed-auth 0.3.1): cms:access in ANY client's roles.
 EDITOR_GATE='[(.resource_access // {})[] | .roles // [] | .[]] | index("cms:access") != null'
 SUMMARY="{aud: $AUD, resource_access: ((.resource_access // {}) | keys), realm_roles: ((.realm_access.roles // []) | length), groups: ((.groups // []) | length)}"
@@ -333,13 +333,13 @@ kcadm create clients -r "$REALM" -s clientId=frontend-main -s 'name=SKY LAB site
 kcadm create clients -r "$REALM" -s clientId=frontend-arge -s 'name=SKY LAB arge' -s publicClient=false \
   -s fullScopeAllowed=true -s serviceAccountsEnabled=true -s standardFlowEnabled=true \
   -s "redirectUris=[\"https://arge.yildizskylab.com/*\"]" >/dev/null
-kcadm create clients -r "$REALM" -s clientId=skymail -s 'name=SkyMail' -s publicClient=true -s fullScopeAllowed=true \
+kcadm create clients -r "$REALM" -s clientId=skynotify -s 'name=SkyNotify' -s publicClient=true -s fullScopeAllowed=true \
   -s standardFlowEnabled=true -s directAccessGrantsEnabled=false -s "redirectUris=[\"$MAIL_CALLBACK\"]" \
   -s 'attributes."pkce.code.challenge.method"=S256' >/dev/null
-skymail=$(client_uuid skymail)
-for role in skymail:access skymail:templates:read skymail:templates:write skymail:lists:read skymail:mails:read \
-  skymail:mails:write skymail:mails:send skymail:mails:approve; do
-  kcadm create "clients/$skymail/roles" -r "$REALM" -s "name=$role" >/dev/null
+skynotify=$(client_uuid skynotify)
+for role in skynotify:access skynotify:templates:read skynotify:templates:write skynotify:lists:read skynotify:mails:read \
+  skynotify:mails:write skynotify:mails:send skynotify:mails:approve; do
+  kcadm create "clients/$skynotify/roles" -r "$REALM" -s "name=$role" >/dev/null
 done
 main=$(client_uuid frontend-main)
 arge=$(client_uuid frontend-arge)
@@ -366,17 +366,17 @@ for scope in "$groups_scope" "$main_core_scope" "$skycms_scope"; do
   kcadm update "clients/$main/default-client-scopes/$scope" -r "$REALM" -n -b '{}' >/dev/null
 done
 kcadm update "clients/$arge/default-client-scopes/$arge_core_scope" -r "$REALM" -n -b '{}' >/dev/null
-for client in "$skymail" "$app"; do
+for client in "$skynotify" "$app"; do
   kcadm update "clients/$client/default-client-scopes/$groups_scope" -r "$REALM" -n -b '{}' >/dev/null
 done
-json_assert "$(kcadm get "clients/$skymail/optional-client-scopes" -r "$REALM")" 'any(.[]; .name == "microprofile-jwt")' \
-  'skymail did not get Keycloak'"'"'s optional microprofile-jwt'
+json_assert "$(kcadm get "clients/$skynotify/optional-client-scopes" -r "$REALM")" 'any(.[]; .name == "microprofile-jwt")' \
+  'skynotify did not get Keycloak'"'"'s optional microprofile-jwt'
 # A hand-made role scope mapping on frontend-main: harmless while full scope is on, it would leak a
-# realm role and a SkyMail role into the site's token once full scope is off.
+# realm role and a SkyNotify role into the site's token once full scope is off.
 kcadm create "clients/$main/scope-mappings/realm" -r "$REALM" \
   -b "$(kcadm get roles/offline_access -r "$REALM" | jq -c '[{id, name}]')" >/dev/null
-kcadm create "clients/$main/scope-mappings/clients/$skymail" -r "$REALM" \
-  -b "$(kcadm get "clients/$skymail/roles/skymail:access" -r "$REALM" | jq -c '[{id, name}]')" >/dev/null
+kcadm create "clients/$main/scope-mappings/clients/$skynotify" -r "$REALM" \
+  -b "$(kcadm get "clients/$skynotify/roles/skynotify:access" -r "$REALM" | jq -c '[{id, name}]')" >/dev/null
 
 # The CMS roles, the flat roles mapper, the groups mapper of frontend-arge and the service accounts'
 # content:read + schema:sync, as in production.
@@ -404,19 +404,19 @@ grant "$REALM" skycloud skycloud:user "$admin_group"
 grant "$REALM" skylapp url:create "$admin_group"
 grant "$REALM" cloudflare-zero-trust access "$admin_group"
 grant "$REALM" broker read-token "$admin_group"
-for role in skymail:access skymail:templates:read skymail:templates:write skymail:lists:read skymail:mails:read \
-  skymail:mails:write skymail:mails:send skymail:mails:approve; do
-  grant "$REALM" skymail "$role" "$admin_group"
+for role in skynotify:access skynotify:templates:read skynotify:templates:write skynotify:lists:read skynotify:mails:read \
+  skynotify:mails:write skynotify:mails:send skynotify:mails:approve; do
+  grant "$REALM" skynotify "$role" "$admin_group"
 done
-grant "$REALM" skymail skymail:access "$weblab_leaders"
-grant "$REALM" skymail skymail:templates:read "$weblab_leaders"
+grant "$REALM" skynotify skynotify:access "$weblab_leaders"
+grant "$REALM" skynotify skynotify:templates:read "$weblab_leaders"
 person "$REALM" privileged "$admin_group" "$yk" "$weblab_leaders" "$uyeler"
 person "$REALM" dkmember "$dk"
 person "$REALM" leader "$weblab_leaders"
 person "$REALM" member "$uyeler"
 main_secret=$(client_secret frontend-main)
 arge_secret=$(client_secret frontend-arge)
-clients_before=$(for c in "$main" "$arge" "$skymail"; do kcadm get "clients/$c" -r "$REALM" | jq -c '{clientId, redirectUris, publicClient, serviceAccountsEnabled, attributes: {pkce: .attributes["pkce.code.challenge.method"]}}'; done)
+clients_before=$(for c in "$main" "$arge" "$skynotify"; do kcadm get "clients/$c" -r "$REALM" | jq -c '{clientId, redirectUris, publicClient, serviceAccountsEnabled, attributes: {pkce: .attributes["pkce.code.challenge.method"]}}'; done)
 mappers_before=$(for c in "$main" "$arge"; do kcadm get "clients/$c/protocol-mappers/models" -r "$REALM" | jq -c 'map({name, protocolMapper, config}) | sort_by(.name)'; done)
 
 # ---------------------------------------------------------------------------------------------
@@ -427,13 +427,13 @@ done
 for who in privileged dkmember leader; do
   keep before-arge-$who "$(tokens frontend-arge "$ARGE_CALLBACK" "$who")"
 done
-keep before-mail-privileged "$(tokens skymail "$MAIL_CALLBACK" privileged)"
-keep before-mail-leader "$(tokens skymail "$MAIL_CALLBACK" leader)"
+keep before-mail-privileged "$(tokens skynotify "$MAIL_CALLBACK" privileged)"
+keep before-mail-leader "$(tokens skynotify "$MAIL_CALLBACK" leader)"
 keep before-main-service "$(service_tokens frontend-main)"
 keep before-arge-service "$(service_tokens frontend-arge)"
 access=$(access_of "$(kept before-main-privileged)")
 printf '    frontend-main, privileged: %s\n' "$(jq -c "$SUMMARY" <<<"$access")"
-json_assert "$access" "($AUD | index(\"skymail\")) != null and ($AUD | index(\"forms\")) != null and (.realm_access.roles | length) == 12 and (.resource_access | has(\"skyapp\") | not) and (.groups | length) == 4" \
+json_assert "$access" "($AUD | index(\"skynotify\")) != null and ($AUD | index(\"forms\")) != null and (.realm_access.roles | length) == 12 and (.resource_access | has(\"skyapp\") | not) and (.groups | length) == 4" \
   'the full-scope control token lacks the foreign audiences, the 12 realm roles or the 4 group paths; narrowing would prove nothing'
 json_assert "$(access_of "$(kept before-main-member)")" "($AUD | index(\"skycms\")) == null" \
   'a member without a skycms role already had aud skycms on the main site (the fixture is not production-shaped)'
@@ -441,9 +441,9 @@ access=$(access_of "$(kept before-arge-dkmember)")
 json_assert "$access" "($EDITOR_GATE) and ((.roles // []) | index(\"content:write\")) == null" \
   'the DK member did not open arge'"'"'s editor gate through the main site'"'"'s cms:access (the F15 control)'
 access=$(access_of "$(kept before-mail-privileged)")
-printf '    skymail, privileged:       %s\n' "$(jq -c "$SUMMARY" <<<"$access")"
+printf '    skynotify, privileged:       %s\n' "$(jq -c "$SUMMARY" <<<"$access")"
 json_assert "$access" '(.groups | length) == 4 and (.realm_access.roles | length) == 12' \
-  'the SkyMail control token lacks the groups or the realm roles'
+  'the SkyNotify control token lacks the groups or the realm roles'
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='the step narrows the hand-made clients'
@@ -457,29 +457,29 @@ expect_line "$output" '[reconcile] client scope skycms-audience: updated (attrib
 expect_line "$output" "[reconcile] pruned protocol mappers from scope $skycms_scope: audience-mapper" 'the empty audience mapper was not pruned'
 expect_line "$output" "[reconcile] protocol mappers of scope $skycms_scope: updated (+skycms-audience)" 'skycms-audience was not added'
 expect_line "$output" "[reconcile] default client scope skycms-audience attached to client $arge" 'skycms-audience was not attached to frontend-arge'
-expect_line "$output" '[reconcile] role scope mappings of frontend-main (none: only its own roles): updated (-realm/offline_access -skymail/skymail:access)' \
+expect_line "$output" '[reconcile] role scope mappings of frontend-main (none: only its own roles): updated (-realm/offline_access -skynotify/skynotify:access)' \
   'the hand-made role scope of frontend-main was not cleared'
 expect_line "$output" '[reconcile] role scope mappings of frontend-arge (none: only its own roles): unchanged' 'frontend-arge role scope'
-expect_line "$output" '[reconcile] role scope mappings of skymail (none: only its own roles): unchanged' 'skymail role scope'
-for client in frontend-main frontend-arge skymail; do
+expect_line "$output" '[reconcile] role scope mappings of skynotify (none: only its own roles): unchanged' 'skynotify role scope'
+for client in frontend-main frontend-arge skynotify; do
   expect_line "$output" "[reconcile] client $client (no full scope): updated (fullScopeAllowed)" "full scope of $client not turned off"
 done
-expect_line "$output" '[reconcile] client scope skymail-api-audience: created' 'the SkyMail audience scope was not made'
-expect_line "$output" "[reconcile] default client scope skymail-api-audience attached to client $skymail" 'the SkyMail audience scope was not attached'
-expect_line "$output" '[reconcile] groups claim of skymail (none): updated (-default scope groups -optional scope microprofile-jwt)' \
-  'the groups were not taken out of SkyMail'"'"'s token'
+expect_line "$output" '[reconcile] client scope skynotify-api-audience: created' 'the SkyNotify audience scope was not made'
+expect_line "$output" "[reconcile] default client scope skynotify-api-audience attached to client $skynotify" 'the SkyNotify audience scope was not attached'
+expect_line "$output" '[reconcile] groups claim of skynotify (none): updated (-default scope groups -optional scope microprofile-jwt)' \
+  'the groups were not taken out of SkyNotify'"'"'s token'
 reject_line "$output" 'groups claim of frontend-' 'the sites'"'"' groups were touched'
 reject_line "$output" 'WARNING' 'the step warned on a realm with every client'
 
 CURRENT_STAGE='the narrowed contract'
-for c in "$main" "$arge" "$skymail"; do
+for c in "$main" "$arge" "$skynotify"; do
   json_assert "$(kcadm get "clients/$c" -r "$REALM")" '(.fullScopeAllowed | not)' 'a client still allows the full scope'
   json_assert "$(kcadm get "clients/$c/scope-mappings" -r "$REALM")" '((.realmMappings // []) | length) == 0 and ((.clientMappings // {}) | length) == 0' \
     'a client still has role scope mappings'
 done
 [[ $(client_secret frontend-main) == "$main_secret" && $(client_secret frontend-arge) == "$arge_secret" ]] \
   || fail 'the step changed a client secret'
-[[ $(for c in "$main" "$arge" "$skymail"; do kcadm get "clients/$c" -r "$REALM" | jq -c '{clientId, redirectUris, publicClient, serviceAccountsEnabled, attributes: {pkce: .attributes["pkce.code.challenge.method"]}}'; done) == "$clients_before" ]] \
+[[ $(for c in "$main" "$arge" "$skynotify"; do kcadm get "clients/$c" -r "$REALM" | jq -c '{clientId, redirectUris, publicClient, serviceAccountsEnabled, attributes: {pkce: .attributes["pkce.code.challenge.method"]}}'; done) == "$clients_before" ]] \
   || fail 'the step changed redirect URIs or flags of a client'
 [[ $(for c in "$main" "$arge"; do kcadm get "clients/$c/protocol-mappers/models" -r "$REALM" | jq -c 'map({name, protocolMapper, config}) | sort_by(.name)'; done) == "$mappers_before" ]] \
   || fail 'the step changed the sites'"'"' own mappers'
@@ -490,10 +490,10 @@ json_assert "$(kcadm get "client-scopes/$skycms_scope/protocol-mappers/models" -
   'skycms-audience is not in the shape site-clients.sh makes'
 json_assert "$(kcadm get "clients/$main/default-client-scopes" -r "$REALM")" 'any(.[]; .name == "groups") and any(.[]; .name == "skycms-audience") and any(.[]; .name == "frontend-main-core-audience")' \
   'frontend-main lost its groups or an audience scope'
-json_assert "$(kcadm get "clients/$skymail/default-client-scopes" -r "$REALM")" '(any(.[]; .name == "groups") | not) and any(.[]; .name == "skymail-api-audience")' \
-  'skymail still has the groups scope or lacks its audience scope'
-json_assert "$(kcadm get "clients/$skymail/optional-client-scopes" -r "$REALM")" '(any(.[]; .name == "microprofile-jwt") | not)' \
-  'skymail still has microprofile-jwt'
+json_assert "$(kcadm get "clients/$skynotify/default-client-scopes" -r "$REALM")" '(any(.[]; .name == "groups") | not) and any(.[]; .name == "skynotify-api-audience")' \
+  'skynotify still has the groups scope or lacks its audience scope'
+json_assert "$(kcadm get "clients/$skynotify/optional-client-scopes" -r "$REALM")" '(any(.[]; .name == "microprofile-jwt") | not)' \
+  'skynotify still has microprofile-jwt'
 json_assert "$(kcadm get default-optional-client-scopes -r "$REALM")" 'any(.[]; .name == "microprofile-jwt")' \
   'the realm lost microprofile-jwt as an optional default scope'
 json_assert "$(kcadm get "clients/$app/default-client-scopes" -r "$REALM")" 'any(.[]; .name == "groups")' \
@@ -506,8 +506,8 @@ done
 for who in privileged dkmember leader; do
   keep after-arge-$who "$(tokens frontend-arge "$ARGE_CALLBACK" "$who")"
 done
-keep after-mail-privileged "$(tokens skymail "$MAIL_CALLBACK" privileged)"
-keep after-mail-leader "$(tokens skymail "$MAIL_CALLBACK" leader)"
+keep after-mail-privileged "$(tokens skynotify "$MAIL_CALLBACK" privileged)"
+keep after-mail-leader "$(tokens skynotify "$MAIL_CALLBACK" leader)"
 keep after-main-service "$(service_tokens frontend-main)"
 keep after-arge-service "$(service_tokens frontend-arge)"
 for key in main-privileged main-dkmember main-leader main-member arge-privileged arge-dkmember arge-leader; do
@@ -542,44 +542,44 @@ json_assert "$(access_of "$(kept after-arge-dkmember)")" "($EDITOR_GATE | not)" 
 for key in mail-privileged mail-leader; do
   before=$(access_of "$(kept before-$key)")
   after=$(access_of "$(kept after-$key)")
-  json_assert "$after" "$AUD == [\"skymail\"] and (has(\"realm_access\") | not) and (has(\"groups\") | not) and ((.resource_access // {}) | keys) == [\"skymail\"]" \
-    "$key: aud is not exactly skymail, or realm roles, groups or another client's roles remain"
+  json_assert "$after" "$AUD == [\"skynotify\"] and (has(\"realm_access\") | not) and (has(\"groups\") | not) and ((.resource_access // {}) | keys) == [\"skynotify\"]" \
+    "$key: aud is not exactly skynotify, or realm roles, groups or another client's roles remain"
   [[ $(jq -c "$MAIL_VIEW" <<<"$after") == "$(jq -c "$MAIL_VIEW" <<<"$before")" ]] \
-    || { jq -c "$MAIL_VIEW" <<<"$before" >&2; jq -c "$MAIL_VIEW" <<<"$after" >&2; fail "$key: a claim SkyMail reads changed"; }
+    || { jq -c "$MAIL_VIEW" <<<"$before" >&2; jq -c "$MAIL_VIEW" <<<"$after" >&2; fail "$key: a claim SkyNotify reads changed"; }
   json_assert "$(id_of "$(kept after-$key)")" '(.name | length) > 0 and (.email | length) > 0 and (has("groups") | not)' \
     "$key: the ID token lost name or e-mail, or still carries groups"
-  # SkyMail's backend authenticates every /v1 call with Keycloak userinfo.
+  # SkyNotify's backend authenticates every /v1 call with Keycloak userinfo.
   userinfo=$(printf 'Authorization: Bearer %s\n' "$(jq -r .access_token <<<"$(kept after-$key)")" \
     | curl -fsS -H @- "$BASE_URL/realms/$REALM/protocol/openid-connect/userinfo")
   json_assert "$userinfo" '.sub == $s and (.name | length) > 0 and (.email | length) > 0 and .email_verified == true and (has("groups") | not)' \
-    "$key: userinfo no longer answers SkyMail's backend with sub, name and e-mail" --arg s "$(jq -r .sub <<<"$after")"
+    "$key: userinfo no longer answers SkyNotify's backend with sub, name and e-mail" --arg s "$(jq -r .sub <<<"$after")"
 done
-printf '    skymail, privileged:       %s\n' "$(jq -c "$SUMMARY" <<<"$(access_of "$(kept after-mail-privileged)")")"
+printf '    skynotify, privileged:       %s\n' "$(jq -c "$SUMMARY" <<<"$(access_of "$(kept after-mail-privileged)")")"
 size_line 'frontend-main, Privileged person' "$(kept before-main-privileged)" "$(kept after-main-privileged)"
 size_line 'frontend-main, team leader' "$(kept before-main-leader)" "$(kept after-main-leader)"
 size_line 'frontend-arge, Privileged person' "$(kept before-arge-privileged)" "$(kept after-arge-privileged)"
 size_line 'frontend-arge, team leader' "$(kept before-arge-leader)" "$(kept after-arge-leader)"
-size_line 'skymail, Privileged person' "$(kept before-mail-privileged)" "$(kept after-mail-privileged)"
-size_line 'skymail, team leader' "$(kept before-mail-leader)" "$(kept after-mail-leader)"
+size_line 'skynotify, Privileged person' "$(kept before-mail-privileged)" "$(kept after-mail-privileged)"
+size_line 'skynotify, team leader' "$(kept before-mail-leader)" "$(kept after-mail-leader)"
 
 CURRENT_STAGE='sessions opened before the step'
-# A session opened before the step gets the narrowed token on its next refresh (the sites and SkyMail
+# A session opened before the step gets the narrowed token on its next refresh (the sites and SkyNotify
 # refresh without a scope parameter): nobody has to sign in again.
-for pair in 'main-privileged frontend-main' 'arge-leader frontend-arge' 'mail-privileged skymail'; do
+for pair in 'main-privileged frontend-main' 'arge-leader frontend-arge' 'mail-privileged skynotify'; do
   read -r key client <<<"$pair"
   refreshed=$(refresh "$client" "$(kept before-$key)") || fail "$key: the refresh of a session opened before the step failed"
   before=$(access_of "$(kept before-$key)")
   after=$(access_of "$refreshed")
-  if [[ $client == skymail ]]; then
-    json_assert "$after" "$AUD == [\"skymail\"] and (has(\"groups\") | not) and (has(\"realm_access\") | not)" "$key: the refreshed token is not narrowed"
-    [[ $(jq -c "$MAIL_VIEW" <<<"$after") == "$(jq -c "$MAIL_VIEW" <<<"$before")" ]] || fail "$key: the refresh changed a claim SkyMail reads"
+  if [[ $client == skynotify ]]; then
+    json_assert "$after" "$AUD == [\"skynotify\"] and (has(\"groups\") | not) and (has(\"realm_access\") | not)" "$key: the refreshed token is not narrowed"
+    [[ $(jq -c "$MAIL_VIEW" <<<"$after") == "$(jq -c "$MAIL_VIEW" <<<"$before")" ]] || fail "$key: the refresh changed a claim SkyNotify reads"
   else
     json_assert "$after" "$AUD == [\"core\", \"skycms\"] and (has(\"realm_access\") | not) and ((.resource_access // {}) | keys) == [\$c]" \
       "$key: the refreshed token is not narrowed" --arg c "$client"
     [[ $(jq -c "$SITE_VIEW" <<<"$after") == "$(jq -c "$SITE_VIEW" <<<"$before")" ]] || fail "$key: the refresh changed a claim the site reads"
   fi
 done
-printf '    sessions opened before the step: the next refresh gives the narrowed token (main site, arge, SkyMail)\n'
+printf '    sessions opened before the step: the next refresh gives the narrowed token (main site, arge, SkyNotify)\n'
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='a second run writes nothing'
@@ -667,10 +667,10 @@ mapper=$(kcadm get "client-scopes/$skycms_scope/protocol-mappers/models" -r "$RE
 kcadm update "client-scopes/$skycms_scope/protocol-mappers/models/$mapper" -r "$REALM" -s 'config."id.token.claim"=true' >/dev/null
 kcadm create "client-scopes/$skycms_scope/protocol-mappers/models" -r "$REALM" \
   -b '{"name":"unexpected","protocol":"openid-connect","protocolMapper":"oidc-audience-mapper","config":{"included.custom.audience":"unexpected","access.token.claim":"true"}}' >/dev/null
-kcadm update "clients/$skymail/default-client-scopes/$groups_scope" -r "$REALM" -n -b '{}' >/dev/null
-kcadm create "clients/$skymail/protocol-mappers/models" -r "$REALM" \
-  -b '{"name":"skymail-groups","protocol":"openid-connect","protocolMapper":"oidc-group-membership-mapper","config":{"claim.name":"groups","full.path":"true","access.token.claim":"true"}}' >/dev/null
-kcadm delete "clients/$skymail/default-client-scopes/$(scope_uuid skymail-api-audience)" -r "$REALM" >/dev/null
+kcadm update "clients/$skynotify/default-client-scopes/$groups_scope" -r "$REALM" -n -b '{}' >/dev/null
+kcadm create "clients/$skynotify/protocol-mappers/models" -r "$REALM" \
+  -b '{"name":"skynotify-groups","protocol":"openid-connect","protocolMapper":"oidc-group-membership-mapper","config":{"claim.name":"groups","full.path":"true","access.token.claim":"true"}}' >/dev/null
+kcadm delete "clients/$skynotify/default-client-scopes/$(scope_uuid skynotify-api-audience)" -r "$REALM" >/dev/null
 output=$(step) || { printf '%s\n' "$output" >&2; fail 'the repairing run failed'; }
 for expected in \
   '[reconcile] client frontend-arge (no full scope): updated (fullScopeAllowed)' \
@@ -680,14 +680,14 @@ for expected in \
   "[reconcile] default client scope skycms-audience attached to client $arge" \
   "[reconcile] pruned protocol mappers from scope $skycms_scope: unexpected" \
   "[reconcile] protocol mappers of scope $skycms_scope: updated (~skycms-audience)" \
-  "[reconcile] default client scope skymail-api-audience attached to client $skymail" \
-  '[reconcile] groups claim of skymail (none): updated (-default scope groups -mapper skymail-groups)'; do
+  "[reconcile] default client scope skynotify-api-audience attached to client $skynotify" \
+  '[reconcile] groups claim of skynotify (none): updated (-default scope groups -mapper skynotify-groups)'; do
   expect_line "$output" "$expected" 'the drift was not repaired'
 done
 json_assert "$(access_of "$(tokens frontend-arge "$ARGE_CALLBACK" privileged)")" "$AUD == [\"core\", \"skycms\"] and (has(\"realm_access\") | not) and ((.resource_access // {}) | keys) == [\"frontend-arge\"]" \
   'the repaired frontend-arge token differs from the contract'
-json_assert "$(access_of "$(tokens skymail "$MAIL_CALLBACK" privileged)")" "$AUD == [\"skymail\"] and (has(\"groups\") | not)" \
-  'the repaired SkyMail token differs from the contract'
+json_assert "$(access_of "$(tokens skynotify "$MAIL_CALLBACK" privileged)")" "$AUD == [\"skynotify\"] and (has(\"groups\") | not)" \
+  'the repaired SkyNotify token differs from the contract'
 event_before=$(newest_admin_event)
 sleep 1
 output=$(step) || { printf '%s\n' "$output" >&2; fail 'the run after the repair failed'; }
@@ -712,8 +712,8 @@ event_before=$(newest_admin_event "$SANDBOX_REALM")
 sleep 1
 output=$(step "$SANDBOX_REALM") || { printf '%s\n' "$output" >&2; fail 'the step failed in the sandbox'; }
 printf '%s\n' "$output" | sed 's/^/    /'
-expect_line "$output" "[reconcile] WARNING: client skymail does not exist in realm $SANDBOX_REALM; skipped client scope skymail-api-audience and its token narrowing" \
-  'the missing sandbox skymail was not reported'
+expect_line "$output" "[reconcile] WARNING: client skynotify does not exist in realm $SANDBOX_REALM; skipped client scope skynotify-api-audience and its token narrowing" \
+  'the missing sandbox skynotify was not reported'
 expect_line "$output" "[reconcile] default client scope skycms-audience attached to client $(client_uuid frontend-arge "$SANDBOX_REALM")" \
   'skycms-audience was not attached to the sandbox frontend-arge'
 changes=$(grep -E 'updated|attached|created|pruned|detached' <<<"$output" || true)
@@ -735,7 +735,7 @@ for pair in "frontend-main $SANDBOX_MAIN_CALLBACK" "frontend-arge $SANDBOX_ARGE_
     "$AUD == [\"core\", \"skycms\"] and ((.resource_access // {}) | keys) == [\$c] and (.groups == [\"/ADMIN\"]) and ((.roles // []) | index(\"content:write\")) != null" \
     "the sandbox $client token differs from the contract" --arg c "$client"
 done
-printf '    sandbox: one change (skycms-audience on frontend-arge), skymail missing is a WARNING; site-clients.sh, sandbox-site-clients.sh and inscribed-cms-roles.sh --check plan nothing afterwards\n'
+printf '    sandbox: one change (skycms-audience on frontend-arge), skynotify missing is a WARNING; site-clients.sh, sandbox-site-clients.sh and inscribed-cms-roles.sh --check plan nothing afterwards\n'
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='sizes'

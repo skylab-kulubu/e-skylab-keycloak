@@ -85,7 +85,7 @@ class EmailCodeMessagesTest {
                 "Bu adresin hesabı silinme sürecinde. Silme bitince aynı adresle yeniden kayıt olabilirsin."),
                 "the agreed sentence (Yusuf, 2026-10-31)");
         assertTrue(messages("tr").getProperty(AccountErasureNotice.SUBJECT_KEY).equals("Bu adresin hesabı siliniyor"),
-                "the subject of SkyMail's account.deletion-in-progress, so both routes read alike");
+                "the subject of SkyNotify's account.deletion-in-progress, so both routes read alike");
         for (String mail : new String[] {"/theme-resources/templates/text/" + AccountErasureNotice.MAIL_TEMPLATE,
                 "/theme-resources/templates/html/" + AccountErasureNotice.MAIL_TEMPLATE}) {
             String template = resource(mail);

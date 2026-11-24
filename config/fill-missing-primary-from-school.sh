@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-off, idempotent operator script (eskylab-login-ux ticket 06, decision O5): an account opened by
 # a YTÜ login before Faz 2 has no Primary e-mail (Keycloak email), because MicrosoftMapper removes the
-# address from the first login. It cannot get SkyMail announcements, the "forgot password" mail or a
+# address from the first login. It cannot get SkyNotify announcements, the "forgot password" mail or a
 # login code. This script makes its School e-mail the Primary e-mail, as Faz 2 does for new accounts
 # (CONTEXT.md, Primary e-mail: "an account opened by a first YTÜ login starts with the School e-mail").
 #

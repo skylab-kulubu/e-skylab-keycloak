@@ -748,7 +748,7 @@ def assert_affected_jobs(root, helper)
     "tests/" "microsoft-reauthentication.sh" => %w[microsoft-reauthentication],
     "tests/" "welcome-page.sh" => %w[welcome-page],
     "tests/" "run-integration.sh" => %w[-integration-group],
-    "config/" "role-groups.json" => %w[role-groups],
+    "config/" "role-groups.json" => %w[role-groups skynotify-rename],
     "tests/" "dk-read-only.sh" => %w[dk-read-only],
     "docs/x.md" => [], "tests/" "check-fresh-runner.sh" => [], "tests/" "sudo-email-code.sh" => [],
     "theme/src/login/x.tsx" => [],

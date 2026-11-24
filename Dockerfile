@@ -65,5 +65,12 @@ COPY --chown=keycloak:keycloak --chmod=0555 config /opt/keycloak/config
 # / shows the e-SKY LAB landing page instead of redirecting to the Admin Console (a run-time option).
 ENV KC_SPI_THEME__WELCOME_THEME=e-skylab-welcome
 
+# The realm's passwordBlacklist policy (config/account-center-realm-security.json) reads this list;
+# password-blacklists/README.md has its sources. Outside data/, so a volume there cannot hide it.
+# Keycloak rejects a realm policy that names a missing list, and an image without the list cannot
+# parse a realm that has one: drop passwordBlacklist from the realm before rolling back past it.
+COPY --chmod=0444 password-blacklists/skylab-yaygin-parolalar.txt /opt/keycloak/password-blacklists/skylab-yaygin-parolalar.txt
+ENV KC_SPI_PASSWORD_POLICY__PASSWORD_BLACKLIST__BLACKLISTS_PATH=/opt/keycloak/password-blacklists
+
 ENTRYPOINT ["/opt/keycloak/bin/kc.sh"]
 CMD ["start", "--optimized"]

@@ -481,6 +481,27 @@ stage_v2_inject_drift() {
   fi
 }
 
+# The image's common-password denylist (password-blacklists/) is live: Keycloak refuses a listed
+# password whatever its letter case (an NCSC entry and one of ours), and the same shape off the
+# list is accepted, so the refusal is the denylist's and not another rule's.
+stage_v2_password_denylist() {
+  local user_uuid output status refused
+  user_uuid=$(kcadm create users -r "$V2_REALM" -i \
+    -s username=denylist-probe -s enabled=true -s emailVerified=true \
+    -s firstName=Denylist -s lastName=Probe -s email=denylist-probe@example.invalid)
+  for refused in Password123 YildizSkylab2025; do
+    status=0
+    output=$(kcadm set-password -r "$V2_REALM" --userid "$user_uuid" \
+      --new-password "$refused" --temporary=false 2>&1) || status=$?
+    [[ $status != 0 ]] && grep -qi 'blacklist' <<<"$output" \
+      || fail "the realm accepted the listed password $refused or refused it for another reason: $output"
+  done
+  kcadm set-password -r "$V2_REALM" --userid "$user_uuid" \
+    --new-password 'Ka9-liste-disi-Qm7' --temporary=false >/dev/null \
+    || fail 'the realm refused a password that is not on the denylist'
+  kcadm delete "users/$user_uuid" -r "$V2_REALM" >/dev/null
+}
+
 stage_v2_assert_realm_identity() {
   CURRENT_STAGE='v2 passkey policy, login settings, brute force and password policy'
   local realm
@@ -497,8 +518,9 @@ stage_v2_assert_realm_identity() {
   json_assert "$realm" \
     '.bruteForceProtected == true and .permanentLockout == false and .failureFactor == 10 and .waitIncrementSeconds == 60 and .maxFailureWaitSeconds == 900 and .maxDeltaTimeSeconds == 43200 and .quickLoginCheckMilliSeconds == 1000 and .minimumQuickLoginWaitSeconds == 60' \
     'brute force protection differs'
-  json_assert "$realm" '.passwordPolicy == "length(8) and notUsername and notEmail"' \
+  json_assert "$realm" '.passwordPolicy == "length(8) and notUsername and notEmail and passwordBlacklist(skylab-yaygin-parolalar.txt)"' \
     'password policy differs'
+  stage_v2_password_denylist
   # Repairing the drifted relying party id is a switch: recorded again, later than the first
   # one, next to the foreign attribute that must not be dropped.
   json_assert "$realm" \

@@ -73,6 +73,35 @@ grep -Fqx 'COPY --from=theme --chown=keycloak:keycloak /build/theme/dist_welcome
 grep -Fqx 'ENV KC_SPI_THEME__WELCOME_THEME=e-skylab-welcome' "$KEYCLOAK_DIR/Dockerfile" \
   || fail 'the image does not select the landing page theme for / (it would redirect to the Admin Console)'
 
+# The common-password denylist of the realm's passwordBlacklist policy (password-blacklists/README.md).
+# Keycloak lower-cases the list and the password; every entry is at least the policy's length(8).
+PASSWORD_DENYLIST=skylab-yaygin-parolalar.txt
+password_denylist_file="$KEYCLOAK_DIR/password-blacklists/$PASSWORD_DENYLIST"
+grep -Fqx "COPY --chmod=0444 password-blacklists/$PASSWORD_DENYLIST /opt/keycloak/password-blacklists/$PASSWORD_DENYLIST" "$KEYCLOAK_DIR/Dockerfile" \
+  || fail 'the image does not ship the password denylist'
+grep -Fqx 'ENV KC_SPI_PASSWORD_POLICY__PASSWORD_BLACKLIST__BLACKLISTS_PATH=/opt/keycloak/password-blacklists' "$KEYCLOAK_DIR/Dockerfile" \
+  || fail 'the image does not point the passwordBlacklist policy at its denylist folder'
+[[ $(jq -r .passwordPolicy "$KEYCLOAK_DIR/config/account-center-realm-security.json") == "length(8) and notUsername and notEmail and passwordBlacklist($PASSWORD_DENYLIST)" ]] \
+  || fail 'the realm password policy is not length(8), notUsername, notEmail and the shipped denylist'
+[[ -s $password_denylist_file && $(wc -c <"$password_denylist_file") -le 1048576 ]] \
+  || fail 'the password denylist is missing, empty or larger than 1 MiB'
+[[ $(wc -l <"$password_denylist_file") -ge 40000 ]] \
+  || fail 'the password denylist has fewer than 40000 entries'
+[[ $(tail -c 1 "$password_denylist_file" | od -An -c | tr -d ' ') == '\n' ]] \
+  || fail 'the password denylist does not end with a line feed'
+if LC_ALL=C grep -qn -e $'\r' -e '^$' -e '[A-Z]' "$password_denylist_file"; then
+  fail 'the password denylist has a carriage return, an empty line or an upper-case ASCII letter'
+fi
+if LC_ALL=C awk 'length($0) < 8 { found = 1 } END { exit !found }' "$password_denylist_file"; then
+  fail 'the password denylist has an entry shorter than the policy length(8)'
+fi
+[[ -z $(LC_ALL=C sort "$password_denylist_file" | uniq -d | head -n 1) ]] \
+  || fail 'the password denylist has a duplicate entry'
+for common_password in password123 12345678 qwertyuiop galatasaray skylab123 yildizskylab2025; do
+  grep -Fqx "$common_password" "$password_denylist_file" \
+    || fail "the password denylist lacks $common_password"
+done
+
 grep -Fq "image: $POSTGRES_IMAGE" "$SCRIPT_DIR/docker-compose.integration.yml" \
   || fail 'integration Compose does not use the approved digest-pinned PostgreSQL fixture image'
 grep -Fqx "export LOGIN_BY_EMAIL_CODE_POSTGRES_IMAGE=$PERSISTENT_POSTGRES_IMAGE" "$SCRIPT_DIR/login-code-persistent.sh" \

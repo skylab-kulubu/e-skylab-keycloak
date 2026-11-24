@@ -2872,8 +2872,8 @@ reconcile_skymail_client_addresses() {
 }
 EOF
   live_file=$(mktemp "$WORK_DIR/live.XXXXXX")
-  kcadm_json "clients/$client_uuid" -r "$TARGET_REALM" \
-    --fields redirectUris,webOrigins,attributes,rootUrl,baseUrl,adminUrl >"$live_file"
+  # The whole client: kcadm's --fields attributes returns the map empty.
+  kcadm_json "clients/$client_uuid" -r "$TARGET_REALM" >"$live_file"
   attributes=$(json_tool field attributes <"$live_file")
   [[ -n $attributes ]] || attributes='{}'
   changed=$(json_tool diff-fields "$desired_file" <"$live_file")

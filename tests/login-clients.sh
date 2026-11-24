@@ -238,11 +238,24 @@ authorize_status() {
     --data-urlencode code_challenge_method=S256
 }
 # logout_status CLIENT POST_LOGOUT_URI [REALM]: the HTTP status of Keycloak's RP-initiated logout for
-# that return address (client_id, no session: 200 is the confirmation page, 400 an address the client
-# does not allow). Ends no session.
+# that return address (client_id, no session cookie, no id_token_hint): 400 is an address the client
+# does not allow; an allowed one gets the confirmation page or the redirect (logout_allowed). Ends no
+# session.
 logout_status() {
   curl -sS -o /dev/null -w '%{http_code}' -G "$BASE_URL/realms/${3:-$REALM}/protocol/openid-connect/logout" \
     --data-urlencode "client_id=$1" --data-urlencode "post_logout_redirect_uri=$2"
+}
+# logout_allowed CLIENT POST_LOGOUT_URI [REALM]: Keycloak accepts that sign-out return (200 or 302).
+logout_allowed() {
+  local status
+  status=$(logout_status "$@")
+  [[ $status == 200 || $status == 302 ]] || { printf 'logout return %s: HTTP %s\n' "$2" "$status" >&2; return 1; }
+}
+# logout_refused CLIENT POST_LOGOUT_URI [REALM]: Keycloak refuses that sign-out return (400).
+logout_refused() {
+  local status
+  status=$(logout_status "$@")
+  [[ $status == 400 ]] || { printf 'logout return %s: HTTP %s, expected 400\n' "$2" "$status" >&2; return 1; }
 }
 # service_tokens CLIENT [REALM]: the client's service-account token response (client_credentials).
 service_tokens() {
@@ -467,8 +480,10 @@ for who in privileged dkmember leader; do
 done
 keep before-mail-privileged "$(tokens skymail "$OLD_MAIL_CALLBACK" privileged)"
 keep before-mail-leader "$(tokens skymail "$OLD_MAIL_CALLBACK" leader)"
-[[ $(logout_status skymail https://iletisim.yildizskylab.com) == 200 && $(logout_status skymail https://notify.yildizskylab.com) == 400 ]] \
-  || fail 'the hand-made skymail sign-out returns are not iletisim. alone; the address change would prove nothing'
+if ! { logout_allowed skymail https://iletisim.yildizskylab.com && logout_refused skymail https://notify.yildizskylab.com; }; then
+  kcadm get "clients/$skymail" -r "$REALM" | jq -c '{rootUrl, baseUrl, logout: .attributes["post.logout.redirect.uris"]}' >&2
+  fail 'the hand-made skymail sign-out returns are not iletisim. alone; the address change would prove nothing'
+fi
 [[ $(authorize_status skymail "$MAIL_CALLBACK") == 400 ]] \
   || fail 'the hand-made skymail already accepted the notify. callback; the address change would prove nothing'
 keep before-main-service "$(service_tokens frontend-main)"
@@ -531,9 +546,9 @@ done
 json_assert "$(kcadm get "clients/$skymail" -r "$REALM")" \
   '.redirectUris == [$cb] and .webOrigins == [$o] and .attributes["post.logout.redirect.uris"] == $o and .rootUrl == $o and .baseUrl == ($o + "/")' \
   'skymail does not allow notify. alone' --arg cb "$MAIL_CALLBACK" --arg o https://notify.yildizskylab.com
-[[ $(logout_status skymail https://notify.yildizskylab.com) == 200 ]] || fail 'skymail refuses the sign-out return to notify.'
+logout_allowed skymail https://notify.yildizskylab.com || fail 'skymail refuses the sign-out return to notify.'
 for old in https://iletisim.yildizskylab.com https://mail.yildizskylab.com; do
-  [[ $(logout_status skymail "$old") == 400 ]] || fail "skymail still accepts the sign-out return $old"
+  logout_refused skymail "$old" || fail "skymail still accepts the sign-out return $old"
 done
 for old in "$OLD_MAIL_CALLBACK" https://mail.yildizskylab.com/api/auth/callback/keycloak; do
   [[ $(authorize_status skymail "$old") == 400 ]] || fail "skymail still accepts the old callback $old"
@@ -837,9 +852,9 @@ json_assert "$(kcadm get "clients/$sandbox_skymail" -r "$SANDBOX_REALM")" \
   'the sandbox skymail does not allow sandbox-notify. and localhost:3000 alone' --arg cb "$SANDBOX_MAIL_CALLBACK" --arg o https://sandbox-notify.yildizskylab.com
 [[ $(authorize_status skymail http://localhost:3000/api/auth/callback/keycloak "$SANDBOX_REALM") == 200 ]] \
   || fail 'the sandbox skymail lost local development'"'"'s callback'
-[[ $(logout_status skymail http://localhost:3000 "$SANDBOX_REALM") == 200 && $(logout_status skymail https://sandbox-notify.yildizskylab.com "$SANDBOX_REALM") == 200 ]] \
+logout_allowed skymail http://localhost:3000 "$SANDBOX_REALM" && logout_allowed skymail https://sandbox-notify.yildizskylab.com "$SANDBOX_REALM" \
   || fail 'the sandbox skymail refuses a sign-out return to sandbox-notify. or localhost:3000'
-[[ $(logout_status skymail https://sandbox-iletisim.yildizskylab.com "$SANDBOX_REALM") == 400 ]] \
+logout_refused skymail https://sandbox-iletisim.yildizskylab.com "$SANDBOX_REALM" \
   || fail 'the sandbox skymail still accepts the sign-out return to sandbox-iletisim.'
 [[ $(authorize_status skymail "$SANDBOX_OLD_MAIL_CALLBACK" "$SANDBOX_REALM") == 400 ]] \
   || fail 'the sandbox skymail still accepts sandbox-iletisim.'

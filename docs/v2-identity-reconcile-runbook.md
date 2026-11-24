@@ -2226,32 +2226,38 @@ Bilinçli davranış değişiklikleri:
 
 ### SkyMail arayüzünün adresi (e-skylab ADR-0090)
 
-SkyMail arayüzünün tek adresi `https://notify.yildizskylab.com`, sandbox realm'inde
-`https://sandbox-notify.yildizskylab.com` (Yusuf, 2026-11-24). Bu tarihe kadar `skymail` istemcisinin
-adresleri elle tutuluyordu: production'da `iletisim.` ve `mail.`, sandbox'ta `sandbox-iletisim.` ve
-`sandbox-mail.`. Uzlaştırıcı (`reconcile_skymail_client_addresses`, aynı adımın sonunda) artık yalnız
-şunları bırakır:
+SkyMail arayüzünün adresi `https://notify.yildizskylab.com`, sandbox realm'inde
+`https://sandbox-notify.yildizskylab.com` ve yerel geliştirme için `http://localhost:3000` (Yusuf,
+2026-11-24; production'da localhost yok). Bu tarihe kadar `skymail` istemcisinin adresleri elle
+tutuluyordu: production'da `iletisim.` ve `mail.`, sandbox'ta `sandbox-iletisim.` ve `sandbox-mail.`.
+Uzlaştırıcı (`reconcile_skymail_client_addresses`, aynı adımın sonunda) artık yalnız şunları bırakır:
 
-| Alan | Değer |
+| Alan | Değer (her köken için) |
 | --- | --- |
-| `redirectUris` | `<adres>/api/auth/callback/keycloak` (Auth.js geri dönüşü), başka hiçbir satır |
-| `webOrigins` | `<adres>` |
-| `post.logout.redirect.uris` | `<adres>` (skymail-frontend çıkışta kendi kökenine döner) |
+| `redirectUris` | `<köken>/api/auth/callback/keycloak` (Auth.js geri dönüşü) |
+| `webOrigins` | `<köken>` |
+| `post.logout.redirect.uris` | `<köken>` (skymail-frontend çıkışta kendi kökenine döner) |
+| `rootUrl` / `baseUrl` | ilk köken / ilk köken + `/` |
 
-Eski adlar yönlendirme olarak da tutulmaz: ilk koşudan sonra eski adla başlayan giriş 400 alır. Satır
-öncesini ve sonrasını basar: `client skymail addresses (https://notify.yildizskylab.com only): updated
-(redirectUris webOrigins attributes; before: …; after: …)`; sonraki koşularda `unchanged`. Kuru koşu
-aynı satırı ve `would kcadm update clients/<id>` satırını basar, hiçbir şey yazmaz. `rootUrl`,
-`baseUrl`, `adminUrl` ve ön/arka kanal çıkış adresleri yönetilmez; başka bir ada işaret ederse
-`WARNING` basılır (geçiş sihirbazı düzeltir).
+Eski adlar yönlendirme olarak da tutulmaz: ilk koşudan sonra eski adla başlayan giriş ve eski ada
+çıkış dönüşü 400 alır. Satır öncesini ve sonrasını basar: `client skymail addresses
+(https://notify.yildizskylab.com): updated (…; before: …; after: …)`; sonraki koşularda `unchanged`.
+Kuru koşu aynı satırı ve `would kcadm update clients/<id>` satırını basar, hiçbir şey yazmaz.
+`adminUrl` ve ön/arka kanal çıkış adresleri yönetilmez; başka bir ada işaret eden mutlak bir değer
+`WARNING` basar (`/` ile başlayan göreli değer basmaz).
 
-**Yayın sırası:** bu adımı içeren sürüm `notify.` geçiş sihirbazıyla aynı anda canlıya çıkar. DNS,
-Dokploy alan adı, sertifika ve skymail-frontend'in `AUTH_URL`'i `notify.`'da hazır olur; aynı
-pencerede uzlaştırıcı eski adları kaldırır. Uzlaştırıcı daha önce koşarsa `iletisim.`'ten giriş
-kesilir ve `notify.` henüz açılmamıştır.
+**Yayın sırası:** bu adımı içeren sürüm `notify.` geçiş penceresinde canlıya çıkar. DNS, Dokploy alan
+adı, sertifika ve skymail-frontend'in `AUTH_URL`'i `notify.`'da hazır olur; aynı pencerede
+uzlaştırıcı eski adları kaldırır. Uzlaştırıcı daha önce koşarsa `iletisim.`'ten giriş kesilir ve
+`notify.` henüz açılmamıştır.
 
-Geri dönüş: uzlaştırıcı her koşuda eski adları yeniden siler; geri dönüş bu adımı içermeyen sürüme
-dönmek ve Admin Console'da (Clients → `skymail` → Settings) eski satırları elle geri yazmaktır.
+**Geri dönüş:** `KEYCLOAK_SKYMAIL_UI_ORIGINS` kökenleri ezer (boşlukla ayrılmış, ilki arayüzün kendi
+adresi). Eski adlara dönmek için uzlaştırma bu değerle koşar:
+`KEYCLOAK_SKYMAIL_UI_ORIGINS="https://iletisim.yildizskylab.com https://mail.yildizskylab.com"`
+(sandbox'ta `"https://sandbox-iletisim.yildizskylab.com https://sandbox-mail.yildizskylab.com
+http://localhost:3000"`). Değer ayarlı kaldıkça sonraki koşular da onu uygular; değişken kaldırılınca
+`notify.`'a döner. `http://localhost` yalnız `e-skylab-sandbox`'ta kabul edilir; başka realm'de koşu
+hiçbir şey okumadan durur.
 
 ### Operatör oturumuyla tek adım (sandbox)
 

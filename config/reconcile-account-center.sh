@@ -202,14 +202,34 @@ SKYFORMS_CORE_SCOPE_NAME=skyforms-core-audience
 # audience.
 SKYCMS_SCOPE_NAME=skycms-audience
 SKYMAIL_SCOPE_NAME=skymail-api-audience
-# The SkyMail UI's one address (e-skylab ADR-0090; Yusuf, 2026-11-24): notify.yildizskylab.com,
-# sandbox-notify. in the sandbox realm. The old iletisim. and mail. names are not kept, not even as
-# redirects (see reconcile_skymail_client_addresses).
+# The SkyMail UI's addresses (e-skylab ADR-0090; Yusuf, 2026-11-24): notify.yildizskylab.com,
+# sandbox-notify. in the sandbox realm, where local development (next dev on http://localhost:3000)
+# also signs in; production has no localhost. The old iletisim. and mail. names are not kept, not
+# even as redirects (see reconcile_skymail_client_addresses). KEYCLOAK_SKYMAIL_UI_ORIGINS overrides
+# the list (space-separated origins, the first one the UI's own: rootUrl and baseUrl), for a rollback
+# to the old names, for example "https://iletisim.yildizskylab.com https://mail.yildizskylab.com";
+# http://localhost is refused outside the sandbox realm.
 if [[ $TARGET_REALM == e-skylab-sandbox ]]; then
-  SKYMAIL_UI_ORIGIN=https://sandbox-notify.yildizskylab.com
+  SKYMAIL_UI_ORIGINS_DEFAULT='https://sandbox-notify.yildizskylab.com http://localhost:3000'
 else
-  SKYMAIL_UI_ORIGIN=https://notify.yildizskylab.com
+  SKYMAIL_UI_ORIGINS_DEFAULT=https://notify.yildizskylab.com
 fi
+read -r -a SKYMAIL_UI_ORIGINS <<<"${KEYCLOAK_SKYMAIL_UI_ORIGINS:-$SKYMAIL_UI_ORIGINS_DEFAULT}"
+if [[ ${#SKYMAIL_UI_ORIGINS[@]} == 0 ]]; then
+  printf 'KEYCLOAK_SKYMAIL_UI_ORIGINS must name at least one origin\n' >&2
+  exit 2
+fi
+for skymail_ui_origin in "${SKYMAIL_UI_ORIGINS[@]}"; do
+  if [[ $skymail_ui_origin =~ ^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]; then
+    continue
+  fi
+  if [[ $skymail_ui_origin =~ ^http://localhost:[0-9]{1,5}$ && $TARGET_REALM == e-skylab-sandbox ]]; then
+    continue
+  fi
+  printf 'KEYCLOAK_SKYMAIL_UI_ORIGINS: %s is not an https origin without a path (http://localhost:PORT only in e-skylab-sandbox)\n' "$skymail_ui_origin" >&2
+  exit 2
+done
+SKYMAIL_UI_ORIGIN=${SKYMAIL_UI_ORIGINS[0]}
 # The admin panel's login client (ADR-0058; see reconcile_admin_panel_client): admin, superadmin in
 # the sandbox realm (as in inscribed-cms-roles.sh); KEYCLOAK_ADMIN_PANEL_CLIENT_ID names another.
 if [[ $TARGET_REALM == e-skylab-sandbox ]]; then
@@ -2848,26 +2868,35 @@ reconcile_login_clients() {
 
 # The SkyMail UI's addresses on its login client (e-skylab ADR-0090; Yusuf, 2026-11-24). Until then
 # they were kept by hand: production allowed iletisim. and mail., the sandbox realm sandbox-iletisim.
-# and sandbox-mail. Now the client allows SKYMAIL_UI_ORIGIN alone: the Auth.js callback as the one
-# redirect URI, the origin as the one web origin and the one post-logout redirect URI (skymail-frontend
-# signs out to its own origin). Every other entry is taken out; the old names are not redirects
-# either, so a login started there is refused. The run logs the values before and after, which the
-# dry run shows too. rootUrl, baseUrl, adminUrl and the logout URLs are not managed: one that names
-# another host is reported with a warning. A missing client is skipped (reconcile_narrowed_login_client
-# has warned).
+# and sandbox-mail. Now the client allows SKYMAIL_UI_ORIGINS alone: per origin the Auth.js callback
+# as a redirect URI, the origin as a web origin and as a post-logout redirect URI (skymail-frontend
+# signs out to its own origin); rootUrl is the first origin, baseUrl that origin's root page. Every
+# other entry is taken out; the old names are not redirects either, so a login started there is
+# refused. The run logs the values before and after, which the dry run shows too. adminUrl and the
+# front- and back-channel logout URLs are not managed: an absolute one on another host is reported
+# with a warning (a relative one, "/..." under rootUrl, is not). A missing client is skipped
+# (reconcile_narrowed_login_client has warned).
 reconcile_skymail_client_addresses() {
   local client_uuid desired_file="$WORK_DIR/addresses-$SKYMAIL_CLIENT_ID.json" live_file changed
-  local callback="$SKYMAIL_UI_ORIGIN/api/auth/callback/keycloak" attributes before field value
+  local attributes before after field value origin redirects='' origins='' logout='' label
   if ! client_uuid=$(optional_lookup client_id_by_client_id "$SKYMAIL_CLIENT_ID"); then
     return 2
   fi
   [[ -n $client_uuid ]] || return 0
+  for origin in "${SKYMAIL_UI_ORIGINS[@]}"; do
+    redirects="$redirects${redirects:+,}\"$origin/api/auth/callback/keycloak\""
+    origins="$origins${origins:+,}\"$origin\""
+    logout="$logout${logout:+##}$origin"
+  done
+  label="${SKYMAIL_UI_ORIGINS[*]}"
   cat >"$desired_file" <<EOF
 {
-  "redirectUris": ["$callback"],
-  "webOrigins": ["$SKYMAIL_UI_ORIGIN"],
+  "rootUrl": "$SKYMAIL_UI_ORIGIN",
+  "baseUrl": "$SKYMAIL_UI_ORIGIN/",
+  "redirectUris": [$redirects],
+  "webOrigins": [$origins],
   "attributes": {
-    "post.logout.redirect.uris": "$SKYMAIL_UI_ORIGIN"
+    "post.logout.redirect.uris": "$logout"
   }
 }
 EOF
@@ -2878,24 +2907,24 @@ EOF
   [[ -n $attributes ]] || attributes='{}'
   changed=$(json_tool diff-fields "$desired_file" <"$live_file")
   if [[ -z $changed ]]; then
-    log "client $SKYMAIL_CLIENT_ID addresses ($SKYMAIL_UI_ORIGIN only): unchanged"
+    log "client $SKYMAIL_CLIENT_ID addresses ($label): unchanged"
   else
-    before="redirectUris $(json_tool field redirectUris <"$live_file")"
+    before="rootUrl $(json_tool field rootUrl <"$live_file") baseUrl $(json_tool field baseUrl <"$live_file")"
+    before="$before redirectUris $(json_tool field redirectUris <"$live_file")"
     before="$before webOrigins $(json_tool field webOrigins <"$live_file")"
     before="$before post.logout.redirect.uris $(json_tool field post.logout.redirect.uris <<<"$attributes")"
+    after="rootUrl $SKYMAIL_UI_ORIGIN baseUrl $SKYMAIL_UI_ORIGIN/ redirectUris [$redirects] webOrigins [$origins] post.logout.redirect.uris $logout"
     kcadm update "clients/$client_uuid" -r "$TARGET_REALM" -n -f "$desired_file" >/dev/null
-    log "client $SKYMAIL_CLIENT_ID addresses ($SKYMAIL_UI_ORIGIN only): updated ($(tr '\n' ' ' <<<"$changed" | sed 's/ $//'); before: $before; after: redirectUris [\"$callback\"] webOrigins [\"$SKYMAIL_UI_ORIGIN\"] post.logout.redirect.uris $SKYMAIL_UI_ORIGIN)"
+    log "client $SKYMAIL_CLIENT_ID addresses ($label): updated ($(tr '\n' ' ' <<<"$changed" | sed 's/ $//'); before: $before; after: $after)"
   fi
-  for field in rootUrl baseUrl adminUrl; do
-    value=$(json_tool field "$field" <"$live_file")
-    if [[ -n $value && $value != "$SKYMAIL_UI_ORIGIN" && $value != "$SKYMAIL_UI_ORIGIN/"* ]]; then
-      warn "client $SKYMAIL_CLIENT_ID: $field is $value, not on $SKYMAIL_UI_ORIGIN (not managed here; set it with the notify. migration wizard)"
-    fi
-  done
+  value=$(json_tool field adminUrl <"$live_file")
+  if [[ -n $value && $value != /* && $value != "$SKYMAIL_UI_ORIGIN" && $value != "$SKYMAIL_UI_ORIGIN/"* ]]; then
+    warn "client $SKYMAIL_CLIENT_ID: adminUrl is $value, not on $SKYMAIL_UI_ORIGIN (not managed here)"
+  fi
   for field in frontchannel.logout.url backchannel.logout.url; do
     value=$(json_tool field "$field" <<<"$attributes")
-    if [[ -n $value && $value != "$SKYMAIL_UI_ORIGIN/"* ]]; then
-      warn "client $SKYMAIL_CLIENT_ID: $field is $value, not on $SKYMAIL_UI_ORIGIN (not managed here; set it with the notify. migration wizard)"
+    if [[ -n $value && $value != /* && $value != "$SKYMAIL_UI_ORIGIN/"* ]]; then
+      warn "client $SKYMAIL_CLIENT_ID: $field is $value, not on $SKYMAIL_UI_ORIGIN (not managed here)"
     fi
   done
 }

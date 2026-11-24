@@ -625,10 +625,11 @@ tek mapper'ı hiçbir audience adlandırmıyordu ve sitelerin `skycms`'i yalnız
 tam kapsamdan geliyordu; tam kapsam kapanmadan önce sabit audience gelmeseydi editör 401 alırdı. Sıra
 uygulamaları bozmaz: önce audience'lar, en son tam kapsamın kapanması. Secret'a, sitelerin adreslerine,
 bayraklara ve istemcilerin kendi mapper'larına dokunulmaz; eksik istemci uyarıyla atlanır. `skymail`'in
-adreslerini ise adım yönetir (e-skylab ADR-0090): tek geri dönüş
-`https://notify.yildizskylab.com/api/auth/callback/keycloak`, tek web origin ve çıkış dönüşü
-`https://notify.yildizskylab.com` (sandbox realm'inde `sandbox-notify.`); eski `iletisim.` ve `mail.`
-satırları silinir (runbook §21). Sitelerin editör kapısı
+adreslerini ise adım yönetir (e-skylab ADR-0090): geri dönüş
+`https://notify.yildizskylab.com/api/auth/callback/keycloak`, web origin, çıkış dönüşü ve `rootUrl`
+`https://notify.yildizskylab.com` (sandbox realm'inde `sandbox-notify.` ve yerel geliştirme için
+`http://localhost:3000`); eski `iletisim.` ve `mail.` satırları silinir. Geri dönüşte
+`KEYCLOAK_SKYMAIL_UI_ORIGINS` kökenleri ezer (runbook §21). Sitelerin editör kapısı
 (`@skylab-kulubu/inscribed-auth` 0.3.1) `cms:access`'i token'daki herhangi bir istemcide aradığı için
 tam kapsamda başka bir sitenin `cms:access`'i bu sitenin editörünü açıyordu (inscribed yazmayı yine
 reddediyordu); daraltmadan sonra her site yalnız kendi `cms:access`'ine bakar. Keycloak kapsamdaki

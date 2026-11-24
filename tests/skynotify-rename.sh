@@ -33,7 +33,8 @@
 #     untouched; core's client-credentials token then carries aud skynotify and
 #     resource_access.skynotify instead of skymail;
 #   - a second --apply renames nothing;
-#   - --reverse --apply restores every object exactly as it was read before (the rollback).
+#   - --reverse --apply restores every object exactly as it was read before (the rollback), but the
+#     ids of renamed mappers (a renamed mapper is a new one).
 # Requirements on the host: docker, jq, curl. SKYNOTIFY_RENAME_TEST_PORT (default 18102),
 # SKYNOTIFY_RENAME_TEST_CONTAINER (default skynotify-rename-test-<pid>), SKYNOTIFY_RENAME_TEST_MEMORY
 # (default 2g).
@@ -175,7 +176,8 @@ snapshot() {
     groups+=("$(kcadm get "groups/$id" -r "$REALM" | jq -S -c 'del(.subGroupCount)')")
   done
   for id in "$scope_audience" "$scope_erase"; do
-    scopes+=("$(kcadm get "client-scopes/$id" -r "$REALM" | jq -S -c '.protocolMappers |= ((. // []) | sort_by(.id))')")
+    # A renamed mapper is a new mapper (Keycloak keeps a mapper's name on update): compared without id.
+    scopes+=("$(kcadm get "client-scopes/$id" -r "$REALM" | jq -S -c '.protocolMappers |= ((. // []) | map(del(.id)) | sort_by(.name))')")
   done
   for id in "$backend" "$seed" "$core" "$mailer"; do
     sas+=("$(kcadm get "clients/$id/service-account-user" -r "$REALM" | jq -S -c '{id, username}')")
@@ -341,8 +343,8 @@ for line in \
   'rename role: role skymail:suppressions:manage -> skynotify:suppressions:manage (client skymail) (id kept)' \
   'rename client-scope: client scope skymail-api-audience -> skynotify-api-audience' \
   'rename client-scope: client scope account-erase-skymail -> account-erase-skynotify' \
-  'rename mapper: mapper skymail-audience -> skynotify-audience (client scope skymail-api-audience; config included.client.audience)' \
-  'rename mapper: mapper account-erase-skymail-audience -> account-erase-skynotify-audience (client scope account-erase-skymail; config included.client.audience)' \
+  'rename mapper-replace: mapper skymail-audience -> skynotify-audience (client scope skymail-api-audience; config included.client.audience) (new id)' \
+  'rename mapper-replace: mapper account-erase-skymail-audience -> account-erase-skynotify-audience (client scope account-erase-skymail; config included.client.audience) (new id)' \
   'rename group: group /ROLLER/SKYMAIL-ACCESS -> SKYNOTIFY-ACCESS' \
   'rename group: group /ROLLER/SKYMAIL-MAILS-WRITE -> SKYNOTIFY-MAILS-WRITE' \
   'rename group: group /ROLLER/SKYMAIL-TEMPLATES-WRITE -> SKYNOTIFY-TEMPLATE-WRITE' \

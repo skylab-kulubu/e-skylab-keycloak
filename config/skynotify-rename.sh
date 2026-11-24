@@ -16,7 +16,9 @@
 #   - client scopes skymail-api-audience, account-api-skymail-audience, account-erase-skymail and any
 #     other whose name or text names SkyMail;
 #   - protocol mappers of every client and client scope whose name or config names SkyMail (for
-#     example included.client.audience=skymail of the Audience mappers);
+#     example included.client.audience=skymail of the Audience mappers). Keycloak keeps a mapper's
+#     name on update, so a mapper whose name changes is created anew (same configuration, new id)
+#     and the old one deleted; a run cut short in between deletes the old one on the next run;
 #   - groups whose name names SkyMail (/ROLLER/SKYMAIL-* -> /ROLLER/SKYNOTIFY-*), with their
 #     description and attributes (display_name_tr, description_tr). A role group's name keeps the
 #     team code rule (at most 24 characters): SKYMAIL-TEMPLATES-WRITE becomes
@@ -572,9 +574,9 @@ public final class SkynotifyRename {
         if (mappers == null || !mappers.isArray()) {
             return;
         }
-        Set<String> taken = new LinkedHashSet<>();
+        Map<String, JsonNode> byName = new HashMap<>();
         for (JsonNode mapper : mappers) {
-            taken.add(mapper.path("name").asText());
+            byName.put(mapper.path("name").asText(), mapper);
         }
         for (JsonNode mapper : mappers) {
             String id = mapper.path("id").asText();
@@ -601,12 +603,26 @@ public final class SkynotifyRename {
             }
             String label = "mapper " + name + (newName.equals(name) ? "" : " -> " + newName) + " (" + owner
                     + (keys.isEmpty() ? "" : "; config " + String.join(" ", keys)) + ")";
+            String path = ownerPath + "/protocol-mappers/models/" + id;
             if (classify(scan, label)) {
-                if (!newName.equals(name) && taken.contains(newName)) {
-                    problems.add("problem\tmapper " + newName + " already exists next to " + name + " (" + owner
-                            + "); nothing was changed");
+                if (newName.equals(name)) {
+                    mapperUnits.add(unit("mapper", path, body, label));
+                } else if (byName.containsKey(newName)) {
+                    // A replace cut short between its create and its delete: the new mapper is there.
+                    JsonNode sibling = byName.get(newName);
+                    if (sibling.path("protocolMapper").equals(body.path("protocolMapper"))
+                            && sibling.path("config").equals(body.path("config"))) {
+                        mapperUnits.add(unit("mapper-delete", path, body, label + " (the renamed copy exists; the old one goes)"));
+                    } else {
+                        problems.add("problem\tmapper " + newName + " already exists next to " + name + " (" + owner
+                                + ") with another configuration; nothing was changed");
+                    }
+                } else {
+                    // Keycloak keeps a mapper's name on update: a new name is a new mapper (same
+                    // configuration, a new id), then the old one is deleted.
+                    body.remove("id");
+                    mapperUnits.add(unit("mapper-replace", path, body, label + " (new id)"));
                 }
-                mapperUnits.add(unit("mapper", ownerPath + "/protocol-mappers/models/" + id, body, label));
             } else if (scan.hasNew) {
                 done.add("done\tmapper\t" + label);
             }
@@ -890,8 +906,25 @@ failure_reason() {
 
 applied=0
 failed=0
+# write KIND PATH BODY: one unit of the plan. A mapper whose name changes is created anew under its
+# owner, then the old one is deleted (Keycloak does not rename a mapper on update).
+write() {
+  case $1 in
+    mapper-replace)
+      kcadm create "${2%/*}" -r "$TARGET_REALM" -f "$3" >/dev/null 2>"$WORK_DIR/write.stderr" \
+        && kcadm delete "$2" -r "$TARGET_REALM" >/dev/null 2>"$WORK_DIR/write.stderr"
+      ;;
+    mapper-delete)
+      kcadm delete "$2" -r "$TARGET_REALM" >/dev/null 2>"$WORK_DIR/write.stderr"
+      ;;
+    *)
+      kcadm update "$2" -r "$TARGET_REALM" -n -f "$3" >/dev/null 2>"$WORK_DIR/write.stderr"
+      ;;
+  esac
+}
+
 while IFS=$'\t' read -r _ kind path body label; do
-  if kcadm update "$path" -r "$TARGET_REALM" -n -f "$body" >/dev/null 2>"$WORK_DIR/write.stderr"; then
+  if write "$kind" "$path" "$body"; then
     applied=$((applied + 1))
   else
     failed=$((failed + 1))
@@ -911,13 +944,20 @@ holders "$WORK_DIR/after"
 status=0
 if ((failed > 0 || left > 0 || after_problems > 0)); then
   log "after: $left rename(s) left, $after_problems problem(s)"
+  while IFS=$'\t' read -r _ kind _ _ label; do
+    log "after: left $kind: $label"
+  done < <(grep $'^unit\t' "$WORK_DIR/after/plan.tsv" || true)
+  while IFS=$'\t' read -r _ text; do
+    log "after: PROBLEM: $text"
+  done < <(grep $'^problem\t' "$WORK_DIR/after/plan.tsv" || true)
   status=1
 fi
 if ((old_accounts > 0)); then
   log "after: $old_accounts service account user(s) still carry the old name"
   status=1
 fi
-if ! cmp -s "$WORK_DIR/before/holders.tsv" "$WORK_DIR/after/holders.tsv"; then
+# No cmp in the Keycloak image.
+if [[ $(<"$WORK_DIR/before/holders.tsv") != "$(<"$WORK_DIR/after/holders.tsv")" ]]; then
   log 'after: the users or groups holding a renamed role differ from before'
   status=1
 else

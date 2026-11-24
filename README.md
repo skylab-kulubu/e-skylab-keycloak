@@ -1082,7 +1082,8 @@ belgesindedir.
 ### SkyMail'den SkyNotify'a ad taşıması (ADR 0091, SPI 1.29.0)
 
 Bildirim servisinin Keycloak'taki her adı SkyNotify'dır: istemciler `skynotify`,
-`skynotify-backend`, `skynotify-seed`; roller `skynotify:*`; gruplar `/ROLLER/SKYNOTIFY-*`;
+`skynotify-backend`, `skynotify-seed`; roller `skynotify:*`; gruplar `/ROLLER/SKYNOTIFY-*` (ekip
+kodu kuralının 24 karakteri yüzünden `SKYMAIL-TEMPLATES-WRITE` → `SKYNOTIFY-TEMPLATE-WRITE`);
 kapsamlar `skynotify-api-audience` ve `account-erase-skynotify`; Hesap Merkezi'nin eşleyicisi
 `account-api-skynotify-audience`; SPI sağlayıcıları `skynotify`, ortam `SKYNOTIFY_*`, gizli
 anahtar bağlaması `/run/secrets/skynotify/`. Uzlaştırıcı yalnız yeni adları bilir: eski adlı bir

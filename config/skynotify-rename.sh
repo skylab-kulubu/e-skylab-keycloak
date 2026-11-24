@@ -18,7 +18,9 @@
 #   - protocol mappers of every client and client scope whose name or config names SkyMail (for
 #     example included.client.audience=skymail of the Audience mappers);
 #   - groups whose name names SkyMail (/ROLLER/SKYMAIL-* -> /ROLLER/SKYNOTIFY-*), with their
-#     description and attributes (display_name_tr, description_tr).
+#     description and attributes (display_name_tr, description_tr). A role group's name keeps the
+#     team code rule (at most 24 characters): SKYMAIL-TEMPLATES-WRITE becomes
+#     SKYNOTIFY-TEMPLATE-WRITE (and back); a new name that would break the rule is a PROBLEM.
 # The text rule is the repository's: SkyMail -> SkyNotify, SKYMAIL -> SKYNOTIFY, skymail ->
 # skynotify, and a Turkish suffix after the apostrophe follows the new name's vowels (SkyMail'e ->
 # SkyNotify'a, SkyMail'in -> SkyNotify'ın); --reverse is the exact inverse. Out of scope (spec §1):
@@ -220,6 +222,12 @@ public final class SkynotifyRename {
             BACK_TO_FRONT.put(pair[1], pair[0]);
         }
     }
+
+    // A role group's name follows the team code rule (config/role-groups.json, runbook §26): at most 24
+    // characters. SKYNOTIFY-TEMPLATES-WRITE would be 25, so that one group takes the singular.
+    private static final Pattern TEAM_CODE = Pattern.compile("^[A-Z][A-Z0-9-]{1,23}$");
+    private static final Map<String, String> GROUP_NAMES_FORWARD = Map.of("SKYNOTIFY-TEMPLATES-WRITE", "SKYNOTIFY-TEMPLATE-WRITE");
+    private static final Map<String, String> GROUP_NAMES_REVERSE = Map.of("SKYMAIL-TEMPLATE-WRITE", "SKYMAIL-TEMPLATES-WRITE");
 
     private final boolean forward;
     private final Pattern oldAny;
@@ -458,7 +466,11 @@ public final class SkynotifyRename {
                 Scan scan = new Scan();
                 ObjectNode body = JSON.createObjectNode();
                 scan.add(name, "name");
-                String newName = rename(name);
+                String newName = groupName(rename(name));
+                if (TEAM_CODE.matcher(name).matches() && !TEAM_CODE.matcher(newName).matches()) {
+                    problems.add("problem\tgroup " + path + ": the new name " + newName
+                            + " breaks the team code name rule (" + TEAM_CODE.pattern() + "); nothing was changed");
+                }
                 body.put("name", newName);
                 JsonNode description = group.get("description");
                 if (description != null && description.isTextual()) {
@@ -626,6 +638,11 @@ public final class SkynotifyRename {
             throw new IllegalStateException(exception);
         }
         return "unit\t" + kind + "\t" + path + "\t" + file + "\t" + label;
+    }
+
+    /** A group name after the rule, with the team code rule's exception. */
+    private String groupName(String renamed) {
+        return (forward ? GROUP_NAMES_FORWARD : GROUP_NAMES_REVERSE).getOrDefault(renamed, renamed);
     }
 
     /** The rename rule (see the script's header); the protected texts are left as they are. */

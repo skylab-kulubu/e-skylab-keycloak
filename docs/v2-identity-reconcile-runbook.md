@@ -3350,7 +3350,7 @@ rolünü `/ROLLER` altındaki bir yaprağa üye olarak alır; yaprak tek bir ist
 | --- | --- |
 | `FORMS-ACCESS`, `FORMS-ALL` | `forms` `skyforms:access`, `skyforms:*` |
 | `PLACE-ADMIN`, `PLACE-MODERATOR` | `place` `place:admin`, `place:moderator` |
-| `SKYNOTIFY-ACCESS`, `SKYNOTIFY-TEMPLATES-READ`, `SKYNOTIFY-TEMPLATES-WRITE`, `SKYNOTIFY-LISTS-READ`, `SKYNOTIFY-LISTS-WRITE`, `SKYNOTIFY-MAILS-READ`, `SKYNOTIFY-MAILS-WRITE`, `SKYNOTIFY-MAILS-APPROVE` | `skynotify` `skynotify:<rol>` (her rol için bir yaprak) |
+| `SKYNOTIFY-ACCESS`, `SKYNOTIFY-TEMPLATES-READ`, `SKYNOTIFY-TEMPLATE-WRITE`, `SKYNOTIFY-LISTS-READ`, `SKYNOTIFY-LISTS-WRITE`, `SKYNOTIFY-MAILS-READ`, `SKYNOTIFY-MAILS-WRITE`, `SKYNOTIFY-MAILS-APPROVE` | `skynotify` `skynotify:<rol>` (her rol için bir yaprak) |
 | `CF-ZERO-TRUST-ACCESS` | `cloudflare-zero-trust` `cloudflare:zero-trust:access` |
 | `SKYCLOUD-ACCESS`, `SKYCLOUD-ADMIN` | `skycloud` `skycloud:access`, `admin` (SkyCloud/Nextcloud yöneticisi) |
 
@@ -4594,7 +4594,7 @@ taşır (README "SkyMail'den SkyNotify'a ad taşıması").
 | --- | --- |
 | istemciler `skymail`, `skymail-backend`, `skymail-seed` | `skynotify`, `skynotify-backend`, `skynotify-seed` (uuid, gizli anahtar, service account korunur) |
 | roller `skymail:*` | `skynotify:*` (id korunur) |
-| gruplar `/ROLLER/SKYMAIL-*` | `/ROLLER/SKYNOTIFY-*` (`display_name_tr`, `description_tr` metinleriyle) |
+| gruplar `/ROLLER/SKYMAIL-*` | `/ROLLER/SKYNOTIFY-*` (`display_name_tr`, `description_tr` metinleriyle); ad kuralının 24 karakteri yüzünden `SKYMAIL-TEMPLATES-WRITE` → `SKYNOTIFY-TEMPLATE-WRITE` |
 | kapsamlar `skymail-api-audience`, `account-erase-skymail` | `skynotify-api-audience`, `account-erase-skynotify` |
 | eşleyiciler (ör. `account-api-skymail-audience`, `included.client.audience=skymail`) | `account-api-skynotify-audience`, `included.client.audience=skynotify` |
 | SPI `sky-mail`, ortam `SKY_MAIL_*`, `/run/secrets/sky-mail/` | `skynotify`, `SKYNOTIFY_*`, `/run/secrets/skynotify/` |

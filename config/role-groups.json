@@ -46,7 +46,7 @@
       "description_tr": "SkyNotify şablonlarını görür (skynotify:templates:read)."
     },
     {
-      "name": "SKYNOTIFY-TEMPLATES-WRITE",
+      "name": "SKYNOTIFY-TEMPLATE-WRITE",
       "client": "skynotify",
       "roles": ["skynotify:templates:write"],
       "display_name_tr": "SkyNotify: şablon yazar",

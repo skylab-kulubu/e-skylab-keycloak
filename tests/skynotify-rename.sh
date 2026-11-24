@@ -12,8 +12,10 @@
 #   skymail-api-audience among its default scopes), keycloak-mailer (a narrowed service account
 #   holding skymail:mails:send, the role in its role scope) and forms (unrelated);
 #   client scopes skymail-api-audience and account-erase-skymail with Audience mappers
-#   (included.client.audience=skymail); groups /ROLLER/SKYMAIL-ACCESS and /ROLLER/SKYMAIL-MAILS-WRITE
-#   with production's display_name_tr and description_tr, and /ROLLER/FORMS-ACCESS; one person in
+#   (included.client.audience=skymail); groups /ROLLER/SKYMAIL-ACCESS, /ROLLER/SKYMAIL-MAILS-WRITE
+#   and /ROLLER/SKYMAIL-TEMPLATES-WRITE (its new name, SKYNOTIFY-TEMPLATE-WRITE, keeps the team code
+#   rule's 24 characters) with production's display_name_tr and description_tr, and
+#   /ROLLER/FORMS-ACCESS; one person in
 #   /ROLLER/SKYMAIL-ACCESS who also holds skymail:mails:send directly.
 # Realm e-skylab-sandbox holds both skymail and skynotify (a rename that cannot be one).
 #
@@ -178,7 +180,20 @@ snapshot() {
   for id in "$backend" "$seed" "$core" "$mailer"; do
     sas+=("$(kcadm get "clients/$id/service-account-user" -r "$REALM" | jq -S -c '{id, username}')")
   done
-  jq -S -c -n '$ARGS.positional | map(fromjson)' --args "${clients[@]}" "${roles[@]}" "${groups[@]}" "${scopes[@]}" "${sas[@]}"
+  # Last (index 19): the group whose new name takes the team code rule's exception.
+  sas+=("$(kcadm get "groups/$group_templates" -r "$REALM" | jq -S -c 'del(.subGroupCount)')")
+  # Lists of names (default client scopes, redirect URIs) come in no fixed order: sorted.
+  jq -S -c -n '$ARGS.positional | map(fromjson) | walk(if type == "array" and all(type == "string") then sort else . end)' --args "${clients[@]}" "${roles[@]}" "${groups[@]}" "${scopes[@]}" "${sas[@]}"
+}
+
+# same_as SNAPSHOT MESSAGE: the realm's snapshot now equals SNAPSHOT, or the difference and MESSAGE.
+same_as() {
+  local now
+  now=$(snapshot)
+  if [[ $now != "$1" ]]; then
+    diff <(jq . <<<"$1") <(jq . <<<"$now") >&2 || true
+    fail "$2"
+  fi
 }
 
 # ---------------------------------------------------------------------------------------------------
@@ -279,11 +294,15 @@ kcadm create "groups/$roller/children" -r "$REALM" -s name=SKYMAIL-ACCESS \
 kcadm create "groups/$roller/children" -r "$REALM" -s name=SKYMAIL-MAILS-WRITE \
   -s 'attributes.display_name_tr=["SkyMail: gönderim yapar"]' \
   -s "attributes.description_tr=[\"SkyMail'den Mail onayı olmadan gönderim yapar (skymail:mails:write).\"]" >/dev/null
+kcadm create "groups/$roller/children" -r "$REALM" -s name=SKYMAIL-TEMPLATES-WRITE \
+  -s 'attributes.display_name_tr=["SkyMail: şablon yazar"]' \
+  -s 'attributes.description_tr=["SkyMail şablonlarını oluşturur ve değiştirir (skymail:templates:write)."]' >/dev/null
 kcadm create "groups/$roller/children" -r "$REALM" -s name=FORMS-ACCESS \
   -s 'attributes.display_name_tr=["Forms: yönetim paneli erişimi"]' >/dev/null
 group_access=$(group_id ROLLER/SKYMAIL-ACCESS)
 group_write=$(group_id ROLLER/SKYMAIL-MAILS-WRITE)
 group_forms=$(group_id ROLLER/FORMS-ACCESS)
+group_templates=$(group_id ROLLER/SKYMAIL-TEMPLATES-WRITE)
 kcadm create "groups/$group_access/role-mappings/clients/$skymail" -r "$REALM" \
   -b "[{\"id\":\"$role_access\",\"name\":\"skymail:access\"}]" >/dev/null
 
@@ -326,26 +345,27 @@ for line in \
   'rename mapper: mapper account-erase-skymail-audience -> account-erase-skynotify-audience (client scope account-erase-skymail; config included.client.audience)' \
   'rename group: group /ROLLER/SKYMAIL-ACCESS -> SKYNOTIFY-ACCESS' \
   'rename group: group /ROLLER/SKYMAIL-MAILS-WRITE -> SKYNOTIFY-MAILS-WRITE' \
+  'rename group: group /ROLLER/SKYMAIL-TEMPLATES-WRITE -> SKYNOTIFY-TEMPLATE-WRITE' \
   'service account user: service-account-skymail-backend' \
   'service account user: service-account-skymail-seed' \
   'holders of role skymail:access -> skynotify:access (client skymail): users=1 groups=1' \
   'holders of role skymail:mails:send -> skynotify:mails:send (client skymail): users=3 groups=0' \
-  'plan: rename=13 alreadyRenamed=0 roles counted=4' \
-  'dry run: 13 change(s); rerun with --apply to execute them'; do
+  'plan: rename=14 alreadyRenamed=0 roles counted=4' \
+  'dry run: 14 change(s); rerun with --apply to execute them'; do
   expect_line "$dry" "$line" 'the dry run misses'
 done
-# Two clients' core fields, four roles, two scopes, two mappers, two groups (thirteen with the third client).
+# Three clients' core fields, four roles, two client scopes, two mappers, three groups.
 reject_line "$dry" 'forms' 'the dry run touches an unrelated client'
 reject_line "$dry" 'skyMail' 'the dry run touches the out-of-scope skyMail mapper'
 reject_line "$dry" "$PERSON" "the dry run printed a person's username"
 reject_line "$dry" "$person" "the dry run printed a person's id"
-[[ $(snapshot) == "$before" ]] || fail 'the dry run changed the realm'
+same_as "$before" 'the dry run changed the realm'
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='apply'
 applied=$(run_expecting 0 "$REALM" --apply)
 indent "$applied"
-expect_line "$applied" 'applied 13 rename(s); failed=0' 'the apply did not rename everything'
+expect_line "$applied" 'applied 14 rename(s); failed=0' 'the apply did not rename everything'
 expect_line "$applied" 'after: holders equal for 4 role(s); nothing left to rename' 'the apply did not check the holders'
 reject_line "$applied" "$PERSON" "the apply printed a person's username"
 
@@ -378,13 +398,14 @@ jq -e --arg text "$suppressions_text" '.[6].name == "skynotify:access" and .[6].
 jq -e --argjson before "$before" '.[6:10] | map(.id) == ($before[6:10] | map(.id))' <<<"$after" >/dev/null || fail 'a role id changed'
 
 role_groups="$REPOSITORY_ROOT/config/role-groups.json"
-for name in SKYNOTIFY-ACCESS SKYNOTIFY-MAILS-WRITE; do
+for name in SKYNOTIFY-ACCESS SKYNOTIFY-MAILS-WRITE SKYNOTIFY-TEMPLATE-WRITE; do
   expected=$(jq -c --arg name "$name" '.groups[] | select(.name == $name) | {name, display_name_tr: [.display_name_tr], description_tr: [.description_tr]}' "$role_groups")
   [[ -n $expected ]] || fail "config/role-groups.json has no $name"
-  got=$(jq -c --arg name "$name" '.[10:12][] | select(.name == $name) | {name, display_name_tr: .attributes.display_name_tr, description_tr: .attributes.description_tr}' <<<"$after")
+  got=$(jq -c --arg name "$name" '[.[10:12][], .[19]][] | select(.name == $name) | {name, display_name_tr: .attributes.display_name_tr, description_tr: .attributes.description_tr}' <<<"$after")
   [[ $got == "$expected" ]] || fail "group $name is not what config/role-groups.json writes: $got (expected $expected)"
 done
-jq -e '.[10].path == "/ROLLER/SKYNOTIFY-ACCESS" and .[11].path == "/ROLLER/SKYNOTIFY-MAILS-WRITE"' <<<"$after" >/dev/null \
+jq -e '.[10].path == "/ROLLER/SKYNOTIFY-ACCESS" and .[11].path == "/ROLLER/SKYNOTIFY-MAILS-WRITE"
+  and .[19].path == "/ROLLER/SKYNOTIFY-TEMPLATE-WRITE" and .[19].id == "'"$group_templates"'"' <<<"$after" >/dev/null \
   || fail 'the group paths do not follow their names'
 jq -e --argjson before "$before" '.[12] == $before[12] and (.[10:13] | map(.id)) == ($before[10:13] | map(.id))' <<<"$after" >/dev/null \
   || fail 'a group id changed or FORMS-ACCESS changed'
@@ -415,22 +436,18 @@ CURRENT_STAGE='second apply'
 again=$(run_expecting 0 "$REALM" --apply)
 expect_line "$again" 'plan: rename=0 alreadyRenamed=' 'the second run planned a rename'
 expect_line "$again" 'applied 0 rename(s); failed=0' 'the second run wrote'
-[[ $(snapshot) == "$after" ]] || fail 'the second run changed the realm'
+same_as "$after" 'the second run changed the realm'
 printf '    a second --apply renames nothing\n'
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='reverse (rollback)'
 reverse_dry=$(run_expecting 0 "$REALM" --reverse)
-expect_line "$reverse_dry" 'dry run: 13 change(s)' 'the reverse dry run does not plan every rename back'
+expect_line "$reverse_dry" 'dry run: 14 change(s)' 'the reverse dry run does not plan every rename back'
 expect_line "$reverse_dry" 'rename client: client skynotify -> skymail' 'the reverse dry run misses the client'
 reversed=$(run_expecting 0 "$REALM" --reverse --apply)
 indent "$reversed"
-expect_line "$reversed" 'applied 13 rename(s); failed=0' 'the reverse did not rename everything back'
-restored=$(snapshot)
-if [[ $restored != "$before" ]]; then
-  diff <(jq . <<<"$before") <(jq . <<<"$restored") >&2 || true
-  fail 'the reverse did not restore every object exactly'
-fi
+expect_line "$reversed" 'applied 14 rename(s); failed=0' 'the reverse did not rename everything back'
+same_as "$before" 'the reverse did not restore every object exactly'
 [[ $(core_claims) == "$claims_before" ]] || fail "core's token after the reverse differs from before"
 printf '    --reverse --apply restores every object exactly as before\n'
 printf 'skynotify-rename: all checks passed\n'

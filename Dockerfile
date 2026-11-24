@@ -69,7 +69,9 @@ ENV KC_SPI_THEME__WELCOME_THEME=e-skylab-welcome
 # password-blacklists/README.md has its sources. Outside data/, so a volume there cannot hide it.
 # Keycloak rejects a realm policy that names a missing list, and an image without the list cannot
 # parse a realm that has one: drop passwordBlacklist from the realm before rolling back past it.
-COPY --chmod=0444 password-blacklists/skylab-yaygin-parolalar.txt /opt/keycloak/password-blacklists/skylab-yaygin-parolalar.txt
+# No --chmod: BuildKit gives the parent folder it creates the same mode, and a 0444 folder
+# cannot be entered by the keycloak user ("Password denylist ... not found!").
+COPY password-blacklists/skylab-yaygin-parolalar.txt /opt/keycloak/password-blacklists/skylab-yaygin-parolalar.txt
 ENV KC_SPI_PASSWORD_POLICY__PASSWORD_BLACKLIST__BLACKLISTS_PATH=/opt/keycloak/password-blacklists
 
 ENTRYPOINT ["/opt/keycloak/bin/kc.sh"]

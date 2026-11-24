@@ -77,7 +77,7 @@ grep -Fqx 'ENV KC_SPI_THEME__WELCOME_THEME=e-skylab-welcome' "$KEYCLOAK_DIR/Dock
 # Keycloak lower-cases the list and the password; every entry is at least the policy's length(8).
 PASSWORD_DENYLIST=skylab-yaygin-parolalar.txt
 password_denylist_file="$KEYCLOAK_DIR/password-blacklists/$PASSWORD_DENYLIST"
-grep -Fqx "COPY --chmod=0444 password-blacklists/$PASSWORD_DENYLIST /opt/keycloak/password-blacklists/$PASSWORD_DENYLIST" "$KEYCLOAK_DIR/Dockerfile" \
+grep -Fqx "COPY password-blacklists/$PASSWORD_DENYLIST /opt/keycloak/password-blacklists/$PASSWORD_DENYLIST" "$KEYCLOAK_DIR/Dockerfile" \
   || fail 'the image does not ship the password denylist'
 grep -Fqx 'ENV KC_SPI_PASSWORD_POLICY__PASSWORD_BLACKLIST__BLACKLISTS_PATH=/opt/keycloak/password-blacklists' "$KEYCLOAK_DIR/Dockerfile" \
   || fail 'the image does not point the passwordBlacklist policy at its denylist folder'

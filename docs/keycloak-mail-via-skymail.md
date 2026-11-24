@@ -266,7 +266,7 @@ eşlenen şablon anahtarı ve altı değişkeniyle bir kez gönderilir, fixture'
 ve 500 döndüğü iki durumda geri düşüş tetiklenir ve posta fixture'ın SMTP
 havuzuna yine de ulaşır.
 
-> **`SKY_MAIL_BASE_URL` API'nin kökü olmalı, arayüzün değil.** `https://mail.yildizskylab.com`
+> **`SKY_MAIL_BASE_URL` API'nin kökü olmalı, arayüzün değil.** `https://notify.yildizskylab.com`
 > SkyMail'in tek sayfalık uygulamasıdır ve her yola HTML döndürür; oraya yapılan
 > `POST /v1/mail_tasks/single` 200 + HTML alır. Gönderici yalnız 201'i gönderildi saydığı için
 > bu hatada her posta sessizce SMTP yedeğine düşer, SkyMail hiçbir şey görmez. Doğru değer

@@ -40,7 +40,9 @@ LCA_FRONTEND_ARGE_SCOPE=frontend-arge-core-audience
 LCA_SKYFORMS_REDIRECT=https://forms.yildizskylab.com/api/auth/callback/keycloak
 LCA_FRONTEND_MAIN_REDIRECT=https://yildizskylab.com/api/auth/callback/keycloak
 LCA_FRONTEND_ARGE_REDIRECT=https://arge.yildizskylab.com/api/auth/callback/keycloak
-LCA_SKYMAIL_REDIRECT=https://mail.yildizskylab.com/api/auth/callback/keycloak
+# The reconciliation leaves the SkyMail UI's notify. address alone (ADR-0090; the fixture starts with
+# production's hand-made iletisim.).
+LCA_SKYMAIL_REDIRECT=https://notify.yildizskylab.com/api/auth/callback/keycloak
 # sky-app's public client signs in with its own scheme (fixture realm); the inbox needs aud skymail (iletisim-servisi 04).
 LCA_SKYAPP_REDIRECT=com.yildizskylab.skyapp:/oauth/callback
 LCA_HAND_MADE_SCOPE_UUID=''

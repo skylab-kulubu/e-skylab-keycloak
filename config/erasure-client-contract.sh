@@ -15,7 +15,7 @@
 ERASURE_CLIENT_ID=core-erasure
 ERASURE_SERVICE_ACCOUNT=service-account-core-erasure
 ERASURE_CLIENT_NAME='Core account erasure (service to service)'
-ERASURE_CLIENT_DESCRIPTION='Service account core uses to send Account erasure commands to SkyMail, CMS and Forms (ADR-0051)'
+ERASURE_CLIENT_DESCRIPTION='Service account core uses to send Account erasure commands to SkyNotify, CMS and Forms (ADR-0051)'
 ERASURE_ROLE_DESCRIPTION='Account erasure command from core through the core-erasure client (ADR-0051)'
 ERASURE_FLAG_FIELDS=enabled,publicClient,bearerOnly,serviceAccountsEnabled,standardFlowEnabled,implicitFlowEnabled,directAccessGrantsEnabled,fullScopeAllowed,clientAuthenticatorType
 ERASURE_FLAG_VALUES=true,false,false,true,false,false,false,false,client-secret
@@ -46,10 +46,10 @@ ERASURE_TOLERATED_DEFAULT_SCOPE=service_account
 
 # One entry per service, same index in every array: the optional client scope core requests,
 # the resource client the service validates as audience and the client role it requires.
-ERASURE_SERVICES=(skymail cms forms)
-ERASURE_SCOPES=(account-erase-skymail account-erase-cms account-erase-forms)
-ERASURE_RESOURCE_CLIENTS=(skymail skycms forms)
-ERASURE_ROLES=(skymail:account:erase cms:account:erase skyforms:account:erase)
+ERASURE_SERVICES=(skynotify cms forms)
+ERASURE_SCOPES=(account-erase-skynotify account-erase-cms account-erase-forms)
+ERASURE_RESOURCE_CLIENTS=(skynotify skycms forms)
+ERASURE_ROLES=(skynotify:account:erase cms:account:erase skyforms:account:erase)
 ERASURE_SCOPE_DESCRIPTION='Account erasure command to one service (ADR-0051); requested by core-erasure only'
 # Mapper CSV fields and the expected line per scope (erasure_expected_mapper).
 ERASURE_MAPPER_FIELDS='name,protocolMapper,config(included.client.audience,included.custom.audience,access.token.claim,introspection.token.claim,id.token.claim,userinfo.token.claim)'

@@ -4,8 +4,8 @@ import { createServer as createTcpServer } from "node:net";
 
 // Integration fixture for K5. Two protocols, one process:
 //
-//   HTTP  :8080  the SkyMail single-mail task API the sky-mail sender posts to.
-//   SMTP  :1025  the sink Keycloak's own sender delivers to when SkyMail fails,
+//   HTTP  :8080  the SkyNotify single-mail task API the skynotify sender posts to.
+//   SMTP  :1025  the sink Keycloak's own sender delivers to when SkyNotify fails,
 //                so the fallback can be proved to still put the mail out.
 //
 // Every accepted mail is printed as one JSON line so the harness can read it from
@@ -13,7 +13,7 @@ import { createServer as createTcpServer } from "node:net";
 
 const mailTaskPath = "/v1/mail_tasks/single";
 const maximumBodyBytes = 16 * 1024;
-const requiredRoles = ["skymail:access", "skymail:mails:send"];
+const requiredRoles = ["skynotify:access", "skynotify:mails:send"];
 const requiredVariables = [
   "link",
   "linkExpirationMinutes",
@@ -26,12 +26,12 @@ const requiredVariables = [
   "subjectKey",
 ];
 // Mails to these recipients are refused so the harness can prove both fallback paths:
-// an unavailable SkyMail, and a template key SkyMail does not know (or that was archived).
-const unavailableRecipientPrefix = process.env.SKYMAIL_UNAVAILABLE_RECIPIENT ?? "skymail-fallback@";
+// an unavailable SkyNotify, and a template key SkyNotify does not know (or that was archived).
+const unavailableRecipientPrefix = process.env.SKYNOTIFY_UNAVAILABLE_RECIPIENT ?? "skynotify-fallback@";
 const missingTemplateRecipientPrefix =
-  process.env.SKYMAIL_MISSING_TEMPLATE_RECIPIENT ?? "skymail-missing@";
-const httpPort = parsePositiveInteger(process.env.SKYMAIL_HTTP_PORT ?? "8080");
-const smtpPort = parsePositiveInteger(process.env.SKYMAIL_SMTP_PORT ?? "1025");
+  process.env.SKYNOTIFY_MISSING_TEMPLATE_RECIPIENT ?? "skynotify-missing@";
+const httpPort = parsePositiveInteger(process.env.SKYNOTIFY_HTTP_PORT ?? "8080");
+const smtpPort = parsePositiveInteger(process.env.SKYNOTIFY_SMTP_PORT ?? "1025");
 
 function parsePositiveInteger(value) {
   if (!/^[1-9][0-9]*$/.test(value)) {
@@ -41,7 +41,7 @@ function parsePositiveInteger(value) {
 }
 
 function emit(record) {
-  process.stdout.write(`SKYMAIL_FIXTURE ${JSON.stringify(record)}\n`);
+  process.stdout.write(`SKYNOTIFY_FIXTURE ${JSON.stringify(record)}\n`);
 }
 
 function reject(response, status, reason) {
@@ -82,7 +82,7 @@ const httpServer = createHttpServer((request, response) => {
     reject(response, 401, "missing or unreadable bearer token");
     return;
   }
-  const roles = claims.resource_access?.skymail?.roles ?? [];
+  const roles = claims.resource_access?.skynotify?.roles ?? [];
   const missingRoles = requiredRoles.filter((role) => !roles.includes(role));
   if (missingRoles.length > 0) {
     reject(response, 403, `service account lacks ${missingRoles.join(" ")}`);
@@ -161,7 +161,7 @@ const smtpServer = createTcpServer((socket) => {
 
   const say = (line) => socket.write(`${line}\r\n`);
 
-  say("220 skymail-fixture ESMTP");
+  say("220 skynotify-fixture ESMTP");
   socket.setEncoding("utf8");
   socket.on("data", (chunk) => {
     pending += chunk;
@@ -186,7 +186,7 @@ const smtpServer = createTcpServer((socket) => {
 
       const command = line.slice(0, 4).toUpperCase();
       if (command === "EHLO" || command === "HELO") {
-        say("250 skymail-fixture");
+        say("250 skynotify-fixture");
       } else if (command === "MAIL") {
         say("250 2.1.0 Sender ok");
       } else if (command === "RCPT") {
@@ -214,6 +214,6 @@ const smtpServer = createTcpServer((socket) => {
 
 httpServer.listen(httpPort, "0.0.0.0", () => {
   smtpServer.listen(smtpPort, "0.0.0.0", () => {
-    process.stdout.write("SkyMail fixture is ready.\n");
+    process.stdout.write("SkyNotify fixture is ready.\n");
   });
 });

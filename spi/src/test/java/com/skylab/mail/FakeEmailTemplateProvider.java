@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Stands in for Keycloak's freemarker template provider: records the calls the {@code sky-mail}
+ * Stands in for Keycloak's freemarker template provider: records the calls the {@code skynotify}
  * decorator passes through, so a test can prove the rendering is still asked for unchanged.
  */
 final class FakeEmailTemplateProvider implements EmailTemplateProvider {

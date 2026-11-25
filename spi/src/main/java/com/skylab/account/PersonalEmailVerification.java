@@ -22,9 +22,9 @@ import java.util.Map;
  * login ({@link PersonalEmailOffer}). One rule for which address may receive a code, one mail, one
  * code store ({@link PendingEmailChanges}) and one record of the proof ({@link PersonalEmailProof}).
  *
- * <p>The mail is Keycloak's generic template send with {@value #TEMPLATE}: the SkyMail provider
- * routes exactly that name to SkyMail's {@code keycloak.personal-email-confirm} template (ADR-0045),
- * and Keycloak's own SMTP renders this extension's FreeMarker copy when SkyMail is unreachable.
+ * <p>The mail is Keycloak's generic template send with {@value #TEMPLATE}: the SkyNotify provider
+ * routes exactly that name to SkyNotify's {@code keycloak.personal-email-confirm} template (ADR-0045),
+ * and Keycloak's own SMTP renders this extension's FreeMarker copy when SkyNotify is unreachable.
  */
 public final class PersonalEmailVerification {
 
@@ -35,7 +35,7 @@ public final class PersonalEmailVerification {
     static final String SUBJECT_KEY = "skyPersonalEmailConfirmSubject";
     /**
      * {@code theme-resources/templates/{text,html}/} of this extension; no theme change needed.
-     * Public because the SkyMail mail provider routes this mail by exactly this name.
+     * Public because the SkyNotify mail provider routes this mail by exactly this name.
      */
     public static final String TEMPLATE = "sky-personal-email-confirm.ftl";
     /**

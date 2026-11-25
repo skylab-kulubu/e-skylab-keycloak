@@ -316,32 +316,32 @@ confirmation_code_of() {
   printf '%s' "$code"
 }
 
-# personal_code_for <address> -> the six-digit code mailed to <address>. With the SkyMail
-# sender (K5) the mail is a SkyMail task rendered by SkyMail's keycloak.personal-email-confirm
+# personal_code_for <address> -> the six-digit code mailed to <address>. With the SkyNotify
+# sender (K5) the mail is a SkyNotify task rendered by SkyNotify's keycloak.personal-email-confirm
 # template, so the code is read from the task the fixture captured; without it Keycloak renders
 # this extension's FreeMarker template and the mail lands in Mailpit.
 personal_code_for() {
   local address=$1 attempt task code
-  if ! "${COMPOSE[@]}" ps --services 2>/dev/null | grep -qx skymail; then
+  if ! "${COMPOSE[@]}" ps --services 2>/dev/null | grep -qx skynotify; then
     confirmation_code_of "$(mailpit_message_id "$address")"
     return
   fi
   for attempt in $(seq 1 30); do
-    task=$("${COMPOSE[@]}" logs --no-color --no-log-prefix skymail 2>/dev/null \
-      | sed -n 's/^SKYMAIL_FIXTURE //p' \
+    task=$("${COMPOSE[@]}" logs --no-color --no-log-prefix skynotify 2>/dev/null \
+      | sed -n 's/^SKYNOTIFY_FIXTURE //p' \
       | jq -c --arg to "$address" 'select(.event == "mail_task" and .recipient_email == $to)' \
       | tail -n 1)
     [[ -n $task ]] && break
     sleep 1
   done
-  [[ -n $task ]] || fail 'no personal e-mail code reached SkyMail'
+  [[ -n $task ]] || fail 'no personal e-mail code reached SkyNotify'
   jq -e '.template_key == "keycloak.personal-email-confirm"' <<<"$task" >/dev/null \
-    || fail 'the personal e-mail code did not go to SkyMail under keycloak.personal-email-confirm'
+    || fail 'the personal e-mail code did not go to SkyNotify under keycloak.personal-email-confirm'
   jq -e '.missing_variables == [] and .body_variables.link == "" and .body_variables.codeExpirationMinutes == "10"' \
     <<<"$task" >/dev/null \
-    || fail 'the SkyMail task must carry every variable, no link and the ten-minute expiry'
+    || fail 'the SkyNotify task must carry every variable, no link and the ten-minute expiry'
   code=$(jq -r '.body_variables.code' <<<"$task")
-  [[ $code =~ ^[0-9]{6}$ ]] || fail 'the SkyMail task carries no six-digit code'
+  [[ $code =~ ^[0-9]{6}$ ]] || fail 'the SkyNotify task carries no six-digit code'
   printf '%s' "$code"
 }
 
@@ -944,7 +944,7 @@ json_assert "$(skyapp_access_token "$EMAIL_USERNAME" "$email_password")" '.email
   'adding a personal address must not move the e-mail claim of other clients' \
   --arg school "$EMAIL_SCHOOL_ADDRESS"
 
-# The primary is what Keycloak, the tokens, core and SkyMail see.
+# The primary is what Keycloak, the tokens, core and SkyNotify see.
 sky POST email/primary "$token_e" - '{"which":"personal"}'
 expect 401 sudo_required 'the primary selection requires sudo'
 # Sudo lasts five minutes and the mail round trip above eats into it.

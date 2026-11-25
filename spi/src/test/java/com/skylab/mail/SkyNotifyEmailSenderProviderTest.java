@@ -26,7 +26,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-class SkyMailEmailSenderProviderTest {
+class SkyNotifyEmailSenderProviderTest {
 
     private static final Map<String, String> SMTP_CONFIG = Map.of("host", "smtp.yildizskylab.com");
     private static final String SUBJECT = "E-posta adresinizi doğrulayın";
@@ -37,55 +37,55 @@ class SkyMailEmailSenderProviderTest {
     private final RecordingSender smtp = new RecordingSender();
 
     private KeycloakSession session;
-    private SkyMailClient client;
-    private SkyMailSettings enabled;
+    private SkyNotifyClient client;
+    private SkyNotifySettings enabled;
 
     @BeforeEach
     void setUp() {
-        session = SkyMailEmailTemplateProviderTest.sessionWithAttributes(attributes);
-        client = mock(SkyMailClient.class);
-        enabled = new SkyMailSettings(true, null,
+        session = SkyNotifyEmailTemplateProviderTest.sessionWithAttributes(attributes);
+        client = mock(SkyNotifyClient.class);
+        enabled = new SkyNotifySettings(true, null,
                 URI.create("https://api.yildizskylab.com/v1/mail_tasks/single"),
                 URI.create("https://e.yildizskylab.com/realms/e-skylab/protocol/openid-connect/token"),
-                "keycloak-mailer", SkyMailSecret.ofLiteral("s3cr3t"),
+                "keycloak-mailer", SkyNotifySecret.ofLiteral("s3cr3t"),
                 java.time.Duration.ofMillis(2_000), java.time.Duration.ofMillis(5_000));
     }
 
-    private SkyMailEmailSenderProvider provider(SkyMailSettings settings, SkyMailClient client) {
+    private SkyNotifyEmailSenderProvider provider(SkyNotifySettings settings, SkyNotifyClient client) {
         return provider(settings, client, () -> URI.create("https://e.yildizskylab.com/realms/e-skylab"));
     }
 
-    private SkyMailEmailSenderProvider provider(
-            SkyMailSettings settings, SkyMailClient client, Supplier<URI> realmIssuer) {
-        return new SkyMailEmailSenderProvider(session, settings, client, () -> smtp, realmIssuer);
+    private SkyNotifyEmailSenderProvider provider(
+            SkyNotifySettings settings, SkyNotifyClient client, Supplier<URI> realmIssuer) {
+        return new SkyNotifyEmailSenderProvider(session, settings, client, () -> smtp, realmIssuer);
     }
 
-    private SkyMailMessage record() {
-        SkyMailMessage message = SkyMailMessage.of(
-                SkyMailTemplates.VERIFY_EMAIL, SkyMailTemplates.VERIFY_EMAIL_SUBJECT_KEY,
+    private SkyNotifyMessage record() {
+        SkyNotifyMessage message = SkyNotifyMessage.of(
+                SkyNotifyTemplates.VERIFY_EMAIL, SkyNotifyTemplates.VERIFY_EMAIL_SUBJECT_KEY,
                 "https://e.yildizskylab.com/verify?key=abc", "60",
-                SkyMailMessageTest.user("Ada", "Yıldız", "ada", "ada@yildizskylab.com"),
-                SkyMailMessageTest.realm("e-skylab", "SKY LAB"));
-        attributes.put(SkyMailMessage.SESSION_ATTRIBUTE, message);
+                SkyNotifyMessageTest.user("Ada", "Yıldız", "ada", "ada@yildizskylab.com"),
+                SkyNotifyMessageTest.realm("e-skylab", "SKY LAB"));
+        attributes.put(SkyNotifyMessage.SESSION_ATTRIBUTE, message);
         return message;
     }
 
     @Test
-    void leavesSmtpAloneWhenSkyMailAcceptsTheMail() throws EmailException {
-        SkyMailMessage message = record();
+    void leavesSmtpAloneWhenSkyNotifyAcceptsTheMail() throws EmailException {
+        SkyNotifyMessage message = record();
         when(client.send(any(), any(), any())).thenReturn(Optional.empty());
 
         provider(enabled, client).send(SMTP_CONFIG, "ada@yildizskylab.com", SUBJECT, TEXT_BODY, HTML_BODY);
 
         verify(client).send(eq(message), eq("ada@yildizskylab.com"), any());
         assertTrue(smtp.sent.isEmpty(), "an accepted mail must not be sent twice");
-        assertNull(attributes.get(SkyMailMessage.SESSION_ATTRIBUTE));
+        assertNull(attributes.get(SkyNotifyMessage.SESSION_ATTRIBUTE));
     }
 
     @Test
-    void fallsBackToKeycloaksOwnSenderWithTheStockRenderingWhenSkyMailFails() throws EmailException {
+    void fallsBackToKeycloaksOwnSenderWithTheStockRenderingWhenSkyNotifyFails() throws EmailException {
         record();
-        when(client.send(any(), any(), any())).thenReturn(Optional.of(SkyMailFallback.UNAVAILABLE));
+        when(client.send(any(), any(), any())).thenReturn(Optional.of(SkyNotifyFallback.UNAVAILABLE));
 
         provider(enabled, client).send(SMTP_CONFIG, "ada@yildizskylab.com", SUBJECT, TEXT_BODY, HTML_BODY);
 
@@ -95,10 +95,10 @@ class SkyMailEmailSenderProviderTest {
     }
 
     @Test
-    void fallsBackForEveryReasonSkyMailCanFailWith() throws EmailException {
-        for (SkyMailFallback fallback : List.of(SkyMailFallback.TEMPLATE_MISSING,
-                SkyMailFallback.UNAVAILABLE, SkyMailFallback.REFUSED, SkyMailFallback.TIMEOUT,
-                SkyMailFallback.TRANSPORT, SkyMailFallback.TOKEN, SkyMailFallback.RESPONSE)) {
+    void fallsBackForEveryReasonSkyNotifyCanFailWith() throws EmailException {
+        for (SkyNotifyFallback fallback : List.of(SkyNotifyFallback.TEMPLATE_MISSING,
+                SkyNotifyFallback.UNAVAILABLE, SkyNotifyFallback.REFUSED, SkyNotifyFallback.TIMEOUT,
+                SkyNotifyFallback.TRANSPORT, SkyNotifyFallback.TOKEN, SkyNotifyFallback.RESPONSE)) {
             smtp.sent.clear();
             record();
             when(client.send(any(), any(), any())).thenReturn(Optional.of(fallback));
@@ -111,10 +111,10 @@ class SkyMailEmailSenderProviderTest {
     }
 
     @Test
-    void fallsBackWithoutCallingSkyMailWhenTheProviderIsDisabled() throws EmailException {
+    void fallsBackWithoutCallingSkyNotifyWhenTheProviderIsDisabled() throws EmailException {
         record();
-        SkyMailSettings disabled =
-                SkyMailSettings.disabled(SkyMailSettings.REASON_SECRET_FILE_MISSING);
+        SkyNotifySettings disabled =
+                SkyNotifySettings.disabled(SkyNotifySettings.REASON_SECRET_FILE_MISSING);
 
         provider(disabled, null).send(SMTP_CONFIG, "ada@yildizskylab.com", SUBJECT, TEXT_BODY, HTML_BODY);
 
@@ -134,7 +134,7 @@ class SkyMailEmailSenderProviderTest {
     void usesEachRecordedMailExactlyOnce() throws EmailException {
         record();
         when(client.send(any(), any(), any())).thenReturn(Optional.empty());
-        SkyMailEmailSenderProvider provider = provider(enabled, client);
+        SkyNotifyEmailSenderProvider provider = provider(enabled, client);
 
         provider.send(SMTP_CONFIG, "ada@yildizskylab.com", SUBJECT, TEXT_BODY, HTML_BODY);
         provider.send(SMTP_CONFIG, "ops@yildizskylab.com", SUBJECT, TEXT_BODY, HTML_BODY);
@@ -147,7 +147,7 @@ class SkyMailEmailSenderProviderTest {
     void sendsToTheAddressKeycloakResolvedForThisMail() throws EmailException {
         record();
         when(client.send(any(), any(), any())).thenReturn(Optional.empty());
-        UserModel user = SkyMailMessageTest.user("Ada", "Yıldız", "ada", "ada@yildizskylab.com");
+        UserModel user = SkyNotifyMessageTest.user("Ada", "Yıldız", "ada", "ada@yildizskylab.com");
 
         provider(enabled, client).send(SMTP_CONFIG, user, SUBJECT, TEXT_BODY, HTML_BODY);
 
@@ -157,9 +157,9 @@ class SkyMailEmailSenderProviderTest {
     @Test
     void fallsBackWhenTheRealmIssuerCannotBeResolvedAndNoTokenUrlIsPinned() throws EmailException {
         record();
-        SkyMailSettings derived = new SkyMailSettings(true, null,
+        SkyNotifySettings derived = new SkyNotifySettings(true, null,
                 URI.create("https://api.yildizskylab.com/v1/mail_tasks/single"), null,
-                "keycloak-mailer", SkyMailSecret.ofLiteral("s3cr3t"),
+                "keycloak-mailer", SkyNotifySecret.ofLiteral("s3cr3t"),
                 java.time.Duration.ofMillis(2_000), java.time.Duration.ofMillis(5_000));
 
         provider(derived, client, () -> null)
@@ -173,20 +173,20 @@ class SkyMailEmailSenderProviderTest {
     void derivesTheRealmIssuerKeycloakIsServing() {
         assertEquals(
                 URI.create("https://e.yildizskylab.com/realms/e-skylab"),
-                SkyMailEmailSenderProvider.realmIssuer(
+                SkyNotifyEmailSenderProvider.realmIssuer(
                         URI.create("https://e.yildizskylab.com/"), "e-skylab"));
         assertEquals(
                 URI.create("http://localhost:18080/realms/e-skylab-test"),
-                SkyMailEmailSenderProvider.realmIssuer(
+                SkyNotifyEmailSenderProvider.realmIssuer(
                         URI.create("http://localhost:18080"), "e-skylab-test"));
-        assertNull(SkyMailEmailSenderProvider.realmIssuer(null, "e-skylab"));
-        assertNull(SkyMailEmailSenderProvider.realmIssuer(URI.create("https://e.invalid/"), " "));
+        assertNull(SkyNotifyEmailSenderProvider.realmIssuer(null, "e-skylab"));
+        assertNull(SkyNotifyEmailSenderProvider.realmIssuer(URI.create("https://e.invalid/"), " "));
     }
 
     @Test
     void reportsWhenKeycloaksOwnSenderIsUnavailable() {
-        SkyMailEmailSenderProvider provider = new SkyMailEmailSenderProvider(
-                session, SkyMailSettings.disabled(SkyMailSettings.REASON_NOT_ENABLED), null,
+        SkyNotifyEmailSenderProvider provider = new SkyNotifyEmailSenderProvider(
+                session, SkyNotifySettings.disabled(SkyNotifySettings.REASON_NOT_ENABLED), null,
                 () -> null, () -> null);
 
         assertThrows(EmailException.class,

@@ -8,7 +8,7 @@ import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
- * Environment configuration of the {@code sky-mail} e-mail sender, read and validated once when
+ * Environment configuration of the {@code skynotify} e-mail sender, read and validated once when
  * the factory is initialised.
  *
  * <p>Malformed values (a non-HTTPS base URL, an out-of-range timeout, an impossible client id)
@@ -17,31 +17,31 @@ import java.util.regex.Pattern;
  * every mail keeps going out over Keycloak's own SMTP, because a mail server that refuses to boot
  * is worse than one that falls back.</p>
  *
- * <p>{@code SKY_MAIL_ENABLED} defaults to {@code false}, so the optimized image build
+ * <p>{@code SKYNOTIFY_ENABLED} defaults to {@code false}, so the optimized image build
  * ({@code kc.sh build}, which initialises every factory without runtime environment) validates
  * nothing and needs no secret.</p>
  */
-record SkyMailSettings(
+record SkyNotifySettings(
         boolean enabled,
         String disabledReason,
         URI mailTaskUrl,
         URI tokenUrl,
         String clientId,
-        SkyMailSecret secret,
+        SkyNotifySecret secret,
         Duration connectTimeout,
         Duration requestTimeout) {
 
-    static final String ENABLED_ENV = "SKY_MAIL_ENABLED";
-    static final String BASE_URL_ENV = "SKY_MAIL_BASE_URL";
-    static final String CLIENT_ID_ENV = "SKY_MAIL_CLIENT_ID";
-    static final String CLIENT_SECRET_FILE_ENV = "SKY_MAIL_CLIENT_SECRET_FILE";
-    static final String CLIENT_SECRET_ENV = "SKY_MAIL_CLIENT_SECRET";
-    static final String TIMEOUT_ENV = "SKY_MAIL_TIMEOUT_MILLISECONDS";
-    static final String TOKEN_URL_ENV = "SKY_MAIL_TOKEN_URL";
+    static final String ENABLED_ENV = "SKYNOTIFY_ENABLED";
+    static final String BASE_URL_ENV = "SKYNOTIFY_BASE_URL";
+    static final String CLIENT_ID_ENV = "SKYNOTIFY_CLIENT_ID";
+    static final String CLIENT_SECRET_FILE_ENV = "SKYNOTIFY_CLIENT_SECRET_FILE";
+    static final String CLIENT_SECRET_ENV = "SKYNOTIFY_CLIENT_SECRET";
+    static final String TIMEOUT_ENV = "SKYNOTIFY_TIMEOUT_MILLISECONDS";
+    static final String TOKEN_URL_ENV = "SKYNOTIFY_TOKEN_URL";
     static final String HARNESS_ENV = "SKY_HARNESS";
 
-    /** The bind mount the production host provides; see docs/keycloak-mail-via-skymail.md. */
-    static final String DEFAULT_SECRET_FILE = "/run/secrets/sky-mail/client.secret";
+    /** The bind mount the production host provides; see docs/keycloak-mail-via-skynotify.md. */
+    static final String DEFAULT_SECRET_FILE = "/run/secrets/skynotify/client.secret";
 
     static final String SINGLE_MAIL_TASK_PATH = "/v1/mail_tasks/single";
     static final String TOKEN_PATH = "/protocol/openid-connect/token";
@@ -58,7 +58,7 @@ record SkyMailSettings(
 
     private static final Pattern CLIENT_ID = Pattern.compile("^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$");
 
-    static SkyMailSettings fromEnvironment(Map<String, String> environment) {
+    static SkyNotifySettings fromEnvironment(Map<String, String> environment) {
         if (!parseEnabled(environment.get(ENABLED_ENV))) {
             return disabled(REASON_NOT_ENABLED);
         }
@@ -73,8 +73,8 @@ record SkyMailSettings(
 
         String inlineSecret = trimmed(environment.get(CLIENT_SECRET_ENV));
         if (harness && inlineSecret != null) {
-            return new SkyMailSettings(true, null, mailTaskUrl, tokenUrl, clientId,
-                    SkyMailSecret.ofLiteral(inlineSecret), connectTimeout, requestTimeout);
+            return new SkyNotifySettings(true, null, mailTaskUrl, tokenUrl, clientId,
+                    SkyNotifySecret.ofLiteral(inlineSecret), connectTimeout, requestTimeout);
         }
 
         String configuredFile = trimmed(environment.get(CLIENT_SECRET_FILE_ENV));
@@ -85,23 +85,23 @@ record SkyMailSettings(
         if (!Files.isRegularFile(secretFile) || !Files.isReadable(secretFile)) {
             return disabled(REASON_SECRET_FILE_MISSING);
         }
-        SkyMailSecret secret = SkyMailSecret.ofFile(secretFile);
+        SkyNotifySecret secret = SkyNotifySecret.ofFile(secretFile);
         try {
             secret.read();
         } catch (Exception exception) {
             return disabled(REASON_SECRET_FILE_EMPTY);
         }
-        return new SkyMailSettings(true, null, mailTaskUrl, tokenUrl, clientId, secret,
+        return new SkyNotifySettings(true, null, mailTaskUrl, tokenUrl, clientId, secret,
                 connectTimeout, requestTimeout);
     }
 
-    static SkyMailSettings disabled(String reason) {
-        return new SkyMailSettings(false, reason, null, null, null, null, null, null);
+    static SkyNotifySettings disabled(String reason) {
+        return new SkyNotifySettings(false, reason, null, null, null, null, null, null);
     }
 
     /**
      * The realm token endpoint this realm's service account authenticates against: the configured
-     * {@code SKY_MAIL_TOKEN_URL} when the operator pinned one, otherwise derived from the realm
+     * {@code SKYNOTIFY_TOKEN_URL} when the operator pinned one, otherwise derived from the realm
      * issuer that Keycloak is serving.
      */
     URI tokenUrlFor(URI realmIssuer) {
@@ -130,8 +130,8 @@ record SkyMailSettings(
 
     static URI mailTaskUrl(String value, boolean harness) {
         URI base = credentialFreeUrl(value, BASE_URL_ENV, harness);
-        // SkyMail may answer under a path on a shared API host (production:
-        // https://api.yildizskylab.com/api/skymail, the same root core uses). The path must be a
+        // SkyNotify may answer under a path on a shared API host (production:
+        // https://api.yildizskylab.com/api/skynotify, the same root core uses). The path must be a
         // plain root: unreserved segments only, no dot segments, no encoding, and not the /v1 the
         // task path already adds.
         String rawPath = base.getRawPath() == null ? "" : base.getRawPath();
@@ -139,12 +139,12 @@ record SkyMailSettings(
         if (!root.isEmpty()) {
             for (String segment : root.substring(1).split("/", -1)) {
                 if (!BASE_PATH_SEGMENT.matcher(segment).matches() || ".".equals(segment) || "..".equals(segment)) {
-                    throw new IllegalStateException(BASE_URL_ENV + " must be the SkyMail API root: "
+                    throw new IllegalStateException(BASE_URL_ENV + " must be the SkyNotify API root: "
                             + "a plain path without dot segments, encoding or empty segments.");
                 }
             }
             if (root.endsWith("/v1")) {
-                throw new IllegalStateException(BASE_URL_ENV + " must be the SkyMail API root without /v1.");
+                throw new IllegalStateException(BASE_URL_ENV + " must be the SkyNotify API root without /v1.");
             }
         }
         return URI.create(base.getScheme() + "://" + base.getRawAuthority() + root + SINGLE_MAIL_TASK_PATH);

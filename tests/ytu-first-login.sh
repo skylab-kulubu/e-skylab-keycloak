@@ -57,7 +57,7 @@
 #     page as no SKY LAB theme runs here; KEYCLOAK_PERSONAL_EMAIL_OFFER): keep registers nothing,
 #     on registers and enables it, second runs change nothing; a new YTÜ identity sees the page once
 #     and "Şimdilik geç" reaches the application and is remembered; a code mailed to the typed
-#     address (Keycloak's SMTP into Mailpit; SkyMail is off) adds a verified personalEmail, keeps
+#     address (Keycloak's SMTP into Mailpit; SkyNotify is off) adds a verified personalEmail, keeps
 #     the School e-mail primary and reaches the application; five wrong codes kill the code; an
 #     address another account uses (username, email, or personalEmail stored in capitals) is
 #     refused and nothing is mailed; the own school address and any address on the university's
@@ -972,7 +972,7 @@ offer_events() { # offer_events USER_ID WHAT: CUSTOM_REQUIRED_ACTION events of t
 }
 
 stage 'personal e-mail offer: reconciler'
-# Keycloak's own SMTP sender delivers to Mailpit (SkyMail is off in this harness).
+# Keycloak's own SMTP sender delivers to Mailpit (SkyNotify is off in this harness).
 kcadm update "realms/$REALM" -s "smtpServer.host=$MAIL_CONTAINER" -s smtpServer.port=1025 \
   -s smtpServer.from=keycloak@example.invalid >/dev/null
 output=$(reconcile "$SCOPED_CONFIG" 0)

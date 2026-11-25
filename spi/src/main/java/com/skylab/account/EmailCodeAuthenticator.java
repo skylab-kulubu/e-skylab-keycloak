@@ -102,7 +102,7 @@ public final class EmailCodeAuthenticator implements AuthenticationFlowCallback 
     /** The page: {@code theme-resources/templates/} of this extension, drawn by the SKY LAB theme. */
     static final String TEMPLATE = "sky-email-code.ftl";
     /**
-     * The mail ({@code theme-resources/templates/{text,html}/}); public because the SkyMail provider
+     * The mail ({@code theme-resources/templates/{text,html}/}); public because the SkyNotify provider
      * routes this mail to {@code keycloak.login-code} by exactly this name.
      */
     public static final String MAIL_TEMPLATE = "sky-login-code.ftl";

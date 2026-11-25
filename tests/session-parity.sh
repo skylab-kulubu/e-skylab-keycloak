@@ -2,7 +2,7 @@
 # Sourced by the stand-alone tests that run operator scripts inside a Keycloak container
 # (tests/role-groups.sh, dk-read-only.sh, master-console.sh, site-clients.sh, inscribed-cms-roles.sh,
 # skyapp-cms-editor.sh, sandbox-admin-local-client.sh, sandbox-site-clients.sh, place-client.sh,
-# forms-skymail-grants.sh): a whole run of a script with a JVM per kcadm and ReconcileJson call
+# forms-skynotify-grants.sh): a whole run of a script with a JVM per kcadm and ReconcileJson call
 # (KEYCLOAK_RECONCILE_SESSION=off) and with the reconciliation session (required;
 # config/reconcile-session.sh) must print the same bytes, in the same order, and end with the same
 # status: the release wizards read these lines. The test runs its container with

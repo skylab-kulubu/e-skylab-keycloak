@@ -26,24 +26,24 @@ seed() { # seed CLIENT ROLE NAMES
   seeded[$1|$2]=1
   seed_names[$1|$2]=" $3"
 }
-seed skymail skymail:mails:approve 'YK'
-seed skymail skymail:mails:write 'ADMIN YK'
+seed skynotify skynotify:mails:approve 'YK'
+seed skynotify skynotify:mails:write 'ADMIN YK'
 seed admin content:read 'ADMIN YK DK'
 # Not the code's set (content:write is ADMIN and YK): DK in the seed set of a write role, so that the
 # write role rule on DK is measured on its own.
 seed admin content:write 'ADMIN YK DK'
 seed forms 'skyforms:*' 'YK'
 # The reconciler's set: DK alone reads who opened a masked mail (skymail-frontend-rewrite 32).
-seed skymail skymail:audit:read 'DK'
-# DK reads the sends (Yusuf, 2026-11-22): SkyMail's seat and mails:read to ADMIN, YK and DK.
-seed skymail skymail:mails:read 'ADMIN YK DK'
+seed skynotify skynotify:audit:read 'DK'
+# DK reads the sends (Yusuf, 2026-11-22): SkyNotify's seat and mails:read to ADMIN, YK and DK.
+seed skynotify skynotify:mails:read 'ADMIN YK DK'
 dk_write_roles=$(bash "$DK_SCRIPT" --print-write-roles)
 while IFS= read -r entry; do
   if [[ -n $entry ]]; then dk_write[$entry]=1; fi
 done <<<"$dk_write_roles"
-[[ -n ${dk_write["*|content:write"]:-} && -n ${dk_write["skymail|skymail:mails:approve"]:-} && -z ${dk_write["skymail|skymail:audit:read"]:-} \
-  && -z ${dk_write["skymail|skymail:mails:read"]:-} && -z ${dk_write["skymail|skymail:access"]:-} ]] \
-  || { printf 'app-assignments drift check failed: dk-read-only.sh --print-write-roles lacks its write roles or holds a SkyMail read role of DK\n' >&2; exit 1; }
+[[ -n ${dk_write["*|content:write"]:-} && -n ${dk_write["skynotify|skynotify:mails:approve"]:-} && -z ${dk_write["skynotify|skynotify:audit:read"]:-} \
+  && -z ${dk_write["skynotify|skynotify:mails:read"]:-} && -z ${dk_write["skynotify|skynotify:access"]:-} ]] \
+  || { printf 'app-assignments drift check failed: dk-read-only.sh --print-write-roles lacks its write roles or holds a SkyNotify read role of DK\n' >&2; exit 1; }
 
 status=0
 # fazla WANT PATH CLIENT ROLE: a mapping the realm has and the code does not expect.
@@ -68,44 +68,44 @@ eksik() {
 }
 
 # In the seed set: the root in both shapes and its sub-groups.
-fazla BILGI /UYELER/YK skymail skymail:mails:approve
-fazla BILGI /YK skymail skymail:mails:approve
-fazla BILGI /UYELER/YK/ALT skymail skymail:mails:approve
-fazla BILGI /UYELER/YK/ALT/X skymail skymail:mails:approve
+fazla BILGI /UYELER/YK skynotify skynotify:mails:approve
+fazla BILGI /YK skynotify skynotify:mails:approve
+fazla BILGI /UYELER/YK/ALT skynotify skynotify:mails:approve
+fazla BILGI /UYELER/YK/ALT/X skynotify skynotify:mails:approve
 fazla BILGI /ADMIN admin content:write
 # Outside the seed set: a root, its sub-group, the other shape, a prefix sibling.
-fazla drift /ADMIN skymail skymail:mails:approve
-fazla drift /ADMIN/ALT skymail skymail:mails:approve
-fazla drift /UYELER/ADMIN skymail skymail:mails:approve
-fazla drift /UYELER/YKX skymail skymail:mails:approve
+fazla drift /ADMIN skynotify skynotify:mails:approve
+fazla drift /ADMIN/ALT skynotify skynotify:mails:approve
+fazla drift /UYELER/ADMIN skynotify skynotify:mails:approve
+fazla drift /UYELER/YKX skynotify skynotify:mails:approve
 fazla drift /DKX admin content:read
 # No seed: drift wherever.
-fazla drift /ADMIN skymail skymail:templates:write
+fazla drift /ADMIN skynotify skynotify:templates:write
 # DK: a read role of its seed set is the panel's; a write role never, DK in its seed set or not.
 fazla BILGI /UYELER/DK/ALT admin content:read
 fazla BILGI /DK admin content:read
 fazla drift /UYELER/DK admin content:write
 fazla drift /DK/ALT admin content:write
-fazla drift /UYELER/DK skymail skymail:mails:write
+fazla drift /UYELER/DK skynotify skynotify:mails:write
 # The audit role: DK's own (a read role on DK and its sub-groups is the panel's after the seed); on
 # ADMIN or YK, who may open the content it records, drift (S2-fazla).
-fazla BILGI /UYELER/DK skymail skymail:audit:read
-fazla BILGI /UYELER/DK/ALT skymail skymail:audit:read
-fazla drift /UYELER/YK skymail skymail:audit:read
-fazla drift /ADMIN skymail skymail:audit:read
-eksik S2-tohum /UYELER/DK skymail skymail:audit:read evet
+fazla BILGI /UYELER/DK skynotify skynotify:audit:read
+fazla BILGI /UYELER/DK/ALT skynotify skynotify:audit:read
+fazla drift /UYELER/YK skynotify skynotify:audit:read
+fazla drift /ADMIN skynotify skynotify:audit:read
+eksik S2-tohum /UYELER/DK skynotify skynotify:audit:read evet
 # mails:read on DK: a read role of its seed set, the panel's after the seed (no S2-fazla).
-fazla BILGI /UYELER/DK skymail skymail:mails:read
-eksik S2-tohum /UYELER/DK skymail skymail:mails:read evet
+fazla BILGI /UYELER/DK skynotify skynotify:mails:read
+eksik S2-tohum /UYELER/DK skynotify skynotify:mails:read evet
 # Missing: in the seed set BILGI (S2-tohum), DK's write role taken away included; DK's temporary
 # Forms roles taken away S2-geçici; outside the seed set or never seeded S2-eksik.
-eksik S2-tohum /ADMIN skymail skymail:mails:write evet
+eksik S2-tohum /ADMIN skynotify skynotify:mails:write evet
 eksik S2-tohum /DK admin content:read evet
 eksik S2-tohum /UYELER/DK admin content:write evet
 eksik S2-geçici /UYELER/DK forms 'skyforms:*' geçici
 eksik S2-geçici /DK forms 'skyforms:feedback:*' geçici
 eksik S2-eksik /UYELER/YK forms skyforms:access evet
-eksik S2-eksik /ADMIN skymail skymail:mails:approve evet
+eksik S2-eksik /ADMIN skynotify skynotify:mails:approve evet
 
 if [[ $status == 0 ]]; then
   printf 'app-assignments drift decision: 30 cases as expected\n'

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-off, idempotent provisioning of the keycloak-mailer service-account client (K5): the
-# confidential client, its roles default scope and the SkyMail client roles on its service
+# confidential client, its roles default scope and the SkyNotify client roles on its service
 # account. The steady-state reconciler only verifies this client because assigning user
 # roles needs user permissions the reconciler identity deliberately does not have.
 #
@@ -185,7 +185,7 @@ else
 fi
 
 # --- roles default scope -----------------------------------------------------------------
-# SkyMail reads resource_access.skymail.roles from the token; the realm's roles scope emits it.
+# SkyNotify reads resource_access.skynotify.roles from the token; the realm's roles scope emits it.
 # In a dry run of a missing client every later step is planned against the empty client so the
 # pending count covers the whole provisioning.
 if [[ -n $mailer_uuid ]] && [[ -n $(mailer_roles_scope_attached "$mailer_uuid" 2>/dev/null) ]]; then
@@ -207,13 +207,13 @@ else
   fi
 fi
 
-# --- SkyMail roles on the service account --------------------------------------------------
-# The roles belong to SkyMail; they are assigned when they exist and reported when missing.
-if ! skymail_uuid=$(client_uuid_by_client_id "$SKYMAIL_CLIENT_ID"); then
-  log "WARNING: client $SKYMAIL_CLIENT_ID does not exist in realm $TARGET_REALM; no SkyMail roles were assigned"
-  skymail_uuid=''
+# --- SkyNotify roles on the service account --------------------------------------------------
+# The roles belong to SkyNotify; they are assigned when they exist and reported when missing.
+if ! skynotify_uuid=$(client_uuid_by_client_id "$SKYNOTIFY_CLIENT_ID"); then
+  log "WARNING: client $SKYNOTIFY_CLIENT_ID does not exist in realm $TARGET_REALM; no SkyNotify roles were assigned"
+  skynotify_uuid=''
 fi
-if [[ -n $skymail_uuid ]]; then
+if [[ -n $skynotify_uuid ]]; then
   if [[ -n $mailer_uuid ]]; then
     service_user_id=$(kcadm get "clients/$mailer_uuid/service-account-user" -r "$TARGET_REALM" \
       --fields id \
@@ -223,9 +223,9 @@ if [[ -n $skymail_uuid ]]; then
       printf 'The %s service-account user could not be resolved exactly\n' "$MAILER_CLIENT_ID" >&2
       exit 1
     }
-    assigned_csv=$(kcadm get "users/$service_user_id/role-mappings/clients/$skymail_uuid" \
+    assigned_csv=$(kcadm get "users/$service_user_id/role-mappings/clients/$skynotify_uuid" \
       -r "$TARGET_REALM" --fields id,name --format csv --noquotes)
-    scope_csv=$(kcadm get "clients/$mailer_uuid/scope-mappings/clients/$skymail_uuid" \
+    scope_csv=$(kcadm get "clients/$mailer_uuid/scope-mappings/clients/$skynotify_uuid" \
       -r "$TARGET_REALM" --fields id,name --format csv --noquotes)
   else
     # Dry run of a missing client: nothing is assigned yet, everything wanted is pending.
@@ -237,14 +237,14 @@ if [[ -n $skymail_uuid ]]; then
   while IFS=, read -r role_id role_name; do
     [[ -n $role_id ]] || continue
     keep=false
-    for wanted in "${MAILER_SKYMAIL_ROLES[@]}"; do
+    for wanted in "${MAILER_SKYNOTIFY_ROLES[@]}"; do
       [[ $role_name == "$wanted" ]] && keep=true
     done
     if [[ $keep == false ]]; then
       plan "remove role $role_name from the $MAILER_CLIENT_ID service account"
       changes=$((changes + 1))
       if [[ $MODE == apply ]]; then
-        kcadm_write delete "users/$service_user_id/role-mappings/clients/$skymail_uuid" \
+        kcadm_write delete "users/$service_user_id/role-mappings/clients/$skynotify_uuid" \
           -r "$TARGET_REALM" -b "[{\"id\":\"$role_id\",\"name\":\"$role_name\"}]"
       fi
     fi
@@ -252,20 +252,20 @@ if [[ -n $skymail_uuid ]]; then
   while IFS=, read -r role_id role_name; do
     [[ -n $role_id ]] || continue
     keep=false
-    for wanted in "${MAILER_SKYMAIL_ROLES[@]}"; do
+    for wanted in "${MAILER_SKYNOTIFY_ROLES[@]}"; do
       [[ $role_name == "$wanted" ]] && keep=true
     done
     if [[ $keep == false ]]; then
       plan "remove scope mapping $role_name from $MAILER_CLIENT_ID"
       changes=$((changes + 1))
       if [[ $MODE == apply ]]; then
-        kcadm_write delete "clients/$mailer_uuid/scope-mappings/clients/$skymail_uuid" \
+        kcadm_write delete "clients/$mailer_uuid/scope-mappings/clients/$skynotify_uuid" \
           -r "$TARGET_REALM" -b "[{\"id\":\"$role_id\",\"name\":\"$role_name\"}]"
       fi
     fi
   done <<<"$scope_csv"
-  for role_name in "${MAILER_SKYMAIL_ROLES[@]}"; do
-    if ! role_id=$(role_id_by_name "$skymail_uuid" "$role_name"); then
+  for role_name in "${MAILER_SKYNOTIFY_ROLES[@]}"; do
+    if ! role_id=$(role_id_by_name "$skynotify_uuid" "$role_name"); then
       missing="$missing $role_name"
       continue
     fi
@@ -273,7 +273,7 @@ if [[ -n $skymail_uuid ]]; then
       plan "assign role $role_name to the $MAILER_CLIENT_ID service account"
       changes=$((changes + 1))
       if [[ $MODE == apply ]]; then
-        kcadm_write create "users/$service_user_id/role-mappings/clients/$skymail_uuid" \
+        kcadm_write create "users/$service_user_id/role-mappings/clients/$skynotify_uuid" \
           -r "$TARGET_REALM" -b "[{\"id\":\"$role_id\",\"name\":\"$role_name\"}]"
       fi
     fi
@@ -281,13 +281,13 @@ if [[ -n $skymail_uuid ]]; then
       plan "add scope mapping $role_name to $MAILER_CLIENT_ID"
       changes=$((changes + 1))
       if [[ $MODE == apply ]]; then
-        kcadm_write create "clients/$mailer_uuid/scope-mappings/clients/$skymail_uuid" \
+        kcadm_write create "clients/$mailer_uuid/scope-mappings/clients/$skynotify_uuid" \
           -r "$TARGET_REALM" -b "[{\"id\":\"$role_id\",\"name\":\"$role_name\"}]"
       fi
     fi
   done
   if [[ -n $missing ]]; then
-    log "WARNING: client $SKYMAIL_CLIENT_ID lacks the roles${missing}; SkyMail must create them, then rerun this script"
+    log "WARNING: client $SKYNOTIFY_CLIENT_ID lacks the roles${missing}; SkyNotify must create them, then rerun this script"
   fi
 fi
 

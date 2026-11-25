@@ -1116,7 +1116,7 @@ Harness: `tests/sandbox-site-clients.sh` tek başına çalışır. Dockerfile'da
 
 ## 14. Place: `place` istemcisi, roller ve `school_email` claim'i (ADR-0060)
 
-Place'in backend'i (`api.place.yildizskylab.com`) e-skylab girişini kendisi yürütür: realm
+Place'in backend'i (`place-api.yildizskylab.com`) e-skylab girişini kendisi yürütür: realm
 `e-skylab`'ın gizli istemcisi `place`'tir (BFF; Authorization Code + PKCE). Keycloak token'ları
 tarayıcıya gitmez, Place kendi oturum cookie'sini verir (ADR-0058'in yönü). İstemciyi
 `config/create-place-client.sh` kurar. Betik §13'teki betiğin düzenindedir: varsayılanı
@@ -1136,7 +1136,7 @@ Kurduğu istemci `place`:
   istemcilerin rolleri gelmez (tam kapsam açık olsaydı `realm-management` rolü olan bir
   yetkilinin token'ı Admin REST'te de geçerli olurdu, §0'daki `account-center` notu);
 - consent ve front-channel logout kapalı (Place'ten çıkış e-skylab oturumunu kapatmaz);
-- dönüş adresi tam olarak `https://api.place.yildizskylab.com/api/auth/eskylab/callback`; web
+- dönüş adresi tam olarak `https://place-api.yildizskylab.com/api/auth/eskylab/callback`; web
   origin yok (tarayıcı Keycloak'ın uçlarını çağırmaz). İstemcide başka adres varsa silinir ve
   satırda listelenir.
 

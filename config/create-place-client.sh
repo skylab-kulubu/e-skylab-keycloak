@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Idempotent provisioning of Place's login client in the production realm (e-skylab), ADR-0060.
-# Place's backend (api.place.yildizskylab.com) runs the e-skylab login itself as a confidential
+# Place's backend (place-api.yildizskylab.com) runs the e-skylab login itself as a confidential
 # client (a BFF: authorization code + PKCE); Keycloak's tokens never reach the browser (ADR-0058),
 # Place hands out its own session cookie. Place has no sandbox, so realm e-skylab is the only one.
 # The script makes:
@@ -8,9 +8,11 @@
 #     printed), standard flow only (implicit flow, direct grants, service account, device grant,
 #     CIBA and standard token exchange off), PKCE S256 required, fullScopeAllowed=false (tokens
 #     carry Place's own roles only), consent off, front-channel logout off (a Place logout ends the
-#     Place session only); redirect URI exactly https://api.place.yildizskylab.com/api/auth/eskylab/callback
+#     Place session only); redirect URI exactly https://place-api.yildizskylab.com/api/auth/eskylab/callback
 #     and no web origin (the browser never calls Keycloak's endpoints). Other URIs on the client
-#     are removed and listed;
+#     are removed and listed (among them the old https://api.place.yildizskylab.com/... one: the
+#     API moved to a one-level name, ADR 0090; sky_lab_genel's place-guessr-api-adi wizard keeps
+#     both during the move and removes the old one itself);
 #   - the client roles place:admin and place:moderator (ADR-0059: an application-wide permission
 #     is a client role). Nothing is ever granted: people and groups get them in the SKY LAB admin
 #     panel. Who holds them is reported (counts of people, group paths);
@@ -75,8 +77,8 @@ MODE=check
 
 CLIENT_ID=place
 CLIENT_NAME=Place
-CLIENT_DESCRIPTION='api.place.yildizskylab.com: Place backend (BFF) e-skylab login, ADR-0060. Made by config/create-place-client.sh'
-REDIRECT_URI=https://api.place.yildizskylab.com/api/auth/eskylab/callback
+CLIENT_DESCRIPTION='place-api.yildizskylab.com: Place backend (BFF) e-skylab login, ADR-0060. Made by config/create-place-client.sh'
+REDIRECT_URI=https://place-api.yildizskylab.com/api/auth/eskylab/callback
 FLAG_FIELDS='enabled,protocol,publicClient,bearerOnly,clientAuthenticatorType,standardFlowEnabled,implicitFlowEnabled,directAccessGrantsEnabled,serviceAccountsEnabled,fullScopeAllowed,consentRequired,frontchannelLogout,attributes(pkce.code.challenge.method,oauth2.device.authorization.grant.enabled,oidc.ciba.grant.enabled,standard.token.exchange.enabled)'
 FLAG_VALUES='true,openid-connect,false,false,client-secret,true,false,false,false,false,false,false,S256,false,false,false'
 FLAG_SETTINGS=(

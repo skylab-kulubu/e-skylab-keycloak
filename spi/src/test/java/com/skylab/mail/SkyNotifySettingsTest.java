@@ -24,7 +24,7 @@ class SkyNotifySettingsTest {
     private Map<String, String> environment(Path secretFile) {
         Map<String, String> environment = new HashMap<>();
         environment.put(SkyNotifySettings.ENABLED_ENV, "true");
-        environment.put(SkyNotifySettings.BASE_URL_ENV, "https://mail.yildizskylab.com");
+        environment.put(SkyNotifySettings.BASE_URL_ENV, "https://api.yildizskylab.com");
         environment.put(SkyNotifySettings.CLIENT_ID_ENV, "keycloak-mailer");
         environment.put(SkyNotifySettings.CLIENT_SECRET_FILE_ENV, secretFile.toString());
         return environment;
@@ -55,7 +55,7 @@ class SkyNotifySettingsTest {
         assertTrue(settings.enabled());
         assertNull(settings.disabledReason());
         assertEquals(
-                URI.create("https://mail.yildizskylab.com/v1/mail_tasks/single"),
+                URI.create("https://api.yildizskylab.com/v1/mail_tasks/single"),
                 settings.mailTaskUrl());
         assertEquals("keycloak-mailer", settings.clientId());
     }
@@ -63,16 +63,16 @@ class SkyNotifySettingsTest {
     @Test
     void refusesABaseUrlThatIsNotACredentialFreeHttpsOrigin() {
         assertThrows(IllegalStateException.class,
-                () -> SkyNotifySettings.mailTaskUrl("http://mail.yildizskylab.com", false));
+                () -> SkyNotifySettings.mailTaskUrl("http://api.yildizskylab.com", false));
         assertThrows(IllegalStateException.class,
-                () -> SkyNotifySettings.mailTaskUrl("https://mail.yildizskylab.com/v1", false));
+                () -> SkyNotifySettings.mailTaskUrl("https://api.yildizskylab.com/v1", false));
         assertThrows(IllegalStateException.class,
-                () -> SkyNotifySettings.mailTaskUrl("https://mail.yildizskylab.com?token=leak", false));
+                () -> SkyNotifySettings.mailTaskUrl("https://api.yildizskylab.com?token=leak", false));
         assertThrows(IllegalStateException.class,
-                () -> SkyNotifySettings.mailTaskUrl("https://ops:secret@mail.yildizskylab.com", false));
+                () -> SkyNotifySettings.mailTaskUrl("https://ops:secret@api.yildizskylab.com", false));
         assertEquals(
-                URI.create("https://mail.yildizskylab.com/v1/mail_tasks/single"),
-                SkyNotifySettings.mailTaskUrl("https://mail.yildizskylab.com/", false));
+                URI.create("https://api.yildizskylab.com/v1/mail_tasks/single"),
+                SkyNotifySettings.mailTaskUrl("https://api.yildizskylab.com/", false));
         // Plain HTTP exists for the integration harness only.
         assertEquals(
                 URI.create("http://skynotify:8080/v1/mail_tasks/single"),

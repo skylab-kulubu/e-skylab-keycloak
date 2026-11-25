@@ -24,7 +24,7 @@ const apps: App[] = [
   { name: "Hesap Merkezi", host: "my.yildizskylab.com", text: "Hesabını yönet." },
   { name: "SkyForms", host: "forms.yildizskylab.com", text: "Başvurular ve formlar." },
   { name: "Yönetim paneli", host: "admin.yildizskylab.com", text: "Yönetim ve ekip liderleri." },
-  { name: "SkyNotify", host: "iletisim.yildizskylab.com", text: "Kulübün e-posta ve bildirim konsolu." },
+  { name: "SkyNotify", host: "notify.yildizskylab.com", text: "Kulübün e-posta ve bildirim konsolu." },
   { name: "YıldızPlace", host: "place.yildizskylab.com", text: "Etkinlik yönetimi." },
   { name: "Kulüp siteleri", host: "yildizskylab.com", text: "Site editörleri." }
 ];

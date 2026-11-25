@@ -28,7 +28,12 @@
 #     mapper is pruned, skycms-audience added), clears the clients' role scope (a realm and a foreign
 #     role mapped by hand), takes groups out of SkyNotify's token only (the realm scope groups and
 #     microprofile-jwt stay realm defaults and stay on the sites) and turns full scope off; secrets,
-#     redirect URIs and the clients' own mappers are unchanged;
+#     the sites' redirect URIs and the clients' own mappers are unchanged;
+#   - skynotify's addresses (e-skylab ADR-0090): production's hand-made iletisim. and mail. entries
+#     (redirect URIs, web origins, post-logout redirect URIs, rootUrl, a relative baseUrl) give way to
+#     notify. alone; a login and a sign-out return through the old name are refused afterwards, both
+#     through notify. work; outside the sandbox realm a localhost origin is refused before anything
+#     is read;
 #   - after it, real logins (authorization code, PKCE, openid email profile) give: the sites aud
 #     exactly core and skycms, no realm_access, resource_access only the site itself, and the claims
 #     the sites, core and inscribed read (azp, sub, e-mail, name, flat roles, own roles, full-path
@@ -54,11 +59,16 @@
 #     writes nothing;
 #   - drift (full scope on, a realm and a foreign role in the role scope, skycms-audience among the
 #     optional scopes and its mapper changed, a foreign mapper in it, groups back on SkyNotify through
-#     the realm scope and a client mapper, SkyNotify's audience scope detached) is repaired;
+#     the realm scope and a client mapper, SkyNotify's audience scope detached, an old SkyNotify address
+#     added back by hand) is repaired;
 #   - in the sandbox realm, frontend-main made by site-clients.sh --site main and frontend-arge made
 #     by sandbox-site-clients.sh: the step only attaches skycms-audience to frontend-arge, warns about
 #     the missing skynotify, and afterwards site-clients.sh, sandbox-site-clients.sh and
-#     inscribed-cms-roles.sh --check plan nothing (the scripts agree).
+#     inscribed-cms-roles.sh --check plan nothing (the scripts agree);
+#   - a sandbox skynotify with the hand-made sandbox-iletisim. and sandbox-mail. addresses and local
+#     development's http://localhost:3000: the step's dry run (KEYCLOAK_RECONCILE_CHECK=true) shows
+#     the address change and writes nothing; the real run leaves sandbox-notify. and localhost:3000,
+#     and a login through sandbox-notify. works.
 # A table of the token sizes before and after is printed at the end.
 # Requirements on the host: docker, curl, jq, openssl, base64. LOGIN_CLIENTS_TEST_PORT (default
 # 18097), LOGIN_CLIENTS_TEST_MEMORY (default 1536m).
@@ -84,7 +94,11 @@ PERSON_PASSWORD=harness-person-password
 KCADM_CONFIG=/tmp/harness-kcadm.config
 MAIN_CALLBACK=https://yildizskylab.com/api/auth/callback/keycloak
 ARGE_CALLBACK=https://arge.yildizskylab.com/api/auth/callback/keycloak
-MAIL_CALLBACK=https://mail.yildizskylab.com/api/auth/callback/keycloak
+# SkyNotify's UI: production's hand-made addresses before the step, notify. after it (ADR-0090).
+OLD_MAIL_CALLBACK=https://iletisim.yildizskylab.com/api/auth/callback/keycloak
+MAIL_CALLBACK=https://notify.yildizskylab.com/api/auth/callback/keycloak
+SANDBOX_OLD_MAIL_CALLBACK=https://sandbox-iletisim.yildizskylab.com/api/auth/callback/keycloak
+SANDBOX_MAIL_CALLBACK=https://sandbox-notify.yildizskylab.com/api/auth/callback/keycloak
 APP_CALLBACK=com.yildizskylab.app:/oauth2redirect
 SANDBOX_MAIN_CALLBACK=https://sandbox.yildizskylab.com/api/auth/callback/keycloak
 SANDBOX_ARGE_CALLBACK=https://sandbox-arge.yildizskylab.com/api/auth/callback/keycloak
@@ -213,6 +227,36 @@ tokens() {
       --data-urlencode "code_verifier=$verifier" --data-urlencode 'client_secret@-'
   fi
 }
+# authorize_status CLIENT CALLBACK [REALM]: the HTTP status of Keycloak's authorization endpoint for
+# that redirect URI (200: the login form, 400: the redirect URI is not allowed).
+authorize_status() {
+  curl -sS -o /dev/null -w '%{http_code}' -G "$BASE_URL/realms/${3:-$REALM}/protocol/openid-connect/auth" \
+    --data-urlencode "client_id=$1" --data-urlencode response_type=code \
+    --data-urlencode 'scope=openid email profile' --data-urlencode "redirect_uri=$2" \
+    --data-urlencode state=harness-state \
+    --data-urlencode "code_challenge=$(openssl rand -hex 32 | openssl dgst -sha256 -binary | b64url)" \
+    --data-urlencode code_challenge_method=S256
+}
+# logout_status CLIENT POST_LOGOUT_URI [REALM]: the HTTP status of Keycloak's RP-initiated logout for
+# that return address (client_id, no session cookie, no id_token_hint): 400 is an address the client
+# does not allow; an allowed one gets the confirmation page or the redirect (logout_allowed). Ends no
+# session.
+logout_status() {
+  curl -sS -o /dev/null -w '%{http_code}' -G "$BASE_URL/realms/${3:-$REALM}/protocol/openid-connect/logout" \
+    --data-urlencode "client_id=$1" --data-urlencode "post_logout_redirect_uri=$2"
+}
+# logout_allowed CLIENT POST_LOGOUT_URI [REALM]: Keycloak accepts that sign-out return (200 or 302).
+logout_allowed() {
+  local status
+  status=$(logout_status "$@")
+  [[ $status == 200 || $status == 302 ]] || { printf 'logout return %s: HTTP %s\n' "$2" "$status" >&2; return 1; }
+}
+# logout_refused CLIENT POST_LOGOUT_URI [REALM]: Keycloak refuses that sign-out return (400).
+logout_refused() {
+  local status
+  status=$(logout_status "$@")
+  [[ $status == 400 ]] || { printf 'logout return %s: HTTP %s, expected 400\n' "$2" "$status" >&2; return 1; }
+}
 # service_tokens CLIENT [REALM]: the client's service-account token response (client_credentials).
 service_tokens() {
   client_secret "$1" "${2:-$REALM}" | curl -fsS "$BASE_URL/realms/${2:-$REALM}/protocol/openid-connect/token" \
@@ -333,8 +377,13 @@ kcadm create clients -r "$REALM" -s clientId=frontend-main -s 'name=SKY LAB site
 kcadm create clients -r "$REALM" -s clientId=frontend-arge -s 'name=SKY LAB arge' -s publicClient=false \
   -s fullScopeAllowed=true -s serviceAccountsEnabled=true -s standardFlowEnabled=true \
   -s "redirectUris=[\"https://arge.yildizskylab.com/*\"]" >/dev/null
+# skynotify's addresses as production keeps them by hand: iletisim. and its twin mail.
 kcadm create clients -r "$REALM" -s clientId=skynotify -s 'name=SkyNotify' -s publicClient=true -s fullScopeAllowed=true \
-  -s standardFlowEnabled=true -s directAccessGrantsEnabled=false -s "redirectUris=[\"$MAIL_CALLBACK\"]" \
+  -s standardFlowEnabled=true -s directAccessGrantsEnabled=false \
+  -s 'redirectUris=["https://iletisim.yildizskylab.com/*","https://mail.yildizskylab.com/*"]' \
+  -s 'webOrigins=["https://iletisim.yildizskylab.com","https://mail.yildizskylab.com"]' \
+  -s 'attributes."post.logout.redirect.uris"=https://iletisim.yildizskylab.com##https://mail.yildizskylab.com' \
+  -s rootUrl=https://iletisim.yildizskylab.com -s baseUrl=/ \
   -s 'attributes."pkce.code.challenge.method"=S256' >/dev/null
 skynotify=$(client_uuid skynotify)
 for role in skynotify:access skynotify:templates:read skynotify:templates:write skynotify:lists:read skynotify:mails:read \
@@ -416,7 +465,9 @@ person "$REALM" leader "$weblab_leaders"
 person "$REALM" member "$uyeler"
 main_secret=$(client_secret frontend-main)
 arge_secret=$(client_secret frontend-arge)
-clients_before=$(for c in "$main" "$arge" "$skynotify"; do kcadm get "clients/$c" -r "$REALM" | jq -c '{clientId, redirectUris, publicClient, serviceAccountsEnabled, attributes: {pkce: .attributes["pkce.code.challenge.method"]}}'; done)
+# The shape the step keeps; skynotify's addresses are the step's own (checked on their own).
+CLIENT_SHAPE='{clientId, redirectUris: (if .clientId == "skynotify" then null else .redirectUris end), publicClient, serviceAccountsEnabled, attributes: {pkce: .attributes["pkce.code.challenge.method"]}}'
+clients_before=$(for c in "$main" "$arge" "$skynotify"; do kcadm get "clients/$c" -r "$REALM" | jq -c "$CLIENT_SHAPE"; done)
 mappers_before=$(for c in "$main" "$arge"; do kcadm get "clients/$c/protocol-mappers/models" -r "$REALM" | jq -c 'map({name, protocolMapper, config}) | sort_by(.name)'; done)
 
 # ---------------------------------------------------------------------------------------------
@@ -427,8 +478,14 @@ done
 for who in privileged dkmember leader; do
   keep before-arge-$who "$(tokens frontend-arge "$ARGE_CALLBACK" "$who")"
 done
-keep before-mail-privileged "$(tokens skynotify "$MAIL_CALLBACK" privileged)"
-keep before-mail-leader "$(tokens skynotify "$MAIL_CALLBACK" leader)"
+keep before-mail-privileged "$(tokens skynotify "$OLD_MAIL_CALLBACK" privileged)"
+keep before-mail-leader "$(tokens skynotify "$OLD_MAIL_CALLBACK" leader)"
+if ! { logout_allowed skynotify https://iletisim.yildizskylab.com && logout_refused skynotify https://notify.yildizskylab.com; }; then
+  kcadm get "clients/$skynotify" -r "$REALM" | jq -c '{rootUrl, baseUrl, logout: .attributes["post.logout.redirect.uris"]}' >&2
+  fail 'the hand-made skynotify sign-out returns are not iletisim. alone; the address change would prove nothing'
+fi
+[[ $(authorize_status skynotify "$MAIL_CALLBACK") == 400 ]] \
+  || fail 'the hand-made skynotify already accepted the notify. callback; the address change would prove nothing'
 keep before-main-service "$(service_tokens frontend-main)"
 keep before-arge-service "$(service_tokens frontend-arge)"
 access=$(access_of "$(kept before-main-privileged)")
@@ -469,6 +526,11 @@ expect_line "$output" "[reconcile] default client scope skynotify-api-audience a
 expect_line "$output" '[reconcile] groups claim of skynotify (none): updated (-default scope groups -optional scope microprofile-jwt)' \
   'the groups were not taken out of SkyNotify'"'"'s token'
 reject_line "$output" 'groups claim of frontend-' 'the sites'"'"' groups were touched'
+# Keycloak keeps redirect URIs and web origins as sets: the "before" lists come in any order.
+expect_line "$output" '[reconcile] client skynotify addresses (https://notify.yildizskylab.com): updated (rootUrl baseUrl redirectUris webOrigins attributes; before: rootUrl https://iletisim.yildizskylab.com baseUrl / redirectUris [' \
+  'skynotify'"'"'s addresses were not moved to notify.'
+expect_line "$output" 'post.logout.redirect.uris https://iletisim.yildizskylab.com##https://mail.yildizskylab.com; after: rootUrl https://notify.yildizskylab.com baseUrl https://notify.yildizskylab.com/ redirectUris ["https://notify.yildizskylab.com/api/auth/callback/keycloak"] webOrigins ["https://notify.yildizskylab.com"] post.logout.redirect.uris https://notify.yildizskylab.com)' \
+  'the address change does not show the values before and after'
 reject_line "$output" 'WARNING' 'the step warned on a realm with every client'
 
 CURRENT_STAGE='the narrowed contract'
@@ -479,8 +541,18 @@ for c in "$main" "$arge" "$skynotify"; do
 done
 [[ $(client_secret frontend-main) == "$main_secret" && $(client_secret frontend-arge) == "$arge_secret" ]] \
   || fail 'the step changed a client secret'
-[[ $(for c in "$main" "$arge" "$skynotify"; do kcadm get "clients/$c" -r "$REALM" | jq -c '{clientId, redirectUris, publicClient, serviceAccountsEnabled, attributes: {pkce: .attributes["pkce.code.challenge.method"]}}'; done) == "$clients_before" ]] \
+[[ $(for c in "$main" "$arge" "$skynotify"; do kcadm get "clients/$c" -r "$REALM" | jq -c "$CLIENT_SHAPE"; done) == "$clients_before" ]] \
   || fail 'the step changed redirect URIs or flags of a client'
+json_assert "$(kcadm get "clients/$skynotify" -r "$REALM")" \
+  '.redirectUris == [$cb] and .webOrigins == [$o] and .attributes["post.logout.redirect.uris"] == $o and .rootUrl == $o and .baseUrl == ($o + "/")' \
+  'skynotify does not allow notify. alone' --arg cb "$MAIL_CALLBACK" --arg o https://notify.yildizskylab.com
+logout_allowed skynotify https://notify.yildizskylab.com || fail 'skynotify refuses the sign-out return to notify.'
+for old in https://iletisim.yildizskylab.com https://mail.yildizskylab.com; do
+  logout_refused skynotify "$old" || fail "skynotify still accepts the sign-out return $old"
+done
+for old in "$OLD_MAIL_CALLBACK" https://mail.yildizskylab.com/api/auth/callback/keycloak; do
+  [[ $(authorize_status skynotify "$old") == 400 ]] || fail "skynotify still accepts the old callback $old"
+done
 [[ $(for c in "$main" "$arge"; do kcadm get "clients/$c/protocol-mappers/models" -r "$REALM" | jq -c 'map({name, protocolMapper, config}) | sort_by(.name)'; done) == "$mappers_before" ]] \
   || fail 'the step changed the sites'"'"' own mappers'
 [[ $(scope_uuid skycms-audience | wc -l | tr -d ' ') == 1 && $(scope_uuid skycms-audience) == "$skycms_scope" ]] \
@@ -671,6 +743,8 @@ kcadm update "clients/$skynotify/default-client-scopes/$groups_scope" -r "$REALM
 kcadm create "clients/$skynotify/protocol-mappers/models" -r "$REALM" \
   -b '{"name":"skynotify-groups","protocol":"openid-connect","protocolMapper":"oidc-group-membership-mapper","config":{"claim.name":"groups","full.path":"true","access.token.claim":"true"}}' >/dev/null
 kcadm delete "clients/$skynotify/default-client-scopes/$(scope_uuid skynotify-api-audience)" -r "$REALM" >/dev/null
+kcadm update "clients/$skynotify" -r "$REALM" \
+  -s "redirectUris=[\"$MAIL_CALLBACK\",\"https://mail.yildizskylab.com/*\"]" >/dev/null
 output=$(step) || { printf '%s\n' "$output" >&2; fail 'the repairing run failed'; }
 for expected in \
   '[reconcile] client frontend-arge (no full scope): updated (fullScopeAllowed)' \
@@ -681,9 +755,12 @@ for expected in \
   "[reconcile] pruned protocol mappers from scope $skycms_scope: unexpected" \
   "[reconcile] protocol mappers of scope $skycms_scope: updated (~skycms-audience)" \
   "[reconcile] default client scope skynotify-api-audience attached to client $skynotify" \
-  '[reconcile] groups claim of skynotify (none): updated (-default scope groups -mapper skynotify-groups)'; do
+  '[reconcile] groups claim of skynotify (none): updated (-default scope groups -mapper skynotify-groups)' \
+  '[reconcile] client skynotify addresses (https://notify.yildizskylab.com): updated (redirectUris; before: rootUrl https://notify.yildizskylab.com baseUrl https://notify.yildizskylab.com/ redirectUris ['; do
   expect_line "$output" "$expected" 'the drift was not repaired'
 done
+[[ $(authorize_status skynotify https://mail.yildizskylab.com/api/auth/callback/keycloak) == 400 ]] \
+  || fail 'the old SkyNotify address added back by hand was not taken out'
 json_assert "$(access_of "$(tokens frontend-arge "$ARGE_CALLBACK" privileged)")" "$AUD == [\"core\", \"skycms\"] and (has(\"realm_access\") | not) and ((.resource_access // {}) | keys) == [\"frontend-arge\"]" \
   'the repaired frontend-arge token differs from the contract'
 json_assert "$(access_of "$(tokens skynotify "$MAIL_CALLBACK" privileged)")" "$AUD == [\"skynotify\"] and (has(\"groups\") | not)" \
@@ -736,6 +813,70 @@ for pair in "frontend-main $SANDBOX_MAIN_CALLBACK" "frontend-arge $SANDBOX_ARGE_
     "the sandbox $client token differs from the contract" --arg c "$client"
 done
 printf '    sandbox: one change (skycms-audience on frontend-arge), skynotify missing is a WARNING; site-clients.sh, sandbox-site-clients.sh and inscribed-cms-roles.sh --check plan nothing afterwards\n'
+
+# ---------------------------------------------------------------------------------------------
+CURRENT_STAGE='sandbox realm: skynotify moves to sandbox-notify.'
+kcadm create clients -r "$SANDBOX_REALM" -s clientId=skynotify -s 'name=SkyNotify' -s publicClient=true -s fullScopeAllowed=true \
+  -s standardFlowEnabled=true -s directAccessGrantsEnabled=false \
+  -s 'redirectUris=["https://sandbox-iletisim.yildizskylab.com/*","https://sandbox-mail.yildizskylab.com/*","http://localhost:3000/api/auth/callback/keycloak"]' \
+  -s 'webOrigins=["https://sandbox-iletisim.yildizskylab.com","https://sandbox-mail.yildizskylab.com","http://localhost:3000"]' \
+  -s 'attributes."post.logout.redirect.uris"=https://sandbox-iletisim.yildizskylab.com##https://sandbox-mail.yildizskylab.com##http://localhost:3000' \
+  -s 'attributes."pkce.code.challenge.method"=S256' >/dev/null
+sandbox_skynotify=$(client_uuid skynotify "$SANDBOX_REALM")
+[[ $(authorize_status skynotify "$SANDBOX_OLD_MAIL_CALLBACK" "$SANDBOX_REALM") == 200 ]] \
+  || fail 'the hand-made sandbox skynotify does not accept its old callback'
+# The address line, less the "before" lists (Keycloak keeps them as sets, in any order).
+SANDBOX_ADDRESSES='[reconcile] client skynotify addresses (https://sandbox-notify.yildizskylab.com http://localhost:3000): updated (rootUrl baseUrl redirectUris webOrigins attributes; before: rootUrl'
+SANDBOX_AFTER='post.logout.redirect.uris https://sandbox-iletisim.yildizskylab.com##https://sandbox-mail.yildizskylab.com##http://localhost:3000; after: rootUrl https://sandbox-notify.yildizskylab.com baseUrl https://sandbox-notify.yildizskylab.com/ redirectUris ["https://sandbox-notify.yildizskylab.com/api/auth/callback/keycloak","http://localhost:3000/api/auth/callback/keycloak"] webOrigins ["https://sandbox-notify.yildizskylab.com","http://localhost:3000"] post.logout.redirect.uris https://sandbox-notify.yildizskylab.com##http://localhost:3000)'
+# The operator's dry run first, as the migration wizard runs it.
+event_before=$(newest_admin_event "$SANDBOX_REALM")
+sleep 1
+output=$(docker exec -e KEYCLOAK_ADMIN_URL=http://localhost:8080 -e "KEYCLOAK_REALM=$SANDBOX_REALM" \
+  -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KCADM_CONFIG" -e KEYCLOAK_RECONCILE_ONLY=login-clients \
+  -e KEYCLOAK_RECONCILE_CHECK=true "$CONTAINER" bash /tmp/config/reconcile-account-center.sh 2>&1) \
+  || { printf '%s\n' "$output" >&2; fail 'the dry run of the step failed in the sandbox'; }
+printf '%s\n' "$output" | sed 's/^/    /'
+no_admin_event_since "$event_before" 'the dry run wrote to the sandbox realm' "$SANDBOX_REALM"
+expect_line "$output" '[reconcile] CHECK: a dry run' 'the dry run did not say it is one'
+expect_line "$output" "$SANDBOX_ADDRESSES" 'the dry run did not show the address change'
+expect_line "$output" "$SANDBOX_AFTER" 'the dry run did not show the values before and after'
+expect_line "$output" "[reconcile] would kcadm update clients/$sandbox_skynotify" 'the dry run did not name the withheld client update'
+expect_line "$output" 'Login client configuration is checked; nothing was written' 'the dry run did not end as one'
+json_assert "$(kcadm get "clients/$sandbox_skynotify" -r "$SANDBOX_REALM")" '.redirectUris | length == 3' \
+  'the dry run changed the sandbox skynotify'
+output=$(step "$SANDBOX_REALM") || { printf '%s\n' "$output" >&2; fail 'the step failed on the sandbox skynotify'; }
+expect_line "$output" "$SANDBOX_ADDRESSES" 'the sandbox skynotify did not move to sandbox-notify.'
+expect_line "$output" "$SANDBOX_AFTER" 'the sandbox address change does not show the values before and after'
+json_assert "$(kcadm get "clients/$sandbox_skynotify" -r "$SANDBOX_REALM")" \
+  '(.redirectUris | sort) == ([$cb, "http://localhost:3000/api/auth/callback/keycloak"] | sort) and (.webOrigins | sort) == ([$o, "http://localhost:3000"] | sort) and .attributes["post.logout.redirect.uris"] == ($o + "##http://localhost:3000") and .rootUrl == $o' \
+  'the sandbox skynotify does not allow sandbox-notify. and localhost:3000 alone' --arg cb "$SANDBOX_MAIL_CALLBACK" --arg o https://sandbox-notify.yildizskylab.com
+[[ $(authorize_status skynotify http://localhost:3000/api/auth/callback/keycloak "$SANDBOX_REALM") == 200 ]] \
+  || fail 'the sandbox skynotify lost local development'"'"'s callback'
+logout_allowed skynotify http://localhost:3000 "$SANDBOX_REALM" && logout_allowed skynotify https://sandbox-notify.yildizskylab.com "$SANDBOX_REALM" \
+  || fail 'the sandbox skynotify refuses a sign-out return to sandbox-notify. or localhost:3000'
+logout_refused skynotify https://sandbox-iletisim.yildizskylab.com "$SANDBOX_REALM" \
+  || fail 'the sandbox skynotify still accepts the sign-out return to sandbox-iletisim.'
+[[ $(authorize_status skynotify "$SANDBOX_OLD_MAIL_CALLBACK" "$SANDBOX_REALM") == 400 ]] \
+  || fail 'the sandbox skynotify still accepts sandbox-iletisim.'
+json_assert "$(access_of "$(tokens skynotify "$SANDBOX_MAIL_CALLBACK" sandboxadmin "$SANDBOX_REALM")")" '.azp == "skynotify"' \
+  'a login through sandbox-notify. failed'
+event_before=$(newest_admin_event "$SANDBOX_REALM")
+sleep 1
+output=$(step "$SANDBOX_REALM") || { printf '%s\n' "$output" >&2; fail 'the second run on the sandbox skynotify failed'; }
+no_admin_event_since "$event_before" 'the second run on the sandbox skynotify wrote to the realm' "$SANDBOX_REALM"
+expect_line "$output" '[reconcile] client skynotify addresses (https://sandbox-notify.yildizskylab.com http://localhost:3000): unchanged' \
+  'the second run did not report the sandbox addresses unchanged'
+printf '    sandbox skynotify: the dry run shows the address change and writes nothing; the run leaves sandbox-notify. and localhost:3000; a login through sandbox-notify. works; the next run writes nothing\n'
+# KEYCLOAK_SKYNOTIFY_UI_ORIGINS (the rollback lever): localhost is refused outside the sandbox realm.
+if output=$(docker exec -e KEYCLOAK_ADMIN_URL=http://localhost:8080 -e "KEYCLOAK_REALM=$REALM" \
+  -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$KCADM_CONFIG" -e KEYCLOAK_RECONCILE_ONLY=login-clients \
+  -e 'KEYCLOAK_SKYNOTIFY_UI_ORIGINS=https://notify.yildizskylab.com http://localhost:3000' \
+  "$CONTAINER" bash /tmp/config/reconcile-account-center.sh 2>&1); then
+  printf '%s\n' "$output" >&2
+  fail 'a localhost origin was accepted outside the sandbox realm'
+fi
+expect_line "$output" 'KEYCLOAK_SKYNOTIFY_UI_ORIGINS: http://localhost:3000 is not an https origin' 'the refused origin was not named'
+printf '    KEYCLOAK_SKYNOTIFY_UI_ORIGINS: localhost refused outside the sandbox realm\n'
 
 # ---------------------------------------------------------------------------------------------
 CURRENT_STAGE='sizes'

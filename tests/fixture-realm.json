@@ -79,7 +79,7 @@
       "publicClient": true,
       "standardFlowEnabled": true,
       "redirectUris": [
-        "https://mail.yildizskylab.com/*"
+        "https://iletisim.yildizskylab.com/*"
       ]
     },
     {

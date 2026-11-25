@@ -7,5 +7,5 @@
   "maxDeltaTimeSeconds": 43200,
   "quickLoginCheckMilliSeconds": 1000,
   "minimumQuickLoginWaitSeconds": 60,
-  "passwordPolicy": "length(8) and notUsername and notEmail"
+  "passwordPolicy": "length(8) and notUsername and notEmail and passwordBlacklist(skylab-yaygin-parolalar.txt)"
 }

@@ -45,7 +45,7 @@ class SkyMailEmailSenderProviderTest {
         session = SkyMailEmailTemplateProviderTest.sessionWithAttributes(attributes);
         client = mock(SkyMailClient.class);
         enabled = new SkyMailSettings(true, null,
-                URI.create("https://mail.yildizskylab.com/v1/mail_tasks/single"),
+                URI.create("https://api.yildizskylab.com/v1/mail_tasks/single"),
                 URI.create("https://e.yildizskylab.com/realms/e-skylab/protocol/openid-connect/token"),
                 "keycloak-mailer", SkyMailSecret.ofLiteral("s3cr3t"),
                 java.time.Duration.ofMillis(2_000), java.time.Duration.ofMillis(5_000));
@@ -158,7 +158,7 @@ class SkyMailEmailSenderProviderTest {
     void fallsBackWhenTheRealmIssuerCannotBeResolvedAndNoTokenUrlIsPinned() throws EmailException {
         record();
         SkyMailSettings derived = new SkyMailSettings(true, null,
-                URI.create("https://mail.yildizskylab.com/v1/mail_tasks/single"), null,
+                URI.create("https://api.yildizskylab.com/v1/mail_tasks/single"), null,
                 "keycloak-mailer", SkyMailSecret.ofLiteral("s3cr3t"),
                 java.time.Duration.ofMillis(2_000), java.time.Duration.ofMillis(5_000));
 

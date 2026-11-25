@@ -55,7 +55,7 @@ async function person(label, { second = false, keepPassword = false, fallback = 
   return { id: user.id, username, email, token: tokens.access_token, other: other?.access_token };
 }
 function tasks() {
-  return execFileSync("docker", ["logs", container], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split("\n").filter(line => line.startsWith("SKYNOTIFY_FIXTURE ")).map(line => JSON.parse(line.slice(16))).filter(value => value.event === "mail_task");
+  return execFileSync("docker", ["logs", container], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split("\n").filter(line => line.startsWith("SKYNOTIFY_FIXTURE ")).map(line => JSON.parse(line.slice("SKYNOTIFY_FIXTURE ".length))).filter(value => value.event === "mail_task");
 }
 async function send(person) {
   const before = tasks().length;

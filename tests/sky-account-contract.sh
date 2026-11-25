@@ -382,7 +382,7 @@ kcadm update "realms/$REALM" \
   -s bruteForceProtected=true \
   -s failureFactor=2 \
   -s permanentLockout=false \
-  -s 'passwordPolicy=length(12) and notUsername' >/dev/null
+  -s 'passwordPolicy=length(12) and notUsername and passwordBlacklist(skylab-yaygin-parolalar.txt)' >/dev/null
 kcadm delete "attack-detection/brute-force/users/$FIXTURE_USER_UUID" -r "$REALM" >/dev/null
 # The Chromium stage leaves a TOTP credential behind. The contract starts from a
 # password-only account so browser logins and direct grants need no OTP challenge.
@@ -626,6 +626,11 @@ json_assert "$SKY_BODY" '.policy == "invalidPasswordMinLengthMessage" and .param
 sky POST credentials/password "$token_a" "$sudo_a" "{\"newPassword\":\"$FIXTURE_USERNAME\",\"logoutOtherSessions\":false}"
 expect 400 password_policy 'notUsername policy must be enforced'
 json_assert "$SKY_BODY" '.policy == "invalidPasswordNotUsernameMessage"' 'notUsername policy key differs'
+# The image's common-password denylist (password-blacklists/), with the theme's Turkish sentence.
+sky POST credentials/password "$token_a" "$sudo_a" '{"newPassword":"Galatasaray1905","logoutOtherSessions":false}'
+expect 400 password_policy 'the common-password denylist must be enforced'
+json_assert "$SKY_BODY" '.policy == "invalidPasswordBlacklistedMessage" and .detail == "Bu parola çok yaygın; başka bir parola seç."' \
+  'denylist policy problem must carry the Keycloak message key and the Turkish detail'
 sky POST credentials/password "$token_a" "$sudo_a" "{\"newPassword\":\"$ROTATED_PASSWORD\"}"
 expect 400 invalid_request 'logoutOtherSessions must be explicit'
 sky POST credentials/password "$token_a" "$sudo_a" "{\"newPassword\":\"$ROTATED_PASSWORD\",\"logoutOtherSessions\":true}"

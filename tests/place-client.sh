@@ -29,7 +29,7 @@
 #     writes nothing;
 #   - with place:moderator granted to ayse and place:admin to /UYELER/ETKINLIK the way the SKY LAB
 #     admin panel does it, a real authorization code flow with PKCE S256 and a nonce through the
-#     client (login page, credentials, redirect to https://api.place.yildizskylab.com/api/auth/eskylab/callback,
+#     client (login page, credentials, redirect to https://place-api.yildizskylab.com/api/auth/eskylab/callback,
 #     code exchanged with the secret and the verifier, as Place's backend does) gives an ID token
 #     (aud place, the nonce), an access token and a userinfo response that carry school_email (the
 #     school address, not the primary e-mail; from the client's own mapper: no claim of profile,
@@ -65,7 +65,7 @@ PORT=${PLACE_CLIENT_TEST_PORT:-18093}
 BASE_URL="http://127.0.0.1:$PORT"
 REALM=e-skylab
 CLIENT=place
-CALLBACK=https://api.place.yildizskylab.com/api/auth/eskylab/callback
+CALLBACK=https://place-api.yildizskylab.com/api/auth/eskylab/callback
 CONTAINER=${PLACE_CLIENT_TEST_CONTAINER:-place-client-test-$$}
 ADMIN_PASSWORD=harness-admin-password
 PERSON_PASSWORD=harness-person-password

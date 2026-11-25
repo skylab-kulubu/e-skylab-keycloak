@@ -19,7 +19,7 @@ entegrasyon testi bunu doğrular.
 | Adım | Uygulanan durum |
 | --- | --- |
 | Realm oturum/giriş/tema (`account-center-realm.json`) | `editUsernameAllowed=false`, `loginWithEmailAllowed=true`, `duplicateEmailsAllowed=false`, `e-skylab-theme`; oturum süreleri: `ssoSessionIdleTimeout=7200` (2 saat hareketsizlik), `ssoSessionMaxLifespan=28800` (en çok 8 saat), `rememberMe=true`, `ssoSessionIdleTimeoutRememberMe=604800` (7 gün), `ssoSessionMaxLifespanRememberMe=2592000` (30 gün), `clientSessionIdleTimeout=0` ve `clientSessionMaxLifespan=0` (istemci oturumu SSO oturumundan miras alır; refresh token SSO oturumu yaşadıkça yaşar), `accessTokenLifespan=300` (erişim tokenı 5 dk; rol/grup değişikliği yeniden giriş olmadan en geç bu sürede gelir; istemci düzeyi `access.token.lifespan` ezmesi yönetilmez). Bu alanlar elle değiştirilirse sonraki uzlaştırma geri yazar. Offline oturum ayarları (`offlineSession*`, SkyApp) yönetilmez. |
-| Brute force ve parola politikası (`account-center-realm-security.json`) | `bruteForceProtected=true`, `permanentLockout=false`, `failureFactor=10`, `waitIncrementSeconds=60`, `maxFailureWaitSeconds=900`, `maxDeltaTimeSeconds=43200`, `quickLoginCheckMilliSeconds=1000`, `minimumQuickLoginWaitSeconds=60`, `passwordPolicy="length(8) and notUsername and notEmail"` |
+| Brute force ve parola politikası (`account-center-realm-security.json`) | `bruteForceProtected=true`, `permanentLockout=false`, `failureFactor=10`, `waitIncrementSeconds=60`, `maxFailureWaitSeconds=900`, `maxDeltaTimeSeconds=43200`, `quickLoginCheckMilliSeconds=1000`, `minimumQuickLoginWaitSeconds=60`, `passwordPolicy="length(8) and notUsername and notEmail and passwordBlacklist(skylab-yaygin-parolalar.txt)"`. Kara liste imajın içindedir (`/opt/keycloak/password-blacklists/`, kaynak ve lisans `password-blacklists/README.md`): yaygın ve sızmış parolalar (NCSC 100k), Türkçe yaygın parolalar ve kulübe özgü kelimeler; büyük/küçük harf fark etmez. Listeyi taşımayan bir imajda Keycloak bu politikayı kabul etmez (uzlaştırma hata verir), politikası olan bir realm'i de okuyamaz: listeden önceki bir imaja dönmeden önce realm'in politikası `length(8) and notUsername and notEmail` yapılır (iki realm). |
 | Olay saklama süresi (hesap silme 09; değerler betiğin başındaki `EVENT_RETENTION_*` sabitlerinde) | `eventsEnabled=true`, `eventsExpiration=2592000`, `adminEventsEnabled=true`, `adminEventsDetailsEnabled=true` ve realm özniteliği `adminEventsExpiration=2592000`: kullanıcı ve admin olayları 30 gün sonra silinir, admin olay ayrıntıları denetim için açık kalır (Yusuf'un seçimi). Neden: Keycloak silinen kişinin olaylarını silmez. `CREATE`/`UPDATE` admin olayları kişinin tam temsilini (e-posta, ad, okul ve kişisel e-posta), `DELETE` kullanıcı adını, `LOGIN`/`LOGIN_ERROR` yazılan adresi tutar. Süre kapatılırsa bunlar süresiz kalır; 30 gün KVKK'nın başvuruyu sonuçlandırma süresidir. Öznitelik, canlı öznitelik haritasının üstüne birleştirilerek yazılır. Dinleyiciler ve kaydedilen olay türleri yönetilmez. Yetki: realm PUT'u `manage-realm` ister, uzlaştırıcı kimliğinde var; `events/config` uç noktası (`manage-events`) kullanılmaz. Üretimde bu değerler 2026-09-26'dan önce elle kurulmuştu; ilk koşuda `[reconcile] realm event retention (…): unchanged` beklenir, `updated (…)` görülürse biri ayarı değiştirmiştir, not edin. Harness: `tests/event-retention.sh`. |
 | Şifresiz passkey politikası (`account-center-passkey-policy.json` + ortam) | `webAuthnPolicyPasswordlessRpId=yildizskylab.com`, `webAuthnPolicyPasswordlessExtraOrigins=["https://my.yildizskylab.com"]`; entity name `SKY LAB`, ES256/RS256, resident key ve kullanıcı doğrulaması zorunlu, passkeys açık, conditional mediation; diğer alanlar Keycloak varsayılanları. Relying party id gerçekten değişiyorsa politika yazılmadan önce realm özniteliği `skylab.passkeyRpIdSwitchedAt=<ISO-8601 UTC>` kaydedilir (öznitelik haritası canlı halinin üstüne birleştirilir, başka öznitelik silinmez) ve `[reconcile] passkey relying party id switches from '…' to '…'` satırı basılır; §5'teki temizlik bu anı cutover alır. İki faktörlü (`webAuthnPolicy*`) politika yönetilmez. `attributes` taşımayan realm PUT'ları CIBA/PAR sürelerini ve cihaz kodu ömrünü (`oauth2DeviceCodeLifespan`) Keycloak varsayılanına sıfırlar (önceden de böyleydi). |
 | User Profile (`account-center-user-profile.json`) | Canlı yapı korunur (gruplar, açıklamalar, mesaj anahtarları, ek öznitelikler); `firstName`, `lastName`, `email` kişi için salt okunur (`edit=[admin]`, `view=[admin,user]`); `username` izinleri olduğu gibi; `schoolEmail`, `personalEmail`, `skyNumber`, `department`, `university`, `skyMail`, `usernameChangedAt` `view=[admin,user]`, `edit=[admin]`; e-posta özniteliklerinde `email`, `usernameChangedAt` için ISO-8601 UTC `pattern` doğrulayıcısı; eksik Türkçe görünen adlar eklenir, mevcutlar korunur; `unmanagedAttributePolicy=ADMIN_VIEW` (asla `ENABLED`) |
@@ -1116,7 +1116,7 @@ Harness: `tests/sandbox-site-clients.sh` tek başına çalışır. Dockerfile'da
 
 ## 14. Place: `place` istemcisi, roller ve `school_email` claim'i (ADR-0060)
 
-Place'in backend'i (`api.place.yildizskylab.com`) e-skylab girişini kendisi yürütür: realm
+Place'in backend'i (`place-api.yildizskylab.com`) e-skylab girişini kendisi yürütür: realm
 `e-skylab`'ın gizli istemcisi `place`'tir (BFF; Authorization Code + PKCE). Keycloak token'ları
 tarayıcıya gitmez, Place kendi oturum cookie'sini verir (ADR-0058'in yönü). İstemciyi
 `config/create-place-client.sh` kurar. Betik §13'teki betiğin düzenindedir: varsayılanı
@@ -1136,7 +1136,7 @@ Kurduğu istemci `place`:
   istemcilerin rolleri gelmez (tam kapsam açık olsaydı `realm-management` rolü olan bir
   yetkilinin token'ı Admin REST'te de geçerli olurdu, §0'daki `account-center` notu);
 - consent ve front-channel logout kapalı (Place'ten çıkış e-skylab oturumunu kapatmaz);
-- dönüş adresi tam olarak `https://api.place.yildizskylab.com/api/auth/eskylab/callback`; web
+- dönüş adresi tam olarak `https://place-api.yildizskylab.com/api/auth/eskylab/callback`; web
   origin yok (tarayıcı Keycloak'ın uçlarını çağırmaz). İstemcide başka adres varsa silinir ve
   satırda listelenir.
 
@@ -2198,7 +2198,8 @@ in realm <realm>; skipped client scope <kapsamlar> and its token narrowing` ve s
 | Ortak `skycms-audience` | Etkinlik sitelerinin (`site-clients.sh`) ve SkyApp'in (`skyapp-cms-editor.sh`) de kullandığı realm kapsamı; uzlaştırıcı onu `site-clients.sh`'in biçimine getirir (`config/skycms-audience-mappers.json`, mapper adı `skycms-audience`). Production'daki tek mapper (`audience-mapper`) hiçbir audience adlandırmıyordu: sitelerin `skycms`'i yalnız audience-resolve'dan, yani tam kapsamdan ve kişinin bir `skycms` rolünden geliyordu. O mapper silinir, `skycms-audience` eklenir; etkisi `skycms-audience`'ı taşıyan her istemcide herkese `aud skycms` (e-skylab-keycloak#71 aynı onarımı `site-clients.sh --shared-scope` ile yapar; ikisi aynı sonuca varır) |
 | Rol kapsamı | Boş: realm rolü ve başka istemcinin rolü yok, elle konmuş eşlemeler kaldırılır. İstemcinin kendi rolleri (`cms:access`, `content:*`, `schema:sync`, `client:admin`, `skymail:*`) Keycloak'ta her zaman geçer; core rolü gerekmez (core `/v1/media` yüklemesi rol istemez) |
 | `groups` | Sitelerde dokunulmaz (inscribed okur). `skymail`'de `groups` yazan (Group Membership, `sky-group-overage-mapper` ya da claim'i `groups` olan; `microprofile-jwt` realm rollerini oraya yazar) her varsayılan ve isteğe bağlı kapsam yalnız `skymail`'den ayrılır, realm'de ve diğer istemcilerde kalır; `skymail`'in kendi böyle bir mapper'ı silinir (ADR-0059: grup okumayan uygulama grup almaz) |
-| İstemci | `fullScopeAllowed=false`; başka alana (secret, adresler, bayraklar, istemcinin diğer mapper'ları) dokunulmaz |
+| İstemci | `fullScopeAllowed=false`; başka alana (secret, sitelerin adresleri, bayraklar, istemcinin diğer mapper'ları) dokunulmaz |
+| `skymail`'in adresleri | Aşağıdaki "SkyMail arayüzünün adresi" bölümü (e-skylab ADR-0090) |
 
 Sıra uygulamaları bozmaz: önce audience'lar (tam kapsam açıkken zararsız), en son tam kapsamın
 kapanması. Tam uzlaştırmada adım `skyapp` audience adımından sonra, `skyforms`'unkinden önce koşar.
@@ -2223,6 +2224,41 @@ Bilinçli davranış değişiklikleri:
 - SkyMail token'ı `aud skymail` taşır (önceden SkyMail kendi adını `aud`'da görmüyordu; okumuyor da,
   RFC 9068 §2.2 ve ADR-0019'un "token API'yi `aud`'da adlandırır" kuralına uyum için).
 
+### SkyMail arayüzünün adresi (e-skylab ADR-0090)
+
+SkyMail arayüzünün adresi `https://notify.yildizskylab.com`, sandbox realm'inde
+`https://sandbox-notify.yildizskylab.com` ve yerel geliştirme için `http://localhost:3000` (Yusuf,
+2026-11-24; production'da localhost yok). Bu tarihe kadar `skymail` istemcisinin adresleri elle
+tutuluyordu: production'da `iletisim.` ve `mail.`, sandbox'ta `sandbox-iletisim.` ve `sandbox-mail.`.
+Uzlaştırıcı (`reconcile_skymail_client_addresses`, aynı adımın sonunda) artık yalnız şunları bırakır:
+
+| Alan | Değer (her köken için) |
+| --- | --- |
+| `redirectUris` | `<köken>/api/auth/callback/keycloak` (Auth.js geri dönüşü) |
+| `webOrigins` | `<köken>` |
+| `post.logout.redirect.uris` | `<köken>` (skymail-frontend çıkışta kendi kökenine döner) |
+| `rootUrl` / `baseUrl` | ilk köken / ilk köken + `/` |
+
+Eski adlar yönlendirme olarak da tutulmaz: ilk koşudan sonra eski adla başlayan giriş ve eski ada
+çıkış dönüşü 400 alır. Satır öncesini ve sonrasını basar: `client skymail addresses
+(https://notify.yildizskylab.com): updated (…; before: …; after: …)`; sonraki koşularda `unchanged`.
+Kuru koşu aynı satırı ve `would kcadm update clients/<id>` satırını basar, hiçbir şey yazmaz.
+`adminUrl` ve ön/arka kanal çıkış adresleri yönetilmez; başka bir ada işaret eden mutlak bir değer
+`WARNING` basar (`/` ile başlayan göreli değer basmaz).
+
+**Yayın sırası:** bu adımı içeren sürüm `notify.` geçiş penceresinde canlıya çıkar. DNS, Dokploy alan
+adı, sertifika ve skymail-frontend'in `AUTH_URL`'i `notify.`'da hazır olur; aynı pencerede
+uzlaştırıcı eski adları kaldırır. Uzlaştırıcı daha önce koşarsa `iletisim.`'ten giriş kesilir ve
+`notify.` henüz açılmamıştır.
+
+**Geri dönüş:** `KEYCLOAK_SKYMAIL_UI_ORIGINS` kökenleri ezer (boşlukla ayrılmış, ilki arayüzün kendi
+adresi). Eski adlara dönmek için uzlaştırma bu değerle koşar:
+`KEYCLOAK_SKYMAIL_UI_ORIGINS="https://iletisim.yildizskylab.com https://mail.yildizskylab.com"`
+(sandbox'ta `"https://sandbox-iletisim.yildizskylab.com https://sandbox-mail.yildizskylab.com
+http://localhost:3000"`). Değer ayarlı kaldıkça sonraki koşular da onu uygular; değişken kaldırılınca
+`notify.`'a döner. `http://localhost` yalnız `e-skylab-sandbox`'ta kabul edilir; başka realm'de koşu
+hiçbir şey okumadan durur.
+
 ### Operatör oturumuyla tek adım (sandbox)
 
 Sandbox realm'inde uzlaştırıcı kimliği yoktur (§16). Operatör adımı kendi kcadm oturumuyla tek başına
@@ -2240,6 +2276,10 @@ KEYCLOAK_RECONCILE_ONLY=login-clients \
   /opt/keycloak/config/reconcile-account-center.sh
 rm -f /tmp/kcadm-operator.config
 ```
+
+Kuru koşu için aynı komuta `KEYCLOAK_RECONCILE_CHECK=true` eklenir: her yazma `would kcadm …`
+satırıdır, son satır `Login client configuration is checked; nothing was written (N write(s)
+withheld).`
 
 Son satır `Login client configuration is reconciled.` İkinci koşu hiçbir şey yazmaz. Ardından
 `site-clients.sh --site main --check`, `sandbox-site-clients.sh --check` ve `inscribed-cms-roles.sh
@@ -2295,7 +2335,9 @@ profile`) siteler `aud` tam `core`, `skycms`, `realm_access` yok, `resource_acce
 kendisi; sitenin, core'un ve inscribed'ın okuduğu claim'ler (Privileged kişi, lider, DK üyesi, üye)
 öncekiyle aynı; servis hesabı token'ları `aud skycms` ve `content:read` + `schema:sync`; SkyMail `aud`
 tam `skymail`, aynı roller, grup ve realm rolü yok, userinfo `sub`, ad ve e-postayı verir; her token
-küçülür. İkinci koşu admin olayı üretmez; `inscribed-cms-roles.sh --check` değişiklik planlamaz;
+küçülür. `skymail`'in elle kurulmuş `iletisim.`/`mail.` adresleri `notify.`'a iner, eski geri dönüşle
+giriş 400 alır; sandbox'ta kuru koşu değişikliği gösterip hiçbir şey yazmaz, gerçek koşu
+`sandbox-notify.`'ı bırakır ve o adla giriş çalışır. İkinci koşu admin olayı üretmez; `inscribed-cms-roles.sh --check` değişiklik planlamaz;
 `skyapp-cms-editor.sh --apply` artık geçer, SkyApp `cms:access`'i `frontend-main` üzerinden alır;
 editörün site token'ı yalnız kendi bileşenlerinden gelen SkyApp rollerini ekler, üyeninki eklemez.
 Adımdan önce açılmış oturumlar (ana site, arge, SkyMail) bir sonraki yenilemede dar token alır,

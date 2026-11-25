@@ -87,6 +87,8 @@ let browser;
 try {
   adminToken = (await jsonRequest(`${base}/realms/master/protocol/openid-connect/token`, { method: "POST", form: { grant_type: "password", client_id: "admin-cli", username: "admin", password: process.env.SUDO_EMAIL_ADMIN_PASSWORD ?? "sudo-harness-admin" } })).access_token;
   const security = JSON.parse(await readFile(new URL("../config/account-center-realm-security.json", import.meta.url), "utf8"));
+  // The stock image has no password denylist (only the built image ships password-blacklists/).
+  security.passwordPolicy = security.passwordPolicy.replace(/ and passwordBlacklist\([^)]*\)/, "");
   await jsonRequest(`${base}/admin/realms`, { method: "POST", token: adminToken, expected: 201, body: {
     realm, enabled: true, sslRequired: "none", registrationAllowed: false, loginWithEmailAllowed: true,
     eventsEnabled: true, adminEventsEnabled: true, defaultLocale: "tr", supportedLocales: ["tr", "en"], internationalizationEnabled: true,

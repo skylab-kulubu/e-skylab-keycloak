@@ -1,0 +1,65 @@
+# Türkçe ve SKY LAB'a özgü kök kelimeler (NIST SP 800-63B: hizmetin adı ve bağlama özgü
+# kelimeler de reddedilir). build.mjs her köke SUFFIXES eklerini ekler; 8 karakterden kısa
+# olanlar zaten length(8) ile reddedildiği için listeye girmez. Büyük/küçük harf fark etmez:
+# Keycloak hem listeyi hem parolayı küçük harfe çevirerek karşılaştırır.
+# Kulüp ve okul
+skylab
+skylabytu
+yildizskylab
+yıldızskylab
+eskylab
+yildiz
+yıldız
+yildizteknik
+yıldızteknik
+yildizlab
+ytu
+ytuskylab
+davutpasa
+davutpaşa
+# Takımlar ve şehirler
+galatasaray
+fenerbahce
+fenerbahçe
+besiktas
+beşiktaş
+trabzonspor
+bursaspor
+istanbul
+ankara
+izmir
+turkiye
+türkiye
+# Sık kullanılan Türkçe kelimeler
+sifre
+şifre
+sifrem
+şifrem
+parola
+parolam
+merhaba
+sevgilim
+askim
+aşkım
+canim
+canım
+hayatim
+hayatım
+bebegim
+bebeğim
+annem
+babam
+kardesim
+kardeşim
+bismillah
+ataturk
+atatürk
+mustafakemal
+cimbom
+ultraslan
+sanane
+asdasd
+qwerty
+qwertyuiop
+asdfgh
+zxcvbn

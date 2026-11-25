@@ -558,7 +558,7 @@ Place'in backend'i (ADR-0060) e-skylab girişini kendisi yürütür: realm `e-sk
 istemcisi `place`'tir. Operatör istemciyi idempotent `config/create-place-client.sh` ile kurar
 (varsayılan `--check`, `--apply`; kcadm prompt düzeni ya da `--kcadm-config`): yalnız standard
 flow, PKCE `S256` zorunlu, `fullScopeAllowed=false`, front-channel logout kapalı, dönüş adresi
-tam olarak `https://api.place.yildizskylab.com/api/auth/eskylab/callback`, web origin yok;
+tam olarak `https://place-api.yildizskylab.com/api/auth/eskylab/callback`, web origin yok;
 `place:admin` ve `place:moderator` client rolleri (kimseye verilmez, admin panelinden verilir);
 `schoolEmail`'den `school_email` claim'i ve `resource_access.place.roles` (ID token, access token,
 userinfo). Place grup okumaz (ADR-0059): grup verisi yazan varsayılan ya da isteğe bağlı

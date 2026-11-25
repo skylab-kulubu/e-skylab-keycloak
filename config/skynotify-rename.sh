@@ -208,8 +208,8 @@ public final class SkynotifyRename {
     private static final Pattern PROTECTED = Pattern.compile("SkyMail adresi \\(eski\\)|\\bskyMail\\b");
     private static final Pattern MAIL_ANY = Pattern.compile("(?i)sky[-_ .]?mail");
     private static final Pattern NOTIFY_ANY = Pattern.compile("(?i)sky[-_ .]?notify");
-    private static final Set<String> MAIL_FORMS = Set.of("SkyMail", "SKYMAIL", "skymail", "Skymail");
-    private static final Set<String> NOTIFY_FORMS = Set.of("SkyNotify", "SKYNOTIFY", "skynotify", "Skynotify");
+    private static final Set<String> MAIL_FORMS = Set.of("SkyMail", "SKYMAIL", "skymail", "Skymail", "sky-mail");
+    private static final Set<String> NOTIFY_FORMS = Set.of("SkyNotify", "SKYNOTIFY", "skynotify", "Skynotify", "sky-notify");
     private static final Map<String, String> FRONT_TO_BACK = new LinkedHashMap<>();
     private static final Map<String, String> BACK_TO_FRONT = new LinkedHashMap<>();
 
@@ -633,7 +633,7 @@ public final class SkynotifyRename {
     private boolean classify(Scan scan, String label) {
         if (!scan.unexpected.isEmpty()) {
             problems.add("problem\t" + label + ": " + String.join(", ", scan.unexpected)
-                    + " cannot be renamed by the rule (only SkyMail, SKYMAIL, skymail, Skymail and their SkyNotify forms); nothing was changed");
+                    + " cannot be renamed by the rule (only SkyMail, SKYMAIL, skymail, Skymail, sky-mail and their SkyNotify forms); nothing was changed");
         }
         if (scan.hasOld && scan.hasNew) {
             problems.add("problem\t" + label + " names both the old and the new name (" + String.join(" ", scan.oldFields)
@@ -676,11 +676,11 @@ public final class SkynotifyRename {
         protectedText.appendTail(builder);
         String result = builder.toString();
         if (forward) {
-            result = result.replace("SkyMail", "SkyNotify").replace("SKYMAIL", "SKYNOTIFY").replace("skymail", "skynotify").replace("Skymail", "Skynotify");
-            result = suffixes(result, "(SkyNotify|SKYNOTIFY|skynotify|Skynotify)", FRONT_TO_BACK);
+            result = result.replace("SkyMail", "SkyNotify").replace("SKYMAIL", "SKYNOTIFY").replace("skymail", "skynotify").replace("Skymail", "Skynotify").replace("sky-mail", "sky-notify");
+            result = suffixes(result, "(SkyNotify|SKYNOTIFY|skynotify|Skynotify|sky-notify)", FRONT_TO_BACK);
         } else {
-            result = result.replace("SkyNotify", "SkyMail").replace("SKYNOTIFY", "SKYMAIL").replace("skynotify", "skymail").replace("Skynotify", "Skymail");
-            result = suffixes(result, "(SkyMail|SKYMAIL|skymail|Skymail)", BACK_TO_FRONT);
+            result = result.replace("SkyNotify", "SkyMail").replace("SKYNOTIFY", "SKYMAIL").replace("skynotify", "skymail").replace("Skynotify", "Skymail").replace("sky-notify", "sky-mail");
+            result = suffixes(result, "(SkyMail|SKYMAIL|skymail|Skymail|sky-mail)", BACK_TO_FRONT);
         }
         for (int i = 0; i < kept.size(); i++) {
             result = result.replace("" + i + "", kept.get(i));

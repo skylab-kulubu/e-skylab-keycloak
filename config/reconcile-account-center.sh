@@ -202,6 +202,34 @@ SKYFORMS_CORE_SCOPE_NAME=skyforms-core-audience
 # audience.
 SKYCMS_SCOPE_NAME=skycms-audience
 SKYMAIL_SCOPE_NAME=skymail-api-audience
+# The SkyMail UI's addresses (e-skylab ADR-0090; Yusuf, 2026-11-24): notify.yildizskylab.com,
+# sandbox-notify. in the sandbox realm, where local development (next dev on http://localhost:3000)
+# also signs in; production has no localhost. The old iletisim. and mail. names are not kept, not
+# even as redirects (see reconcile_skymail_client_addresses). KEYCLOAK_SKYMAIL_UI_ORIGINS overrides
+# the list (space-separated origins, the first one the UI's own: rootUrl and baseUrl), for a rollback
+# to the old names, for example "https://iletisim.yildizskylab.com https://mail.yildizskylab.com";
+# http://localhost is refused outside the sandbox realm.
+if [[ $TARGET_REALM == e-skylab-sandbox ]]; then
+  SKYMAIL_UI_ORIGINS_DEFAULT='https://sandbox-notify.yildizskylab.com http://localhost:3000'
+else
+  SKYMAIL_UI_ORIGINS_DEFAULT=https://notify.yildizskylab.com
+fi
+read -r -a SKYMAIL_UI_ORIGINS <<<"${KEYCLOAK_SKYMAIL_UI_ORIGINS:-$SKYMAIL_UI_ORIGINS_DEFAULT}"
+if [[ ${#SKYMAIL_UI_ORIGINS[@]} == 0 ]]; then
+  printf 'KEYCLOAK_SKYMAIL_UI_ORIGINS must name at least one origin\n' >&2
+  exit 2
+fi
+for skymail_ui_origin in "${SKYMAIL_UI_ORIGINS[@]}"; do
+  if [[ $skymail_ui_origin =~ ^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]; then
+    continue
+  fi
+  if [[ $skymail_ui_origin =~ ^http://localhost:[0-9]{1,5}$ && $TARGET_REALM == e-skylab-sandbox ]]; then
+    continue
+  fi
+  printf 'KEYCLOAK_SKYMAIL_UI_ORIGINS: %s is not an https origin without a path (http://localhost:PORT only in e-skylab-sandbox)\n' "$skymail_ui_origin" >&2
+  exit 2
+done
+SKYMAIL_UI_ORIGIN=${SKYMAIL_UI_ORIGINS[0]}
 # The admin panel's login client (ADR-0058; see reconcile_admin_panel_client): admin, superadmin in
 # the sandbox realm (as in inscribed-cms-roles.sh); KEYCLOAK_ADMIN_PANEL_CLIENT_ID names another.
 if [[ $TARGET_REALM == e-skylab-sandbox ]]; then
@@ -223,8 +251,8 @@ RECONCILE_ONLY=${KEYCLOAK_RECONCILE_ONLY:-}
 # KEYCLOAK_RECONCILE_CHECK=true: a dry run. Of the operator's service-roles step (runbook §20), of the
 # role-groups, leader-app-roles and tohum-atamalar steps (§26, §27, §33) and of the default-roles step
 # (§33): it prints "would ..." for each change and writes nothing. Of the whole reconciliation (the
-# reconciler identity, no KEYCLOAK_RECONCILE_ONLY) and of the operator's core-roles and broker-flows
-# (§22) steps: every write
+# reconciler identity, no KEYCLOAK_RECONCILE_ONLY) and of the operator's core-roles, broker-flows
+# (§22) and login-clients (§21) steps: every write
 # is withheld (see kcadm below): each one is a "[reconcile] would kcadm VERB PATH ..." line instead,
 # the step's own lines say what a real run would log, and the run ends with "... is checked; nothing
 # was written (N write(s) withheld)." A step that reads back what it would have written (a flow it
@@ -273,8 +301,8 @@ case $RECONCILE_CHECK in
   true)
     # The whole reconciliation (the reconciler identity) or one operator step that has a dry run.
     if [[ -n $RECONCILE_ONLY ]] \
-      && [[ ! $RECONCILE_ONLY =~ ^(service-roles|role-groups|leader-app-roles|core-roles|default-roles|broker-flows|app-assignments|tohum-atamalar)$ || -z $OPERATOR_KCADM_CONFIG ]]; then
-      printf 'KEYCLOAK_RECONCILE_CHECK=true is a dry run of the operator step KEYCLOAK_RECONCILE_ONLY=service-roles (or core-roles, role-groups, leader-app-roles, default-roles, broker-flows, tohum-atamalar) with KEYCLOAK_RECONCILE_KCADM_CONFIG only, or of the whole reconciliation with the reconciler identity\n' >&2
+      && [[ ! $RECONCILE_ONLY =~ ^(service-roles|role-groups|leader-app-roles|core-roles|default-roles|broker-flows|login-clients|app-assignments|tohum-atamalar)$ || -z $OPERATOR_KCADM_CONFIG ]]; then
+      printf 'KEYCLOAK_RECONCILE_CHECK=true is a dry run of the operator step KEYCLOAK_RECONCILE_ONLY=service-roles (or core-roles, role-groups, leader-app-roles, default-roles, broker-flows, login-clients, tohum-atamalar) with KEYCLOAK_RECONCILE_KCADM_CONFIG only, or of the whole reconciliation with the reconciler identity\n' >&2
       exit 2
     fi
     ;;
@@ -447,8 +475,8 @@ BASE_URL=$(normalize_account_center_base_url \
   "$BASE_URL" \
   "$REQUIRE_PRODUCTION_HOST")
 
-# The dry run of the whole reconciliation, of core-roles and of default-roles (KEYCLOAK_RECONCILE_CHECK
-# =true, see above): every kcadm create, update and delete is withheld. Each one is logged on the
+# The dry run of the whole reconciliation, of core-roles, default-roles, broker-flows and
+# login-clients (KEYCLOAK_RECONCILE_CHECK=true, see above): every kcadm create, update and delete is withheld. Each one is logged on the
 # run's own stderr (file descriptor CHECK_FD, so that a caller that captures or silences the call's
 # output, as kcadm_quiet does, cannot hide it) as "[reconcile] would kcadm VERB PATH (-s KEY=VALUE
 # ... body)" ("(body)" for a body alone), with a person's id masked; nothing the reconciler writes is secret. A create that asks
@@ -456,7 +484,7 @@ BASE_URL=$(normalize_account_center_base_url \
 # placeholder answers an empty list (an empty object for one resource or a mapping set, nothing in
 # CSV), so that a step goes on as if the thing were made and empty. Anything else is read live.
 CHECK_WRITES=false
-if [[ $RECONCILE_CHECK == true && ( -z $RECONCILE_ONLY || $RECONCILE_ONLY =~ ^(core-roles|default-roles|broker-flows)$ ) ]]; then
+if [[ $RECONCILE_CHECK == true && ( -z $RECONCILE_ONLY || $RECONCILE_ONLY =~ ^(core-roles|default-roles|broker-flows|login-clients)$ ) ]]; then
   CHECK_WRITES=true
 fi
 CHECK_ID_PREFIX=checked-not-created-
@@ -2821,9 +2849,11 @@ ensure_default_audience_scope() {
 # their full-path groups (inscribed reads them); SkyMail's token carries none: every default or
 # optional scope writing the claim groups is detached from skymail only (the realm scope and every
 # other client keep it) and a mapper of skymail itself writing it is deleted. The order keeps the
-# apps working during the run: audiences first, full scope off last. The client's secret, URIs,
-# flags and other mappers are not touched. A missing client is skipped with a warning (the sandbox
-# realm may lack one); the operator runs this step alone there (KEYCLOAK_RECONCILE_ONLY=login-clients).
+# apps working during the run: audiences first, full scope off last. The client's secret, flags and
+# other mappers are not touched; of the URIs only skymail's are (reconcile_skymail_client_addresses),
+# the sites' are not. A missing client is skipped with a warning (the sandbox realm may lack one); the
+# operator runs this step alone there (KEYCLOAK_RECONCILE_ONLY=login-clients, KEYCLOAK_RECONCILE_CHECK
+# =true for its dry run).
 reconcile_login_clients() {
   reconcile_narrowed_login_client "$FRONTEND_MAIN_CLIENT_ID" keep-groups \
     "$FRONTEND_MAIN_SCOPE_NAME=$CONFIG_DIR/frontend-main-core-audience-mappers.json" \
@@ -2833,6 +2863,70 @@ reconcile_login_clients() {
     "$SKYCMS_SCOPE_NAME=$CONFIG_DIR/skycms-audience-mappers.json"
   reconcile_narrowed_login_client "$SKYMAIL_CLIENT_ID" drop-groups \
     "$SKYMAIL_SCOPE_NAME=$CONFIG_DIR/skymail-api-audience-mappers.json"
+  reconcile_skymail_client_addresses
+}
+
+# The SkyMail UI's addresses on its login client (e-skylab ADR-0090; Yusuf, 2026-11-24). Until then
+# they were kept by hand: production allowed iletisim. and mail., the sandbox realm sandbox-iletisim.
+# and sandbox-mail. Now the client allows SKYMAIL_UI_ORIGINS alone: per origin the Auth.js callback
+# as a redirect URI, the origin as a web origin and as a post-logout redirect URI (skymail-frontend
+# signs out to its own origin); rootUrl is the first origin, baseUrl that origin's root page. Every
+# other entry is taken out; the old names are not redirects either, so a login started there is
+# refused. The run logs the values before and after, which the dry run shows too. adminUrl and the
+# front- and back-channel logout URLs are not managed: an absolute one on another host is reported
+# with a warning (a relative one, "/..." under rootUrl, is not). A missing client is skipped
+# (reconcile_narrowed_login_client has warned).
+reconcile_skymail_client_addresses() {
+  local client_uuid desired_file="$WORK_DIR/addresses-$SKYMAIL_CLIENT_ID.json" live_file changed
+  local attributes before after field value origin redirects='' origins='' logout='' label
+  if ! client_uuid=$(optional_lookup client_id_by_client_id "$SKYMAIL_CLIENT_ID"); then
+    return 2
+  fi
+  [[ -n $client_uuid ]] || return 0
+  for origin in "${SKYMAIL_UI_ORIGINS[@]}"; do
+    redirects="$redirects${redirects:+,}\"$origin/api/auth/callback/keycloak\""
+    origins="$origins${origins:+,}\"$origin\""
+    logout="$logout${logout:+##}$origin"
+  done
+  label="${SKYMAIL_UI_ORIGINS[*]}"
+  cat >"$desired_file" <<EOF
+{
+  "rootUrl": "$SKYMAIL_UI_ORIGIN",
+  "baseUrl": "$SKYMAIL_UI_ORIGIN/",
+  "redirectUris": [$redirects],
+  "webOrigins": [$origins],
+  "attributes": {
+    "post.logout.redirect.uris": "$logout"
+  }
+}
+EOF
+  live_file=$(mktemp "$WORK_DIR/live.XXXXXX")
+  # The whole client: kcadm's --fields attributes returns the map empty.
+  kcadm_json "clients/$client_uuid" -r "$TARGET_REALM" >"$live_file"
+  attributes=$(json_tool field attributes <"$live_file")
+  [[ -n $attributes ]] || attributes='{}'
+  changed=$(json_tool diff-fields "$desired_file" <"$live_file")
+  if [[ -z $changed ]]; then
+    log "client $SKYMAIL_CLIENT_ID addresses ($label): unchanged"
+  else
+    before="rootUrl $(json_tool field rootUrl <"$live_file") baseUrl $(json_tool field baseUrl <"$live_file")"
+    before="$before redirectUris $(json_tool field redirectUris <"$live_file")"
+    before="$before webOrigins $(json_tool field webOrigins <"$live_file")"
+    before="$before post.logout.redirect.uris $(json_tool field post.logout.redirect.uris <<<"$attributes")"
+    after="rootUrl $SKYMAIL_UI_ORIGIN baseUrl $SKYMAIL_UI_ORIGIN/ redirectUris [$redirects] webOrigins [$origins] post.logout.redirect.uris $logout"
+    kcadm update "clients/$client_uuid" -r "$TARGET_REALM" -n -f "$desired_file" >/dev/null
+    log "client $SKYMAIL_CLIENT_ID addresses ($label): updated ($(tr '\n' ' ' <<<"$changed" | sed 's/ $//'); before: $before; after: $after)"
+  fi
+  value=$(json_tool field adminUrl <"$live_file")
+  if [[ -n $value && $value != /* && $value != "$SKYMAIL_UI_ORIGIN" && $value != "$SKYMAIL_UI_ORIGIN/"* ]]; then
+    warn "client $SKYMAIL_CLIENT_ID: adminUrl is $value, not on $SKYMAIL_UI_ORIGIN (not managed here)"
+  fi
+  for field in frontchannel.logout.url backchannel.logout.url; do
+    value=$(json_tool field "$field" <<<"$attributes")
+    if [[ -n $value && $value != /* && $value != "$SKYMAIL_UI_ORIGIN/"* ]]; then
+      warn "client $SKYMAIL_CLIENT_ID: $field is $value, not on $SKYMAIL_UI_ORIGIN (not managed here)"
+    fi
+  done
 }
 
 # reconcile_narrowed_login_client CLIENT keep-groups|drop-groups SCOPE=MAPPERS_FILE...
@@ -4792,13 +4886,17 @@ if [[ $RECONCILE_ONLY == admin-panel-client ]]; then
   printf 'Admin panel client configuration is reconciled.\n'
   exit 0
 fi
-if [[ $RECONCILE_ONLY == login-clients ]]; then
-  reconcile_login_clients
-  printf 'Login client configuration is reconciled.\n'
-  exit 0
-fi
 if [[ $CHECK_WRITES == true ]]; then
   log "CHECK: a dry run; no write is sent (each is a \"would kcadm\" line); the other lines say what a real run would log"
+fi
+if [[ $RECONCILE_ONLY == login-clients ]]; then
+  reconcile_login_clients
+  if [[ $CHECK_WRITES == true ]]; then
+    printf 'Login client configuration is checked; nothing was written (%s write(s) withheld).\n' "$(check_writes_withheld)"
+  else
+    printf 'Login client configuration is reconciled.\n'
+  fi
+  exit 0
 fi
 if [[ $RECONCILE_ONLY == core-roles ]]; then
   reconcile_core_roles

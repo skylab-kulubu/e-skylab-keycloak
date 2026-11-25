@@ -623,8 +623,13 @@ SkyMail'in token'ında `groups` olmaz: `groups` yazan varsayılan ya da isteğe 
 silinir. Ortak `skycms-audience` kapsamı `site-clients.sh`'in kurduğu biçime getirilir: production'daki
 tek mapper'ı hiçbir audience adlandırmıyordu ve sitelerin `skycms`'i yalnız audience-resolve'dan, yani
 tam kapsamdan geliyordu; tam kapsam kapanmadan önce sabit audience gelmeseydi editör 401 alırdı. Sıra
-uygulamaları bozmaz: önce audience'lar, en son tam kapsamın kapanması. Secret'a, adreslere, bayraklara
-ve istemcilerin kendi mapper'larına dokunulmaz; eksik istemci uyarıyla atlanır. Sitelerin editör kapısı
+uygulamaları bozmaz: önce audience'lar, en son tam kapsamın kapanması. Secret'a, sitelerin adreslerine,
+bayraklara ve istemcilerin kendi mapper'larına dokunulmaz; eksik istemci uyarıyla atlanır. `skymail`'in
+adreslerini ise adım yönetir (e-skylab ADR-0090): geri dönüş
+`https://notify.yildizskylab.com/api/auth/callback/keycloak`, web origin, çıkış dönüşü ve `rootUrl`
+`https://notify.yildizskylab.com` (sandbox realm'inde `sandbox-notify.` ve yerel geliştirme için
+`http://localhost:3000`); eski `iletisim.` ve `mail.` satırları silinir. Geri dönüşte
+`KEYCLOAK_SKYMAIL_UI_ORIGINS` kökenleri ezer (runbook §21). Sitelerin editör kapısı
 (`@skylab-kulubu/inscribed-auth` 0.3.1) `cms:access`'i token'daki herhangi bir istemcide aradığı için
 tam kapsamda başka bir sitenin `cms:access`'i bu sitenin editörünü açıyordu (inscribed yazmayı yine
 reddediyordu); daraltmadan sonra her site yalnız kendi `cms:access`'ine bakar. Keycloak kapsamdaki
@@ -633,7 +638,8 @@ SkyApp'in CMS rollerini `frontend-main`'in `cms:access` ve `client:admin`'ine ba
 editörün ana site token'ı o `skyapp` rollerini ve `aud skyapp`'i de taşır (hiçbir servis okumaz;
 inscribed sitenin kendi düz `roles`'una bakar). Sandbox realm'inde
 operatör adımı tek başına koşar (`KEYCLOAK_RECONCILE_KCADM_CONFIG` +
-`KEYCLOAK_RECONCILE_ONLY=login-clients`). Harness `tests/login-clients.sh` tek başına çalışır
+`KEYCLOAK_RECONCILE_ONLY=login-clients`; kuru koşusu `KEYCLOAK_RECONCILE_CHECK=true`). Harness
+`tests/login-clients.sh` tek başına çalışır
 (runbook §21).
 
 Admin paneli (core-frontend) yerelde `next dev` ile `http://localhost:3000`'te sandbox'a karşı

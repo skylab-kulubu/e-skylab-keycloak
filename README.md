@@ -40,7 +40,7 @@ realm ayarı bırakmamaktır.
   sabitlenmiştir.
 - `kc.sh build` ile PostgreSQL için optimize edilmiş bir Keycloak imajı
   üretilir.
-- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.28.0`),
+- `/opt/keycloak/providers` altında tam olarak bir SKY LAB SPI (`1.29.0`),
   kaynaktan derlenen bir SKY LAB giriş teması (`2.0.1`) ve bir RabbitMQ olay
   sağlayıcısı (`3.3.0`; yalnız olay kataloğu, kişisel verisiz gövde, arka planda yayın:
   [`docs/keycloak-events-to-rabbitmq.md`](docs/keycloak-events-to-rabbitmq.md)) bulunur.
@@ -52,8 +52,8 @@ realm ayarı bırakmamaktır.
   (çalışma zamanı seçeneği; Dokploy'da ayar gerekmez).
 - Realm ve istemci ayarları `config/reconcile-account-center.sh` ile sürekli
   uzlaştırılır; tek seferlik realm içe aktarımına güvenilmez.
-- Sistem e-postaları `sky-mail` sağlayıcılarıyla SkyMail üzerinden gönderilir;
-  SkyMail kapalı ya da ulaşılamazken realm'in kendi SMTP'si devreye girer.
+- Sistem e-postaları `skynotify` sağlayıcılarıyla SkyNotify üzerinden gönderilir;
+  SkyNotify kapalı ya da ulaşılamazken realm'in kendi SMTP'si devreye girer.
 - Üretim yalnız
   `ghcr.io/skylab-kulubu/e-skylab-keycloak` deposundan imaj çeker ve doğrulanmış
   bir `KEYCLOAK_IMAGE_DIGEST` kabul eder. Çalışma zamanı, ön kontrol ve
@@ -251,12 +251,12 @@ gruplar, açıklamalar ve tanımlanmamış öznitelikler korunur,
 
 K5'in gizli `keycloak-mailer` service-account istemcisini (standard flow ve
 direct grant kapalı, `fullScopeAllowed=false`, `roles` varsayılan kapsamı,
-`skymail` istemcisinin `skymail:access` ve `skymail:mails:send` rolleri service
+`skynotify` istemcisinin `skynotify:access` ve `skynotify:mails:send` rolleri service
 account'ta ve scope mapping'de) operatör, imajdaki idempotent
 `config/create-mailer-client.sh` betiğiyle oluşturur (varsayılan kuru koşu,
 `--apply`; yönetici parolası kcadm'ın kendi prompt'una yazılır,
 `KEYCLOAK_MAILER_ADMIN_PASSWORD` yalnız `SKY_HARNESS=1` ile kabul edilir;
-`skymail` rolleri yoksa uyarır, asla oluşturmaz). Uzlaştırıcı kimliğine kullanıcı
+`skynotify` rolleri yoksa uyarır, asla oluşturmaz). Uzlaştırıcı kimliğine kullanıcı
 yetkisi verilmediği için uzlaştırıcı bu istemciyi yalnız doğrular: yoksa
 uyarı ve çalıştırılacak komut, bayraklar yanlışsa hata, service account
 rolleri okunamıyorsa uyarı. Gizli anahtarı Keycloak üretir; hiçbir betik
@@ -367,7 +367,7 @@ Sayfa gelmeden önce eylem yeniden bakar: hesabı bu oturum açmış olmalı
 `personalEmail`'i ve `personalEmailOfferSkippedAt` işareti olmamalı; değilse giriş sayfasız
 sürer. Bu yüzden bağlanan hesapta, A6'da, YTÜ'süz girişte ve ikinci kez çıkmaz. Kod, Hesap
 Merkezi'nin `email/change-request`'iyle aynı ortak parçadan geçer
-(`PersonalEmailVerification`: adres kuralı, aynı `sky-personal-email-confirm` postası ve SkyMail
+(`PersonalEmailVerification`: adres kuralı, aynı `sky-personal-email-confirm` postası ve SkyNotify
 eşlemesi, kanıt kaydı; `PendingEmailChanges`: 6 hane, 10 dakika, 5 yanlışta ölür, tek kullanım,
 yalnız tuzlu özet). Kod deposundaki kayıt kullanıcıya değil, yalnız bu giriş oturumunun bir
 kimlik doğrulama notunda duran rastgele bir tutamağa bağlıdır; kod başka oturumda ya da Hesap Merkezi'nde
@@ -455,7 +455,7 @@ denetlenmez (denemesi yanlış sayılır); günün ilk böyle hesabı aynı alar
 `sky_email_code_wrong_ceiling` log satırı yazar. Sayfa hiçbir zaman "hesap yok" demez: kimseye
 postalanmamış bir kodun tutturulması süresi dolmuş kod gibi görünür (olayda `no_account`). Koddan
 sonraki OTP Admin Console'da kapatılırsa OTP'li kişi kodla giremez (`otp_unguarded`, güvenlik incelemesi
-K1). Posta SkyMail'in `keycloak.login-code` şablonuyla (SkyMail
+K1). Posta SkyNotify'ın `keycloak.login-code` şablonuyla (SkyNotify
 yoksa SPI'nın FreeMarker kopyası) çıkar: konuda kod yok, bağlantı yok. Olaylar: başarılı giriş
 Keycloak'ın `LOGIN` olayı, ayrıntısı `sky_method=email_code`; her ret `LOGIN_ERROR`, ayrıntısı
 `sky_email_code` (`wrong_code`, `rate_limited`, `rate_limited_address`, `account_locked`, …), IP'siz
@@ -464,7 +464,7 @@ ve yazılan tanımlayıcı olmadan (olaylar jboss-logging ile sunucu günlüğü
 `sky email code` alt akışını kurar (`sky-email-code`, koşullu OTP, passkey önerisi), `off` onu
 DISABLED yapar (geri dönüş), varsayılan `keep` dokunmaz; operatör adımı
 `KEYCLOAK_RECONCILE_ONLY=email-code-login`. Ayrıntı, üretim sırası ve geri dönüş: runbook §29. Harness
-`tests/login-by-email-code.sh` tek başına çalışır (stok imaj, SPI jar'ı, SkyMail fixture'ı, Mailpit).
+`tests/login-by-email-code.sh` tek başına çalışır (stok imaj, SPI jar'ı, SkyNotify fixture'ı, Mailpit).
 Giriş teması (bilet 08b): ilk ekrandaki e-posta düğmesi, Keycloak adımı `auth.authenticationSelections`'ta
 sunuyorsa (`sky-email-code-display-name`) koda geçer, sunmuyorsa bugünkü parola görünümünü açar;
 `sky-email-code.ftl` sayfası (`theme/src/login/EmailCode.tsx`) adres ve kod aşamalarını, 60 saniyelik
@@ -496,10 +496,10 @@ ayarı açar, `off` kapatır (geri dönüş), `keep` dokunmaz; aynı operatör a
 koruması) olmadan açılmaz; 10 (kayıt sonrası), 13 (hoş geldin) ve 24 (ardışık yanlış kod sayacı) de açılış bağımlılığıdır. Ayrıntı: runbook §30. Harness `tests/sign-up-by-email-code.sh` tek başına
 çalışır.
 
-Hesap silmede (ADR-0051) core, SkyMail, CMS ve Forms'a ayrı bir gizli service
+Hesap silmede (ADR-0051) core, SkyNotify, CMS ve Forms'a ayrı bir gizli service
 account istemcisinden, `core-erasure`'dan aldığı token'larla gider. Operatör
 istemciyi, üç isteğe bağlı `account-erase-*` kapsamını ve üç erase rolünü
-(`skymail:account:erase`, `cms:account:erase`, `skyforms:account:erase`)
+(`skynotify:account:erase`, `cms:account:erase`, `skyforms:account:erase`)
 imajdaki idempotent `config/create-erasure-client.sh` ile kurar (aynı kuru koşu /
 `--apply` / kcadm prompt düzeni, `KEYCLOAK_ERASURE_ADMIN_PASSWORD` yalnız
 `SKY_HARNESS=1` ile). İstemcide `fullScopeAllowed=false` ve doğrudan scope
@@ -516,9 +516,9 @@ kişiye yönetilmeyen `skyAccountErasureDisabledAt` özniteliğini (kapatma anı
 kapatma (yönetici, Admin Console, kcadm) işaret koymaz, kişiyi yeniden açan güncelleme işareti
 siler, işaret `delete_identity` ile kişiyle birlikte gider. "E-postayla devam et" her kapalı kişiye
 aynı kod sayfasını gösterir; kişi işaretliyse istekten sonra, arka planda, giriş kodunun gideceği
-adrese SkyMail'in `account.deletion-in-progress` şablonuyla "hesap silinme sürecinde" postası
+adrese SkyNotify'ın `account.deletion-in-progress` şablonuyla "hesap silinme sürecinde" postası
 gider, aynı adrese saatte en çok bir kez. Posta ad taşımaz ve `erase_after_send: true` ile gider:
-kişinin SkyMail'deki silme komutu çoktan koşmuş olabilir, SkyMail satırı gönderince siler. Yönetici kapattığı hesapta davranış aynıdır (posta yok).
+kişinin SkyNotify'daki silme komutu çoktan koşmuş olabilir, SkyNotify satırı gönderince siler. Yönetici kapattığı hesapta davranış aynıdır (posta yok).
 Başlığı göndermeyen core'da hiçbir şey değişmez. Harness: `tests/login-by-email-code.sh`.
 
 CMS inscribed'a geçerken (ADR-0056) operatör site istemcilerinde (`frontend-main`,
@@ -570,17 +570,17 @@ yönetmez; imaj yayını gerekmez. Sunucuda sky_lab_genel'deki
 `ops/wizards/place-keycloak-client-wizard.sh` betiği koşar ve secret'ı doğrudan OpenBao'ya taşır.
 Harness `tests/place-client.sh` tek başına çalışır (runbook §14).
 
-Forms (forms-backend) SkyMail'den tek tek posta gönderir (`POST /v1/mail_tasks/single`); SkyMail
-token'daki `resource_access.skymail.roles`'ta `skymail:access` ve `skymail:mails:send` (ya da daha
-geniş `skymail:mails:write`) arar. Bu yetki iki realm'de de elle verilmişti, sandbox'ta hiç
-yoktu: her sandbox Forms postası 403 `server.forbidden` aldı. Operatör `config/forms-skymail-grants.sh`
+Forms (forms-backend) SkyNotify'dan tek tek posta gönderir (`POST /v1/mail_tasks/single`); SkyNotify
+token'daki `resource_access.skynotify.roles`'ta `skynotify:access` ve `skynotify:mails:send` (ya da daha
+geniş `skynotify:mails:write`) arar. Bu yetki iki realm'de de elle verilmişti, sandbox'ta hiç
+yoktu: her sandbox Forms postası 403 `server.forbidden` aldı. Operatör `config/forms-skynotify-grants.sh`
 ile `service-account-forms`'a eksik olanı verir (varsayılan `--check`, `--apply`; kcadm prompt
 düzeni ya da `--kcadm-config`; `KEYCLOAK_REALM` yalnız `e-skylab` ya da `e-skylab-sandbox`):
-`skymail:access`, ve `skymail:mails:write` tutmuyorsa `skymail:mails:send`; `forms`'un
-`fullScopeAllowed`'ı kapalıysa aynı roller kapsam eşlemesine. Hiçbir şey silinmez, SkyMail rolü
-oluşturulmaz; `skymail:mails:write` NOTE olarak kalır. Uzlaştırıcının kimliği kullanıcı yetkisi
+`skynotify:access`, ve `skynotify:mails:write` tutmuyorsa `skynotify:mails:send`; `forms`'un
+`fullScopeAllowed`'ı kapalıysa aynı roller kapsam eşlemesine. Hiçbir şey silinmez, SkyNotify rolü
+oluşturulmaz; `skynotify:mails:write` NOTE olarak kalır. Uzlaştırıcının kimliği kullanıcı yetkisi
 taşımadığı için bu bir operatör betiğidir; imaj yayını gerekmez (betik `--kcadm-config` ile
-dışarıdan da koşar). Harness `tests/forms-skymail-grants.sh` tek başına çalışır.
+dışarıdan da koşar). Harness `tests/forms-skynotify-grants.sh` tek başına çalışır.
 
 Admin panelinin istemcisini (`admin`, sandbox'ta `superadmin`; ADR-0058) uzlaştırıcı daraltır.
 İstemci iki realm'de de elle kurulmuş ve gizlidir; uzlaştırıcı onu yerinde benimser, id'sine,
@@ -605,31 +605,31 @@ kendi kcadm oturumuyla tek başına koşar (`KEYCLOAK_RECONCILE_KCADM_CONFIG` +
 Sunucuda sky_lab_genel'deki `ops/wizards/admin-panel-keycloak-sandbox-wizard.sh` koşar
 (runbook §16).
 
-Giriş istemcilerini (`frontend-main`, `frontend-arge`, `skymail`; ADR-0058, ADR-0059) de uzlaştırıcı
+Giriş istemcilerini (`frontend-main`, `frontend-arge`, `skynotify`; ADR-0058, ADR-0059) de uzlaştırıcı
 uygulamalarının çağırdığı API'lere daraltır (`reconcile_login_clients`). Üçü production'da elle ve tam
 kapsamla kurulmuştu: token kişinin bütün audience'larını, realm rollerini ve başka istemcilerin
 rollerini taşıyordu. Ne gerektiği uygulamaların `origin/main`'inden ölçüldü (2026-10-05): siteler (ana
 site ve editörü, arge) inscribed'a (`aud` `skycms`, tenant `azp`, istemcinin kendi rollerinden düz
 `roles`, koleksiyon kurallarında tam yollu `groups`) ve görsel yüklemede core `POST /v1/media`'ya (`aud`
-`core`, rol ya da grup gerekmez) gider; SkyMail arayüzü yalnız SkyMail'e gider, SkyMail de kendi
-rollerini (`resource_access.skymail`) ve Keycloak userinfo'dan `sub`, ad ve e-postayı okur, grup okumaz
+`core`, rol ya da grup gerekmez) gider; SkyNotify arayüzü yalnız SkyNotify'a gider, SkyNotify de kendi
+rollerini (`resource_access.skynotify`) ve Keycloak userinfo'dan `sub`, ad ve e-postayı okur, grup okumaz
 (posta listelerinin grupları kendi servis hesabıyla okunur). Sözleşme: audience'lar varsayılan
 kapsamlardaki sabit Audience mapper'larından gelir (sitelerde `frontend-<site>-core-audience` ve ortak
-`skycms-audience`, SkyMail'de `skymail-api-audience` → `aud` `skymail`); rol kapsamında realm rolü ve
+`skycms-audience`, SkyNotify'da `skynotify-api-audience` → `aud` `skynotify`); rol kapsamında realm rolü ve
 başka istemcinin rolü yoktur (istemcinin kendi rolleri, yani `cms:access`, `content:*`, `client:admin`,
-`skymail:*`, her zaman geçer); "Full scope allowed" kapanır. Siteler tam yollu `groups`'u tutar;
-SkyMail'in token'ında `groups` olmaz: `groups` yazan varsayılan ya da isteğe bağlı kapsamlar (realm'in
-`groups` kapsamı, `microprofile-jwt`) yalnız `skymail`'den ayrılır, `skymail`'in kendi grup mapper'ı
+`skynotify:*`, her zaman geçer); "Full scope allowed" kapanır. Siteler tam yollu `groups`'u tutar;
+SkyNotify'ın token'ında `groups` olmaz: `groups` yazan varsayılan ya da isteğe bağlı kapsamlar (realm'in
+`groups` kapsamı, `microprofile-jwt`) yalnız `skynotify`'dan ayrılır, `skynotify`'ın kendi grup mapper'ı
 silinir. Ortak `skycms-audience` kapsamı `site-clients.sh`'in kurduğu biçime getirilir: production'daki
 tek mapper'ı hiçbir audience adlandırmıyordu ve sitelerin `skycms`'i yalnız audience-resolve'dan, yani
 tam kapsamdan geliyordu; tam kapsam kapanmadan önce sabit audience gelmeseydi editör 401 alırdı. Sıra
 uygulamaları bozmaz: önce audience'lar, en son tam kapsamın kapanması. Secret'a, sitelerin adreslerine,
-bayraklara ve istemcilerin kendi mapper'larına dokunulmaz; eksik istemci uyarıyla atlanır. `skymail`'in
+bayraklara ve istemcilerin kendi mapper'larına dokunulmaz; eksik istemci uyarıyla atlanır. `skynotify`'ın
 adreslerini ise adım yönetir (e-skylab ADR-0090): geri dönüş
 `https://notify.yildizskylab.com/api/auth/callback/keycloak`, web origin, çıkış dönüşü ve `rootUrl`
 `https://notify.yildizskylab.com` (sandbox realm'inde `sandbox-notify.` ve yerel geliştirme için
 `http://localhost:3000`); eski `iletisim.` ve `mail.` satırları silinir. Geri dönüşte
-`KEYCLOAK_SKYMAIL_UI_ORIGINS` kökenleri ezer (runbook §21). Sitelerin editör kapısı
+`KEYCLOAK_SKYNOTIFY_UI_ORIGINS` kökenleri ezer (runbook §21). Sitelerin editör kapısı
 (`@skylab-kulubu/inscribed-auth` 0.3.1) `cms:access`'i token'daki herhangi bir istemcide aradığı için
 tam kapsamda başka bir sitenin `cms:access`'i bu sitenin editörünü açıyordu (inscribed yazmayı yine
 reddediyordu); daraltmadan sonra her site yalnız kendi `cms:access`'ine bakar. Keycloak kapsamdaki
@@ -695,40 +695,40 @@ operatör yapar (`KEYCLOAK_RECONCILE_KCADM_CONFIG` + `KEYCLOAK_RECONCILE_ONLY=se
 `would …` diye yazar, hiçbir şey yazmaz. Adım önce her şeyi okur, okuma hatasında hiçbir şey vermez
 (eksik varsayılan `roles` kapsamı hariç: onu okuma sırasında ve tam uzlaştırmada da ekler, runbook §20.1),
 verdikten sonra rolün `skylab.granted-service-accounts` özniteliğine kaydeder; yalnız servis
-hesaplarına ait rolleri (`services` sınıfı; kişilerin de taşıyabildiği `users:read` ve SkyMail'in
+hesaplarına ait rolleri (`services` sınıfı; kişilerin de taşıyabildiği `users:read` ve SkyNotify'ın
 paylaşılan rolleri değil) taşıyan başka kullanıcı, grup, varsayılan rolü ya da onları içeren bileşik
 rolü, servis hesabının listede olmayan rollerini bildirir ve hiçbir şey silmez. `forms` yalnız servis hesabıdır (Forms kişileri `skyforms`
 ile giriş yaptırır; core ürünü `client_id == azp`'den okur): uzlaştırıcı `standardFlowEnabled`,
 `implicitFlowEnabled`, `directAccessGrantsEnabled`'in kapalı olduğunu doğrular, değilse uyarır;
 operatör adımı açık olanları kapatır (kuru koşuda `would set …`). `media:attach`'ın istemci listesi
 core'un `MEDIA_SERVICE_CLIENTS`'ıyla aynı tutulur (runbook §20).
-Aynı adım SkyMail'in servis hesabına (`skymail-backend`) core'un `audience:read` rolünü (core #242,
+Aynı adım SkyNotify'ın servis hesabına (`skynotify-backend`) core'un `audience:read` rolünü (core #242,
 haber ve duyuru kitlesi), `communication-preferences:read` rolünü (core #256, kimin takip
-edilebileceği) ve `consent:audience:read` rolünü (rıza kaydının davet ve tanıtım kitlesi, runbook §20.2) ile `realm-management`'ın `view-users` ve `view-clients` rollerini (Admin REST'ten kişi okuma; production'da 2026-09-23'ten beri elle verilmişti), core'un servis hesabına SkyMail'in `skymail:access`, `skymail:mails:send`,
-`skymail:lists:read`, `skymail:lists:write`, `skymail:notifications:send` (skymail-backend #79, `POST /v1/notifications`;
-yalnız `service-account-core`) ve `skymail:tracking:withdraw` (skymail-backend #75, takibi
+edilebileceği) ve `consent:audience:read` rolünü (rıza kaydının davet ve tanıtım kitlesi, runbook §20.2) ile `realm-management`'ın `view-users` ve `view-clients` rollerini (Admin REST'ten kişi okuma; production'da 2026-09-23'ten beri elle verilmişti), core'un servis hesabına SkyNotify'ın `skynotify:access`, `skynotify:mails:send`,
+`skynotify:lists:read`, `skynotify:lists:write`, `skynotify:notifications:send` (skynotify-backend #79, `POST /v1/notifications`;
+yalnız `service-account-core`) ve `skynotify:tracking:withdraw` (skynotify-backend #75, takibi
 geri alma; yalnız `service-account-core`) rollerini ve Forms'un `skyforms:responses:read-service`
 rolünü (core Forms'un iç okuma uçlarını okur: form, yanıtlar, yanıtlayanlar, gecikmiş
 değerlendirmeler; ADR 0071, ADR 0075; yalnız `service-account-core`, `aud forms` varsayılan `roles`
 kapsamından; runbook §20.1), Template seed'in servis hesabına
-(`skymail-seed`) `skymail:templates:system`'ı (yalnız o bir şablonu sistem şablonu yapar ya da
-işareti kaldırır; skymail-backend README) verir; SkyMail'in rollerinden yalnız
-`skymail:notifications:send`'i, `skymail:tracking:withdraw`'u ve `skymail:templates:system`'ı, Forms'un rollerinden yalnız `skyforms:responses:read-service`'i oluşturur, öbürleri eksikse uyarır (runbook §20.1); listelenen servis istemcisinde varsayılan `roles` kapsamı yoksa ekler (runbook §20.1). SkyMail'in kendi
-rolleri `skymail:access`, `skymail:templates:read`, `skymail:lists:read`, `skymail:mails:read`,
-`skymail:mails:send`, `skymail:mails:write` ADMIN ve YK'ya (`access` ve `mails:read` DK'ya da), `skymail:mails:approve` yalnız YK'ya
+(`skynotify-seed`) `skynotify:templates:system`'ı (yalnız o bir şablonu sistem şablonu yapar ya da
+işareti kaldırır; skynotify-backend README) verir; SkyNotify'ın rollerinden yalnız
+`skynotify:notifications:send`'i, `skynotify:tracking:withdraw`'u ve `skynotify:templates:system`'ı, Forms'un rollerinden yalnız `skyforms:responses:read-service`'i oluşturur, öbürleri eksikse uyarır (runbook §20.1); listelenen servis istemcisinde varsayılan `roles` kapsamı yoksa ekler (runbook §20.1). SkyNotify'ın kendi
+rolleri `skynotify:access`, `skynotify:templates:read`, `skynotify:lists:read`, `skynotify:mails:read`,
+`skynotify:mails:send`, `skynotify:mails:write` ADMIN ve YK'ya (`access` ve `mails:read` DK'ya da), `skynotify:mails:approve` yalnız YK'ya
 (onaycı YK kökü) aynı biçimde bir kez tohumlanır; uzlaştırıcı onları oluşturmaz, realm'de olanı
-tohumlar. `skymail:announcements:send` listeden çıktı (okuyan yok; ekip-yetkileri bilet 03), var olan
+tohumlar. `skynotify:announcements:send` listeden çıktı (okuyan yok; ekip-yetkileri bilet 03), var olan
 eşlemeleri kalır (runbook §25).
-`skymail:mails:tracking:read` (gönderimlerin kişi bazındaki açılma ve tıklama raporu) aynı biçimde
+`skynotify:mails:tracking:read` (gönderimlerin kişi bazındaki açılma ve tıklama raporu) aynı biçimde
 ADMIN, YK ve DK'ya bir kez tohumlanır; okuma rolüdür, DK'da kalır (runbook §25).
-`skymail:audit:read` (maskeli içeriği kimin açtığını gösteren kayıt; skymail-frontend-rewrite 32) aynı
+`skynotify:audit:read` (maskeli içeriği kimin açtığını gösteren kayıt; skymail-frontend-rewrite 32) aynı
 biçimde oluşturulur ve yalnız DK'ya bir kez tohumlanır: içeriği açabilen roller kendi açışlarının
 kaydını okumaz (Purview Audit Reader, NIST AU-9(4); runbook §25).
-DK her şeyi okur (Yusuf, 2026-11-22): `skymail:access` ve `skymail:mails:read` ADMIN ve YK'nın yanında
+DK her şeyi okur (Yusuf, 2026-11-22): `skynotify:access` ve `skynotify:mails:read` ADMIN ve YK'nın yanında
 DK'ya da verilir; önceden tohumlanmış realm'de bunu operatörün `core-roles` adımındaki bir kezlik tohum
-eki yapar (`SKYMAIL_PRIVILEGED_SEED_ADDITIONS`). İkisi de içerik açmaz, yazmaz (runbook §25).
-`skymail:suppressions:manage` (bastırma listesi, kalıcı ret kaydını kaldırma, bounce oranı; ADR 0073)
-ve `skymail:unsubscribes:reactivate` (kimliği olmayan adresin çıkışını kişi isteyince ya da hata
+eki yapar (`SKYNOTIFY_PRIVILEGED_SEED_ADDITIONS`). İkisi de içerik açmaz, yazmaz (runbook §25).
+`skynotify:suppressions:manage` (bastırma listesi, kalıcı ret kaydını kaldırma, bounce oranı; ADR 0073)
+ve `skynotify:unsubscribes:reactivate` (kimliği olmayan adresin çıkışını kişi isteyince ya da hata
 olunca gerekçeyle geri alma; ADR 0072 karar 7) aynı biçimde oluşturulur ve yalnız ADMIN ve YK'ya bir
 kez tohumlanır; yazma rolleridir, DK almaz (`config/dk-read-only.sh` onları yazma rolü sayar). Forms'un
 salt okur rolü `skyforms:read-all` (DK her formu ve cevabı okur, yazamaz; forms-backend henüz okumuyor)
@@ -784,7 +784,7 @@ kişiye ataması panelindir ve uzlaştırıcı ona dokunmaz. Operatör adımlar�
 `KEYCLOAK_RECONCILE_ONLY=app-assignments` (her eşlemeyi `KOD|…` ya da `PANEL|…` satırıyla sınıflar,
 yalnız okur), `default-roles` (`broker/read-token`'ı varsayılan rolden ve onun içindeki bileşik rollerden, ör.
 `USER`, alır, IdP'lerde "Stored tokens readable"ı kapatır; kuru koşulu), `tohum-atamalar` (tek seferlik başlangıç ataması: bütün en üst
-ekiplere SkyForms, Leader gruplarına ve ALGOLAB'a SkyMail "onaya gönder"; yedekli, işaretli, ikinci
+ekiplere SkyForms, Leader gruplarına ve ALGOLAB'a SkyNotify "onaya gönder"; yedekli, işaretli, ikinci
 kez uygulanmaz). `KEYCLOAK_RECONCILE_CHECK=true` tam uzlaştırmanın ve `core-roles`'ın kuru koşusudur:
 her yazma `would kcadm …` satırıdır, hiçbir şey yazılmaz. `skyforms`'un token'ı `skyforms-core-audience`
 kapsamıyla `aud: core` taşır (Forms'un kişi seçicisi core'u kişinin token'ıyla çağırır). Ayrıntı:
@@ -888,7 +888,7 @@ betikleri de onu aynı değişkenle kullanır: `config/app-assignments.sh` (prod
 oturumsuz 18 dakikaydı), `role-groups.sh`, `dk-read-only.sh`, `master-console.sh` ve yalnız kcadm
 çağıranlar (`site-clients.sh`, `site-editor-grants.sh`, `inscribed-cms-roles.sh`,
 `skyapp-cms-editor.sh`, `sandbox-site-clients.sh`, `sandbox-admin-local-client.sh`,
-`create-place-client.sh`, `forms-skymail-grants.sh`, `leader-app-roles.sh`). Bunlarda da kcadm
+`create-place-client.sh`, `forms-skynotify-grants.sh`, `leader-app-roles.sh`). Bunlarda da kcadm
 okumaları, yazmaları ve ReconcileJson oturuma gider; testleri her betiğin koşusunu (yazan koşular
 dahil) iki yolla koşturup bayt bayt karşılaştırır. Yalnız kcadm çağıran bir betik tek başına
 kopyalanıp koşulursa (yanında `reconcile-session.sh` yoksa) eskisi gibi çağrı başına JVM açar. Passkey relying party id geçişinden
@@ -1032,44 +1032,44 @@ girilir, RP ID `yildizskylab.test`'tir. Kardeş alt alan adı
 (üretimde TLS var). Tek etiketli bir üst ad (`my.localtest` için RP ID
 `localtest`) olmaz: tarayıcı RP ID olarak yalnız kayıtlı bir alan adı kabul eder.
 
-## Sistem e-postaları (SkyMail)
+## Sistem e-postaları (SkyNotify)
 
 Keycloak'ın doğrulama, parola sıfırlama, e-posta değişikliği ve YTÜ bağlama
-postaları kulübün posta alanı SkyMail'in sistem şablonlarıyla yazılır ve SkyMail
-tarafından gönderilir (ADR-0045). SPI iki sağlayıcı kaydeder: `sky-mail` şablon
+postaları kulübün posta alanı SkyNotify'ın sistem şablonlarıyla yazılır ve SkyNotify
+tarafından gönderilir (ADR-0045). SPI iki sağlayıcı kaydeder: `skynotify` şablon
 sağlayıcısı stok `freemarker` sağlayıcısını sararak Keycloak'ın hangi şablonu
 istediğini ve bağlantı ile ömrünü oturum üzerinde kaydeder, üretimi olduğu gibi
-devreder; `sky-mail` göndericisi bu kaydı alıp
-`POST {SKY_MAIL_BASE_URL}/v1/mail_tasks/single` ile `template_key`, alıcı ve
+devreder; `skynotify` göndericisi bu kaydı alıp
+`POST {SKYNOTIFY_BASE_URL}/v1/mail_tasks/single` ile `template_key`, alıcı ve
 `body_variables` gönderir. İkisi de `order()` ile Keycloak'ın kendi
 sağlayıcılarının önüne geçer, derleme seçeneği gerekmez.
 
 Şablon eşlemesi `keycloak.verify-email`, `keycloak.reset-password`,
 `keycloak.update-email`, `keycloak.idp-link`, `keycloak.personal-email-confirm`
-ve eşlenmeyen her posta için `keycloak.generic`'tir. SkyMail Go `text/template`
+ve eşlenmeyen her posta için `keycloak.generic`'tir. SkyNotify Go `text/template`
 kullandığından eksik değişken `<no value>` basar; bu yüzden `link`,
 `linkExpirationMinutes`, `code`, `codeExpirationMinutes`, `firstName`, `username`,
 `realmDisplayName` ve `subjectKey` her postada, bilinmiyorsa boş string olarak
 gönderilir. Kişisel e-posta postası link değil kod taşır ve sky-account'un
 `EmailResource.TEMPLATE` sabitiyle eşlenir. SMTP test
-postası realm'in kendi ayarlarını kanıtladığı için SkyMail'e hiç uğramaz.
+postası realm'in kendi ayarlarını kanıtladığı için SkyNotify'a hiç uğramaz.
 
 Yetki, `keycloak-mailer` gizli service account istemcisinin client credentials
-token'ıdır (`skymail:access` + `skymail:mails:send`); token süresi dolmadan
+token'ıdır (`skynotify:access` + `skynotify:mails:send`); token süresi dolmadan
 30 saniye öncesine kadar bellekte önbelleklenir. Yalnız `201` gönderildi
 sayılır: 404 (şablon anahtarı yok ya da arşivlenmiş), başka 4xx, 5xx, zaman
 aşımı, token hatası ve kapalı sağlayıcı dahil her durum Keycloak'ın kendi SMTP
 göndericisine, üretilmiş stok gövdeyle devreder ve tek satır
-`sky_mail_fallback reason=<sabit sözcük> template=<anahtar>` günlüğü düşer;
+`skynotify_fallback reason=<sabit sözcük> template=<anahtar>` günlüğü düşer;
 satır adres, bağlantı, token ya da gizli anahtar taşımaz.
 
-Yapılandırma ortamdan gelir: `SKY_MAIL_ENABLED` (varsayılan `false`),
-`SKY_MAIL_BASE_URL`, `SKY_MAIL_CLIENT_ID`, `SKY_MAIL_CLIENT_SECRET_FILE`
-(varsayılan `/run/secrets/sky-mail/client.secret`), `SKY_MAIL_TOKEN_URL`
-(varsayılan realm issuer'ından türetilir) ve `SKY_MAIL_TIMEOUT_MILLISECONDS`
+Yapılandırma ortamdan gelir: `SKYNOTIFY_ENABLED` (varsayılan `false`),
+`SKYNOTIFY_BASE_URL`, `SKYNOTIFY_CLIENT_ID`, `SKYNOTIFY_CLIENT_SECRET_FILE`
+(varsayılan `/run/secrets/skynotify/client.secret`), `SKYNOTIFY_TOKEN_URL`
+(varsayılan realm issuer'ından türetilir) ve `SKYNOTIFY_TIMEOUT_MILLISECONDS`
 (varsayılan 5000 toplam, bağlantı bütçesi en çok 2000). Biçimi bozuk bir değer
 fabrikayı başarısız eder; gizli anahtar dosyası eksik ya da boşsa sağlayıcı
-kapalı tarafa düşer (tek `sky_mail_disabled reason=…` uyarısı) ve postalar
+kapalı tarafa düşer (tek `skynotify_disabled reason=…` uyarısı) ve postalar
 SMTP'den çıkmaya devam eder.
 
 Operatör `keycloak-mailer` istemcisini `config/create-mailer-client.sh` ile
@@ -1077,13 +1077,41 @@ oluşturur, Keycloak'ın ürettiği gizli anahtarı üretim sunucusunda
 `/opt/weblab/account-center-keycloak/credentials/mailer-client.secret`
 dosyasına (`root:root`, `0640`; Keycloak süreci uid 1000, gid 0 ile çalışır ve
 dosyayı grup üzerinden okur) yazar ve bu dosya salt okunur olarak
-`/run/secrets/sky-mail/client.secret` yoluna bağlanır. Production Keycloak bir
-Dokploy uygulamasıdır ve bu Compose dosyasını kullanmaz: bağlama ve `SKY_MAIL_*`
+`/run/secrets/skynotify/client.secret` yoluna bağlanır. Production Keycloak bir
+Dokploy uygulamasıdır ve bu Compose dosyasını kullanmaz: bağlama ve `SKYNOTIFY_*`
 değişkenleri Dokploy'da elle tanımlanır. Anahtar her token isteğinde okunur; döndürme dosyanın içeriğini
 yerinde güncellemekle yapılır. Eşleme tablosu, değişkenler, ortam, geri düşüş
 sözcükleri ve operatör adımları
-[`docs/keycloak-mail-via-skymail.md`](docs/keycloak-mail-via-skymail.md)
+[`docs/keycloak-mail-via-skynotify.md`](docs/keycloak-mail-via-skynotify.md)
 belgesindedir.
+
+### SkyMail'den SkyNotify'a ad taşıması (ADR 0091, SPI 1.29.0)
+
+Bildirim servisinin Keycloak'taki her adı SkyNotify'dır: istemciler `skynotify`,
+`skynotify-backend`, `skynotify-seed`; roller `skynotify:*`; gruplar `/ROLLER/SKYNOTIFY-*` (ekip
+kodu kuralının 24 karakteri yüzünden `SKYMAIL-TEMPLATES-WRITE` → `SKYNOTIFY-TEMPLATE-WRITE`);
+kapsamlar `skynotify-api-audience` ve `account-erase-skynotify`; Hesap Merkezi'nin eşleyicisi
+`account-api-skynotify-audience`; SPI sağlayıcıları `skynotify`, ortam `SKYNOTIFY_*`, gizli
+anahtar bağlaması `/run/secrets/skynotify/`. Uzlaştırıcı yalnız yeni adları bilir: eski adlı bir
+nesneyi taşımaz, eşleyiciyi adıyla aradığı için taşınmamış bir realm'de yenisini yanına kurar.
+Bu yüzden yeni imaj, taşıma betiği koştuktan sonra dağıtılır. Kapsam dışı: User Profile'daki
+`skyMail` özniteliği ("SkyMail adresi (eski)").
+
+Var olan realm'lerdeki nesneleri `config/skynotify-rename.sh` yerinde taşır (kcadm; JDK ve
+Keycloak'ın Jackson kütüphaneleri yeter, betik eski imajda da koşar). İstemcinin uuid'i, gizli
+anahtarı ve service account kullanıcısı (adı istemciyle değişir), rol, grup ve kapsam id'leri
+korunur; bu yüzden her rol eşlemesi yerinde kalır. Audience eşleyicilerindeki
+`included.client.audience` ve nesnelerin metinleri (Türkçe ek ünlü uyumuyla: SkyMail'e →
+SkyNotify'a) değişir. Varsayılan kuru koşudur ve her taşımayı, taşınan her rolün kullanıcı ve
+grup sayısını basar; `--apply` yazar, sonra yeniden okur: taşınacak nesne kalmamalı, eski adlı
+service account kalmamalı, rol id'si başına sayılar önceki gibi olmalı. Bir nesne hem eski hem
+yeni adı taşıyorsa, yeni ad başka nesnede varsa, kuralın geri çeviremeyeceği bir yazım
+(`sky-mail`, `Skymail`) ya da 255 karakteri aşan metin çıkarsa hiçbir şey yazmadan durur.
+`--reverse` geri almadır (aynı nesneler eski adlara, birebir). `--realm` yalnız `e-skylab` ya da
+`e-skylab-sandbox`. Pencerede sandbox realm'i için imaj yayını olmadan, production realm'i
+için eski imaj ayaktayken ve yeni imajın tek dağıtımından hemen önce koşar
+(sky_lab_genel `.scratch/skynotify-ad`, bilet 07 ve 10). Harness
+`tests/skynotify-rename.sh` stok Keycloak imajında tek başına çalışır.
 
 ## sky-handoff API (SkyApp'ten web'e geçiş)
 
@@ -1363,7 +1391,7 @@ brute-force korumasıyla sınırlıdır.
 
 Sözleşme: [sky-account API](docs/sky-account-api.md),
 [yerel/sandbox kabul planı](docs/sudo-email-code-test-plan.md).
-Önce SkyMail `keycloak.login-code` şablonunun `purpose=sudo` dalı hazır olmalı;
+Önce SkyNotify `keycloak.login-code` şablonunun `purpose=sudo` dalı hazır olmalı;
 ardından Keycloak, sonra account-center yayımlanır. Bu sürüm kayıt ayarını
 kendiliğinden açmaz. Endpoint’lerin yüklenmesi uygun mevcut hesaplara API’de
 e-posta Sudo imkânı verir; bağımsız aç/kapat ayarı yoktur.

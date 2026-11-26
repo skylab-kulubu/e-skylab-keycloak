@@ -419,11 +419,11 @@ kategorisinden `failedLogin` olur; bu bir parola kontrolü değildir. Başarıl�
 kanıt standart 5 dakikalık `sub` + `sid` bağlı HMAC Sudo token'ı verir,
 `amr=["otp"]`, audit `method=email-code`. Kod ve adres loglara girmez.
 
-Posta SkyMail `keycloak.login-code` anahtarına **`purpose=sudo`** ile gider;
+Posta SkyNotify `keycloak.login-code` anahtarına **`purpose=sudo`** ile gider;
 konu kod içermez. SMTP yedeği `sky-sudo-code.ftl` ile aynı işlem-onayı metnini
 kullanır. Gönderim başarısızsa kod silinir ve `503 email_not_sent` döner.
 
-Yayın bağımlılığı: önce SkyMail'in `purpose=sudo` şablonu seed edilip hazır
+Yayın bağımlılığı: önce SkyNotify'ın `purpose=sudo` şablonu seed edilip hazır
 olmalı; ardından Keycloak, sonra account-center. Bu uçların imaja eklenmesi,
 uygun mevcut kullanıcıların e-posta Sudo yolunu API üzerinden açar; bağımsız
 bir feature flag yoktur. Kayıt akışını veya canlı realm ayarını kendiliğinden
@@ -671,7 +671,7 @@ ADR-0044: kişinin **Okul e-postası** (`schoolEmail` özniteliği) YTÜ Microso
 bağlantısıyla gelir ve buradan hiç yazılmaz; **Kişisel e-posta** (`personalEmail`)
 kişinin eklediği ve postasına gelen kodu kendi oturumunda girerek kanıtladığı adrestir; **Birincil e-posta**
 ikisinden kişinin seçtiğidir ve Keycloak `email` alanının ta kendisidir. Birincili
-değiştirmek `email` alanını yazmak demektir, bu yüzden token'lar, core ve SkyMail
+değiştirmek `email` alanını yazmak demektir, bu yüzden token'lar, core ve SkyNotify
 bir sonraki token'da yeni adresi kendiliğinden görür.
 
 Doğrulanmışlık kaydı: onay anında bu uzantı `personalEmailVerifiedAt` özniteliğine

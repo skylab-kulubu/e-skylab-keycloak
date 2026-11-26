@@ -12,7 +12,7 @@
 #   - a token requested with one erase scope carries azp=core-erasure, that service's audience
 #     and exactly its erase role, nothing of the other services; a token without an erase scope
 #     carries no erase role;
-#   - core's own tokens are unchanged: its SkyMail send token carries no erase role, it cannot
+#   - core's own tokens are unchanged: its SkyNotify send token carries no erase role, it cannot
 #     request an erase scope, and Admin REST still accepts it;
 #   - the reconciler verifies the client, fails on security drift and names the command, and the
 #     script repairs that drift;
@@ -27,10 +27,10 @@ STATE_DIR=${TEST_STATE_DIR:?set TEST_STATE_DIR}
 REALM=${ERASURE_REALM:-e-skylab-test}
 BASE_URL=http://localhost:18080
 COMPOSE=(docker compose -f "$COMPOSE_FILE")
-SCOPES=(account-erase-skymail account-erase-cms account-erase-forms)
-RESOURCES=(skymail skycms forms)
-ROLES=(skymail:account:erase cms:account:erase skyforms:account:erase)
-ALL_ERASE_ROLES='["cms:account:erase","skyforms:account:erase","skymail:account:erase"]'
+SCOPES=(account-erase-skynotify account-erase-cms account-erase-forms)
+RESOURCES=(skynotify skycms forms)
+ROLES=(skynotify:account:erase cms:account:erase skyforms:account:erase)
+ALL_ERASE_ROLES='["cms:account:erase","skyforms:account:erase","skynotify:account:erase"]'
 CURRENT_STAGE='core-erasure client fixture'
 
 fail() {
@@ -168,31 +168,31 @@ core_claims() {
   jq -S -c '{azp, aud, scope, resource_access, realm_access}' <<<"$(access_payload core "$core_secret" "$1")"
 }
 
-skymail_uuid=$(client_uuid skymail)
+skynotify_uuid=$(client_uuid skynotify)
 core_uuid=$(client_uuid core)
-[[ -n $skymail_uuid && -n $core_uuid ]] || fail 'the fixture realm lacks the skymail or core client'
+[[ -n $skynotify_uuid && -n $core_uuid ]] || fail 'the fixture realm lacks the skynotify or core client'
 for resource in skycms forms; do
   stale=$(client_uuid "$resource")
   [[ -z $stale ]] || kcadm delete "clients/$stale" -r "$REALM" >/dev/null
 done
 [[ -z $(client_uuid core-erasure) ]] || fail 'core-erasure exists before the operator script ran'
 
-# core sends through SkyMail with its own client (production: skymail:access and
-# skymail:mails:send on service-account-core); its tokens are captured before the script runs.
+# core sends through SkyNotify with its own client (production: skynotify:access and
+# skynotify:mails:send on service-account-core); its tokens are captured before the script runs.
 core_sa=$(kcadm get "clients/$core_uuid/service-account-user" -r "$REALM" -c | jq -r .id)
-for role in skymail:access skymail:mails:send; do
-  kcadm create "users/$core_sa/role-mappings/clients/$skymail_uuid" -r "$REALM" \
-    -b "$(role_body "$skymail_uuid" "$role")" >/dev/null
+for role in skynotify:access skynotify:mails:send; do
+  kcadm create "users/$core_sa/role-mappings/clients/$skynotify_uuid" -r "$REALM" \
+    -b "$(role_body "$skynotify_uuid" "$role")" >/dev/null
 done
 kcadm create "clients/$core_uuid/client-secret" -r "$REALM" >/dev/null 2>&1
 core_secret=$(kcadm get "clients/$core_uuid/client-secret" -r "$REALM" -c | jq -r .value)
 core_send_before=$(core_claims openid)
 core_default_before=$(core_claims '')
-jq -e '(.resource_access.skymail.roles | sort) == ["skymail:access", "skymail:mails:send"]' <<<"$core_send_before" >/dev/null \
-  || fail "core's SkyMail send token does not carry the SkyMail send roles: $core_send_before"
+jq -e '(.resource_access.skynotify.roles | sort) == ["skynotify:access", "skynotify:mails:send"]' <<<"$core_send_before" >/dev/null \
+  || fail "core's SkyNotify send token does not carry the SkyNotify send roles: $core_send_before"
 
 # ERASURE_FIXTURE_ONLY=1: the run-integration.sh groups that do not prove this contract get only the
-# state it ends in and stop: core's SkyMail roles above, skycms and forms, core-erasure applied, and
+# state it ends in and stop: core's SkyNotify roles above, skycms and forms, core-erasure applied, and
 # a full reconciliation that has seen skycms and forms (as the contract's verification run has).
 if [[ ${ERASURE_FIXTURE_ONLY:-} == 1 ]]; then
   CURRENT_STAGE='core-erasure fixture only'
@@ -236,8 +236,8 @@ for mode in '' --apply; do
 done
 [[ -z $(client_uuid core-erasure) ]] || fail 'the stopped script created core-erasure'
 [[ $(admin_events_since "$events_before") == 0 ]] || fail 'the stopped script wrote something'
-[[ $(kcadm get "clients/$skymail_uuid/roles" -r "$REALM" -c | jq '[.[] | select(.name == "skymail:account:erase")] | length') == 0 ]] \
-  || fail 'the stopped script created the SkyMail erase role'
+[[ $(kcadm get "clients/$skynotify_uuid/roles" -r "$REALM" -c | jq '[.[] | select(.name == "skynotify:account:erase")] | length') == 0 ]] \
+  || fail 'the stopped script created the SkyNotify erase role'
 
 create_resource_clients
 
@@ -246,7 +246,7 @@ events_before=$(newest_admin_event)
 output=$(create_erasure_client)
 printf '%s\n' "$output" >"$STATE_DIR/create-erasure-dry-run.log"
 expect_line "$output" "[erasure-client] realm=$REALM client=core-erasure mode=dry-run" 'the dry run did not name its realm and mode'
-expect_line "$output" 'would create confidential service-account client core-erasure (secret generated by Keycloak; default scopes basic roles; optional scopes account-erase-skymail account-erase-cms account-erase-forms)' \
+expect_line "$output" 'would create confidential service-account client core-erasure (secret generated by Keycloak; default scopes basic roles; optional scopes account-erase-skynotify account-erase-cms account-erase-forms)' \
   'the dry run did not plan the client'
 for i in 0 1 2; do
   expect_line "$output" "would create client role ${ROLES[$i]} on ${RESOURCES[$i]}" 'the dry run did not plan a role'
@@ -279,7 +279,7 @@ jq -e '.publicClient == false and .bearerOnly == false and .serviceAccountsEnabl
 # client update. basic must stay: it emits sub, which the services' account-access gate reads.
 [[ $(kcadm get "clients/$client/default-client-scopes" -r "$REALM" -c | jq -c '[.[].name | select(. != "service_account")] | sort') == '["basic","roles"]' ]] \
   || fail 'core-erasure default scopes are not exactly basic and roles (besides service_account)'
-[[ $(kcadm get "clients/$client/optional-client-scopes" -r "$REALM" -c | jq -c '[.[].name] | sort') == '["account-erase-cms","account-erase-forms","account-erase-skymail"]' ]] \
+[[ $(kcadm get "clients/$client/optional-client-scopes" -r "$REALM" -c | jq -c '[.[].name] | sort') == '["account-erase-cms","account-erase-forms","account-erase-skynotify"]' ]] \
   || fail 'core-erasure optional scopes are not exactly the three erase scopes'
 jq -e '(.realmMappings // []) == [] and (.clientMappings // {}) == {}' <<<"$(kcadm get "clients/$client/scope-mappings" -r "$REALM" -c)" >/dev/null \
   || fail 'core-erasure has direct scope mappings: every token would carry those roles'
@@ -303,8 +303,8 @@ for i in 0 1 2; do
   [[ $(kcadm get "clients/$resource/roles/${ROLES[$i]}/users" -r "$REALM" -c | jq -c '[.[].username]') == '["service-account-core-erasure"]' ]] \
     || fail "${ROLES[$i]} is held by someone other than the service account"
 done
-[[ $(kcadm get "clients/$skymail_uuid/roles/skymail:access/users" -r "$REALM" -c | jq '[.[] | select(.username == "service-account-core-erasure")] | length') == 0 ]] \
-  || fail 'core-erasure holds a SkyMail role other than the erase role'
+[[ $(kcadm get "clients/$skynotify_uuid/roles/skynotify:access/users" -r "$REALM" -c | jq '[.[] | select(.username == "service-account-core-erasure")] | length') == 0 ]] \
+  || fail 'core-erasure holds a SkyNotify role other than the erase role'
 
 CURRENT_STAGE='core-erasure is idempotent'
 events_before=$(newest_admin_event)
@@ -341,10 +341,10 @@ response=$(token_response core-erasure "$secret" 'openid profile email')
 [[ ${response##*$'\n'} == 400 ]] || fail 'core-erasure may request scopes outside its contract'
 
 CURRENT_STAGE="core's own tokens are unchanged"
-[[ $(core_claims openid) == "$core_send_before" ]] || fail "core's SkyMail send token changed: $(core_claims openid)"
+[[ $(core_claims openid) == "$core_send_before" ]] || fail "core's SkyNotify send token changed: $(core_claims openid)"
 [[ $(core_claims '') == "$core_default_before" ]] || fail "core's default token changed"
 jq -e --argjson all "$ALL_ERASE_ROLES" '[.. | strings | select(. as $s | $all | index($s))] == []' <<<"$core_send_before" >/dev/null \
-  || fail "core's SkyMail send token carries an erase role"
+  || fail "core's SkyNotify send token carries an erase role"
 response=$(token_response core "$core_secret" 'openid account-erase-cms')
 [[ ${response##*$'\n'} == 400 && $(jq -r .error <<<"${response%$'\n'*}") == invalid_scope ]] \
   || fail "core may request an erase scope (HTTP ${response##*$'\n'})"
@@ -382,8 +382,8 @@ expect_line "$output" 'create-erasure-client.sh keycloak-config --admin-user <ad
 kcadm update "clients/$client" -r "$REALM" -s fullScopeAllowed=false >/dev/null
 kcadm delete "clients/$client/optional-client-scopes/$cms_scope" -r "$REALM" >/dev/null
 kcadm update "clients/$client/default-client-scopes/$cms_scope" -r "$REALM" -n -b '{}' >/dev/null
-kcadm create "clients/$client/scope-mappings/clients/$skymail_uuid" -r "$REALM" \
-  -b "$(role_body "$skymail_uuid" skymail:account:erase)" >/dev/null
+kcadm create "clients/$client/scope-mappings/clients/$skynotify_uuid" -r "$REALM" \
+  -b "$(role_body "$skynotify_uuid" skynotify:account:erase)" >/dev/null
 kcadm create "client-scopes/$cms_scope/scope-mappings/clients/$(client_uuid forms)" -r "$REALM" \
   -b "$(role_body "$(client_uuid forms)" skyforms:account:erase)" >/dev/null
 if reconcile "$STATE_DIR/reconcile-erasure-drift-2.log"; then
@@ -398,7 +398,7 @@ for expected in \
   'update client core-erasure flags' \
   'detach default scope account-erase-cms from core-erasure' \
   'attach optional scope account-erase-cms to core-erasure' \
-  'remove direct scope mapping skymail/skymail:account:erase from core-erasure' \
+  'remove direct scope mapping skynotify/skynotify:account:erase from core-erasure' \
   'remove role forms/skyforms:account:erase from scope account-erase-cms' \
   'applied 5 change(s)'; do
   expect_line "$output" "$expected" 'the script did not repair the drift'

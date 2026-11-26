@@ -241,7 +241,7 @@ docker run --pull=never --cpus 2 --rm -d --name "$CONTAINER" --network "$NETWORK
   -e KC_OPTS="$KCADM_JVM_STANDALONE_OPTS" \
   --tmpfs /opt/keycloak/data:rw,size=256m,mode=1777 -p "127.0.0.1:$PORT:8080" \
   -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e "KC_BOOTSTRAP_ADMIN_PASSWORD=$ADMIN_PASSWORD" \
-  -e SKY_HARNESS=1 -e SKY_MAIL_ENABLED=false \
+  -e SKY_HARNESS=1 -e SKYNOTIFY_ENABLED=false \
   -v "$SPI_JAR:/opt/keycloak/providers/e-skylab-spi.jar:ro" \
   -v "$STATE_DIR/fixture/fixture.jar:/opt/keycloak/providers/broker-fixture.jar:ro" \
   -v "$REPOSITORY_ROOT/config:/opt/keycloak/sky-config:ro" \

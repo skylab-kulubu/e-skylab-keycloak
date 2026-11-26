@@ -28,7 +28,7 @@
 # person assignments); PROBLEM lines for an admin, unclassified or realm role in the panel area or on a
 # person, and for an app role on a target that reaches every member. The code area's expectations:
 # the reconciler's Privileged roles (--privileged-file, written by its operator step
-# KEYCLOAK_RECONCILE_ONLY=app-assignments: core's resource roles, SkyMail's, Forms', SkyCloud's and
+# KEYCLOAK_RECONCILE_ONLY=app-assignments: core's resource roles, SkyNotify's, Forms', SkyCloud's and
 # the admin panel's Privileged roles), config/role-groups.json, config/leader-app-roles.sh --print-expected,
 # config/site-editor-grants.sh --print-expected and DK's temporary Forms roles. Without
 # --privileged-file the Privileged roots' own expectations are unknown (a NOTE). The service
@@ -48,7 +48,7 @@
 # --privileged-file gives it, at /<NAME>, /UYELER/<NAME> and under them) is one line
 # "BILGI|S2-tohum|<group path>|<client>|<role>|eksik|fazla" and never counts towards the alarm; before
 # the seed (no mark) the missing mapping is the code's own and S2-eksik. Given to a Privileged root
-# outside its seed set (YK's skymail:mails:approve on ADMIN), or a write role of config/dk-read-only.sh
+# outside its seed set (YK's skynotify:mails:approve on ADMIN), or a write role of config/dk-read-only.sh
 # (--print-write-roles) given to DK or under it at all (DK reads and does not write), it is S2-fazla
 # (ekip-yetkileri ticket 17). DK's temporary Forms admin roles (geçici) missing is the goal of
 # dk-read-only.sh --forms: one line "BILGI|S2-geçici|<group path>|<client>|<role>|eksik", never counted
@@ -65,7 +65,7 @@
 #             leaf config/role-groups.json names, on /UYELER, an area or any other group, an app role
 #             on a target that reaches every member;
 #   S2b       an admin, unclassified or realm role on a panel target (a team, a Sub-team, a Leader
-#             group): e.g. skymail:mails:write on a team;
+#             group): e.g. skynotify:mails:write on a team;
 #   S3        a mapping on a group under /ROLLER that config/role-groups.json does not name (a leaf
 #             it does not list, or a group under a leaf);
 #   S5        a top team none of whose Leader groups (LIDERLER, KOORDINATORLER) has an enabled member
@@ -81,7 +81,7 @@
 #
 # --seed: the one-time initial assignment (YETKI-MATRISI §6.3, Yusuf's K1 of 2026-10-23), the
 # catalogue's initialAssignments: forms skyforms:access to every top team /UYELER/<area>/<team> (its
-# Sub-teams and Leader groups inherit it), skymail skymail:access and skymail:templates:read to every
+# Sub-teams and Leader groups inherit it), skynotify skynotify:access and skynotify:templates:read to every
 # top team's LIDERLER and KOORDINATORLER and to /UYELER/ARGE/ALGOLAB. A dry run without --apply. It
 # adds what is missing only (a group that holds the role, or whose parent holds it, is left alone),
 # never takes anything away, and is no part of a routine reconciliation: it runs once per realm, then

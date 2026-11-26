@@ -26,16 +26,16 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-class SkyMailEmailTemplateProviderTest {
+class SkyNotifyEmailTemplateProviderTest {
 
     private final Map<String, Object> attributes = new HashMap<>();
     private final FakeEmailTemplateProvider delegate = new FakeEmailTemplateProvider();
     private final UserModel user =
-            SkyMailMessageTest.user("Ada", "Yıldız", "ada", "ada@yildizskylab.com");
-    private final RealmModel realm = SkyMailMessageTest.realm("e-skylab", "SKY LAB");
+            SkyNotifyMessageTest.user("Ada", "Yıldız", "ada", "ada@yildizskylab.com");
+    private final RealmModel realm = SkyNotifyMessageTest.realm("e-skylab", "SKY LAB");
 
     private KeycloakSession session;
-    private SkyMailEmailTemplateProvider provider;
+    private SkyNotifyEmailTemplateProvider provider;
 
     static KeycloakSession sessionWithAttributes(Map<String, Object> attributes) {
         KeycloakSession session = mock(KeycloakSession.class);
@@ -51,14 +51,14 @@ class SkyMailEmailTemplateProviderTest {
     @BeforeEach
     void setUp() {
         session = sessionWithAttributes(attributes);
-        provider = new SkyMailEmailTemplateProvider(session, delegate);
+        provider = new SkyNotifyEmailTemplateProvider(session, delegate);
         provider.setRealm(realm).setUser(user);
     }
 
-    private SkyMailMessage recorded() {
-        Object pending = attributes.get(SkyMailMessage.SESSION_ATTRIBUTE);
+    private SkyNotifyMessage recorded() {
+        Object pending = attributes.get(SkyNotifyMessage.SESSION_ATTRIBUTE);
         assertNotNull(pending, "the template provider must record the mail on the session");
-        return (SkyMailMessage) pending;
+        return (SkyNotifyMessage) pending;
     }
 
     @Test
@@ -81,12 +81,12 @@ class SkyMailEmailTemplateProviderTest {
     void mapsTheVerifyEmailMail() throws EmailException {
         provider.sendVerifyEmail("https://e.yildizskylab.com/verify?key=abc", 60);
 
-        SkyMailMessage message = recorded();
-        assertEquals(SkyMailTemplates.VERIFY_EMAIL, message.templateKey());
-        assertEquals("emailVerificationSubject", message.variables().get(SkyMailMessage.SUBJECT_KEY));
+        SkyNotifyMessage message = recorded();
+        assertEquals(SkyNotifyTemplates.VERIFY_EMAIL, message.templateKey());
+        assertEquals("emailVerificationSubject", message.variables().get(SkyNotifyMessage.SUBJECT_KEY));
         assertEquals("https://e.yildizskylab.com/verify?key=abc",
-                message.variables().get(SkyMailMessage.LINK));
-        assertEquals("60", message.variables().get(SkyMailMessage.LINK_EXPIRATION_MINUTES));
+                message.variables().get(SkyNotifyMessage.LINK));
+        assertEquals("60", message.variables().get(SkyNotifyMessage.LINK_EXPIRATION_MINUTES));
         assertEquals("Ada Yıldız", message.recipientFullName());
     }
 
@@ -94,8 +94,8 @@ class SkyMailEmailTemplateProviderTest {
     void mapsThePasswordResetMail() throws EmailException {
         provider.sendPasswordReset("https://e.yildizskylab.com/reset?key=abc", 30);
 
-        assertEquals(SkyMailTemplates.RESET_PASSWORD, recorded().templateKey());
-        assertEquals("passwordResetSubject", recorded().variables().get(SkyMailMessage.SUBJECT_KEY));
+        assertEquals(SkyNotifyTemplates.RESET_PASSWORD, recorded().templateKey());
+        assertEquals("passwordResetSubject", recorded().variables().get(SkyNotifyMessage.SUBJECT_KEY));
     }
 
     @Test
@@ -103,9 +103,9 @@ class SkyMailEmailTemplateProviderTest {
         provider.sendEmailUpdateConfirmation("https://e.yildizskylab.com/update?key=abc", 15,
                 "new@yildizskylab.com");
 
-        assertEquals(SkyMailTemplates.UPDATE_EMAIL, recorded().templateKey());
+        assertEquals(SkyNotifyTemplates.UPDATE_EMAIL, recorded().templateKey());
         assertEquals("emailUpdateConfirmationSubject",
-                recorded().variables().get(SkyMailMessage.SUBJECT_KEY));
+                recorded().variables().get(SkyNotifyMessage.SUBJECT_KEY));
         assertTrue(delegate.calls.contains(
                 "sendEmailUpdateConfirmation:https://e.yildizskylab.com/update?key=abc:15:new@yildizskylab.com"));
     }
@@ -114,9 +114,9 @@ class SkyMailEmailTemplateProviderTest {
     void mapsTheIdentityProviderLinkMail() throws EmailException {
         provider.sendConfirmIdentityBrokerLink("https://e.yildizskylab.com/link?key=abc", 20);
 
-        assertEquals(SkyMailTemplates.IDP_LINK, recorded().templateKey());
+        assertEquals(SkyNotifyTemplates.IDP_LINK, recorded().templateKey());
         assertEquals("identityProviderLinkSubject",
-                recorded().variables().get(SkyMailMessage.SUBJECT_KEY));
+                recorded().variables().get(SkyNotifyMessage.SUBJECT_KEY));
     }
 
     @Test
@@ -130,12 +130,12 @@ class SkyMailEmailTemplateProviderTest {
         provider.send("skyPersonalEmailConfirmSubject", List.of(), EmailResource.TEMPLATE,
                 bodyAttributes, "kisisel@example.com");
 
-        SkyMailMessage message = recorded();
-        assertEquals(SkyMailTemplates.PERSONAL_EMAIL_CONFIRM, message.templateKey());
-        assertEquals("048213", message.variables().get(SkyMailMessage.CODE));
-        assertEquals("10", message.variables().get(SkyMailMessage.CODE_EXPIRATION_MINUTES));
-        assertEquals("", message.variables().get(SkyMailMessage.LINK), "the code mail carries no link");
-        assertEquals("skyPersonalEmailConfirmSubject", message.variables().get(SkyMailMessage.SUBJECT_KEY));
+        SkyNotifyMessage message = recorded();
+        assertEquals(SkyNotifyTemplates.PERSONAL_EMAIL_CONFIRM, message.templateKey());
+        assertEquals("048213", message.variables().get(SkyNotifyMessage.CODE));
+        assertEquals("10", message.variables().get(SkyNotifyMessage.CODE_EXPIRATION_MINUTES));
+        assertEquals("", message.variables().get(SkyNotifyMessage.LINK), "the code mail carries no link");
+        assertEquals("skyPersonalEmailConfirmSubject", message.variables().get(SkyNotifyMessage.SUBJECT_KEY));
     }
 
     @Test
@@ -149,40 +149,40 @@ class SkyMailEmailTemplateProviderTest {
         provider.send("skyLoginCodeSubject", List.of(), EmailCodeAuthenticator.MAIL_TEMPLATE,
                 bodyAttributes, "ada@example.com");
 
-        SkyMailMessage message = recorded();
-        assertEquals(SkyMailTemplates.LOGIN_CODE, message.templateKey());
-        assertEquals("731904", message.variables().get(SkyMailMessage.CODE));
-        assertEquals("10", message.variables().get(SkyMailMessage.CODE_EXPIRATION_MINUTES));
-        assertEquals("login", message.variables().get(SkyMailMessage.PURPOSE));
-        assertEquals("", message.variables().get(SkyMailMessage.LINK), "the code mail carries no link");
+        SkyNotifyMessage message = recorded();
+        assertEquals(SkyNotifyTemplates.LOGIN_CODE, message.templateKey());
+        assertEquals("731904", message.variables().get(SkyNotifyMessage.CODE));
+        assertEquals("10", message.variables().get(SkyNotifyMessage.CODE_EXPIRATION_MINUTES));
+        assertEquals("login", message.variables().get(SkyNotifyMessage.PURPOSE));
+        assertEquals("", message.variables().get(SkyNotifyMessage.LINK), "the code mail carries no link");
     }
 
     @Test
     void fallsBackToTheGenericTemplateCarryingTheKeycloakSubjectKey() throws EmailException {
         provider.sendExecuteActions("https://e.yildizskylab.com/actions?key=abc", 10);
-        assertEquals(SkyMailTemplates.GENERIC, recorded().templateKey());
-        assertEquals("executeActionsSubject", recorded().variables().get(SkyMailMessage.SUBJECT_KEY));
+        assertEquals(SkyNotifyTemplates.GENERIC, recorded().templateKey());
+        assertEquals("executeActionsSubject", recorded().variables().get(SkyNotifyMessage.SUBJECT_KEY));
 
         provider.send("orgInviteSubject", "org-invite.ftl", Map.of());
-        assertEquals(SkyMailTemplates.GENERIC, recorded().templateKey());
-        assertEquals("orgInviteSubject", recorded().variables().get(SkyMailMessage.SUBJECT_KEY));
-        assertEquals("", recorded().variables().get(SkyMailMessage.LINK));
+        assertEquals(SkyNotifyTemplates.GENERIC, recorded().templateKey());
+        assertEquals("orgInviteSubject", recorded().variables().get(SkyNotifyMessage.SUBJECT_KEY));
+        assertEquals("", recorded().variables().get(SkyNotifyMessage.LINK));
 
         Event event = new Event();
         event.setType(EventType.UPDATE_PASSWORD);
         provider.sendEvent(event);
-        assertEquals(SkyMailTemplates.GENERIC, recorded().templateKey());
-        assertEquals("eventUpdatePasswordSubject", recorded().variables().get(SkyMailMessage.SUBJECT_KEY));
+        assertEquals(SkyNotifyTemplates.GENERIC, recorded().templateKey());
+        assertEquals("eventUpdatePasswordSubject", recorded().variables().get(SkyNotifyMessage.SUBJECT_KEY));
     }
 
     @Test
     void leavesTheSmtpTestMailToKeycloaksOwnSender() throws EmailException {
         provider.sendVerifyEmail("https://e.yildizskylab.com/verify?key=abc", 60);
-        assertNotNull(attributes.get(SkyMailMessage.SESSION_ATTRIBUTE));
+        assertNotNull(attributes.get(SkyNotifyMessage.SESSION_ATTRIBUTE));
 
         provider.sendSmtpTestEmail(Map.of("host", "smtp.invalid"), user);
 
-        assertNull(attributes.get(SkyMailMessage.SESSION_ATTRIBUTE),
+        assertNull(attributes.get(SkyNotifyMessage.SESSION_ATTRIBUTE),
                 "the SMTP test mail must prove the realm's own SMTP settings");
         assertTrue(delegate.calls.contains("sendSmtpTestEmail"));
     }

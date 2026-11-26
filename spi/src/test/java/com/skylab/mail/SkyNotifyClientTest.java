@@ -31,7 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class SkyMailClientTest {
+class SkyNotifyClientTest {
 
     private static final String SECRET = "mailer-client-secret";
     private static final String TOKEN_PATH = "/realms/e-skylab-test/protocol/openid-connect/token";
@@ -55,7 +55,7 @@ class SkyMailClientTest {
     private volatile long tokenLifetimeSeconds = 300;
 
     @BeforeEach
-    void startStubSkyMail() throws IOException {
+    void startStubSkyNotify() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.setExecutor(Executors.newFixedThreadPool(2));
         server.createContext(TOKEN_PATH, exchange -> {
@@ -86,7 +86,7 @@ class SkyMailClientTest {
     }
 
     @AfterEach
-    void stopStubSkyMail() {
+    void stopStubSkyNotify() {
         server.stop(0);
     }
 
@@ -105,42 +105,42 @@ class SkyMailClientTest {
         }
     }
 
-    private SkyMailSettings settings(long timeoutMillis, URI tokenUrl) {
-        return new SkyMailSettings(
+    private SkyNotifySettings settings(long timeoutMillis, URI tokenUrl) {
+        return new SkyNotifySettings(
                 true,
                 null,
                 base.resolve(MAIL_PATH),
                 tokenUrl,
                 "keycloak-mailer",
-                SkyMailSecret.ofLiteral(SECRET),
+                SkyNotifySecret.ofLiteral(SECRET),
                 Duration.ofMillis(Math.min(2_000, timeoutMillis)),
                 Duration.ofMillis(timeoutMillis));
     }
 
-    private SkyMailClient client() {
+    private SkyNotifyClient client() {
         return client(settings(2_000, base.resolve(TOKEN_PATH)));
     }
 
-    private SkyMailClient client(SkyMailSettings settings) {
-        return new SkyMailClient(
+    private SkyNotifyClient client(SkyNotifySettings settings) {
+        return new SkyNotifyClient(
                 settings,
                 HttpClient.newBuilder().connectTimeout(settings.connectTimeout()).build(),
                 clock);
     }
 
-    private static SkyMailMessage message() {
-        return SkyMailMessage.of(
-                SkyMailTemplates.VERIFY_EMAIL,
-                SkyMailTemplates.VERIFY_EMAIL_SUBJECT_KEY,
+    private static SkyNotifyMessage message() {
+        return SkyNotifyMessage.of(
+                SkyNotifyTemplates.VERIFY_EMAIL,
+                SkyNotifyTemplates.VERIFY_EMAIL_SUBJECT_KEY,
                 "https://e.yildizskylab.com/verify?key=abc",
                 "60",
-                SkyMailMessageTest.user("Ada", "Yıldız", "ada", "ada@yildizskylab.com"),
-                SkyMailMessageTest.realm("e-skylab", "SKY LAB"));
+                SkyNotifyMessageTest.user("Ada", "Yıldız", "ada", "ada@yildizskylab.com"),
+                SkyNotifyMessageTest.realm("e-skylab", "SKY LAB"));
     }
 
     @Test
     void sendsOneSingleMailTaskAndCountsOnly201AsSent() throws Exception {
-        Optional<SkyMailFallback> outcome =
+        Optional<SkyNotifyFallback> outcome =
                 client().send(message(), "ada@yildizskylab.com", REALM_ISSUER);
 
         assertEquals(Optional.empty(), outcome);
@@ -149,7 +149,7 @@ class SkyMailClientTest {
         assertEquals("keycloak.verify-email", body.get("template_key").textValue());
         assertEquals("ada@yildizskylab.com", body.get("recipient_email").textValue());
         assertEquals("Ada Yıldız", body.get("recipient_full_name").textValue());
-        assertEquals(SkyMailMessage.VARIABLE_NAMES.size(), body.get("body_variables").size());
+        assertEquals(SkyNotifyMessage.VARIABLE_NAMES.size(), body.get("body_variables").size());
         assertEquals("access-1", mailAuthorizations.getFirst().replace("Bearer ", ""));
     }
 
@@ -164,105 +164,105 @@ class SkyMailClientTest {
         assertFalse(mailBodies.getFirst().contains(SECRET));
     }
 
-    // SkyMail authenticates every call through Keycloak's userinfo endpoint, and Keycloak answers
-    // a token without the openid scope there with 403, which SkyMail turns into 401. Production
+    // SkyNotify authenticates every call through Keycloak's userinfo endpoint, and Keycloak answers
+    // a token without the openid scope there with 403, which SkyNotify turns into 401. Production
     // K5 fell back with reason=refused on 2026-09-24 for exactly that; core asks for openid too.
     @Test
-    void asksForTheOpenidScopeSoSkyMailCanReadUserinfo() {
+    void asksForTheOpenidScopeSoSkyNotifyCanReadUserinfo() {
         client().send(message(), "ada@yildizskylab.com", REALM_ISSUER);
 
         assertEquals(List.of("grant_type=client_credentials&scope=openid"), tokenBodies);
     }
 
     @Test
-    void fallsBackWhenSkyMailDoesNotKnowTheTemplateKey() {
+    void fallsBackWhenSkyNotifyDoesNotKnowTheTemplateKey() {
         mailStatus = 404;
         mailResponse = "{\"detail\":\"template not found\"}";
 
-        assertEquals(Optional.of(SkyMailFallback.TEMPLATE_MISSING),
+        assertEquals(Optional.of(SkyNotifyFallback.TEMPLATE_MISSING),
                 client().send(message(), "ada@yildizskylab.com", REALM_ISSUER));
     }
 
     @Test
-    void fallsBackWhenSkyMailIsUnavailable() {
+    void fallsBackWhenSkyNotifyIsUnavailable() {
         mailStatus = 500;
         mailResponse = "{\"detail\":\"boom\"}";
 
-        assertEquals(Optional.of(SkyMailFallback.UNAVAILABLE),
+        assertEquals(Optional.of(SkyNotifyFallback.UNAVAILABLE),
                 client().send(message(), "ada@yildizskylab.com", REALM_ISSUER));
     }
 
     @Test
-    void fallsBackWhenSkyMailRefusesTheRequest() {
+    void fallsBackWhenSkyNotifyRefusesTheRequest() {
         mailStatus = 400;
 
-        assertEquals(Optional.of(SkyMailFallback.REFUSED),
+        assertEquals(Optional.of(SkyNotifyFallback.REFUSED),
                 client().send(message(), "ada@yildizskylab.com", REALM_ISSUER));
     }
 
     @Test
-    void classifiesEveryStatusSkyMailCanAnswerWith() {
+    void classifiesEveryStatusSkyNotifyCanAnswerWith() {
         byte[] accepted = "{\"id\":\"8f1c0d3e-0000-4000-8000-000000000001\"}".getBytes(StandardCharsets.UTF_8);
-        assertEquals(Optional.empty(), SkyMailClient.classify(201, accepted));
-        assertEquals(Optional.of(SkyMailFallback.REFUSED), SkyMailClient.classify(200, accepted));
-        assertEquals(Optional.of(SkyMailFallback.REFUSED), SkyMailClient.classify(202, accepted));
-        assertEquals(Optional.of(SkyMailFallback.REFUSED), SkyMailClient.classify(401, accepted));
-        assertEquals(Optional.of(SkyMailFallback.REFUSED), SkyMailClient.classify(403, accepted));
-        assertEquals(Optional.of(SkyMailFallback.TEMPLATE_MISSING), SkyMailClient.classify(404, accepted));
-        assertEquals(Optional.of(SkyMailFallback.UNAVAILABLE), SkyMailClient.classify(500, accepted));
-        assertEquals(Optional.of(SkyMailFallback.UNAVAILABLE), SkyMailClient.classify(503, accepted));
+        assertEquals(Optional.empty(), SkyNotifyClient.classify(201, accepted));
+        assertEquals(Optional.of(SkyNotifyFallback.REFUSED), SkyNotifyClient.classify(200, accepted));
+        assertEquals(Optional.of(SkyNotifyFallback.REFUSED), SkyNotifyClient.classify(202, accepted));
+        assertEquals(Optional.of(SkyNotifyFallback.REFUSED), SkyNotifyClient.classify(401, accepted));
+        assertEquals(Optional.of(SkyNotifyFallback.REFUSED), SkyNotifyClient.classify(403, accepted));
+        assertEquals(Optional.of(SkyNotifyFallback.TEMPLATE_MISSING), SkyNotifyClient.classify(404, accepted));
+        assertEquals(Optional.of(SkyNotifyFallback.UNAVAILABLE), SkyNotifyClient.classify(500, accepted));
+        assertEquals(Optional.of(SkyNotifyFallback.UNAVAILABLE), SkyNotifyClient.classify(503, accepted));
     }
 
     @Test
-    void fallsBackWhenSkyMailAcceptsTheMailWithoutAMailTaskId() {
+    void fallsBackWhenSkyNotifyAcceptsTheMailWithoutAMailTaskId() {
         mailResponse = "{\"detail\":\"queued\"}";
 
-        assertEquals(Optional.of(SkyMailFallback.RESPONSE),
+        assertEquals(Optional.of(SkyNotifyFallback.RESPONSE),
                 client().send(message(), "ada@yildizskylab.com", REALM_ISSUER));
     }
 
     @Test
-    void fallsBackWhenSkyMailDoesNotAnswerInsideTheRequestBudget() {
+    void fallsBackWhenSkyNotifyDoesNotAnswerInsideTheRequestBudget() {
         mailDelayMillis = 1_500;
 
-        assertEquals(Optional.of(SkyMailFallback.TIMEOUT),
+        assertEquals(Optional.of(SkyNotifyFallback.TIMEOUT),
                 client(settings(300, base.resolve(TOKEN_PATH)))
                         .send(message(), "ada@yildizskylab.com", REALM_ISSUER));
     }
 
     @Test
-    void fallsBackWhenSkyMailCannotBeReached() throws IOException {
+    void fallsBackWhenSkyNotifyCannotBeReached() throws IOException {
         HttpServer closed = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         closed.start();
         int deadPort = closed.getAddress().getPort();
         closed.stop(0);
-        SkyMailSettings unreachable = new SkyMailSettings(
+        SkyNotifySettings unreachable = new SkyNotifySettings(
                 true, null, URI.create("http://127.0.0.1:" + deadPort + MAIL_PATH),
-                base.resolve(TOKEN_PATH), "keycloak-mailer", SkyMailSecret.ofLiteral(SECRET),
+                base.resolve(TOKEN_PATH), "keycloak-mailer", SkyNotifySecret.ofLiteral(SECRET),
                 Duration.ofMillis(500), Duration.ofMillis(500));
 
-        Optional<SkyMailFallback> outcome =
+        Optional<SkyNotifyFallback> outcome =
                 client(unreachable).send(message(), "ada@yildizskylab.com", REALM_ISSUER);
 
         assertTrue(outcome.isPresent());
-        assertTrue(List.of(SkyMailFallback.TRANSPORT, SkyMailFallback.TIMEOUT).contains(outcome.get()),
-                "an unreachable SkyMail must fall back, not throw: " + outcome.get());
+        assertTrue(List.of(SkyNotifyFallback.TRANSPORT, SkyNotifyFallback.TIMEOUT).contains(outcome.get()),
+                "an unreachable SkyNotify must fall back, not throw: " + outcome.get());
     }
 
     @Test
     void fallsBackWhenTheServiceAccountTokenCannotBeObtained() {
         tokenStatus = 401;
 
-        assertEquals(Optional.of(SkyMailFallback.TOKEN),
+        assertEquals(Optional.of(SkyNotifyFallback.TOKEN),
                 client().send(message(), "ada@yildizskylab.com", REALM_ISSUER));
         assertTrue(mailBodies.isEmpty(), "no mail may be posted without a token");
     }
 
     @Test
     void fallsBackWhenThereIsNoTokenEndpointToCall() {
-        SkyMailSettings derived = settings(2_000, null);
+        SkyNotifySettings derived = settings(2_000, null);
 
-        assertEquals(Optional.of(SkyMailFallback.CONFIG),
+        assertEquals(Optional.of(SkyNotifyFallback.CONFIG),
                 client(derived).send(message(), "ada@yildizskylab.com", null));
         assertEquals(0, tokenRequests.get());
     }
@@ -270,7 +270,7 @@ class SkyMailClientTest {
     @Test
     void cachesTheTokenAndFetchesAFreshOneShortlyBeforeItExpires() {
         tokenLifetimeSeconds = 300;
-        SkyMailClient client = client();
+        SkyNotifyClient client = client();
 
         client.send(message(), "ada@yildizskylab.com", REALM_ISSUER);
         client.send(message(), "ada@yildizskylab.com", REALM_ISSUER);
@@ -289,13 +289,13 @@ class SkyMailClientTest {
     }
 
     @Test
-    void forgetsACachedTokenSkyMailRefused() {
-        SkyMailClient client = client();
+    void forgetsACachedTokenSkyNotifyRefused() {
+        SkyNotifyClient client = client();
         client.send(message(), "ada@yildizskylab.com", REALM_ISSUER);
         assertEquals(1, tokenRequests.get());
 
         mailStatus = 401;
-        assertEquals(Optional.of(SkyMailFallback.REFUSED),
+        assertEquals(Optional.of(SkyNotifyFallback.REFUSED),
                 client.send(message(), "ada@yildizskylab.com", REALM_ISSUER));
         assertEquals(0, client.cachedTokenCount());
 
@@ -306,11 +306,11 @@ class SkyMailClientTest {
 
     @Test
     void readsATokenResponseOnlyWhenItCarriesAUsableAccessToken() {
-        assertEquals(Optional.empty(), SkyMailClient.parseToken("{\"expires_in\":300}", 1_000));
-        assertEquals(Optional.empty(), SkyMailClient.parseToken("{\"access_token\":\"\"}", 1_000));
-        assertEquals(Optional.empty(), SkyMailClient.parseToken("not json", 1_000));
+        assertEquals(Optional.empty(), SkyNotifyClient.parseToken("{\"expires_in\":300}", 1_000));
+        assertEquals(Optional.empty(), SkyNotifyClient.parseToken("{\"access_token\":\"\"}", 1_000));
+        assertEquals(Optional.empty(), SkyNotifyClient.parseToken("not json", 1_000));
 
-        SkyMailClient.CachedToken token = SkyMailClient
+        SkyNotifyClient.CachedToken token = SkyNotifyClient
                 .parseToken("{\"access_token\":\"abc\",\"expires_in\":300}", 1_000)
                 .orElseThrow();
         assertEquals(1_300, token.expiresAtEpochSecond());
@@ -318,21 +318,21 @@ class SkyMailClientTest {
         assertFalse(token.isUsableAt(1_270));
         assertFalse(token.toString().contains("abc"), "a cached token must never be printed");
 
-        SkyMailClient.CachedToken withoutLifetime = SkyMailClient
+        SkyNotifyClient.CachedToken withoutLifetime = SkyNotifyClient
                 .parseToken("{\"access_token\":\"abc\"}", 1_000)
                 .orElseThrow();
-        assertEquals(1_000 + SkyMailClient.FALLBACK_TOKEN_LIFETIME_SECONDS,
+        assertEquals(1_000 + SkyNotifyClient.FALLBACK_TOKEN_LIFETIME_SECONDS,
                 withoutLifetime.expiresAtEpochSecond());
     }
 
     @Test
     void neverPutsTheAddressLinkOrSecretInWhatTheSenderLogs() {
-        SkyMailMessage message = message();
+        SkyNotifyMessage message = message();
         List<String> lines = new java.util.ArrayList<>();
-        lines.add(SkyMailEmailSenderProvider.sentLine(message));
-        for (SkyMailFallback fallback : SkyMailFallback.values()) {
-            lines.add(SkyMailEmailSenderProvider.fallbackLine(fallback, message));
-            lines.add(SkyMailEmailSenderProvider.fallbackLine(fallback, null));
+        lines.add(SkyNotifyEmailSenderProvider.sentLine(message));
+        for (SkyNotifyFallback fallback : SkyNotifyFallback.values()) {
+            lines.add(SkyNotifyEmailSenderProvider.fallbackLine(fallback, message));
+            lines.add(SkyNotifyEmailSenderProvider.fallbackLine(fallback, null));
         }
 
         for (String line : lines) {
@@ -341,10 +341,10 @@ class SkyMailClientTest {
             assertFalse(line.contains(SECRET), line);
             assertFalse(line.contains("Ada"), line);
         }
-        assertEquals("sky_mail_fallback reason=template_missing template=keycloak.verify-email",
-                SkyMailEmailSenderProvider.fallbackLine(SkyMailFallback.TEMPLATE_MISSING, message));
-        assertEquals("sky_mail_fallback reason=disabled template=none",
-                SkyMailEmailSenderProvider.fallbackLine(SkyMailFallback.DISABLED, null));
+        assertEquals("skynotify_fallback reason=template_missing template=keycloak.verify-email",
+                SkyNotifyEmailSenderProvider.fallbackLine(SkyNotifyFallback.TEMPLATE_MISSING, message));
+        assertEquals("skynotify_fallback reason=disabled template=none",
+                SkyNotifyEmailSenderProvider.fallbackLine(SkyNotifyFallback.DISABLED, null));
     }
 
     @Test
@@ -352,11 +352,11 @@ class SkyMailClientTest {
         assertEquals(
                 List.of("disabled", "not_mapped", "config", "token", "template_missing", "refused",
                         "unavailable", "timeout", "transport", "response"),
-                java.util.Arrays.stream(SkyMailFallback.values()).map(SkyMailFallback::reason).toList());
-        assertFalse(SkyMailFallback.DISABLED.isFailure());
-        assertFalse(SkyMailFallback.NOT_MAPPED.isFailure());
-        assertTrue(SkyMailFallback.TEMPLATE_MISSING.isFailure());
-        assertTrue(SkyMailFallback.TIMEOUT.isFailure());
+                java.util.Arrays.stream(SkyNotifyFallback.values()).map(SkyNotifyFallback::reason).toList());
+        assertFalse(SkyNotifyFallback.DISABLED.isFailure());
+        assertFalse(SkyNotifyFallback.NOT_MAPPED.isFailure());
+        assertTrue(SkyNotifyFallback.TEMPLATE_MISSING.isFailure());
+        assertTrue(SkyNotifyFallback.TIMEOUT.isFailure());
     }
 
     static final class MutableClock extends Clock {

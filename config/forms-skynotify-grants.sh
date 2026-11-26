@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
-# Idempotent grant of SkyMail's send permission to Forms' service account (realms e-skylab and
-# e-skylab-sandbox). forms-backend sends one mail at a time through SkyMail's
-# POST /v1/mail_tasks/single with a client-credentials token of its client forms. SkyMail reads the
-# caller's roles from resource_access.skymail.roles and requires skymail:access for /v1 and
-# skymail:mails:send or skymail:mails:write for that route. Until now the grant was made by hand:
+# Idempotent grant of SkyNotify's send permission to Forms' service account (realms e-skylab and
+# e-skylab-sandbox). forms-backend sends one mail at a time through SkyNotify's
+# POST /v1/mail_tasks/single with a client-credentials token of its client forms. SkyNotify reads the
+# caller's roles from resource_access.skynotify.roles and requires skynotify:access for /v1 and
+# skynotify:mails:send or skynotify:mails:write for that route. Until now the grant was made by hand:
 # production had it, the sandbox realm did not, so every sandbox Forms mail was refused with
 # 403 server.forbidden.
 # The script makes sure that service-account-forms holds, directly or through a composite role:
-#   - skymail:access;
-#   - skymail:mails:send, unless it already holds skymail:mails:write (which also allows the route;
+#   - skynotify:access;
+#   - skynotify:mails:send, unless it already holds skynotify:mails:write (which also allows the route;
 #     it is broader than sending one mail needs, so it is reported as a NOTE and left as is);
 #   - when the client forms has fullScopeAllowed=false, the same roles in its scope mappings for the
-#     client skymail (otherwise the token would not carry them).
-# It never creates a SkyMail role (SkyMail's roles are made with the client skymail) and never
-# removes a role, a mapping or anything else. A missing client forms or skymail, a disabled service
-# account or a missing role skymail:access is a PROBLEM (exit 1); so is a missing
-# skymail:mails:send when the account does not hold skymail:mails:write. A client forms without the
+#     client skynotify (otherwise the token would not carry them).
+# It never creates a SkyNotify role (SkyNotify's roles are made with the client skynotify) and never
+# removes a role, a mapping or anything else. A missing client forms or skynotify, a disabled service
+# account or a missing role skynotify:access is a PROBLEM (exit 1); so is a missing
+# skynotify:mails:send when the account does not hold skynotify:mails:write. A client forms without the
 # default client scope roles is a WARNING: its tokens carry no resource_access at all.
 #
 # It refuses every realm but e-skylab and e-skylab-sandbox, before it logs in.
 #
 # Usage (inside the Keycloak image, as an operator):
-#   forms-skymail-grants.sh --admin-user <admin>             # --check (default): state and plan
-#   forms-skymail-grants.sh --admin-user <admin> --apply     # grants what is missing
-#   forms-skymail-grants.sh --kcadm-config <file> [--apply]  # reuse a logged-in kcadm session
+#   forms-skynotify-grants.sh --admin-user <admin>             # --check (default): state and plan
+#   forms-skynotify-grants.sh --admin-user <admin> --apply     # grants what is missing
+#   forms-skynotify-grants.sh --kcadm-config <file> [--apply]  # reuse a logged-in kcadm session
 #   --forms-client <clientId> overrides Forms' client id (default forms, or KEYCLOAK_FORMS_CLIENT_ID)
 #
 # The administrator password is typed into kcadm's own prompt and never passes through this
@@ -31,7 +31,7 @@
 # e-skylab), KEYCLOAK_ADMIN_REALM (default master), KEYCLOAK_FORMS_GRANTS_ADMIN_USERNAME (or
 # --admin-user).
 #
-# Output: one "[forms-skymail-grants] ..." line per fact, change ("would ..." in --check), NOTE,
+# Output: one "[forms-skynotify-grants] ..." line per fact, change ("would ..." in --check), NOTE,
 # WARNING and PROBLEM, then "check: N change(s) pending, W warning(s), P problem(s)" or "applied N
 # change(s), ...". Exit 0 unless a PROBLEM or a missing realm (1) or a usage error or a refused
 # realm (2). No secret or token is read or printed.
@@ -52,10 +52,10 @@ TARGET_REALM=${KEYCLOAK_REALM:-e-skylab}
 ALLOWED_REALMS=(e-skylab e-skylab-sandbox)
 ADMIN_USER=${KEYCLOAK_FORMS_GRANTS_ADMIN_USERNAME:-}
 FORMS_CLIENT_ID=${KEYCLOAK_FORMS_CLIENT_ID:-forms}
-SKYMAIL_CLIENT_ID=skymail
-ACCESS_ROLE=skymail:access
-SEND_ROLE=skymail:mails:send
-BROADER_SEND_ROLE=skymail:mails:write
+SKYNOTIFY_CLIENT_ID=skynotify
+ACCESS_ROLE=skynotify:access
+SEND_ROLE=skynotify:mails:send
+BROADER_SEND_ROLE=skynotify:mails:write
 ROLES_SCOPE=roles
 KCADM_CONFIG=''
 OWN_CONFIG=false
@@ -103,7 +103,7 @@ for realm in "${ALLOWED_REALMS[@]}"; do
   [[ $TARGET_REALM == "$realm" ]] && allowed=true
 done
 if [[ $allowed != true ]]; then
-  printf '[forms-skymail-grants] refusing realm %s: Forms runs in %s only; nothing was read or changed\n' \
+  printf '[forms-skynotify-grants] refusing realm %s: Forms runs in %s only; nothing was read or changed\n' \
     "$TARGET_REALM" "${ALLOWED_REALMS[*]}" >&2
   exit 2
 fi
@@ -137,14 +137,14 @@ if [[ -z $KCADM_CONFIG ]]; then
     fi
     [[ -n $ADMIN_USER ]] || usage
   fi
-  KCADM_CONFIG=$(mktemp /tmp/forms-skymail-grants-kcadm.XXXXXX)
+  KCADM_CONFIG=$(mktemp /tmp/forms-skynotify-grants-kcadm.XXXXXX)
   OWN_CONFIG=true
 elif [[ ! -r $KCADM_CONFIG ]]; then
   printf 'kcadm config %s is not readable\n' "$KCADM_CONFIG" >&2
   exit 2
 fi
 
-WORK_DIR=$(mktemp -d /tmp/forms-skymail-grants.XXXXXX)
+WORK_DIR=$(mktemp -d /tmp/forms-skynotify-grants.XXXXXX)
 cleanup() {
   stop_session
   if [[ $OWN_CONFIG == true ]]; then
@@ -155,7 +155,7 @@ cleanup() {
 trap cleanup EXIT
 
 log() {
-  printf '[forms-skymail-grants] %s\n' "$1"
+  printf '[forms-skynotify-grants] %s\n' "$1"
 }
 
 changes=0
@@ -188,7 +188,7 @@ kcadm() {
 
 kcadm_write() {
   local stderr_file status
-  stderr_file=$(mktemp /tmp/forms-skymail-grants-stderr.XXXXXX)
+  stderr_file=$(mktemp /tmp/forms-skynotify-grants-stderr.XXXXXX)
   if kcadm "$@" >/dev/null 2>"$stderr_file"; then
     status=0
   else
@@ -248,19 +248,19 @@ if ! realm_name=$(kcadm get "realms/$TARGET_REALM" --fields realm --format csv -
 fi
 
 forms_uuid=$(uuid_by "$FORMS_CLIENT_ID")
-skymail_uuid=$(uuid_by "$SKYMAIL_CLIENT_ID")
+skynotify_uuid=$(uuid_by "$SKYNOTIFY_CLIENT_ID")
 [[ -n $forms_uuid ]] || problem "client $FORMS_CLIENT_ID does not exist in realm $TARGET_REALM"
-[[ -n $skymail_uuid ]] || problem "client $SKYMAIL_CLIENT_ID does not exist in realm $TARGET_REALM"
+[[ -n $skynotify_uuid ]] || problem "client $SKYNOTIFY_CLIENT_ID does not exist in realm $TARGET_REALM"
 [[ $problems == 0 ]] || finish
 
 IFS=, read -r service_accounts full_scope < <(csv "clients/$forms_uuid" serviceAccountsEnabled,fullScopeAllowed)
 if [[ $service_accounts != true ]]; then
-  problem "client $FORMS_CLIENT_ID has no service account; it cannot call SkyMail"
+  problem "client $FORMS_CLIENT_ID has no service account; it cannot call SkyNotify"
   finish
 fi
-skymail_roles=$(csv "clients/$skymail_uuid/roles" name)
-if ! has_line "$skymail_roles" "$ACCESS_ROLE"; then
-  problem "client $SKYMAIL_CLIENT_ID has no role $ACCESS_ROLE (made with SkyMail's client, never here)"
+skynotify_roles=$(csv "clients/$skynotify_uuid/roles" name)
+if ! has_line "$skynotify_roles" "$ACCESS_ROLE"; then
+  problem "client $SKYNOTIFY_CLIENT_ID has no role $ACCESS_ROLE (made with SkyNotify's client, never here)"
   finish
 fi
 service_user_id=$(csv "clients/$forms_uuid/service-account-user" id)
@@ -268,9 +268,9 @@ service_user_id=$(csv "clients/$forms_uuid/service-account-user" id)
   problem "the service-account user of $FORMS_CLIENT_ID could not be resolved exactly"
   finish
 }
-mappings="users/$service_user_id/role-mappings/clients/$skymail_uuid"
+mappings="users/$service_user_id/role-mappings/clients/$skynotify_uuid"
 effective=$(csv "$mappings/composite" name)
-log "service-account-$FORMS_CLIENT_ID holds the skymail roles: $(tr '\n' ' ' <<<"${effective:-}" | sed 's/ *$//; s/^$/none/')"
+log "service-account-$FORMS_CLIENT_ID holds the skynotify roles: $(tr '\n' ' ' <<<"${effective:-}" | sed 's/ *$//; s/^$/none/')"
 
 # --- the roles it needs ----------------------------------------------------------------------------
 wanted=("$ACCESS_ROLE")
@@ -278,51 +278,51 @@ if has_line "$effective" "$BROADER_SEND_ROLE"; then
   wanted+=("$BROADER_SEND_ROLE")
   log "NOTE: service-account-$FORMS_CLIENT_ID holds $BROADER_SEND_ROLE, broader than sending one mail needs ($SEND_ROLE); left as is"
   has_line "$effective" "$SEND_ROLE" && wanted+=("$SEND_ROLE")
-elif has_line "$skymail_roles" "$SEND_ROLE"; then
+elif has_line "$skynotify_roles" "$SEND_ROLE"; then
   wanted+=("$SEND_ROLE")
 else
-  problem "client $SKYMAIL_CLIENT_ID has no role $SEND_ROLE and service-account-$FORMS_CLIENT_ID does not hold $BROADER_SEND_ROLE"
+  problem "client $SKYNOTIFY_CLIENT_ID has no role $SEND_ROLE and service-account-$FORMS_CLIENT_ID does not hold $BROADER_SEND_ROLE"
   finish
 fi
 
 for role in "${wanted[@]}"; do
   if has_line "$effective" "$role"; then
-    log "service-account-$FORMS_CLIENT_ID: $SKYMAIL_CLIENT_ID role $role unchanged"
+    log "service-account-$FORMS_CLIENT_ID: $SKYNOTIFY_CLIENT_ID role $role unchanged"
     continue
   fi
-  change "assign $SKYMAIL_CLIENT_ID role $role to service-account-$FORMS_CLIENT_ID"
+  change "assign $SKYNOTIFY_CLIENT_ID role $role to service-account-$FORMS_CLIENT_ID"
   if [[ $MODE == apply ]]; then
-    kcadm_write add-roles -r "$TARGET_REALM" --uid "$service_user_id" --cid "$skymail_uuid" --rolename "$role"
+    kcadm_write add-roles -r "$TARGET_REALM" --uid "$service_user_id" --cid "$skynotify_uuid" --rolename "$role"
   fi
 done
 
 if [[ $full_scope == true ]]; then
   log "client $FORMS_CLIENT_ID: fullScopeAllowed=true, its tokens carry every role it holds (no scope mapping needed)"
 else
-  scope_roles=$(csv "clients/$forms_uuid/scope-mappings/clients/$skymail_uuid" name)
+  scope_roles=$(csv "clients/$forms_uuid/scope-mappings/clients/$skynotify_uuid" name)
   for role in "${wanted[@]}"; do
     if has_line "$scope_roles" "$role"; then
-      log "client $FORMS_CLIENT_ID: scope mapping $SKYMAIL_CLIENT_ID/$role unchanged"
+      log "client $FORMS_CLIENT_ID: scope mapping $SKYNOTIFY_CLIENT_ID/$role unchanged"
       continue
     fi
-    change "add scope mapping $SKYMAIL_CLIENT_ID/$role to $FORMS_CLIENT_ID (fullScopeAllowed=false)"
+    change "add scope mapping $SKYNOTIFY_CLIENT_ID/$role to $FORMS_CLIENT_ID (fullScopeAllowed=false)"
     if [[ $MODE == apply ]]; then
-      role_id=$(csv "clients/$skymail_uuid/roles/$role" id)
-      kcadm_write create "clients/$forms_uuid/scope-mappings/clients/$skymail_uuid" -r "$TARGET_REALM" \
+      role_id=$(csv "clients/$skynotify_uuid/roles/$role" id)
+      kcadm_write create "clients/$forms_uuid/scope-mappings/clients/$skynotify_uuid" -r "$TARGET_REALM" \
         -b "[{\"id\":\"$role_id\",\"name\":\"$role\"}]"
     fi
   done
 fi
 
 if ! has_line "$(csv "clients/$forms_uuid/default-client-scopes" name)" "$ROLES_SCOPE"; then
-  warning "client $FORMS_CLIENT_ID lacks the default client scope $ROLES_SCOPE; its tokens carry no resource_access, so SkyMail refuses them"
+  warning "client $FORMS_CLIENT_ID lacks the default client scope $ROLES_SCOPE; its tokens carry no resource_access, so SkyNotify refuses them"
 fi
 
 # --- read back -------------------------------------------------------------------------------------
 if [[ $MODE == apply ]]; then
   effective=$(csv "$mappings/composite" name)
   for role in "${wanted[@]}"; do
-    has_line "$effective" "$role" || problem "service-account-$FORMS_CLIENT_ID still lacks $SKYMAIL_CLIENT_ID role $role after the run"
+    has_line "$effective" "$role" || problem "service-account-$FORMS_CLIENT_ID still lacks $SKYNOTIFY_CLIENT_ID role $role after the run"
   done
 fi
 finish

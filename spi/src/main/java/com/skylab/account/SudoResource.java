@@ -59,7 +59,7 @@ public final class SudoResource {
     private static final String ID_TOKEN_FIELD = "idToken";
     private static final Pattern OTP_CODE = Pattern.compile("^[0-9]{4,10}$");
 
-    /** Public so the SkyMail decorator routes this to the existing code template with purpose=sudo. */
+    /** Public so the SkyNotify decorator routes this to the existing code template with purpose=sudo. */
     public static final String MAIL_TEMPLATE = "sky-sudo-code.ftl";
     private static final Logger LOG = Logger.getLogger(SudoResource.class);
     private final AccountRequest request;

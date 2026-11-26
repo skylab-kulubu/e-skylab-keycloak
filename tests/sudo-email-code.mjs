@@ -10,7 +10,7 @@ const realm = `sudo-email-test-${process.pid}`;
 const password = "sudo-harness-password";
 const secret = "sudo-harness-client-secret";
 const mailerSecret = "sudo-harness-mailer-secret";
-const container = process.env.SUDO_EMAIL_SKYMAIL_CONTAINER;
+const container = process.env.SUDO_EMAIL_SKYNOTIFY_CONTAINER;
 const mailUrl = process.env.SUDO_EMAIL_MAIL_URL;
 const api = `${base}/realms/${realm}/sky-account/v1`;
 const cases = [];
@@ -41,7 +41,7 @@ async function tokenFor(username) {
 }
 async function person(label, { second = false, keepPassword = false, fallback = false } = {}) {
   const username = `sudo-${label}`;
-  const email = `${fallback ? "skymail-fallback" : username}@example.invalid`;
+  const email = `${fallback ? "skynotify-fallback" : username}@example.invalid`;
   await admin("users", { method: "POST", expected: 201, body: { username, email, emailVerified: true, enabled: true, firstName: "Sudo", lastName: "Fixture", credentials: [{ type: "password", value: password, temporary: false }] } });
   const [user] = await admin(`users?username=${username}&exact=true`);
   fixtureAddresses.push(email);
@@ -55,7 +55,7 @@ async function person(label, { second = false, keepPassword = false, fallback = 
   return { id: user.id, username, email, token: tokens.access_token, other: other?.access_token };
 }
 function tasks() {
-  return execFileSync("docker", ["logs", container], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split("\n").filter(line => line.startsWith("SKYMAIL_FIXTURE ")).map(line => JSON.parse(line.slice(16))).filter(value => value.event === "mail_task");
+  return execFileSync("docker", ["logs", container], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split("\n").filter(line => line.startsWith("SKYNOTIFY_FIXTURE ")).map(line => JSON.parse(line.slice("SKYNOTIFY_FIXTURE ".length))).filter(value => value.event === "mail_task");
 }
 async function send(person) {
   const before = tasks().length;
@@ -66,7 +66,7 @@ async function send(person) {
     if (task) break;
     await sleep(100);
   }
-  assert.ok(task, "Sudo mail task did not reach the isolated SkyMail fixture");
+  assert.ok(task, "Sudo mail task did not reach the isolated SkyNotify fixture");
   assert.equal(task.template_key, "keycloak.login-code");
   assert.equal(task.body_variables.purpose, "sudo");
   assert.equal(task.body_variables.subjectKey, "skySudoCodeSubject");
@@ -103,10 +103,10 @@ try {
   await admin("clients", { method: "POST", expected: 201, body: { clientId: "account-center", enabled: true, publicClient: false, secret, directAccessGrantsEnabled: true, standardFlowEnabled: false, fullScopeAllowed: true, protocolMappers: [
     { name: "account-audience", protocol: "openid-connect", protocolMapper: "oidc-audience-mapper", config: { "included.client.audience": "account", "access.token.claim": "true", "id.token.claim": "false" } },
   ] } });
-  await admin("clients", { method: "POST", expected: 201, body: { clientId: "skymail", enabled: true, publicClient: false, bearerOnly: true } });
-  const [mailClient] = await admin("clients?clientId=skymail");
+  await admin("clients", { method: "POST", expected: 201, body: { clientId: "skynotify", enabled: true, publicClient: false, bearerOnly: true } });
+  const [mailClient] = await admin("clients?clientId=skynotify");
   const roles = [];
-  for (const name of ["skymail:access", "skymail:mails:send"]) {
+  for (const name of ["skynotify:access", "skynotify:mails:send"]) {
     await admin(`clients/${mailClient.id}/roles`, { method: "POST", expected: 201, body: { name } });
     roles.push(await admin(`clients/${mailClient.id}/roles/${encodeURIComponent(name)}`));
   }

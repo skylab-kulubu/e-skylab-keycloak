@@ -7,16 +7,16 @@ import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.KeycloakSessionFactory;
 
 /**
- * Registers the {@code sky-mail} e-mail template provider.
+ * Registers the {@code skynotify} e-mail template provider.
  *
  * <p>{@link #order()} is above Keycloak's own {@code freemarker} factory, which makes this the
  * realm's default template provider without a build option. The provider only records which
  * template Keycloak asked for; the rendering itself stays with {@code freemarker}, so the mails
- * and the theme are unchanged whether or not SkyMail is enabled.</p>
+ * and the theme are unchanged whether or not SkyNotify is enabled.</p>
  */
-public final class SkyMailEmailTemplateProviderFactory implements EmailTemplateProviderFactory {
+public final class SkyNotifyEmailTemplateProviderFactory implements EmailTemplateProviderFactory {
 
-    public static final String PROVIDER_ID = "sky-mail";
+    public static final String PROVIDER_ID = "skynotify";
     static final String DELEGATE_PROVIDER_ID = "freemarker";
 
     @Override
@@ -37,7 +37,7 @@ public final class SkyMailEmailTemplateProviderFactory implements EmailTemplateP
             throw new IllegalStateException(
                     "The " + DELEGATE_PROVIDER_ID + " e-mail template provider is not available.");
         }
-        return new SkyMailEmailTemplateProvider(session, delegate);
+        return new SkyNotifyEmailTemplateProvider(session, delegate);
     }
 
     @Override

@@ -19,17 +19,17 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * The outbound half of the {@code sky-mail} sender: a client-credentials token for the
+ * The outbound half of the {@code skynotify} sender: a client-credentials token for the
  * {@code keycloak-mailer} service account, cached in memory until shortly before it expires, and
  * one {@code POST /v1/mail_tasks/single} per mail.
  *
- * <p>Nothing here throws at the caller. Every way a mail can fail to reach SkyMail — an
- * unobtainable token, a refused or unavailable SkyMail, a timeout, a 201 without a task id —
- * comes back as a {@link SkyMailFallback} so the sender can put the mail on Keycloak's own SMTP
- * instead. Only {@code 201} counts as sent: on a {@code 404} SkyMail has written no queue row, so
+ * <p>Nothing here throws at the caller. Every way a mail can fail to reach SkyNotify — an
+ * unobtainable token, a refused or unavailable SkyNotify, a timeout, a 201 without a task id —
+ * comes back as a {@link SkyNotifyFallback} so the sender can put the mail on Keycloak's own SMTP
+ * instead. Only {@code 201} counts as sent: on a {@code 404} SkyNotify has written no queue row, so
  * a mail treated as sent would vanish.</p>
  */
-final class SkyMailClient {
+final class SkyNotifyClient {
 
     /** Refresh a cached token this long before it expires, so a send never races the expiry. */
     static final Duration TOKEN_REFRESH_MARGIN = Duration.ofSeconds(30);
@@ -39,53 +39,53 @@ final class SkyMailClient {
     private static final int MAX_MAIL_RESPONSE_BYTES = 4_096;
     private static final int MAX_TOKEN_RESPONSE_BYTES = 16_384;
 
-    private final SkyMailSettings settings;
+    private final SkyNotifySettings settings;
     private final HttpClient httpClient;
     private final Clock clock;
     private final Map<URI, CachedToken> tokens = new ConcurrentHashMap<>();
 
-    SkyMailClient(SkyMailSettings settings, HttpClient httpClient, Clock clock) {
+    SkyNotifyClient(SkyNotifySettings settings, HttpClient httpClient, Clock clock) {
         this.settings = settings;
         this.httpClient = httpClient;
         this.clock = clock;
     }
 
-    static SkyMailClient create(SkyMailSettings settings) {
+    static SkyNotifyClient create(SkyNotifySettings settings) {
         HttpClient httpClient = HttpClient.newBuilder()
                 .connectTimeout(settings.connectTimeout())
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
-        return new SkyMailClient(settings, httpClient, Clock.systemUTC());
+        return new SkyNotifyClient(settings, httpClient, Clock.systemUTC());
     }
 
     /**
-     * Hands one mail to SkyMail. Returns empty when SkyMail accepted it with {@code 201}, and the
+     * Hands one mail to SkyNotify. Returns empty when SkyNotify accepted it with {@code 201}, and the
      * reason to fall back otherwise.
      */
-    Optional<SkyMailFallback> send(SkyMailMessage message, String recipientEmail, URI realmIssuer) {
+    Optional<SkyNotifyFallback> send(SkyNotifyMessage message, String recipientEmail, URI realmIssuer) {
         final URI tokenUrl;
         final String body;
         try {
             tokenUrl = settings.tokenUrlFor(realmIssuer);
             body = message.toRequestBody(recipientEmail);
         } catch (IOException | RuntimeException exception) {
-            return Optional.of(SkyMailFallback.CONFIG);
+            return Optional.of(SkyNotifyFallback.CONFIG);
         }
 
         Optional<String> token = accessToken(tokenUrl);
         if (token.isEmpty()) {
-            return Optional.of(SkyMailFallback.TOKEN);
+            return Optional.of(SkyNotifyFallback.TOKEN);
         }
 
-        Optional<SkyMailFallback> outcome = post(body, token.get());
-        if (outcome.filter(SkyMailFallback.REFUSED::equals).isPresent()) {
+        Optional<SkyNotifyFallback> outcome = post(body, token.get());
+        if (outcome.filter(SkyNotifyFallback.REFUSED::equals).isPresent()) {
             // A refused mail may be a token Keycloak rotated under us; never reuse it.
             tokens.remove(tokenUrl);
         }
         return outcome;
     }
 
-    private Optional<SkyMailFallback> post(String body, String token) {
+    private Optional<SkyNotifyFallback> post(String body, String token) {
         HttpRequest request = HttpRequest.newBuilder(settings.mailTaskUrl())
                 .timeout(settings.requestTimeout())
                 .header("Accept", "application/json")
@@ -101,28 +101,28 @@ final class SkyMailClient {
                 return classify(response.statusCode(), bytes);
             }
         } catch (HttpTimeoutException exception) {
-            return Optional.of(SkyMailFallback.TIMEOUT);
+            return Optional.of(SkyNotifyFallback.TIMEOUT);
         } catch (IOException exception) {
-            return Optional.of(SkyMailFallback.TRANSPORT);
+            return Optional.of(SkyNotifyFallback.TRANSPORT);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            return Optional.of(SkyMailFallback.TRANSPORT);
+            return Optional.of(SkyNotifyFallback.TRANSPORT);
         }
     }
 
-    static Optional<SkyMailFallback> classify(int statusCode, byte[] responseBytes) {
+    static Optional<SkyNotifyFallback> classify(int statusCode, byte[] responseBytes) {
         if (statusCode == 201) {
             return hasMailTaskId(responseBytes)
                     ? Optional.empty()
-                    : Optional.of(SkyMailFallback.RESPONSE);
+                    : Optional.of(SkyNotifyFallback.RESPONSE);
         }
         if (statusCode == 404) {
-            return Optional.of(SkyMailFallback.TEMPLATE_MISSING);
+            return Optional.of(SkyNotifyFallback.TEMPLATE_MISSING);
         }
         if (statusCode >= 500) {
-            return Optional.of(SkyMailFallback.UNAVAILABLE);
+            return Optional.of(SkyNotifyFallback.UNAVAILABLE);
         }
-        return Optional.of(SkyMailFallback.REFUSED);
+        return Optional.of(SkyNotifyFallback.REFUSED);
     }
 
     private static boolean hasMailTaskId(byte[] responseBytes) {
@@ -164,7 +164,7 @@ final class SkyMailClient {
                 .header("Accept", "application/json")
                 .header("Content-Type", "application/x-www-form-urlencoded")
                 .header("Authorization", "Basic " + credentials)
-                // SkyMail authenticates each call through Keycloak's userinfo endpoint, which
+                // SkyNotify authenticates each call through Keycloak's userinfo endpoint, which
                 // refuses a token without the openid scope.
                 .POST(HttpRequest.BodyPublishers.ofString(
                         "grant_type=client_credentials&scope=openid", StandardCharsets.UTF_8))

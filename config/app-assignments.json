@@ -16,16 +16,16 @@
       ]
     },
     {
-      "client": "skymail",
-      "name": "SkyMail",
+      "client": "skynotify",
+      "name": "SkyNotify",
       "assignmentRequired": true,
       "roles": [
-        "skymail:access",
-        "skymail:templates:read"
+        "skynotify:access",
+        "skynotify:templates:read"
       ],
       "suggestedRoles": [
-        "skymail:access",
-        "skymail:templates:read"
+        "skynotify:access",
+        "skynotify:templates:read"
       ]
     },
     {
@@ -110,18 +110,18 @@
       "target": "top-teams"
     },
     {
-      "client": "skymail",
+      "client": "skynotify",
       "roles": [
-        "skymail:access",
-        "skymail:templates:read"
+        "skynotify:access",
+        "skynotify:templates:read"
       ],
       "target": "top-team-leaders"
     },
     {
-      "client": "skymail",
+      "client": "skynotify",
       "roles": [
-        "skymail:access",
-        "skymail:templates:read"
+        "skynotify:access",
+        "skynotify:templates:read"
       ],
       "target": "/UYELER/ARGE/ALGOLAB"
     }

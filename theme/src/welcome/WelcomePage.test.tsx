@@ -64,7 +64,7 @@ describe("the e-SKY LAB landing page", () => {
       ["Hesap Merkezi", "my.yildizskylab.com"],
       ["SkyForms", "forms.yildizskylab.com"],
       ["Yönetim paneli", "admin.yildizskylab.com"],
-      ["İletişim", "notify.yildizskylab.com"],
+      ["SkyNotify", "notify.yildizskylab.com"],
       ["YıldızPlace", "place.yildizskylab.com"],
       ["Kulüp siteleri", "yildizskylab.com"]
     ];

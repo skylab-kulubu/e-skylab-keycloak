@@ -10,7 +10,7 @@ import java.nio.file.Path;
  * mounted file on every token request, so an operator can rotate the secret without restarting
  * Keycloak, and it is never held in a field, printed by {@link #toString()} or logged.
  */
-final class SkyMailSecret {
+final class SkyNotifySecret {
 
     /** Largest accepted secret file; a Keycloak client secret is a few dozen characters. */
     private static final int MAX_SECRET_BYTES = 4_096;
@@ -18,18 +18,18 @@ final class SkyMailSecret {
     private final Path file;
     private final String literal;
 
-    private SkyMailSecret(Path file, String literal) {
+    private SkyNotifySecret(Path file, String literal) {
         this.file = file;
         this.literal = literal;
     }
 
-    static SkyMailSecret ofFile(Path file) {
-        return new SkyMailSecret(file, null);
+    static SkyNotifySecret ofFile(Path file) {
+        return new SkyNotifySecret(file, null);
     }
 
     /** Only the integration harness ({@code SKY_HARNESS=1}) may pass the secret in an env var. */
-    static SkyMailSecret ofLiteral(String literal) {
-        return new SkyMailSecret(null, literal);
+    static SkyNotifySecret ofLiteral(String literal) {
+        return new SkyNotifySecret(null, literal);
     }
 
     /**
@@ -41,11 +41,11 @@ final class SkyMailSecret {
             return literal;
         }
         if (Files.size(file) > MAX_SECRET_BYTES) {
-            throw new IOException("The SkyMail client secret file is larger than expected.");
+            throw new IOException("The SkyNotify client secret file is larger than expected.");
         }
         String value = stripTrailingNewlines(Files.readString(file, StandardCharsets.UTF_8));
         if (value.isEmpty()) {
-            throw new IOException("The SkyMail client secret file is empty.");
+            throw new IOException("The SkyNotify client secret file is empty.");
         }
         return value;
     }
@@ -64,6 +64,6 @@ final class SkyMailSecret {
 
     @Override
     public String toString() {
-        return "SkyMailSecret[redacted]";
+        return "SkyNotifySecret[redacted]";
     }
 }

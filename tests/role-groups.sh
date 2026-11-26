@@ -9,12 +9,12 @@
 # and no volume, copies config/ into the container and runs the scripts there the way an operator
 # does; tokens are real password grants of a harness login client.
 #
-# Fixtures: realm e-skylab with the clients forms, place, skymail, cloudflare-zero-trust and skycloud
+# Fixtures: realm e-skylab with the clients forms, place, skynotify, cloudflare-zero-trust and skycloud
 # and their roles, the tree /ADMIN, /UYELER/YK (with a task group that has a LIDERLER group), the top teams
 # /UYELER/ARGE/AIRLAB (LIDERLER, KOORDINATORLER and a Sub-team with its own LIDERLER) and
 # /UYELER/ORGANIZASYON/ARTLAB (no Leader group); a person with a direct client role and a direct realm
 # role, and /UYELER holding a realm role. Realm e-skylab-sandbox with forms (only skyforms:access) and
-# skymail and nothing else (no skycloud).
+# skynotify and nothing else (no skycloud).
 #
 # What it proves:
 #   - every realm but e-skylab and e-skylab-sandbox is refused before a login (exit 2), an invalid
@@ -53,7 +53,7 @@
 #     seeded read role on DK's sub-group BILGI; a reconciler that stops before the check prints no
 #     summary: exit 2;
 #   - app-assignments --seed: a dry run plans exactly the missing initial assignments (every top
-#     team's Forms seat, the Leader groups' and ALGOLAB's SkyMail pair) with enabled member counts and
+#     team's Forms seat, the Leader groups' and ALGOLAB's SkyNotify pair) with enabled member counts and
 #     writes nothing; the reconciler's step tohum-atamalar applies them with a 0600 backup and marks
 #     the realm; a second dry run plans nothing and a second --apply is refused; --restore takes
 #     exactly the backup's assignments away and clears the mark; a missing target, a Privileged
@@ -107,9 +107,9 @@ KCADM_CONFIG=/tmp/harness-kcadm.config
 IN_CONTAINER_CONFIG=/tmp/config
 REALM=e-skylab
 SANDBOX=e-skylab-sandbox
-LEAVES=(FORMS-ACCESS FORMS-ALL PLACE-ADMIN PLACE-MODERATOR SKYMAIL-ACCESS SKYMAIL-TEMPLATES-READ
-  SKYMAIL-TEMPLATES-WRITE SKYMAIL-LISTS-READ SKYMAIL-LISTS-WRITE SKYMAIL-MAILS-READ SKYMAIL-MAILS-WRITE
-  SKYMAIL-MAILS-APPROVE CF-ZERO-TRUST-ACCESS SKYCLOUD-ACCESS SKYCLOUD-ADMIN)
+LEAVES=(FORMS-ACCESS FORMS-ALL PLACE-ADMIN PLACE-MODERATOR SKYNOTIFY-ACCESS SKYNOTIFY-TEMPLATES-READ
+  SKYNOTIFY-TEMPLATE-WRITE SKYNOTIFY-LISTS-READ SKYNOTIFY-LISTS-WRITE SKYNOTIFY-MAILS-READ SKYNOTIFY-MAILS-WRITE
+  SKYNOTIFY-MAILS-APPROVE CF-ZERO-TRUST-ACCESS SKYCLOUD-ACCESS SKYCLOUD-ADMIN)
 LEADER_ROLES='["skycloud/skycloud:access"]'
 CURRENT_STAGE=startup
 SESSION_PARITY_DIR=$(mktemp -d)
@@ -255,7 +255,7 @@ make_fixture() {
     -s directAccessGrantsEnabled=true >/dev/null
   kcadm create clients -r "$realm" -s clientId=forms -s publicClient=false -s standardFlowEnabled=false \
     -s serviceAccountsEnabled=true >/dev/null
-  kcadm create clients -r "$realm" -s clientId=skymail -s publicClient=true >/dev/null
+  kcadm create clients -r "$realm" -s clientId=skynotify -s publicClient=true >/dev/null
   if [[ $full == yes ]]; then
     for role in skyforms:access 'skyforms:*' skyforms:form:manage skyforms:response:manage skyforms:feedback:manage; do
       kcadm create "clients/$(client_uuid "$realm" forms)/roles" -r "$realm" -s "name=$role" >/dev/null
@@ -274,9 +274,9 @@ make_fixture() {
   else
     kcadm create "clients/$(client_uuid "$realm" forms)/roles" -r "$realm" -s name=skyforms:access >/dev/null
   fi
-  for role in skymail:access skymail:templates:read skymail:templates:write skymail:lists:read skymail:lists:write \
-    skymail:mails:read skymail:mails:write skymail:mails:approve; do
-    kcadm create "clients/$(client_uuid "$realm" skymail)/roles" -r "$realm" -s "name=$role" >/dev/null
+  for role in skynotify:access skynotify:templates:read skynotify:templates:write skynotify:lists:read skynotify:lists:write \
+    skynotify:mails:read skynotify:mails:write skynotify:mails:approve; do
+    kcadm create "clients/$(client_uuid "$realm" skynotify)/roles" -r "$realm" -s "name=$role" >/dev/null
   done
   create_group "$realm" '' ADMIN
   create_group "$realm" '' UYELER
@@ -368,7 +368,7 @@ make_person "$REALM" sub-leader-person /UYELER/ARGE/AIRLAB/SUB/LIDERLER
 make_person "$REALM" role-group-person
 make_person "$REALM" direct-person
 kcadm create roles -r "$REALM" -s name=USER >/dev/null
-kcadm add-roles -r "$REALM" --uusername direct-person --cclientid skymail --rolename skymail:mails:write >/dev/null
+kcadm add-roles -r "$REALM" --uusername direct-person --cclientid skynotify --rolename skynotify:mails:write >/dev/null
 kcadm add-roles -r "$REALM" --uusername direct-person --cclientid forms --rolename skyforms:access >/dev/null
 kcadm add-roles -r "$REALM" --uusername direct-person --rolename USER >/dev/null
 kcadm add-roles -r "$REALM" --gpath /UYELER --rolename USER >/dev/null
@@ -417,44 +417,44 @@ printf '    --apply made /ROLLER and the 15 leaves (attributes, roles, no member
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='role-groups: a member carries the role'
-[[ $(token_roles "$REALM" role-group-person skymail) == '[]' ]] || fail 'the person holds a skymail role before joining'
+[[ $(token_roles "$REALM" role-group-person skynotify) == '[]' ]] || fail 'the person holds a skynotify role before joining'
 person_id=$(kcadm get users -r "$REALM" -q username=role-group-person -q exact=true | jq -r '.[0].id')
-kcadm update "users/$person_id/groups/$(group_id "$REALM" /ROLLER/SKYMAIL-ACCESS)" -r "$REALM" -n -b '{}' >/dev/null
-[[ $(token_roles "$REALM" role-group-person skymail) == '["skymail:access"]' ]] \
-  || fail "a member of /ROLLER/SKYMAIL-ACCESS does not carry exactly skymail:access: $(token_roles "$REALM" role-group-person skymail)"
-printf '    a member of /ROLLER/SKYMAIL-ACCESS carries skymail:access in the token\n'
+kcadm update "users/$person_id/groups/$(group_id "$REALM" /ROLLER/SKYNOTIFY-ACCESS)" -r "$REALM" -n -b '{}' >/dev/null
+[[ $(token_roles "$REALM" role-group-person skynotify) == '["skynotify:access"]' ]] \
+  || fail "a member of /ROLLER/SKYNOTIFY-ACCESS does not carry exactly skynotify:access: $(token_roles "$REALM" role-group-person skynotify)"
+printf '    a member of /ROLLER/SKYNOTIFY-ACCESS carries skynotify:access in the token\n'
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='role-groups: drift repaired, the rest reported and kept'
 forms_access=$(group_id "$REALM" /ROLLER/FORMS-ACCESS)
 kcadm delete "groups/$forms_access/role-mappings/clients/$(client_uuid "$REALM" forms)" -r "$REALM" \
   -b "$(role_body "$REALM" forms skyforms:access)" >/dev/null
-kcadm create "groups/$forms_access/role-mappings/clients/$(client_uuid "$REALM" skymail)" -r "$REALM" \
-  -b "$(role_body "$REALM" skymail skymail:access)" >/dev/null
+kcadm create "groups/$forms_access/role-mappings/clients/$(client_uuid "$REALM" skynotify)" -r "$REALM" \
+  -b "$(role_body "$REALM" skynotify skynotify:access)" >/dev/null
 kcadm update "groups/$(group_id "$REALM" /ROLLER/PLACE-ADMIN)" -r "$REALM" -s 'attributes.display_name_tr=["eski"]' >/dev/null
-create_group "$REALM" /ROLLER/SKYMAIL-ACCESS NESTED
+create_group "$REALM" /ROLLER/SKYNOTIFY-ACCESS NESTED
 create_group "$REALM" /ROLLER OTHER
 kcadm add-roles -r "$REALM" --gpath /ROLLER --rolename USER >/dev/null
 checked=$(run_expecting 0 role-groups.sh "$REALM")
 expect_line "$checked" 'would map forms/skyforms:access to /ROLLER/FORMS-ACCESS' 'the taken role was not planned back'
 expect_line "$checked" 'would write display_name_tr and description_tr of /ROLLER/PLACE-ADMIN' 'the changed attribute was not planned back'
-expect_line "$checked" 'WARNING: /ROLLER/FORMS-ACCESS also holds skymail/skymail:access' 'the extra role was not reported'
-expect_line "$checked" 'WARNING: /ROLLER/SKYMAIL-ACCESS has 1 subgroup(s)' 'the subgroup was not reported'
+expect_line "$checked" 'WARNING: /ROLLER/FORMS-ACCESS also holds skynotify/skynotify:access' 'the extra role was not reported'
+expect_line "$checked" 'WARNING: /ROLLER/SKYNOTIFY-ACCESS has 1 subgroup(s)' 'the subgroup was not reported'
 expect_line "$checked" 'WARNING: /ROLLER/OTHER is not in role-groups.json; left as it is' 'the unlisted group was not reported'
 expect_line "$checked" 'WARNING: /ROLLER itself holds roles (realm/USER)' 'the role on the root was not reported'
 expect_line "$checked" 'check: 2 change(s) pending, 4 warning(s), 0 problem(s)' 'the drift was not counted'
 applied=$(run_expecting 0 role-groups.sh "$REALM" --apply)
 expect_line "$applied" 'applied 2 change(s), 4 warning(s), 0 problem(s)' 'the drift was not repaired'
-[[ $(group_roles "$REALM" /ROLLER/FORMS-ACCESS) == '["forms/skyforms:access","skymail/skymail:access"]' ]] \
+[[ $(group_roles "$REALM" /ROLLER/FORMS-ACCESS) == '["forms/skyforms:access","skynotify/skynotify:access"]' ]] \
   || fail "the repair took the extra role away or did not map the listed one: $(group_roles "$REALM" /ROLLER/FORMS-ACCESS)"
-group_exists "$REALM" /ROLLER/SKYMAIL-ACCESS/NESTED || fail 'the subgroup was removed'
+group_exists "$REALM" /ROLLER/SKYNOTIFY-ACCESS/NESTED || fail 'the subgroup was removed'
 group_exists "$REALM" /ROLLER/OTHER || fail 'the unlisted group was removed'
 [[ $(group_roles "$REALM" /ROLLER) == '["realm/USER"]' ]] || fail 'the role on the root was taken away'
-[[ $(kcadm get "groups/$(group_id "$REALM" /ROLLER/SKYMAIL-ACCESS)/members" -r "$REALM" | jq -r '[.[].username] | join(",")') == role-group-person ]] \
+[[ $(kcadm get "groups/$(group_id "$REALM" /ROLLER/SKYNOTIFY-ACCESS)/members" -r "$REALM" | jq -r '[.[].username] | join(",")') == role-group-person ]] \
   || fail 'the run changed the members of a role group'
-kcadm delete "groups/$forms_access/role-mappings/clients/$(client_uuid "$REALM" skymail)" -r "$REALM" \
-  -b "$(role_body "$REALM" skymail skymail:access)" >/dev/null
-kcadm delete "groups/$(group_id "$REALM" /ROLLER/SKYMAIL-ACCESS/NESTED)" -r "$REALM" >/dev/null
+kcadm delete "groups/$forms_access/role-mappings/clients/$(client_uuid "$REALM" skynotify)" -r "$REALM" \
+  -b "$(role_body "$REALM" skynotify skynotify:access)" >/dev/null
+kcadm delete "groups/$(group_id "$REALM" /ROLLER/SKYNOTIFY-ACCESS/NESTED)" -r "$REALM" >/dev/null
 kcadm delete "groups/$(group_id "$REALM" /ROLLER/OTHER)" -r "$REALM" >/dev/null
 kcadm remove-roles -r "$REALM" --gpath /ROLLER --rolename USER >/dev/null
 printf '    drift repaired (a mapping, an attribute); extra role, subgroup, unlisted group and root role reported and kept\n'
@@ -463,9 +463,9 @@ printf '    drift repaired (a mapping, an attribute); extra role, subgroup, unli
 CURRENT_STAGE='role-groups: the audit counts, it names nobody'
 # core's RolePlacement refuses a role on a Privileged root's subgroup (a YK duty group) and on a role
 # group with groups under it: the audit lists both, next to /UYELER.
-create_group "$REALM" /ROLLER/SKYMAIL-ACCESS NESTED
-kcadm create "groups/$(group_id "$REALM" /UYELER/YK/BASKAN)/role-mappings/clients/$(client_uuid "$REALM" skymail)" -r "$REALM" \
-  -b "$(role_body "$REALM" skymail skymail:access)" >/dev/null
+create_group "$REALM" /ROLLER/SKYNOTIFY-ACCESS NESTED
+kcadm create "groups/$(group_id "$REALM" /UYELER/YK/BASKAN)/role-mappings/clients/$(client_uuid "$REALM" skynotify)" -r "$REALM" \
+  -b "$(role_body "$REALM" skynotify skynotify:access)" >/dev/null
 # A top team's Leader group holds admin roles by name only: skycloud:access (every top team) and a
 # site's cms:access for that site's own teams (AIRLAB is ArtLab's lab team, not YıldızJam's).
 for site in frontend-artlab frontend-yildizjam; do
@@ -483,15 +483,15 @@ for path in /ADMIN /UYELER/YK; do
     -r "$REALM" -b "$(role_body "$REALM" skycloud admin)" >/dev/null
 done
 audited=$(run_expecting 0 role-groups.sh "$REALM" --audit)
-expect_line "$audited" 'audit: skymail/skymail:mails:write: 1 person(s) directly; groups: /ROLLER/SKYMAIL-MAILS-WRITE' 'the per-role count is wrong'
+expect_line "$audited" 'audit: skynotify/skynotify:mails:write: 1 person(s) directly; groups: /ROLLER/SKYNOTIFY-MAILS-WRITE' 'the per-role count is wrong'
 expect_line "$audited" 'audit K1: 1 person(s) hold admin or unclassified client roles directly, 1 person(s) hold realm roles directly' 'K1 is wrong'
 expect_line "$audited" 'audit K1: 1 person(s) hold app roles directly (panel assignments' 'K1 did not count the app role apart'
 expect_line "$audited" 'audit K4: 4 group(s) hold roles outside the allowed places:' 'K4 is wrong'
 expect_line "$audited" 'audit K4:   /UYELER: realm/USER' 'K4 did not name /UYELER'
-expect_line "$audited" 'audit K4:   /ROLLER/SKYMAIL-ACCESS: skymail/skymail:access' 'K4 did not name the role group with a subgroup'
-expect_line "$audited" 'audit K4:   /UYELER/YK/BASKAN: skymail/skymail:access' 'K4 did not name the YK duty group'
+expect_line "$audited" 'audit K4:   /ROLLER/SKYNOTIFY-ACCESS: skynotify/skynotify:access' 'K4 did not name the role group with a subgroup'
+expect_line "$audited" 'audit K4:   /UYELER/YK/BASKAN: skynotify/skynotify:access' 'K4 did not name the YK duty group'
 expect_line "$audited" 'audit K4:   /UYELER/ARGE/AIRLAB/LIDERLER: frontend-yildizjam/cms:access' 'K4 did not name another site'"'"'s cms:access'
-reject_line "$audited" 'audit K4:   /ROLLER/SKYMAIL-MAILS' 'K4 reported a leaf role group'
+reject_line "$audited" 'audit K4:   /ROLLER/SKYNOTIFY-MAILS' 'K4 reported a leaf role group'
 reject_line "$audited" 'audit K4:   /UYELER/ARGE/AIRLAB/KOORDINATORLER' 'K4 reported skycloud:access on a top team Leader group'
 reject_line "$audited" 'audit K4:   /ADMIN' 'K4 reported SkyCloud'"'"'s admin on ADMIN'
 reject_line "$audited" 'audit K4:   /UYELER/YK:' 'K4 reported SkyCloud'"'"'s admin on YK'
@@ -501,9 +501,9 @@ for path in /ADMIN /UYELER/YK; do
   kcadm delete "groups/$(group_id "$REALM" "$path")/role-mappings/clients/$(client_uuid "$REALM" skycloud)" \
     -r "$REALM" -b "$(role_body "$REALM" skycloud admin)" >/dev/null
 done
-kcadm delete "groups/$(group_id "$REALM" /ROLLER/SKYMAIL-ACCESS/NESTED)" -r "$REALM" >/dev/null
-kcadm delete "groups/$(group_id "$REALM" /UYELER/YK/BASKAN)/role-mappings/clients/$(client_uuid "$REALM" skymail)" -r "$REALM" \
-  -b "$(role_body "$REALM" skymail skymail:access)" >/dev/null
+kcadm delete "groups/$(group_id "$REALM" /ROLLER/SKYNOTIFY-ACCESS/NESTED)" -r "$REALM" >/dev/null
+kcadm delete "groups/$(group_id "$REALM" /UYELER/YK/BASKAN)/role-mappings/clients/$(client_uuid "$REALM" skynotify)" -r "$REALM" \
+  -b "$(role_body "$REALM" skynotify skynotify:access)" >/dev/null
 for site in frontend-artlab frontend-yildizjam; do
   kcadm delete "clients/$(client_uuid "$REALM" "$site")" -r "$REALM" >/dev/null
 done
@@ -516,18 +516,18 @@ printf '    --audit: per-role counts, K1 and K4 (core'"'"'s placement rule) with
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='role-groups: a default group under /ROLLER and a team-like name are refused'
-mail_access=$(group_id "$REALM" /ROLLER/SKYMAIL-ACCESS)
+mail_access=$(group_id "$REALM" /ROLLER/SKYNOTIFY-ACCESS)
 kcadm update "realms/$REALM/default-groups/$mail_access" -n -b '{}' >/dev/null
 before=$(events "$REALM")
 refused=$(run_expecting 1 role-groups.sh "$REALM" --apply)
-expect_line "$refused" 'PROBLEM: the default group /ROLLER/SKYMAIL-ACCESS is at or under /ROLLER' 'the default group was not refused'
+expect_line "$refused" 'PROBLEM: the default group /ROLLER/SKYNOTIFY-ACCESS is at or under /ROLLER' 'the default group was not refused'
 [[ $(events "$REALM") == "$before" ]] || fail 'the run wrote something next to a default group under /ROLLER'
 kcadm delete "realms/$REALM/default-groups/$mail_access" >/dev/null
 create_group "$REALM" /UYELER/ARGE LISTS
 create_group "$REALM" /UYELER/ARGE/AIRLAB MAILS
 refused=$(run_expecting 1 role-groups.sh "$REALM")
-expect_line "$refused" 'PROBLEM: /ROLLER/SKYMAIL-LISTS-READ: the name contains the team code LISTS' 'a leaf named like a top team was not refused'
-expect_line "$refused" 'PROBLEM: /ROLLER/SKYMAIL-MAILS-READ: the name contains the team code MAILS' 'a leaf named like a Sub-team was not refused'
+expect_line "$refused" 'PROBLEM: /ROLLER/SKYNOTIFY-LISTS-READ: the name contains the team code LISTS' 'a leaf named like a top team was not refused'
+expect_line "$refused" 'PROBLEM: /ROLLER/SKYNOTIFY-MAILS-READ: the name contains the team code MAILS' 'a leaf named like a Sub-team was not refused'
 reject_line "$refused" 'the team code LIDERLER' 'a Leader group was taken for a team code'
 kcadm delete "groups/$(group_id "$REALM" /UYELER/ARGE/LISTS)" -r "$REALM" >/dev/null
 kcadm delete "groups/$(group_id "$REALM" /UYELER/ARGE/AIRLAB/MAILS)" -r "$REALM" >/dev/null
@@ -638,16 +638,16 @@ printf '    a catalogue whose initial assignment names an admin role is refused 
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='app-assignments: every mapping in the code area or the panel area'
-# The panel area: the Forms seat on a top team, SkyMail on a Sub-team, the Forms seat on direct-person.
+# The panel area: the Forms seat on a top team, SkyNotify on a Sub-team, the Forms seat on direct-person.
 # Outside it: an admin role on a top team, an app role on an area. /ADMIN holds the Forms seat (code).
 grant_group() { # grant_group PATH CLIENT ROLE
   kcadm create "groups/$(group_id "$REALM" "$1")/role-mappings/clients/$(client_uuid "$REALM" "$2")" -r "$REALM" \
     -b "$(role_body "$REALM" "$2" "$3")" >/dev/null
 }
 grant_group /UYELER/ARGE/AIRLAB forms skyforms:access
-grant_group /UYELER/ARGE/AIRLAB/SUB skymail skymail:access
-grant_group /UYELER/ARGE/AIRLAB skymail skymail:mails:write
-grant_group /UYELER/ARGE skymail skymail:access
+grant_group /UYELER/ARGE/AIRLAB/SUB skynotify skynotify:access
+grant_group /UYELER/ARGE/AIRLAB skynotify skynotify:mails:write
+grant_group /UYELER/ARGE skynotify skynotify:access
 grant_group /ADMIN forms skyforms:access
 # SkyCloud's admin: the reconciler expects it on ADMIN and YK (Yusuf, 2026-10-24); ADMIN holds it, YK
 # not yet. It stays on ADMIN for the core-roles stage at the end.
@@ -690,22 +690,22 @@ sorted=$(reconcile_step 1 app-assignments -e "KEYCLOAK_RECONCILE_KCADM_CONFIG=$K
   -e KEYCLOAK_APP_ASSIGNMENTS_ALARM=true)
 reject_line "$sorted" 'NOTE: no --privileged-file' 'the reconciler'"'"'s step did not pass its expectations'
 expect_line "$sorted" '[app-assignments] PANEL|/UYELER/ARGE/AIRLAB|forms|skyforms:access' 'the top team'"'"'s Forms seat is not the panel'"'"'s'
-expect_line "$sorted" '[app-assignments] PANEL|/UYELER/ARGE/AIRLAB/SUB|skymail|skymail:access' 'the Sub-team'"'"'s SkyMail is not the panel'"'"'s'
+expect_line "$sorted" '[app-assignments] PANEL|/UYELER/ARGE/AIRLAB/SUB|skynotify|skynotify:access' 'the Sub-team'"'"'s SkyNotify is not the panel'"'"'s'
 expect_line "$sorted" '[app-assignments] PANEL|kişi:1|forms|skyforms:access' 'the person'"'"'s Forms seat is not a panel assignment'
-expect_line "$sorted" '[app-assignments] KOD|kişi:1|skymail|skymail:mails:write|hayır|var' 'the person'"'"'s admin role is not the code area'"'"'s'
-expect_line "$sorted" '[app-assignments] KOD|/UYELER/ARGE/AIRLAB|skymail|skymail:mails:write|hayır|var' 'the admin role on a team is not reported'
-expect_line "$sorted" 'PROBLEM: skymail/skymail:mails:write (an admin, unclassified or realm role) is mapped to /UYELER/ARGE/AIRLAB' 'the admin role on a team is no PROBLEM'
-expect_line "$sorted" '[app-assignments] KOD|/UYELER/ARGE|skymail|skymail:access|hayır|var' 'the app role on an area is not the code area'"'"'s'
-expect_line "$sorted" 'PROBLEM: skymail/skymail:access (an app role) is mapped to /UYELER/ARGE, which is no panel target' 'the app role on an area is no PROBLEM'
-expect_line "$sorted" '[app-assignments] KOD|/ROLLER/SKYMAIL-ACCESS|skymail|skymail:access|evet|var' 'a role group'"'"'s role is not as expected'
+expect_line "$sorted" '[app-assignments] KOD|kişi:1|skynotify|skynotify:mails:write|hayır|var' 'the person'"'"'s admin role is not the code area'"'"'s'
+expect_line "$sorted" '[app-assignments] KOD|/UYELER/ARGE/AIRLAB|skynotify|skynotify:mails:write|hayır|var' 'the admin role on a team is not reported'
+expect_line "$sorted" 'PROBLEM: skynotify/skynotify:mails:write (an admin, unclassified or realm role) is mapped to /UYELER/ARGE/AIRLAB' 'the admin role on a team is no PROBLEM'
+expect_line "$sorted" '[app-assignments] KOD|/UYELER/ARGE|skynotify|skynotify:access|hayır|var' 'the app role on an area is not the code area'"'"'s'
+expect_line "$sorted" 'PROBLEM: skynotify/skynotify:access (an app role) is mapped to /UYELER/ARGE, which is no panel target' 'the app role on an area is no PROBLEM'
+expect_line "$sorted" '[app-assignments] KOD|/ROLLER/SKYNOTIFY-ACCESS|skynotify|skynotify:access|evet|var' 'a role group'"'"'s role is not as expected'
 expect_line "$sorted" '[app-assignments] KOD|/UYELER/ARGE/AIRLAB/LIDERLER|skycloud|skycloud:access|evet|var' 'the Leader group'"'"'s SkyCloud is not as expected'
 expect_line "$sorted" '[app-assignments] KOD|/UYELER/ARGE/AIRLAB/SUB/LIDERLER|skycloud|skycloud:access|hayır|var' 'SkyCloud on a Sub-team'"'"'s Leader group is not reported'
 expect_line "$sorted" '[app-assignments] KOD|/UYELER|realm|USER|hayır|var' 'the realm role on /UYELER is not reported'
 expect_line "$sorted" '[app-assignments] KOD|/ADMIN|forms|skyforms:access|evet|var' 'the reconciler does not expect the Forms seat on ADMIN'
 expect_line "$sorted" '[app-assignments] KOD|/UYELER/YK|forms|skyforms:access|evet|yok' 'the missing Forms seat of YK is not reported'
-expect_line "$sorted" '[app-assignments] KOD|/UYELER/YK|skymail|skymail:mails:approve|evet|yok' 'the missing SkyMail approver role of YK is not reported'
+expect_line "$sorted" '[app-assignments] KOD|/UYELER/YK|skynotify|skynotify:mails:approve|evet|yok' 'the missing SkyNotify approver role of YK is not reported'
 expect_line "$sorted" '[app-assignments] KOD|/UYELER/YK|forms|skyforms:*|evet|yok' 'the missing skyforms:* of YK is not reported'
-reject_line "$sorted" 'KOD|/ADMIN|skymail|skymail:mails:approve' 'ADMIN was expected to approve (YK alone does)'
+reject_line "$sorted" 'KOD|/ADMIN|skynotify|skynotify:mails:approve' 'ADMIN was expected to approve (YK alone does)'
 expect_line "$sorted" '[app-assignments] KOD|/ADMIN|skycloud|admin|evet|var' 'the reconciler does not expect SkyCloud'"'"'s admin on ADMIN'
 expect_line "$sorted" '[app-assignments] KOD|/UYELER/YK|skycloud|admin|evet|yok' 'the missing SkyCloud admin of YK is not reported'
 expect_line "$sorted" '[app-assignments] KOD|/ROLLER/SKYCLOUD-ADMIN|skycloud|admin|evet|var' 'the SkyCloud admin role group is not as expected'
@@ -735,35 +735,35 @@ expect_line "$sorted" '[app-assignments] KOD|/ADMIN|frontend-arge|cms:access|kar
 expect_line "$sorted" '[app-assignments] KOD|/UYELER/ARGE/AIRLAB/LIDERLER|frontend-arge|cms:access|karar-bekliyor|var' 'the Leader group'"'"'s frontend-arge role is not pending'
 reject_line "$sorted" 'PROBLEM: frontend-arge' 'a pending frontend-arge role was a PROBLEM'
 expect_line "$sorted" 'PANEL: SkyForms (forms): 1 group assignment(s), 1 person assignment(s)' 'the SkyForms panel count is wrong'
-expect_line "$sorted" 'PANEL: SkyMail (skymail): 1 group assignment(s), 0 person assignment(s)' 'the SkyMail panel count is wrong'
+expect_line "$sorted" 'PANEL: SkyNotify (skynotify): 1 group assignment(s), 0 person assignment(s)' 'the SkyNotify panel count is wrong'
 reject_line "$sorted" 'PANEL|/ROLLER' 'a role group was taken for the panel area'
 reject_line "$sorted" 'PANEL|/ADMIN' 'a Privileged root was taken for the panel area'
 expect_line "$sorted" 'check: 0 change(s) pending' 'the check planned a change'
 # The drift summary: one SAPMA line a drift, of its class.
-expect_line "$sorted" '[app-assignments] SAPMA|S1|kişi:1|skymail|skymail:mails:write' 'the person'"'"'s admin role is no S1'
+expect_line "$sorted" '[app-assignments] SAPMA|S1|kişi:1|skynotify|skynotify:mails:write' 'the person'"'"'s admin role is no S1'
 expect_line "$sorted" '[app-assignments] SAPMA|S1-realm|kişi:' 'the person'"'"'s realm role is no S1-realm'
-expect_line "$sorted" '[app-assignments] SAPMA|S2b|/UYELER/ARGE/AIRLAB|skymail|skymail:mails:write' 'the admin role on a team is no S2b'
+expect_line "$sorted" '[app-assignments] SAPMA|S2b|/UYELER/ARGE/AIRLAB|skynotify|skynotify:mails:write' 'the admin role on a team is no S2b'
 expect_line "$sorted" '[app-assignments] SAPMA|S2b|/UYELER/ARGE/AIRLAB/SUB/LIDERLER|skycloud|skycloud:access' 'SkyCloud on a Sub-team'"'"'s Leader group is no S2b'
-expect_line "$sorted" '[app-assignments] SAPMA|S2-fazla|/UYELER/ARGE|skymail|skymail:access' 'the app role on an area is no S2-fazla'
+expect_line "$sorted" '[app-assignments] SAPMA|S2-fazla|/UYELER/ARGE|skynotify|skynotify:access' 'the app role on an area is no S2-fazla'
 expect_line "$sorted" '[app-assignments] SAPMA|S2-fazla|/UYELER|realm|USER' 'the realm role on /UYELER is no S2-fazla'
 expect_line "$sorted" '[app-assignments] SAPMA|S2-eksik|/UYELER/YK|forms|skyforms:access' 'the missing Forms seat of YK is no S2-eksik'
 expect_line "$sorted" '[app-assignments] SAPMA|S5|/UYELER/ORGANIZASYON/ARTLAB|-|-' 'the top team without a Leader group is no S5'
 reject_line "$sorted" 'SAPMA|S5|/UYELER/ARGE/AIRLAB|' 'a top team with an enabled Leader was taken for one without'
 reject_line "$sorted" 'SAPMA|S1|kişi:1|forms' 'a person'"'"'s panel seat was taken for drift'
 reject_line "$sorted" 'SAPMA|S2-fazla|/UYELER/ARGE/AIRLAB|forms' 'a team'"'"'s panel seat was taken for drift'
-reject_line "$sorted" 'SAPMA|S2b|/UYELER/ARGE/AIRLAB/SUB|skymail' 'a Sub-team'"'"'s panel SkyMail was taken for drift'
+reject_line "$sorted" 'SAPMA|S2b|/UYELER/ARGE/AIRLAB/SUB|skynotify' 'a Sub-team'"'"'s panel SkyNotify was taken for drift'
 reject_line "$(grep -F 'SAPMA|' <<<"$sorted")" '|frontend-arge|' 'a pending frontend-arge role was taken for drift'
-reject_line "$(grep -F 'SAPMA|' <<<"$sorted")" 'SAPMA|S2-fazla|/ROLLER/SKYMAIL-ACCESS' 'a role group'"'"'s expected role was taken for drift'
+reject_line "$(grep -F 'SAPMA|' <<<"$sorted")" 'SAPMA|S2-fazla|/ROLLER/SKYNOTIFY-ACCESS' 'a role group'"'"'s expected role was taken for drift'
 expect_line "$sorted" '[app-assignments] SAPMA: S1=1 S1-realm=' 'the drift summary is missing'
 expect_line "$sorted" '(bilgi) S2-eksik=' 'a person'"'"'s realm role counts towards the alarm by default'
 for name in direct-person leader-person role-group-person sub-leader-person; do
   reject_line "$sorted" "$name" 'the check printed a person'
 done
 [[ $(events "$REALM") == "$before" ]] || fail 'the check wrote something'
-kcadm delete "groups/$(group_id "$REALM" /UYELER/ARGE/AIRLAB)/role-mappings/clients/$(client_uuid "$REALM" skymail)" -r "$REALM" \
-  -b "$(role_body "$REALM" skymail skymail:mails:write)" >/dev/null
-kcadm delete "groups/$(group_id "$REALM" /UYELER/ARGE)/role-mappings/clients/$(client_uuid "$REALM" skymail)" -r "$REALM" \
-  -b "$(role_body "$REALM" skymail skymail:access)" >/dev/null
+kcadm delete "groups/$(group_id "$REALM" /UYELER/ARGE/AIRLAB)/role-mappings/clients/$(client_uuid "$REALM" skynotify)" -r "$REALM" \
+  -b "$(role_body "$REALM" skynotify skynotify:mails:write)" >/dev/null
+kcadm delete "groups/$(group_id "$REALM" /UYELER/ARGE)/role-mappings/clients/$(client_uuid "$REALM" skynotify)" -r "$REALM" \
+  -b "$(role_body "$REALM" skynotify skynotify:access)" >/dev/null
 kcadm delete "clients/$(client_uuid "$REALM" frontend-arge)" -r "$REALM" >/dev/null
 # The panel's client and /UYELER/DK go: the core-roles stage at the end makes its own shape.
 kcadm delete "clients/$(client_uuid "$REALM" admin)" -r "$REALM" >/dev/null
@@ -800,10 +800,10 @@ planned=$(run_expecting 0 app-assignments.sh "$REALM" --seed)
 expect_line "$planned" 'top teams: 3, their Leader groups: 2' 'the top teams were not read from the tree'
 expect_line "$planned" 'YENI ATAMA /UYELER/ARGE/ALGOLAB forms skyforms:access (1 etkin üye)' 'ALGOLAB'"'"'s Forms seat was not planned with its enabled member'
 expect_line "$planned" 'YENI ATAMA /UYELER/ORGANIZASYON/ARTLAB forms skyforms:access (0 etkin üye)' 'ARTLAB'"'"'s Forms seat was not planned'
-for role in skymail:access skymail:templates:read; do
-  expect_line "$planned" "YENI ATAMA /UYELER/ARGE/AIRLAB/LIDERLER skymail $role (1 etkin üye)" "LIDERLER's $role was not planned"
-  expect_line "$planned" "YENI ATAMA /UYELER/ARGE/AIRLAB/KOORDINATORLER skymail $role (0 etkin üye)" "KOORDINATORLER's $role was not planned"
-  expect_line "$planned" "YENI ATAMA /UYELER/ARGE/ALGOLAB skymail $role (1 etkin üye)" "ALGOLAB's $role was not planned"
+for role in skynotify:access skynotify:templates:read; do
+  expect_line "$planned" "YENI ATAMA /UYELER/ARGE/AIRLAB/LIDERLER skynotify $role (1 etkin üye)" "LIDERLER's $role was not planned"
+  expect_line "$planned" "YENI ATAMA /UYELER/ARGE/AIRLAB/KOORDINATORLER skynotify $role (0 etkin üye)" "KOORDINATORLER's $role was not planned"
+  expect_line "$planned" "YENI ATAMA /UYELER/ARGE/ALGOLAB skynotify $role (1 etkin üye)" "ALGOLAB's $role was not planned"
 done
 reject_line "$planned" 'YENI ATAMA /UYELER/ARGE/AIRLAB forms' 'a team that holds the seat was planned again'
 reject_line "$planned" 'SUB/LIDERLER' 'a Sub-team Leader group was planned'
@@ -819,11 +819,11 @@ expect_line "$output" 'applied 8 change(s), 0 warning(s), 0 problem(s)' 'the ste
 expect_line "$output" 'realm attribute skylab.app-assignments-seeded=' 'the realm was not marked'
 [[ $(docker exec "$CONTAINER" stat -c %a /tmp/seed-backup.tsv) == 600 ]] || fail 'the backup is not mode 0600'
 [[ $(docker exec "$CONTAINER" wc -l </dev/null /tmp/seed-backup.tsv | cut -d' ' -f1) == 8 ]] || fail 'the backup does not hold eight lines'
-[[ $(group_roles "$REALM" /UYELER/ARGE/ALGOLAB) == '["forms/skyforms:access","skymail/skymail:access","skymail/skymail:templates:read"]' ]] \
-  || fail "ALGOLAB does not hold the seat and the SkyMail pair: $(group_roles "$REALM" /UYELER/ARGE/ALGOLAB)"
+[[ $(group_roles "$REALM" /UYELER/ARGE/ALGOLAB) == '["forms/skyforms:access","skynotify/skynotify:access","skynotify/skynotify:templates:read"]' ]] \
+  || fail "ALGOLAB does not hold the seat and the SkyNotify pair: $(group_roles "$REALM" /UYELER/ARGE/ALGOLAB)"
 [[ $(group_roles "$REALM" /UYELER/ORGANIZASYON/ARTLAB) == '["forms/skyforms:access"]' ]] || fail 'ARTLAB does not hold the Forms seat'
-[[ $(token_roles "$REALM" leader-person skymail) == '["skymail:access","skymail:templates:read"]' ]] \
-  || fail "the Leader does not carry the SkyMail pair: $(token_roles "$REALM" leader-person skymail)"
+[[ $(token_roles "$REALM" leader-person skynotify) == '["skynotify:access","skynotify:templates:read"]' ]] \
+  || fail "the Leader does not carry the SkyNotify pair: $(token_roles "$REALM" leader-person skynotify)"
 [[ $(token_roles "$REALM" leader-person forms) == '["skyforms:access"]' ]] || fail 'the Leader does not inherit the team'"'"'s Forms seat'
 [[ $(token_roles "$REALM" algolab-member forms) == '["skyforms:access"]' ]] || fail 'the ALGOLAB member does not carry the Forms seat'
 again=$(run_expecting 0 app-assignments.sh "$REALM" --seed)
@@ -855,14 +855,14 @@ reject_line "$refused" 'YENI ATAMA' 'a refused run planned assignments'
 [[ $(events "$REALM") == "$before" ]] || fail 'the refused run wrote something'
 kcadm delete "realms/$REALM/default-groups/$(group_id "$REALM" /UYELER/ORGANIZASYON/ARTLAB)" >/dev/null
 before=$(events "$REALM")
-printf '{"apps":[{"client":"skymail","name":"SkyMail","assignmentRequired":true,"roles":["skymail:access"]}],"initialAssignments":[{"client":"skymail","roles":["skymail:access"],"target":"/UYELER/YK/BASKAN"}]}\n' \
+printf '{"apps":[{"client":"skynotify","name":"SkyNotify","assignmentRequired":true,"roles":["skynotify:access"]}],"initialAssignments":[{"client":"skynotify","roles":["skynotify:access"],"target":"/UYELER/YK/BASKAN"}]}\n' \
   | docker exec -i "$CONTAINER" sh -c 'cat > /tmp/privileged-target.json'
 trap - ERR
 refused=$(docker exec -e KEYCLOAK_REALM=$REALM -e KEYCLOAK_APP_ASSIGNMENTS_FILE=/tmp/privileged-target.json "$CONTAINER" \
   bash "$IN_CONTAINER_CONFIG/app-assignments.sh" --kcadm-config "$KCADM_CONFIG" --seed --apply 2>&1) && status=0 || status=$?
 trap 'on_error "$LINENO"' ERR
 [[ $status == 1 ]] || { printf '%s\n' "$refused" >&2; fail "a Privileged target was not refused (exit $status)"; }
-expect_line "$refused" 'PROBLEM: refusing /UYELER/YK/BASKAN as a target of skymail' 'the Privileged target was not named'
+expect_line "$refused" 'PROBLEM: refusing /UYELER/YK/BASKAN as a target of skynotify' 'the Privileged target was not named'
 refused=$(run_expecting 1 app-assignments.sh "$SANDBOX" --seed)
 expect_line "$refused" "PROBLEM: the target /UYELER/ARGE/ALGOLAB does not exist in realm $SANDBOX" 'the missing target was not refused'
 [[ $(events "$REALM") == "$before" ]] || fail 'a refused run wrote something'
@@ -1140,7 +1140,7 @@ seeded=$(docker exec -e KEYCLOAK_ADMIN_URL=http://localhost:8080 -e KEYCLOAK_REA
   "$CONTAINER" bash "$IN_CONTAINER_CONFIG/reconcile-account-center.sh" 2>&1) && status=0 || status=$?
 trap 'on_error "$LINENO"' ERR
 [[ $status == 0 ]] || { printf '%s\n' "$seeded" >&2; fail "the sandbox core-roles step failed (exit $status)"; }
-expect_line "$seeded" '[reconcile] skymail role skymail:access: seeded once to /ADMIN,/UYELER/YK' 'the sandbox did not seed SkyMail'"'"'s access'
+expect_line "$seeded" '[reconcile] skynotify role skynotify:access: seeded once to /ADMIN,/UYELER/YK' 'the sandbox did not seed SkyNotify'"'"'s access'
 make_person "$SANDBOX" sandbox-leader /UYELER/ARGE/AIRLAB/LIDERLER
 create_group "$SANDBOX" /UYELER/ORGANIZASYON/ARTLAB LIDERLER
 make_person "$SANDBOX" sandbox-artlab-leader /UYELER/ORGANIZASYON/ARTLAB/LIDERLER
@@ -1152,41 +1152,41 @@ reject_line "$clean" 'not measured' 'the clean run was taken for one not measure
 expect_line "$clean" 'check: 0 change(s) pending' 'the check planned a change'
 [[ $(events "$SANDBOX") == "$sandbox_before" ]] || fail 'the alarm wrote something'
 printf '    alarm: the sandbox without drift exits 0 (alarm=0), writes nothing\n'
-# The panel takes skymail:mails:write from ADMIN (its seed set ADMIN and YK): BILGI. skymail:mails:approve
+# The panel takes skynotify:mails:write from ADMIN (its seed set ADMIN and YK): BILGI. skynotify:mails:approve
 # is seeded to YK alone: on a sub-group of /UYELER/YK it is the panel's (BILGI), on ADMIN and on a
-# sub-group of ADMIN outside its seed set (ekip-yetkileri ticket 17: S2-fazla). skymail:templates:write is
+# sub-group of ADMIN outside its seed set (ekip-yetkileri ticket 17: S2-fazla). skynotify:templates:write is
 # in no Privileged list: on ADMIN it is the code area's drift.
-kcadm remove-roles -r "$SANDBOX" --gpath /ADMIN --cclientid skymail --rolename skymail:mails:write >/dev/null
-kcadm add-roles -r "$SANDBOX" --gpath /ADMIN --cclientid skymail --rolename skymail:mails:approve >/dev/null
-kcadm add-roles -r "$SANDBOX" --gpath /ADMIN --cclientid skymail --rolename skymail:templates:write >/dev/null
+kcadm remove-roles -r "$SANDBOX" --gpath /ADMIN --cclientid skynotify --rolename skynotify:mails:write >/dev/null
+kcadm add-roles -r "$SANDBOX" --gpath /ADMIN --cclientid skynotify --rolename skynotify:mails:approve >/dev/null
+kcadm add-roles -r "$SANDBOX" --gpath /ADMIN --cclientid skynotify --rolename skynotify:templates:write >/dev/null
 create_group "$SANDBOX" /ADMIN ALT
 create_group "$SANDBOX" /UYELER/YK ALT
 # By id: kcadm's --gpath search refuses a sub-group path ("not an exact match").
 for path in /ADMIN/ALT /UYELER/YK/ALT; do
-  kcadm create "groups/$(group_id "$SANDBOX" "$path")/role-mappings/clients/$(client_uuid "$SANDBOX" skymail)" -r "$SANDBOX" \
-    -b "$(role_body "$SANDBOX" skymail skymail:mails:approve)" >/dev/null
+  kcadm create "groups/$(group_id "$SANDBOX" "$path")/role-mappings/clients/$(client_uuid "$SANDBOX" skynotify)" -r "$SANDBOX" \
+    -b "$(role_body "$SANDBOX" skynotify skynotify:mails:approve)" >/dev/null
 done
 sandbox_before=$(events "$SANDBOX")
 changed=$(alarm_run 1)
-expect_line "$changed" '[app-assignments] BILGI|S2-tohum|/ADMIN|skymail|skymail:mails:write|eksik' \
+expect_line "$changed" '[app-assignments] BILGI|S2-tohum|/ADMIN|skynotify|skynotify:mails:write|eksik' \
   'a seeded role the panel took from a Privileged root is no BILGI line'
-expect_line "$changed" '[app-assignments] BILGI|S2-tohum|/UYELER/YK/ALT|skymail|skymail:mails:approve|fazla' \
+expect_line "$changed" '[app-assignments] BILGI|S2-tohum|/UYELER/YK/ALT|skynotify|skynotify:mails:approve|fazla' \
   'a seeded role the panel gave a sub-group of its seed set is no BILGI line'
-reject_line "$changed" 'SAPMA|S2-eksik|/ADMIN|skymail|skymail:mails:write' 'a panel change on a seeded Privileged role was taken for drift'
+reject_line "$changed" 'SAPMA|S2-eksik|/ADMIN|skynotify|skynotify:mails:write' 'a panel change on a seeded Privileged role was taken for drift'
 reject_line "$changed" 'SAPMA|S2-fazla|/UYELER/YK/ALT|' 'a panel change in a seed set was taken for drift'
-expect_line "$changed" '[app-assignments] SAPMA|S2-fazla|/ADMIN|skymail|skymail:mails:approve' \
+expect_line "$changed" '[app-assignments] SAPMA|S2-fazla|/ADMIN|skynotify|skynotify:mails:approve' \
   'a seeded role on a Privileged root outside its seed set is no S2-fazla'
-expect_line "$changed" '[app-assignments] SAPMA|S2-fazla|/ADMIN/ALT|skymail|skymail:mails:approve' \
+expect_line "$changed" '[app-assignments] SAPMA|S2-fazla|/ADMIN/ALT|skynotify|skynotify:mails:approve' \
   'a seeded role on a sub-group outside its seed set is no S2-fazla'
-reject_line "$changed" 'BILGI|S2-tohum|/ADMIN|skymail|skymail:mails:approve' 'a seeded role outside its seed set was taken for the panel'"'"'s'
+reject_line "$changed" 'BILGI|S2-tohum|/ADMIN|skynotify|skynotify:mails:approve' 'a seeded role outside its seed set was taken for the panel'"'"'s'
 reject_line "$changed" 'BILGI|S2-tohum|/ADMIN/ALT|' 'a seeded role outside its seed set was taken for the panel'"'"'s'
-expect_line "$changed" '[app-assignments] SAPMA|S2-fazla|/ADMIN|skymail|skymail:templates:write' \
+expect_line "$changed" '[app-assignments] SAPMA|S2-fazla|/ADMIN|skynotify|skynotify:templates:write' \
   'a role no seed covers on a Privileged root is no S2-fazla'
-reject_line "$changed" 'PROBLEM: skymail/skymail:mails:approve' 'a Privileged sub-group'"'"'s role was a PROBLEM'
+reject_line "$changed" 'PROBLEM: skynotify/skynotify:mails:approve' 'a Privileged sub-group'"'"'s role was a PROBLEM'
 expect_line "$changed" 'S2-eksik=0 S2-fazla=3 S2b=0 S3=0 S5=0 S2-tohum=2 (bilgi), alarm=3' \
   'the panel'"'"'s changes counted towards the alarm, or the code area'"'"'s did not'
 [[ $(events "$SANDBOX") == "$sandbox_before" ]] || fail 'the alarm wrote something'
-kcadm remove-roles -r "$SANDBOX" --gpath /ADMIN --cclientid skymail --rolename skymail:templates:write >/dev/null
+kcadm remove-roles -r "$SANDBOX" --gpath /ADMIN --cclientid skynotify --rolename skynotify:templates:write >/dev/null
 kcadm delete "groups/$(group_id "$SANDBOX" /ADMIN/ALT)" -r "$SANDBOX" >/dev/null
 kcadm delete "groups/$(group_id "$SANDBOX" /UYELER/YK/ALT)" -r "$SANDBOX" >/dev/null
 printf '    alarm: a seeded Privileged role changed in its seed set (/<NAME>, /UYELER/<NAME>, a sub-group) is BILGI (S2-tohum), never counted; outside its seed set or with no seed it is S2-fazla (exit 1)\n'

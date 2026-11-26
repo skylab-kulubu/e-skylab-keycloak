@@ -42,14 +42,14 @@ services:
     cap_drop:
       - ALL
 
-  skymail:
+  skynotify:
     image: node:22.22.1-bookworm-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9ed5bfaf3d
-    command: ["node", "/fixture/skymail-server.mjs"]
+    command: ["node", "/fixture/skynotify-server.mjs"]
     environment:
-      SKYMAIL_HTTP_PORT: 8080
-      SKYMAIL_SMTP_PORT: 1025
+      SKYNOTIFY_HTTP_PORT: 8080
+      SKYNOTIFY_SMTP_PORT: 1025
     volumes:
-      - ./skymail-server.mjs:/fixture/skymail-server.mjs:ro
+      - ./skynotify-server.mjs:/fixture/skynotify-server.mjs:ro
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -83,19 +83,19 @@ services:
       # The mailer client secret is written into the mounted file once the operator script
       # has created the client; the provider reads it on every token request.
       SKY_HARNESS: "1"
-      SKY_MAIL_ENABLED: "true"
-      SKY_MAIL_BASE_URL: http://skymail:8080
-      SKY_MAIL_CLIENT_ID: keycloak-mailer
-      SKY_MAIL_CLIENT_SECRET_FILE: /run/secrets/sky-mail/client.secret
-      SKY_MAIL_TOKEN_URL: http://keycloak:8080/realms/e-skylab-test/protocol/openid-connect/token
-      SKY_MAIL_TIMEOUT_MILLISECONDS: 2000
+      SKYNOTIFY_ENABLED: "true"
+      SKYNOTIFY_BASE_URL: http://skynotify:8080
+      SKYNOTIFY_CLIENT_ID: keycloak-mailer
+      SKYNOTIFY_CLIENT_SECRET_FILE: /run/secrets/skynotify/client.secret
+      SKYNOTIFY_TOKEN_URL: http://keycloak:8080/realms/e-skylab-test/protocol/openid-connect/token
+      SKYNOTIFY_TIMEOUT_MILLISECONDS: 2000
       # kcadm's JVM options (tests/kcadm-jvm.sh): every docker compose exec of kcadm.sh, and the
       # operator reconciliations run here, start the CLI with them. The server (kc.sh) ignores
       # KC_OPTS. run-integration.sh sets KCADM_COMPOSE_KC_OPTS; unset, kcadm runs as in production.
       KC_OPTS: ${KCADM_COMPOSE_KC_OPTS:-}
     volumes:
       - ./fixture-realm.json:/opt/keycloak/data/import/e-skylab-test-realm.json:ro
-      - ${TEST_STATE_DIR:?set the integration state directory}/sky-mail:/run/secrets/sky-mail:ro
+      - ${TEST_STATE_DIR:?set the integration state directory}/skynotify:/run/secrets/skynotify:ro
       # kcadm's AppCDS archive, written here once by the harness (tests/kcadm-jvm.sh).
       - ${TEST_STATE_DIR:?set the integration state directory}/kcadm-cds:/opt/kcadm-cds
     ports:
@@ -108,7 +108,7 @@ services:
         condition: service_healthy
       mailpit:
         condition: service_started
-      skymail:
+      skynotify:
         condition: service_started
 
   keycloak-config:

@@ -241,7 +241,7 @@ stage_admin_panel_hand_made() {
   [[ -n $AP_SECRET ]] || fail 'the fixture admin client has no client secret'
   lca_login "$AP_CLIENT" "$AP_REDIRECT" "$AP_SECRET" "$AP_USER" "$AP_PASSWORD" "$AP_PANEL_SCOPE"
   json_assert "$LCA_ACCESS_PAYLOAD" \
-    '((.aud | if type == "array" then . else [.] end) | index("skymail")) != null and ((.realm_access.roles // []) | index("offline_access")) != null and (.resource_access | has("skymail"))' \
+    '((.aud | if type == "array" then . else [.] end) | index("skynotify")) != null and ((.realm_access.roles // []) | index("offline_access")) != null and (.resource_access | has("skynotify"))' \
     'the full-scope control token lacks the foreign roles of the fixture person; the narrowing assertions would prove nothing'
 }
 
@@ -249,7 +249,7 @@ stage_admin_panel_hand_made() {
 # forms is reported missing. Then the client drifts before the second pass.
 stage_admin_panel_after_first_reconciliation() {
   CURRENT_STAGE='admin panel client: narrowed in place by the first reconciliation'
-  local log="$TEST_STATE_DIR/reconcile-first.log" scope_uuid mapper_uuid core_uuid skymail_uuid
+  local log="$TEST_STATE_DIR/reconcile-first.log" scope_uuid mapper_uuid core_uuid skynotify_uuid
   grep -Fq "[reconcile] client scope $AP_SCOPE: created" "$log" \
     || fail 'the first reconciliation did not create the admin panel audience scope'
   grep -Fq "[reconcile] WARNING: client forms does not exist in realm $V2_REALM; no forms role is in the scope of $AP_CLIENT" "$log" \
@@ -264,15 +264,15 @@ stage_admin_panel_after_first_reconciliation() {
   # foreign client role in it, the audience scope among the optional scopes, one audience mapper
   # into the ID token and a foreign mapper.
   core_uuid=$(lca_client_uuid core)
-  skymail_uuid=$(lca_client_uuid skymail)
+  skynotify_uuid=$(lca_client_uuid skynotify)
   scope_uuid=$(lca_scope_uuids "$AP_SCOPE")
   kcadm update "clients/$AP_UUID" -r "$V2_REALM" \
     -s fullScopeAllowed=true -s 'attributes."standard.token.exchange.enabled"=false' \
     -s 'attributes."client.session.max.lifespan"=""' >/dev/null
   kcadm delete "clients/$AP_UUID/scope-mappings/clients/$core_uuid" -r "$V2_REALM" \
     -b "$(v2_role_body "$core_uuid" url:read)" >/dev/null
-  kcadm create "clients/$AP_UUID/scope-mappings/clients/$skymail_uuid" -r "$V2_REALM" \
-    -b "$(v2_role_body "$skymail_uuid" skymail:access)" >/dev/null
+  kcadm create "clients/$AP_UUID/scope-mappings/clients/$skynotify_uuid" -r "$V2_REALM" \
+    -b "$(v2_role_body "$skynotify_uuid" skynotify:access)" >/dev/null
   kcadm create "clients/$AP_UUID/scope-mappings/realm" -r "$V2_REALM" \
     -b "$(kcadm get roles/offline_access -r "$V2_REALM" -c | jq -c '[{id, name}]')" >/dev/null
   kcadm delete "clients/$AP_UUID/default-client-scopes/$scope_uuid" -r "$V2_REALM" >/dev/null
@@ -299,7 +299,7 @@ stage_admin_panel_after_second_reconciliation() {
   grep -Eq "^\[reconcile\] protocol mappers of scope $scope_uuid: updated \(.*~skycms-audience" "$log" \
     || fail 'the second reconciliation did not repair the drifted skycms-audience mapper'
   grep -E "^\[reconcile\] role scope mappings of $AP_CLIENT \(every role of core, forms\): updated \(" "$log" \
-    | grep -F '+core/url:read' | grep -F -- '-realm/offline_access' | grep -Fq -- '-skymail/skymail:access' \
+    | grep -F '+core/url:read' | grep -F -- '-realm/offline_access' | grep -Fq -- '-skynotify/skynotify:access' \
     || fail 'the second reconciliation did not restore the role scope mappings of the admin client'
   ap_assert_contract core
 }
@@ -387,8 +387,8 @@ stage_admin_panel_tokens() {
   for audience in "${AP_APIS[@]}"; do
     ap_assert_exchanged "$token" "$payload" "$audience" "$AP_USER"
   done
-  # skymail is a client the person holds a role of: a full-scope token would name it, this one must not.
-  ap_exchange "$token" skymail
+  # skynotify is a client the person holds a role of: a full-scope token would name it, this one must not.
+  ap_exchange "$token" skynotify
   [[ $AP_EXCHANGE_STATUS == 400 && $(jq -r .error <<<"$AP_EXCHANGE_BODY") == invalid_request ]] \
     || fail "an exchange to an audience outside the panel token was not refused (HTTP $AP_EXCHANGE_STATUS)"
   # The exchange gives no refresh token: the server keeps only the panel's own session.

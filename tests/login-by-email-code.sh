@@ -6,10 +6,10 @@
 # this repository builds on (the Dockerfile's KEYCLOAK_IMAGE) in dev mode with docker run "${pull_arguments[@]}" --rm and no
 # volume, this repository's SPI jar in /opt/keycloak/providers and config/ mounted read-only. No
 # SKY LAB theme runs here: the pages are Keycloak's own and the SPI's fallback templates, driven
-# with curl. Mail leaves as in production, through SkyMail: the integration harness's SkyMail
-# fixture (tests/skymail-server.mjs) takes the mail tasks, with a real client-credentials token of
-# keycloak-mailer whose endpoint Keycloak derives from the request (no SKY_MAIL_TOKEN_URL), so the
-# background send of the code is proved to reach SkyMail; the codes are read from its records. One
+# with curl. Mail leaves as in production, through SkyNotify: the integration harness's SkyNotify
+# fixture (tests/skynotify-server.mjs) takes the mail tasks, with a real client-credentials token of
+# keycloak-mailer whose endpoint Keycloak derives from the request (no SKYNOTIFY_TOKEN_URL), so the
+# background send of the code is proved to reach SkyNotify; the codes are read from its records. One
 # recipient the fixture refuses proves the SMTP fallback into the integration harness's Mailpit.
 # Keycloak listens on the published port inside its container too, so the derived address works
 # from both sides.
@@ -30,13 +30,13 @@
 #     adds the ALTERNATIVE subflow 'sky email code' (sky-email-code, conditional OTP, passkey offer)
 #     next to the password flow and touches nothing else; a second on changes nothing;
 #   - a person without TOTP signs in with the code typed after their username: the code went to the
-#     Primary e-mail through SkyMail's keycloak.login-code (code, purpose=login, no link), no TOTP page, the token carries the same audience and claims as after a password
+#     Primary e-mail through SkyNotify's keycloak.login-code (code, purpose=login, no link), no TOTP page, the token carries the same audience and claims as after a password
 #     login, the LOGIN event says sky_method=email_code;
 #   - the School e-mail of a Verified YTÜ account and a proven Personal e-mail as the identifier: the
 #     code goes to the Primary e-mail; without a Primary e-mail it goes to the School e-mail;
 #   - an address that names nobody: the same page and no mail;
 #   - a person core's disable_identity closed (the erasure header): marked, the same page, one
-#     account.deletion-in-progress notice through SkyMail (no name; erase_after_send is a unit test) and no second
+#     account.deletion-in-progress notice through SkyNotify (no name; erase_after_send is a unit test) and no second
 #     within the hour; Admin REST cannot write or change the mark and a whole-representation PUT keeps
 #     it; a person an administrator disabled: no mark, the same page and nothing mailed;
 #   - a code does not work in another browser; five wrong codes kill it; a person locked by
@@ -52,7 +52,7 @@
 #     an otp_unguarded event and log line) but still signs in a person without, and on repairs it;
 #   - a code sign-in is asked "Bu cihazda oturumum açık kalsın mı?" (sky-stay-signed-in) and yes gives a
 #     remember-me session; the LOGIN event, written after that page, keeps sky_method=email_code;
-#   - when SkyMail refuses, the code still arrives through Keycloak's SMTP (the SPI's FreeMarker
+#   - when SkyNotify refuses, the code still arrives through Keycloak's SMTP (the SPI's FreeMarker
 #     copy: the code on its own line, no link, no code in the subject) and signs the person in;
 #   - "Parolanla gir" (Keycloak's execution selection) reaches the password form, and a password
 #     login still works with the subflow on;
@@ -96,7 +96,7 @@ BASE_URL="http://127.0.0.1:$PORT"
 MAIL_URL="http://127.0.0.1:$MAIL_PORT"
 CONTAINER=${LOGIN_BY_EMAIL_CODE_TEST_CONTAINER:-login-by-email-code-test-$$}
 MAIL_CONTAINER="$CONTAINER-mail"
-SKYMAIL_CONTAINER="$CONTAINER-skymail"
+SKYNOTIFY_CONTAINER="$CONTAINER-skynotify"
 NETWORK="$CONTAINER-net"
 DB_CONTAINER="$CONTAINER-db"
 REPLICA_CONTAINER="$CONTAINER-replica"
@@ -143,7 +143,7 @@ fail() {
 }
 cleanup() {
   kcadm_rest_cleanup
-  docker rm -fv "$CONTAINER" "$MAIL_CONTAINER" "$SKYMAIL_CONTAINER" "$DB_CONTAINER" "$REPLICA_CONTAINER" >/dev/null 2>&1 || true
+  docker rm -fv "$CONTAINER" "$MAIL_CONTAINER" "$SKYNOTIFY_CONTAINER" "$DB_CONTAINER" "$REPLICA_CONTAINER" >/dev/null 2>&1 || true
   docker network rm "$NETWORK" >/dev/null 2>&1 || true
   rm -rf "$STATE_DIR"
 }
@@ -346,20 +346,20 @@ mail_count() {
     | jq --arg to "$1" '[.messages[]? | select(any(.To[]?; .Address == $to))] | length'
 }
 
-# The SkyMail fixture's records, one JSON object per line.
-skymail_records() {
-  docker logs "$SKYMAIL_CONTAINER" 2>/dev/null | sed -n 's/^SKYMAIL_FIXTURE //p'
+# The SkyNotify fixture's records, one JSON object per line.
+skynotify_records() {
+  docker logs "$SKYNOTIFY_CONTAINER" 2>/dev/null | sed -n 's/^SKYNOTIFY_FIXTURE //p'
 }
 
-# code_count ADDRESS: how many Login code mail tasks SkyMail got for the address.
+# code_count ADDRESS: how many Login code mail tasks SkyNotify got for the address.
 code_count() {
-  skymail_records | jq -s --arg to "$1" \
+  skynotify_records | jq -s --arg to "$1" \
     '[.[] | select(.event == "mail_task" and .template_key == "keycloak.login-code" and .recipient_email == $to)] | length'
 }
 
-# notice_count ADDRESS: how many Account erasure notices SkyMail got for the address.
+# notice_count ADDRESS: how many Account erasure notices SkyNotify got for the address.
 notice_count() {
-  skymail_records | jq -s --arg to "$1" \
+  skynotify_records | jq -s --arg to "$1" \
     '[.[] | select(.event == "mail_task" and .template_key == "account.deletion-in-progress" and .recipient_email == $to)] | length'
 }
 
@@ -373,14 +373,14 @@ await_code() {
     (($(code_count "$1") > $2)) && break
     sleep 1
   done
-  (($(code_count "$1") > $2)) || fail 'no code reached SkyMail for the address'
-  task=$(skymail_records | jq -s -c --arg to "$1" \
+  (($(code_count "$1") > $2)) || fail 'no code reached SkyNotify for the address'
+  task=$(skynotify_records | jq -s -c --arg to "$1" \
     '[.[] | select(.event == "mail_task" and .template_key == "keycloak.login-code" and .recipient_email == $to)] | last')
   jq -e --arg purpose "$purpose" --arg subject "$subject_key" '.body_variables | .purpose == $purpose
       and .link == "" and .codeExpirationMinutes == "10" and .subjectKey == $subject
       and (.code | test("^[0-9]{6}$"))' <<<"$task" >/dev/null \
     || fail 'the code mail task does not carry the expected purpose, subject and ten minutes without a link'
-  jq -e '.missing_variables == [] and (.roles | index("skymail:mails:send")) != null' <<<"$task" >/dev/null \
+  jq -e '.missing_variables == [] and (.roles | index("skynotify:mails:send")) != null' <<<"$task" >/dev/null \
     || fail 'the Login code mail task lacks a variable or the send role'
   code=$(jq -r '.body_variables.code' <<<"$task")
   printf '%s\n' "$code"
@@ -493,10 +493,10 @@ docker network create "$NETWORK" >/dev/null
 [[ -n $NODE_IMAGE ]] || fail 'Dockerfile has no ARG NODE_IMAGE'
 docker run "${pull_arguments[@]}" --rm -d --name "$MAIL_CONTAINER" --network "$NETWORK" --memory 256m -p "127.0.0.1:$MAIL_PORT:8025" \
   "$MAILPIT_IMAGE" >/dev/null
-docker run "${pull_arguments[@]}" --rm -d --name "$SKYMAIL_CONTAINER" --network "$NETWORK" --memory 128m --read-only \
-  -e SKYMAIL_HTTP_PORT=8080 -e SKYMAIL_SMTP_PORT=1025 \
-  -v "$SCRIPT_DIR/skymail-server.mjs:/fixture/skymail-server.mjs:ro" \
-  "$NODE_IMAGE" node /fixture/skymail-server.mjs >/dev/null
+docker run "${pull_arguments[@]}" --rm -d --name "$SKYNOTIFY_CONTAINER" --network "$NETWORK" --memory 128m --read-only \
+  -e SKYNOTIFY_HTTP_PORT=8080 -e SKYNOTIFY_SMTP_PORT=1025 \
+  -v "$SCRIPT_DIR/skynotify-server.mjs:/fixture/skynotify-server.mjs:ro" \
+  "$NODE_IMAGE" node /fixture/skynotify-server.mjs >/dev/null
 # PostgreSQL is shared by the separate counter regression's two independent Keycloak instances.
 database_arguments=()
 if [[ $PERSISTENT_ONLY == 1 ]]; then
@@ -529,7 +529,7 @@ if [[ $PERSISTENT_ONLY == 1 ]]; then
     --db-username=keycloak "--db-password=$DB_PASSWORD")
 fi
 
-# No SKY_MAIL_TOKEN_URL: as in production, the token endpoint comes from the request's issuer.
+# No SKYNOTIFY_TOKEN_URL: as in production, the token endpoint comes from the request's issuer.
 # The second instance deliberately has its own local user/code cache; counter decisions must use DB.
 start_keycloak() {
   local instance=$1 port=$2
@@ -537,8 +537,8 @@ start_keycloak() {
     -e KC_OPTS="$KCADM_JVM_STANDALONE_OPTS" \
     -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
     -e SKY_EMAIL_CODE_DAILY_LIMIT="$DAILY_LIMIT" -e SKY_EMAIL_CODE_WRONG_CODES_PER_ACCOUNT="$WRONG_CEILING" \
-    -e SKY_HARNESS=1 -e SKY_MAIL_ENABLED=true -e "SKY_MAIL_BASE_URL=http://$SKYMAIL_CONTAINER:8080" \
-    -e SKY_MAIL_CLIENT_ID=keycloak-mailer -e "SKY_MAIL_CLIENT_SECRET=$MAILER_SECRET" -e SKY_MAIL_TIMEOUT_MILLISECONDS=3000 \
+    -e SKY_HARNESS=1 -e SKYNOTIFY_ENABLED=true -e "SKYNOTIFY_BASE_URL=http://$SKYNOTIFY_CONTAINER:8080" \
+    -e SKYNOTIFY_CLIENT_ID=keycloak-mailer -e "SKYNOTIFY_CLIENT_SECRET=$MAILER_SECRET" -e SKYNOTIFY_TIMEOUT_MILLISECONDS=3000 \
     -v "$SPI_JAR:/opt/keycloak/providers/e-skylab-spi.jar:ro" ${theme_mount[@]+"${theme_mount[@]}"} \
     -v "$REPOSITORY_ROOT/config:/opt/keycloak/sky-config:ro" \
     "$IMAGE" start-dev --http-port "$port" ${database_arguments[@]+"${database_arguments[@]}"} >/dev/null
@@ -552,8 +552,8 @@ curl -fsS "$BASE_URL/realms/master" >/dev/null || { docker logs "$CONTAINER" 2>&
 sessions_login
 kcadm_jvm_dump "$CONTAINER" "$ADMIN_CONFIG"
 docker logs "$CONTAINER" >"$STATE_DIR/server.log" 2>&1
-grep -Fq 'sky_mail_enabled client=keycloak-mailer' "$STATE_DIR/server.log" || fail 'the SkyMail provider is not on'
-printf '    stock Keycloak in dev mode with the SPI jar (%s), daily limit %s, SkyMail fixture\n' "$(basename -- "$SPI_JAR")" "$DAILY_LIMIT"
+grep -Fq 'skynotify_enabled client=keycloak-mailer' "$STATE_DIR/server.log" || fail 'the SkyNotify provider is not on'
+printf '    stock Keycloak in dev mode with the SPI jar (%s), daily limit %s, SkyNotify fixture\n' "$(basename -- "$SPI_JAR")" "$DAILY_LIMIT"
 
 # ---------------------------------------------------------------------------------------------------
 stage 'e-skylab fixture'
@@ -578,15 +578,15 @@ kcadm create identity-provider/instances -r "$REALM" -f - >/dev/null <<JSON
 JSON
 kcadm create clients -r "$REALM" -s "clientId=$APP" -s publicClient=true -s standardFlowEnabled=true \
   -s directAccessGrantsEnabled=false -s "redirectUris=[\"$APP_REDIRECT\"]" >/dev/null
-# SkyMail's roles and Keycloak's mailer service account (config/create-mailer-client.sh in production).
-skymail_client=$(kcadm create clients -r "$REALM" -i -s clientId=skymail -s publicClient=false -s bearerOnly=true)
-for role in skymail:access skymail:mails:send; do
-  kcadm create "clients/$skymail_client/roles" -r "$REALM" -s "name=$role" >/dev/null
+# SkyNotify's roles and Keycloak's mailer service account (config/create-mailer-client.sh in production).
+skynotify_client=$(kcadm create clients -r "$REALM" -i -s clientId=skynotify -s publicClient=false -s bearerOnly=true)
+for role in skynotify:access skynotify:mails:send; do
+  kcadm create "clients/$skynotify_client/roles" -r "$REALM" -s "name=$role" >/dev/null
 done
 kcadm create clients -r "$REALM" -s clientId=keycloak-mailer -s publicClient=false -s serviceAccountsEnabled=true \
   -s standardFlowEnabled=false -s directAccessGrantsEnabled=false -s "secret=$MAILER_SECRET" >/dev/null
-kcadm add-roles -r "$REALM" --uusername service-account-keycloak-mailer --cclientid skymail \
-  --rolename skymail:access --rolename skymail:mails:send >/dev/null
+kcadm add-roles -r "$REALM" --uusername service-account-keycloak-mailer --cclientid skynotify \
+  --rolename skynotify:access --rolename skynotify:mails:send >/dev/null
 # The operator alarm goes to the members of /ADMIN (SKY_EMAIL_CODE_ALARM_GROUP's default): two who
 # get it, one disabled and one without an address who do not.
 admin_group=$(kcadm create groups -r "$REALM" -i -s name=ADMIN)
@@ -792,10 +792,10 @@ for _ in $(seq 1 30); do
   (($(notice_count erased@example.invalid) > 0)) && break
   sleep 1
 done
-(($(notice_count erased@example.invalid) == 1)) || fail 'no erasure notice reached SkyMail'
-skymail_records | jq -s -c --arg to erased@example.invalid \
+(($(notice_count erased@example.invalid) == 1)) || fail 'no erasure notice reached SkyNotify'
+skynotify_records | jq -s -c --arg to erased@example.invalid \
   '[.[] | select(.event == "mail_task" and .template_key == "account.deletion-in-progress" and .recipient_email == $to)] | last' \
-  | jq -e '.missing_variables == [] and (.roles | index("skymail:mails:send")) != null
+  | jq -e '.missing_variables == [] and (.roles | index("skynotify:mails:send")) != null
       and .recipient_full_name == ""
       and (.body_variables | .code == "" and .link == "" and .purpose == "" and .firstName == "" and .username == ""
         and .subjectKey == "skyAccountErasureNoticeSubject")' >/dev/null \
@@ -810,7 +810,7 @@ sleep 5
   || fail 'a code was mailed to an account being erased'
 (($(notice_count closed@example.invalid) == 0 && $(code_count closed@example.invalid) == 0 && $(mail_count closed@example.invalid) == 0)) \
   || fail "the account an administrator disabled was mailed"
-printf '    an account being erased: the same page, one deletion notice an hour through SkyMail; an administrator-disabled one: nothing\n'
+printf '    an account being erased: the same page, one deletion notice an hour through SkyNotify; an administrator-disabled one: nothing\n'
 
 # ---------------------------------------------------------------------------------------------------
 stage 'the code works only where it was asked for'
@@ -883,8 +883,8 @@ sleep 5
 (($(code_count eda@example.invalid) == 3)) || fail "the address got $(code_count eda@example.invalid) codes in a quarter hour, not 3"
 kcadm get events -r "$REALM" -q type=LOGIN_ERROR -q "user=$eda" \
   | jq -e 'any(.[]; .details.sky_email_code == "rate_limited_address")' >/dev/null || fail 'no event for the address budget'
-alarm_subjects() { # alarm_subjects ADDRESS: the alarm mail tasks SkyMail got for the address, by subjectKey
-  skymail_records | jq -s -c --arg to "$1" \
+alarm_subjects() { # alarm_subjects ADDRESS: the alarm mail tasks SkyNotify got for the address, by subjectKey
+  skynotify_records | jq -s -c --arg to "$1" \
     '[.[] | select(.event == "mail_task" and .template_key == "keycloak.login-code-alarm" and .recipient_email == $to)
       | .body_variables.subjectKey] | sort'
 }
@@ -894,10 +894,10 @@ for _ in $(seq 1 30); do
 done
 for address in "$ALARM_TO" ops2@example.invalid; do
   [[ $(alarm_subjects "$address") == '["skyLoginCodeAlarmFullSubject","skyLoginCodeAlarmHalfSubject"]' ]] \
-    || fail "a member of /ADMIN did not get the half and full alarms through SkyMail: $(alarm_subjects "$address")"
+    || fail "a member of /ADMIN did not get the half and full alarms through SkyNotify: $(alarm_subjects "$address")"
 done
 [[ $(alarm_subjects ops-off@example.invalid) == '[]' ]] || fail 'a disabled member of /ADMIN got the alarm'
-(($(skymail_records | jq -s '[.[] | select(.event == "mail_task" and .template_key == "keycloak.login-code-alarm")] | length') == 4)) \
+(($(skynotify_records | jq -s '[.[] | select(.event == "mail_task" and .template_key == "keycloak.login-code-alarm")] | length') == 4)) \
   || fail 'the alarm went to someone outside the enabled members of /ADMIN'
 open_code_page after-limit
 before=$(code_count ada@example.invalid)
@@ -954,22 +954,22 @@ grep -Fq "sky_email_code_wrong_ceiling accounts=1 ceiling=$WRONG_CEILING realm=$
 printf '    %s wrong codes: no further code mailed (same page), the right code of a mailed one is not looked at, one alarm to /ADMIN\n' "$WRONG_CEILING"
 
 # ---------------------------------------------------------------------------------------------------
-stage 'SkyMail refuses: the SMTP fallback'
-person fallback skymail-fallback@example.invalid >/dev/null
+stage 'SkyNotify refuses: the SMTP fallback'
+person fallback skynotify-fallback@example.invalid >/dev/null
 open_code_page fallback
-before=$(mail_count skymail-fallback@example.invalid)
+before=$(mail_count skynotify-fallback@example.invalid)
 ask_code fallback
-code=$(await_smtp_code skymail-fallback@example.invalid "$before")
+code=$(await_smtp_code skynotify-fallback@example.invalid "$before")
 CODES+=("$code")
 type_code "$code"
 finish
 [[ $LANDED == app ]] || fail "the code from the SMTP fallback did not sign in ($(page_summary))"
 docker logs "$CONTAINER" >"$STATE_DIR/server.log" 2>&1
-grep -Fq 'sky_mail_fallback reason=unavailable template=keycloak.login-code' "$STATE_DIR/server.log" \
-  || fail 'the fallback left no sky_mail_fallback line'
-! grep -Eq 'sky_mail_fallback reason=(config|token|disabled)' "$STATE_DIR/server.log" \
+grep -Fq 'skynotify_fallback reason=unavailable template=keycloak.login-code' "$STATE_DIR/server.log" \
+  || fail 'the fallback left no skynotify_fallback line'
+! grep -Eq 'skynotify_fallback reason=(config|token|disabled)' "$STATE_DIR/server.log" \
   || fail 'a mail fell back for want of a token or a configuration (the background send lost the request)'
-printf '    SkyMail refused: the code still came through SMTP (no link, not in the subject) and signed in; no config/token fallbacks\n'
+printf '    SkyNotify refused: the code still came through SMTP (no link, not in the subject) and signed in; no config/token fallbacks\n'
 
 # ---------------------------------------------------------------------------------------------------
 stage 'TOTP after the code'
@@ -1078,7 +1078,7 @@ for code in "${CODES[@]}"; do
 done
 for address in ada@example.invalid ytu.personal@example.invalid ytu.okul@std.yildiz.edu.tr only.okul@std.yildiz.edu.tr \
   nobody@example.invalid bea@example.invalid cem@example.invalid dila@example.invalid eda@example.invalid fikret@example.invalid \
-  skymail-fallback@example.invalid hakan@example.invalid gul@example.invalid ilker@example.invalid \
+  skynotify-fallback@example.invalid hakan@example.invalid gul@example.invalid ilker@example.invalid \
   erased@example.invalid closed@example.invalid; do
   ! grep -Fiq "$address" "$STATE_DIR/server.log" || fail 'an address of the run reached the server log'
 done

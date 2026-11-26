@@ -7,8 +7,8 @@
 # on (the Dockerfile's KEYCLOAK_IMAGE) in dev mode with docker run --rm and no volume, this repository's
 # SPI jar in /opt/keycloak/providers and config/ mounted read-only. No SKY LAB theme runs here: the
 # pages are Keycloak's own and the SPI's fallback templates (sky-email-code.ftl,
-# sky-email-code-sign-up.ftl), driven with curl. Mail leaves as in production, through SkyMail: the
-# integration harness's SkyMail fixture (tests/skymail-server.mjs) takes the mail tasks with a real
+# sky-email-code-sign-up.ftl), driven with curl. Mail leaves as in production, through SkyNotify: the
+# integration harness's SkyNotify fixture (tests/skynotify-server.mjs) takes the mail tasks with a real
 # client-credentials token of keycloak-mailer; its records give the codes. Recipients the fixture
 # refuses prove the SMTP fallback into Mailpit, in the language of the sign-in page.
 #
@@ -29,7 +29,7 @@
 #     exactly the reconciler's realm-management roles; a second on changes nothing; keep reports on;
 #     registrationAllowed stays false;
 #   - with the setting off an address that names nobody is mailed nothing;
-#   - a new address: the sign-up code goes to it through SkyMail's keycloak.login-code (purpose=signup,
+#   - a new address: the sign-up code goes to it through SkyNotify's keycloak.login-code (purpose=signup,
 #     subjectKey skySignUpCodeSubject, no link), the right code opens the sign-up form, the names open
 #     the account: the address as verified Primary e-mail and proven Personal e-mail
 #     (personalEmailVerifiedAt), the username from the names on the form, no credential, no group, only the
@@ -47,7 +47,7 @@
 #     no second account;
 #   - a YTÜ school address: a sign-up code, then the YTÜ stage with the OBS broker link, no account;
 #   - two sign-ups of one address submitted at the same moment open one account;
-#   - SkyMail refuses: the sign-up code still comes through Keycloak's SMTP with the sign-up text, in
+#   - SkyNotify refuses: the sign-up code still comes through Keycloak's SMTP with the sign-up text, in
 #     Turkish or in English as the sign-in page was (Accept-Language), no link, no code in the subject;
 #   - the sign-up's REGISTER leaves through the RabbitMQ provider (keycloak-to-rabbitmq, built from
 #     rabbitmq-provider/, against the integration harness's RabbitMQ image; RabbitMQ R07): one
@@ -87,7 +87,7 @@ BASE_URL="http://127.0.0.1:$PORT"
 MAIL_URL="http://127.0.0.1:$MAIL_PORT"
 CONTAINER=${SIGN_UP_BY_EMAIL_CODE_TEST_CONTAINER:-sign-up-by-email-code-test-$$}
 MAIL_CONTAINER="$CONTAINER-mail"
-SKYMAIL_CONTAINER="$CONTAINER-skymail"
+SKYNOTIFY_CONTAINER="$CONTAINER-skynotify"
 RABBITMQ_CONTAINER="$CONTAINER-rabbitmq"
 RABBITMQ_PASSWORD=harness-rabbitmq-password
 RABBITMQ_QUEUE=sign-up-user-events
@@ -121,12 +121,12 @@ fail() {
   [[ -z ${SIGN_UP_BY_EMAIL_CODE_TEST_PAGE_DUMP:-} ]] || printf '%s\n' "$BODY" >"$SIGN_UP_BY_EMAIL_CODE_TEST_PAGE_DUMP"
   printf 'sign-up-by-email-code failure during %s: %s\n' "$CURRENT_STAGE" "$1" >&2
   # The extension's own lines carry no address, code or IP; Keycloak's errors say what broke.
-  docker logs "$CONTAINER" 2>&1 | grep -E 'sky_email_code|sky_mail|ERROR' | tail -n 20 >&2 || true
+  docker logs "$CONTAINER" 2>&1 | grep -E 'sky_email_code|skynotify|ERROR' | tail -n 20 >&2 || true
   exit 1
 }
 cleanup() {
   kcadm_rest_cleanup
-  docker rm -fv "$CONTAINER" "$MAIL_CONTAINER" "$SKYMAIL_CONTAINER" "$RABBITMQ_CONTAINER" >/dev/null 2>&1 || true
+  docker rm -fv "$CONTAINER" "$MAIL_CONTAINER" "$SKYNOTIFY_CONTAINER" "$RABBITMQ_CONTAINER" >/dev/null 2>&1 || true
   docker network rm "$NETWORK" >/dev/null 2>&1 || true
   rm -rf "$STATE_DIR"
 }
@@ -335,12 +335,12 @@ mail_count() {
     | jq --arg to "$1" '[.messages[]? | select(any(.To[]?; .Address == $to))] | length'
 }
 
-skymail_records() {
-  docker logs "$SKYMAIL_CONTAINER" 2>/dev/null | sed -n 's/^SKYMAIL_FIXTURE //p'
+skynotify_records() {
+  docker logs "$SKYNOTIFY_CONTAINER" 2>/dev/null | sed -n 's/^SKYNOTIFY_FIXTURE //p'
 }
 
 code_count() {
-  skymail_records | jq -s --arg to "$1" \
+  skynotify_records | jq -s --arg to "$1" \
     '[.[] | select(.event == "mail_task" and .template_key == "keycloak.login-code" and .recipient_email == $to)] | length'
 }
 
@@ -353,13 +353,13 @@ await_code() {
     (($(code_count "$1") > $2)) && break
     sleep 1
   done
-  (($(code_count "$1") > $2)) || fail "no $3 code reached SkyMail for the address"
-  task=$(skymail_records | jq -s -c --arg to "$1" \
+  (($(code_count "$1") > $2)) || fail "no $3 code reached SkyNotify for the address"
+  task=$(skynotify_records | jq -s -c --arg to "$1" \
     '[.[] | select(.event == "mail_task" and .template_key == "keycloak.login-code" and .recipient_email == $to)] | last')
   jq -e --arg purpose "$3" --arg subject "$subject_key" '.body_variables | .purpose == $purpose and .link == ""
       and .codeExpirationMinutes == "10" and .subjectKey == $subject and (.code | test("^[0-9]{6}$"))' <<<"$task" >/dev/null \
     || fail "the code mail task does not carry the code, purpose=$3, $subject_key and the ten minutes without a link"
-  jq -e '.missing_variables == [] and (.roles | index("skymail:mails:send")) != null' <<<"$task" >/dev/null \
+  jq -e '.missing_variables == [] and (.roles | index("skynotify:mails:send")) != null' <<<"$task" >/dev/null \
     || fail 'the code mail task lacks a variable or the send role'
   code=$(jq -r '.body_variables.code' <<<"$task")
   printf '%s\n' "$code"
@@ -480,10 +480,10 @@ CURRENT_STAGE='Keycloak start'
 docker network create "$NETWORK" >/dev/null
 docker run --rm -d --name "$MAIL_CONTAINER" --network "$NETWORK" --memory 256m --tmpfs /tmp:rw,size=64m,mode=1777 -p "127.0.0.1:$MAIL_PORT:8025" \
   "$MAILPIT_IMAGE" >/dev/null
-docker run --rm -d --name "$SKYMAIL_CONTAINER" --network "$NETWORK" --memory 128m --read-only \
-  -e SKYMAIL_HTTP_PORT=8080 -e SKYMAIL_SMTP_PORT=1025 \
-  -v "$SCRIPT_DIR/skymail-server.mjs:/fixture/skymail-server.mjs:ro" \
-  "$NODE_IMAGE" node /fixture/skymail-server.mjs >/dev/null
+docker run --rm -d --name "$SKYNOTIFY_CONTAINER" --network "$NETWORK" --memory 128m --read-only \
+  -e SKYNOTIFY_HTTP_PORT=8080 -e SKYNOTIFY_SMTP_PORT=1025 \
+  -v "$SCRIPT_DIR/skynotify-server.mjs:/fixture/skynotify-server.mjs:ro" \
+  "$NODE_IMAGE" node /fixture/skynotify-server.mjs >/dev/null
 # The provider's broker, with the exchange it publishes to and a queue for every user event (the
 # admin events of the fixture's own writes are not this harness's business).
 [[ -n $RABBITMQ_IMAGE ]] || fail 'tests/docker-compose.integration.yml has no RabbitMQ image'
@@ -503,8 +503,8 @@ rabbit_api -X POST -H 'content-type: application/json' -d '{"routing_key":"KK.EV
 docker run --rm -d --name "$CONTAINER" --network "$NETWORK" --memory "$MEMORY" --tmpfs /opt/keycloak/data:rw,size=512m,mode=1777 -p "127.0.0.1:$PORT:$PORT" \
   -e KC_OPTS="$KCADM_JVM_STANDALONE_OPTS" \
   -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
-  -e SKY_HARNESS=1 -e SKY_MAIL_ENABLED=true -e "SKY_MAIL_BASE_URL=http://$SKYMAIL_CONTAINER:8080" \
-  -e SKY_MAIL_CLIENT_ID=keycloak-mailer -e "SKY_MAIL_CLIENT_SECRET=$MAILER_SECRET" -e SKY_MAIL_TIMEOUT_MILLISECONDS=3000 \
+  -e SKY_HARNESS=1 -e SKYNOTIFY_ENABLED=true -e "SKYNOTIFY_BASE_URL=http://$SKYNOTIFY_CONTAINER:8080" \
+  -e SKYNOTIFY_CLIENT_ID=keycloak-mailer -e "SKYNOTIFY_CLIENT_SECRET=$MAILER_SECRET" -e SKYNOTIFY_TIMEOUT_MILLISECONDS=3000 \
   -v "$SPI_JAR:/opt/keycloak/providers/e-skylab-spi.jar:ro" \
   -e "KK_TO_RMQ_URL=$RABBITMQ_CONTAINER" -e KK_TO_RMQ_PORT=5672 -e KK_TO_RMQ_USERNAME=keycloak \
   -e "KK_TO_RMQ_PASSWORD=$RABBITMQ_PASSWORD" -e KK_TO_RMQ_VHOST=/ -e KK_TO_RMQ_EXCHANGE=keycloak.events \
@@ -519,7 +519,7 @@ done
 curl -fsS "$BASE_URL/realms/master" >/dev/null || { docker logs "$CONTAINER" 2>&1 | tail -n 40 >&2; fail "Keycloak did not start ($IMAGE)"; }
 sessions_login
 kcadm_jvm_dump "$CONTAINER" "$ADMIN_CONFIG"
-printf '    stock Keycloak in dev mode with the SPI jar (%s), the RabbitMQ provider (%s), SkyMail fixture, Mailpit, RabbitMQ\n' \
+printf '    stock Keycloak in dev mode with the SPI jar (%s), the RabbitMQ provider (%s), SkyNotify fixture, Mailpit, RabbitMQ\n' \
   "$(basename -- "$SPI_JAR")" "$(basename -- "$RABBITMQ_JAR")"
 
 # ---------------------------------------------------------------------------------------------------
@@ -544,14 +544,14 @@ kcadm create identity-provider/instances -r "$REALM" -f - >/dev/null <<JSON
 JSON
 kcadm create clients -r "$REALM" -s "clientId=$APP" -s publicClient=true -s standardFlowEnabled=true \
   -s directAccessGrantsEnabled=false -s "redirectUris=[\"$APP_REDIRECT\"]" >/dev/null
-skymail_client=$(kcadm create clients -r "$REALM" -i -s clientId=skymail -s publicClient=false -s bearerOnly=true)
-for role in skymail:access skymail:mails:send; do
-  kcadm create "clients/$skymail_client/roles" -r "$REALM" -s "name=$role" >/dev/null
+skynotify_client=$(kcadm create clients -r "$REALM" -i -s clientId=skynotify -s publicClient=false -s bearerOnly=true)
+for role in skynotify:access skynotify:mails:send; do
+  kcadm create "clients/$skynotify_client/roles" -r "$REALM" -s "name=$role" >/dev/null
 done
 kcadm create clients -r "$REALM" -s clientId=keycloak-mailer -s publicClient=false -s serviceAccountsEnabled=true \
   -s standardFlowEnabled=false -s directAccessGrantsEnabled=false -s "secret=$MAILER_SECRET" >/dev/null
-kcadm add-roles -r "$REALM" --uusername service-account-keycloak-mailer --cclientid skymail \
-  --rolename skymail:access --rolename skymail:mails:send >/dev/null
+kcadm add-roles -r "$REALM" --uusername service-account-keycloak-mailer --cclientid skynotify \
+  --rolename skynotify:access --rolename skynotify:mails:send >/dev/null
 
 kcadm create authentication/flows -r "$REALM" -s "alias=$FLOW" -s providerId=basic-flow -s topLevel=true \
   -s builtIn=false -s 'description=production shape' >/dev/null
@@ -657,7 +657,7 @@ api_call() {
 api_personal_code() {
   local address=$1 task
   for _ in $(seq 1 30); do
-    task=$(skymail_records | jq -s -c --arg to "$address" \
+    task=$(skynotify_records | jq -s -c --arg to "$address" \
       '[.[] | select(.event == "mail_task" and .template_key == "keycloak.personal-email-confirm" and .recipient_email == $to)] | last')
     [[ $task == null ]] || break
     sleep 1
@@ -924,28 +924,28 @@ done
 printf '    two sign-ups of one address at the same moment: one account, no server error\n'
 
 # ---------------------------------------------------------------------------------------------------
-stage 'SkyMail refuses: the SMTP fallback'
+stage 'SkyNotify refuses: the SMTP fallback'
 open_code_page fallback-tr
-before=$(mail_count skymail-fallback@example.invalid)
-ask_code skymail-fallback@example.invalid
-code=$(await_smtp_code skymail-fallback@example.invalid "$before" 'hesabını açmak için kodun')
+before=$(mail_count skynotify-fallback@example.invalid)
+ask_code skynotify-fallback@example.invalid
+code=$(await_smtp_code skynotify-fallback@example.invalid "$before" 'hesabını açmak için kodun')
 CODES+=("$code")
-ADDRESSES+=(skymail-fallback@example.invalid)
+ADDRESSES+=(skynotify-fallback@example.invalid)
 type_code "$code"
 on_form kc-email-code-sign-up-form || fail "the SMTP code did not open the form ($(page_summary))"
 open_code_page fallback-en
-before=$(mail_count skymail-fallback@example.org)
-ask_code skymail-fallback@example.org --header 'Accept-Language: en'
-code=$(await_smtp_code skymail-fallback@example.org "$before" 'create your')
+before=$(mail_count skynotify-fallback@example.org)
+ask_code skynotify-fallback@example.org --header 'Accept-Language: en'
+code=$(await_smtp_code skynotify-fallback@example.org "$before" 'create your')
 CODES+=("$code")
-ADDRESSES+=(skymail-fallback@example.org)
+ADDRESSES+=(skynotify-fallback@example.org)
 docker logs "$CONTAINER" >"$STATE_DIR/server.log" 2>&1
-grep -Fq 'sky_mail_fallback reason=unavailable template=keycloak.login-code' "$STATE_DIR/server.log" \
-  || fail 'the fallback left no sky_mail_fallback line'
-! grep -Eq 'sky_mail_fallback reason=(config|token|disabled)' "$STATE_DIR/server.log" \
+grep -Fq 'skynotify_fallback reason=unavailable template=keycloak.login-code' "$STATE_DIR/server.log" \
+  || fail 'the fallback left no skynotify_fallback line'
+! grep -Eq 'skynotify_fallback reason=(config|token|disabled)' "$STATE_DIR/server.log" \
   || fail 'a mail fell back for want of a token or a configuration'
 ! grep -Fq 'sky_email_code_send_failed' "$STATE_DIR/server.log" || fail 'a sign-up code could not be sent'
-printf '    SkyMail refused: the sign-up code came through SMTP with the sign-up text, Turkish or English as the page was\n'
+printf '    SkyNotify refused: the sign-up code came through SMTP with the sign-up text, Turkish or English as the page was\n'
 
 # ---------------------------------------------------------------------------------------------------
 stage 'the server log'

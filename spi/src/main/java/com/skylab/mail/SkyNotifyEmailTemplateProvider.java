@@ -17,16 +17,16 @@ import java.util.Map;
  *
  * <p>{@code EmailSenderProvider} receives a rendered subject and body, not a template id, so by
  * the time the sender runs the identity of the mail is gone. This decorator sits in front of the
- * realm's stock freemarker template provider, records the SkyMail template key and the mail's
+ * realm's stock freemarker template provider, records the SkyNotify template key and the mail's
  * variables on the {@link KeycloakSession} that both providers share, and then delegates the
- * rendering unchanged. {@link SkyMailEmailSenderProvider} takes the recorded message off the
+ * rendering unchanged. {@link SkyNotifyEmailSenderProvider} takes the recorded message off the
  * session — and the stock rendering is still produced, so the SMTP fallback has a body to send.</p>
  *
  * <p>The handoff is a session attribute rather than a thread local: the session is the exact
  * scope of one mail, it is discarded with the request, and a unit test can assert on it without
  * a running server.</p>
  */
-public final class SkyMailEmailTemplateProvider implements EmailTemplateProvider {
+public final class SkyNotifyEmailTemplateProvider implements EmailTemplateProvider {
 
     private final KeycloakSession session;
     private final EmailTemplateProvider delegate;
@@ -34,7 +34,7 @@ public final class SkyMailEmailTemplateProvider implements EmailTemplateProvider
     private RealmModel realm;
     private UserModel user;
 
-    SkyMailEmailTemplateProvider(KeycloakSession session, EmailTemplateProvider delegate) {
+    SkyNotifyEmailTemplateProvider(KeycloakSession session, EmailTemplateProvider delegate) {
         this.session = session;
         this.delegate = delegate;
     }
@@ -42,15 +42,15 @@ public final class SkyMailEmailTemplateProvider implements EmailTemplateProvider
     // --- capture -------------------------------------------------------------------------
 
     private void record(String templateKey, String subjectKey, String link, String expirationMinutes) {
-        record(SkyMailMessage.of(templateKey, subjectKey, link, expirationMinutes, user, realm));
+        record(SkyNotifyMessage.of(templateKey, subjectKey, link, expirationMinutes, user, realm));
     }
 
-    private void record(SkyMailMessage message) {
-        session.setAttribute(SkyMailMessage.SESSION_ATTRIBUTE, message);
+    private void record(SkyNotifyMessage message) {
+        session.setAttribute(SkyNotifyMessage.SESSION_ATTRIBUTE, message);
     }
 
     private void clear() {
-        session.removeAttribute(SkyMailMessage.SESSION_ATTRIBUTE);
+        session.removeAttribute(SkyNotifyMessage.SESSION_ATTRIBUTE);
     }
 
     // --- EmailTemplateProvider ------------------------------------------------------------
@@ -83,20 +83,20 @@ public final class SkyMailEmailTemplateProvider implements EmailTemplateProvider
 
     @Override
     public void sendEvent(Event event) throws EmailException {
-        record(SkyMailTemplates.GENERIC, SkyMailTemplates.eventSubjectKey(event.getType()), "", "");
+        record(SkyNotifyTemplates.GENERIC, SkyNotifyTemplates.eventSubjectKey(event.getType()), "", "");
         delegate.sendEvent(event);
     }
 
     @Override
     public void sendPasswordReset(String link, long expirationInMinutes) throws EmailException {
-        record(SkyMailTemplates.RESET_PASSWORD, SkyMailTemplates.RESET_PASSWORD_SUBJECT_KEY,
-                link, SkyMailMessage.minutes(expirationInMinutes));
+        record(SkyNotifyTemplates.RESET_PASSWORD, SkyNotifyTemplates.RESET_PASSWORD_SUBJECT_KEY,
+                link, SkyNotifyMessage.minutes(expirationInMinutes));
         delegate.sendPasswordReset(link, expirationInMinutes);
     }
 
     /**
      * The SMTP test mail exists to prove the realm's own SMTP settings, so it never goes through
-     * SkyMail. Clearing first also stops a message recorded earlier in this session from being
+     * SkyNotify. Clearing first also stops a message recorded earlier in this session from being
      * picked up by the test mail.
      */
     @Override
@@ -107,44 +107,44 @@ public final class SkyMailEmailTemplateProvider implements EmailTemplateProvider
 
     @Override
     public void sendConfirmIdentityBrokerLink(String link, long expirationInMinutes) throws EmailException {
-        record(SkyMailTemplates.IDP_LINK, SkyMailTemplates.IDP_LINK_SUBJECT_KEY,
-                link, SkyMailMessage.minutes(expirationInMinutes));
+        record(SkyNotifyTemplates.IDP_LINK, SkyNotifyTemplates.IDP_LINK_SUBJECT_KEY,
+                link, SkyNotifyMessage.minutes(expirationInMinutes));
         delegate.sendConfirmIdentityBrokerLink(link, expirationInMinutes);
     }
 
     @Override
     public void sendExecuteActions(String link, long expirationInMinutes) throws EmailException {
-        record(SkyMailTemplates.GENERIC, SkyMailTemplates.EXECUTE_ACTIONS_SUBJECT_KEY,
-                link, SkyMailMessage.minutes(expirationInMinutes));
+        record(SkyNotifyTemplates.GENERIC, SkyNotifyTemplates.EXECUTE_ACTIONS_SUBJECT_KEY,
+                link, SkyNotifyMessage.minutes(expirationInMinutes));
         delegate.sendExecuteActions(link, expirationInMinutes);
     }
 
     @Override
     public void sendVerifiableCredentialOffer(String link, long expirationInMinutes) throws EmailException {
-        record(SkyMailTemplates.GENERIC, "verifiableCredentialOfferSubject",
-                link, SkyMailMessage.minutes(expirationInMinutes));
+        record(SkyNotifyTemplates.GENERIC, "verifiableCredentialOfferSubject",
+                link, SkyNotifyMessage.minutes(expirationInMinutes));
         delegate.sendVerifiableCredentialOffer(link, expirationInMinutes);
     }
 
     @Override
     public void sendVerifyEmail(String link, long expirationInMinutes) throws EmailException {
-        record(SkyMailTemplates.VERIFY_EMAIL, SkyMailTemplates.VERIFY_EMAIL_SUBJECT_KEY,
-                link, SkyMailMessage.minutes(expirationInMinutes));
+        record(SkyNotifyTemplates.VERIFY_EMAIL, SkyNotifyTemplates.VERIFY_EMAIL_SUBJECT_KEY,
+                link, SkyNotifyMessage.minutes(expirationInMinutes));
         delegate.sendVerifyEmail(link, expirationInMinutes);
     }
 
     @Override
     public void sendOrgInviteEmail(OrganizationModel organization, String link, long expirationInMinutes)
             throws EmailException {
-        record(SkyMailTemplates.GENERIC, "orgInviteSubject", link, SkyMailMessage.minutes(expirationInMinutes));
+        record(SkyNotifyTemplates.GENERIC, "orgInviteSubject", link, SkyNotifyMessage.minutes(expirationInMinutes));
         delegate.sendOrgInviteEmail(organization, link, expirationInMinutes);
     }
 
     @Override
     public void sendEmailUpdateConfirmation(String link, long expirationInMinutes, String address)
             throws EmailException {
-        record(SkyMailTemplates.UPDATE_EMAIL, SkyMailTemplates.UPDATE_EMAIL_SUBJECT_KEY,
-                link, SkyMailMessage.minutes(expirationInMinutes));
+        record(SkyNotifyTemplates.UPDATE_EMAIL, SkyNotifyTemplates.UPDATE_EMAIL_SUBJECT_KEY,
+                link, SkyNotifyMessage.minutes(expirationInMinutes));
         delegate.sendEmailUpdateConfirmation(link, expirationInMinutes, address);
     }
 
@@ -185,15 +185,15 @@ public final class SkyMailEmailTemplateProvider implements EmailTemplateProvider
     private void recordGeneric(String subjectFormatKey, String bodyTemplate,
             Map<String, Object> bodyAttributes) {
         Map<String, Object> attributes = bodyAttributes == null ? Map.of() : bodyAttributes;
-        Object link = attributes.get(SkyMailMessage.LINK);
-        Object code = attributes.get(SkyMailMessage.CODE);
-        Object purpose = attributes.get(SkyMailMessage.PURPOSE);
-        record(SkyMailMessage.of(SkyMailTemplates.forBodyTemplate(bodyTemplate),
+        Object link = attributes.get(SkyNotifyMessage.LINK);
+        Object code = attributes.get(SkyNotifyMessage.CODE);
+        Object purpose = attributes.get(SkyNotifyMessage.PURPOSE);
+        record(SkyNotifyMessage.of(SkyNotifyTemplates.forBodyTemplate(bodyTemplate),
                 subjectFormatKey,
                 link instanceof String text ? text : "",
-                SkyMailMessage.minutes(attributes.get("linkExpiration")),
+                SkyNotifyMessage.minutes(attributes.get("linkExpiration")),
                 code instanceof String text ? text : "",
-                SkyMailMessage.minutes(attributes.get("codeExpiration")),
+                SkyNotifyMessage.minutes(attributes.get("codeExpiration")),
                 purpose instanceof String text ? text : "",
                 user,
                 realm));

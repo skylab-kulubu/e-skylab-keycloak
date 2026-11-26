@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # Sourced by run-integration.sh after login-by-either-email.sh; uses its COMPOSE, kcadm, fail,
-# json_assert, sky_mail_fixture_records, v2_login_account_center, V2_REALM, V2_ID_PAYLOAD and
+# json_assert, skynotify_fixture_records, v2_login_account_center, V2_REALM, V2_ID_PAYLOAD and
 # TEST_STATE_DIR, and K4's lbe_answer, lbe_create_person and lbe_link_ytu.
 #
 # K4b: the realm's reset credentials flow ("Şifremi unuttum") starts with
@@ -10,7 +10,7 @@
 # copy. The stages prove, on real Keycloak: the copy differs from the built-in flow only by the
 # step; a run cut short is finished; the rollback and forward runs (shared with K4's reconciler
 # stage) swap the step in place; a School or Personal e-mail produces the reset mail through
-# SkyMail, addressed to the Primary e-mail and never to the typed one; the link it carries
+# SkyNotify, addressed to the Primary e-mail and never to the typed one; the link it carries
 # resets the password; an unknown, ambiguous, unproven or disabled address gets the same page
 # and no mail.
 #
@@ -402,14 +402,14 @@ rbe_bogus_flag() {
     'the reconciler did not explain the refused KEYCLOAK_RESET_OTP_STEP'
 }
 
-# The reset mails SkyMail received for this stage's people, oldest first, one JSON per line.
+# The reset mails SkyNotify received for this stage's people, oldest first, one JSON per line.
 rbe_mail_tasks() {
-  sky_mail_fixture_records \
+  skynotify_fixture_records \
     | jq -c --arg template "$RBE_TEMPLATE" \
       'select(.event == "mail_task" and .template_key == $template and ((.recipient_email // "") | startswith("k4b.")))'
 }
 
-# Runs after the K5 stage: the realm's mails then leave through SkyMail, as in production.
+# Runs after the K5 stage: the realm's mails then leave through SkyNotify, as in production.
 stage_reset_by_either_email() {
   CURRENT_STAGE='K4b reset password by School or Personal e-mail'
   local client_secret=$1
@@ -436,7 +436,7 @@ stage_reset_by_either_email() {
   # E: a Personal e-mail without its proof; F: a School e-mail without the YTÜ link.
   e=$(lbe_create_person k4b-e k4b.e@example.invalid "$RBE_PASSWORD" personalEmail=k4b.e-unproven@example.invalid)
   f=$(lbe_create_person k4b-f k4b.f@example.invalid "$RBE_PASSWORD" schoolEmail=k4b.f-unlinked@std.example.edu.tr)
-  [[ -z $(rbe_mail_tasks) ]] || fail 'K4b: SkyMail already holds reset mails for this stage'
+  [[ -z $(rbe_mail_tasks) ]] || fail 'K4b: SkyNotify already holds reset mails for this stage'
 
   # The reference page: an address nobody has.
   rbe_reset k4b-unknown k4b.nobody@example.invalid "$client_secret"
@@ -478,7 +478,7 @@ stage_reset_by_either_email() {
   rbe_reset k4b-username k4b-b "$client_secret"
   rbe_expect_answer username "$reference"
 
-  # SkyMail got exactly the three mails, in order, each to the Primary e-mail. Every request
+  # SkyNotify got exactly the three mails, in order, each to the Primary e-mail. Every request
   # above returned after its mail was handed over, so once the last one is in, all are.
   for attempt in $(seq 1 45); do
     tasks=$(rbe_mail_tasks)
@@ -487,7 +487,7 @@ stage_reset_by_either_email() {
   done
   json_assert "$(jq -s -c '[.[].recipient_email]' <<<"$tasks")" \
     '. == ["k4b.a-personal@example.invalid", "k4b.b-school@std.example.edu.tr", "k4b.b-school@std.example.edu.tr"]' \
-    "K4b: SkyMail did not receive exactly the three reset mails to the Primary e-mails: $(jq -s -c '[.[].recipient_email]' <<<"$tasks")"
+    "K4b: SkyNotify did not receive exactly the three reset mails to the Primary e-mails: $(jq -s -c '[.[].recipient_email]' <<<"$tasks")"
   json_assert "$(jq -s -c . <<<"$tasks")" \
     'all(.[]; .missing_variables == [] and .azp == "keycloak-mailer" and (.body_variables.link | contains("/login-actions/action-token")))' \
     'K4b: a reset mail lacks a variable, the action link or the keycloak-mailer service account'
@@ -553,7 +553,7 @@ rbe_credential_ids() {
   kcadm get "users/$1/credentials" -r "$V2_REALM" -c | jq -r --arg type "$2" '[.[] | select(.type == $type) | .id] | sort | join(",")'
 }
 
-# eskylab-login-ux 23, after stage_reset_by_either_email (the mails leave through SkyMail): a
+# eskylab-login-ux 23, after stage_reset_by_either_email (the mails leave through SkyNotify): a
 # person with an OTP authenticator resets the password with the mailed link and the code of
 # that authenticator; no page asks for a new authenticator and the OTP credential stays the same.
 stage_reset_verifies_otp() {
@@ -580,7 +580,7 @@ stage_reset_verifies_otp() {
 
   rbe_reset k4b-otp k4b-g "$client_secret"
   [[ $RBE_STATUS == 200 ]] || fail "reset OTP step: the reset request returned HTTP $RBE_STATUS"
-  task=$(sky_mail_await_record mail_task "$recipient") || fail "reset OTP step: SkyMail received no reset mail for the person with OTP"
+  task=$(skynotify_await_record mail_task "$recipient") || fail "reset OTP step: SkyNotify received no reset mail for the person with OTP"
   link=$(jq -r '.body_variables.link' <<<"$task")
   [[ $link == *"/login-actions/action-token"* ]] || fail 'reset OTP step: the reset mail carries no action link'
 
@@ -645,7 +645,7 @@ stage_reset_verifies_otp() {
     [[ $(rbe_mail_count "$recipient") -gt $mails ]] && break
     sleep 1
   done
-  [[ $(rbe_mail_count "$recipient") -gt $mails ]] || fail 'reset OTP step: SkyMail received no second reset mail'
+  [[ $(rbe_mail_count "$recipient") -gt $mails ]] || fail 'reset OTP step: SkyNotify received no second reset mail'
   link=$(rbe_mail_tasks_to "$recipient" | tail -n 1 | jq -r '.body_variables.link')
   page=$(curl --fail --silent --show-error --location \
     --cookie-jar "$RBE_COOKIES" --cookie "$RBE_COOKIES" "$link")
@@ -697,9 +697,9 @@ rbe_await_failures() {
   return 1
 }
 
-# The reset mails SkyMail received for one recipient, oldest first, one JSON per line.
+# The reset mails SkyNotify received for one recipient, oldest first, one JSON per line.
 rbe_mail_tasks_to() {
-  sky_mail_fixture_records \
+  skynotify_fixture_records \
     | jq -c --arg template "$RBE_TEMPLATE" --arg recipient "$1" \
       'select(.event == "mail_task" and .template_key == $template and .recipient_email == $recipient)'
 }

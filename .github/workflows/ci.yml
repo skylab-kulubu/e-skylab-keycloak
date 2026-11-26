@@ -289,19 +289,19 @@ jobs:
       - name: Place client script against a throwaway Keycloak
         run: bash tests/place-client.sh
 
-  # config/forms-skymail-grants.sh (SkyMail's send permission for Forms' service account) against the
+  # config/forms-skynotify-grants.sh (SkyNotify's send permission for Forms' service account) against the
   # stock Keycloak image in dev mode, with real client-credentials tokens and userinfo; needs no build
   # of this repository's image.
-  forms-skymail-grants:
+  forms-skynotify-grants:
     needs: scope
-    if: needs.scope.outputs.other == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' forms-skymail-grants ')
+    if: needs.scope.outputs.other == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' forms-skynotify-grants ')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 
-      - name: Forms SkyMail grants script against a throwaway Keycloak
-        run: bash tests/forms-skymail-grants.sh
+      - name: Forms SkyNotify grants script against a throwaway Keycloak
+        run: bash tests/forms-skynotify-grants.sh
 
   # config/role-groups.sh (/ROLLER application role groups) and config/leader-app-roles.sh (the Forms
   # seat on the top teams' Leader groups), also as the reconciler's operator steps, against the stock
@@ -403,6 +403,21 @@ jobs:
 
       - name: Primary e-mail fill script against a throwaway Keycloak
         run: bash tests/fill-missing-primary-from-school.sh
+
+  # config/skynotify-rename.sh (sky_lab_genel skynotify-ad 07: SkyMail's clients, roles, groups,
+  # client scopes and mappers renamed to SkyNotify in place, and back with --reverse) against the
+  # stock Keycloak image in dev mode, which stands for the old production image; needs no build of
+  # this repository's image.
+  skynotify-rename:
+    needs: scope
+    if: needs.scope.outputs.other == 'true' || contains(format(' {0} ', needs.scope.outputs.affected), ' skynotify-rename ')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: SkyNotify rename script against a throwaway Keycloak
+        run: bash tests/skynotify-rename.sh
 
   # The first YTÜ login (eskylab-login-ux 07): the SPI's sky-ytu-first-login step and the
   # reconciler's first broker login step (KEYCLOAK_RECONCILE_ONLY=first-broker-login,
@@ -585,7 +600,7 @@ jobs:
   # Self-registration on "E-postayla devam et" (eskylab-login-ux 09): the sign-up branch of the SPI's
   # sky-email-code step and the reconciler's sign-up setting (KEYCLOAK_EMAIL_CODE_SIGN_UP) against the
   # stock Keycloak image in dev mode, with the SPI jar built from spi/ in the Dockerfile's Maven image,
-  # production's browser flow shape and User Profile, the SkyMail fixture and Mailpit; real sign-ups,
+  # production's browser flow shape and User Profile, the SkyNotify fixture and Mailpit; real sign-ups,
   # a YTÜ address, "Hesap aç" with an account and two sign-ups of one address at once. Needs no build of
   # this repository's image.
   sign-up-by-email-code:
@@ -690,7 +705,7 @@ jobs:
       - name: SkyApp CMS editing against a throwaway Keycloak
         run: bash tests/skyapp-cms-editor.sh
 
-  # The reconciler's login client step (frontend-main, frontend-arge, skymail narrowed to the APIs
+  # The reconciler's login client step (frontend-main, frontend-arge, skynotify narrowed to the APIs
   # their apps call; KEYCLOAK_RECONCILE_ONLY=login-clients) against the stock Keycloak image in dev
   # mode, with production-shaped full-scope clients, real logins (PKCE) before and after, userinfo,
   # and the operator scripts that share these clients; needs no build of this repository's image.
@@ -964,12 +979,13 @@ jobs:
       - inscribed-cms-roles
       - sandbox-site-clients
       - place-client
-      - forms-skymail-grants
+      - forms-skynotify-grants
       - role-groups
       - dk-read-only
       - master-console
       - sandbox-admin-local-client
       - fill-missing-primary-from-school
+      - skynotify-rename
       - ytu-first-login
       - login-by-email-code
       - email-code-persistent-counter

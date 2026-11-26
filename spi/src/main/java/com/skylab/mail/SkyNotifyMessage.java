@@ -11,15 +11,15 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * One SkyMail single-mail task: the system template to render and the variables it is rendered
- * with. Built by {@link SkyMailEmailTemplateProvider} while Keycloak still knows which template it
- * asked for, handed to {@link SkyMailEmailSenderProvider} through the Keycloak session.
+ * One SkyNotify single-mail task: the system template to render and the variables it is rendered
+ * with. Built by {@link SkyNotifyEmailTemplateProvider} while Keycloak still knows which template it
+ * asked for, handed to {@link SkyNotifyEmailSenderProvider} through the Keycloak session.
  *
- * <p>SkyMail renders subjects and bodies with Go {@code text/template}, which prints
+ * <p>SkyNotify renders subjects and bodies with Go {@code text/template}, which prints
  * {@code &lt;no value&gt;} for a variable the caller left out. Every message therefore carries all
  * of {@link #VARIABLE_NAMES}, with an empty string wherever Keycloak does not know the value.</p>
  */
-record SkyMailMessage(String templateKey, String recipientFullName, Map<String, String> variables) {
+record SkyNotifyMessage(String templateKey, String recipientFullName, Map<String, String> variables) {
 
     /** Session attribute the template provider hands the sender the pending message through. */
     static final String SESSION_ATTRIBUTE = "com.skylab.mail.pending-message";
@@ -41,12 +41,12 @@ record SkyMailMessage(String templateKey, String recipientFullName, Map<String, 
             LINK, LINK_EXPIRATION_MINUTES, CODE, CODE_EXPIRATION_MINUTES, PURPOSE,
             FIRST_NAME, USERNAME, REALM_DISPLAY_NAME, SUBJECT_KEY);
 
-    SkyMailMessage {
+    SkyNotifyMessage {
         variables = Map.copyOf(variables);
     }
 
     /** A mail whose action is a link (every Keycloak system mail). */
-    static SkyMailMessage of(
+    static SkyNotifyMessage of(
             String templateKey,
             String subjectKey,
             String link,
@@ -57,7 +57,7 @@ record SkyMailMessage(String templateKey, String recipientFullName, Map<String, 
     }
 
     /** A mail whose action is a code the person types (the sky-account personal e-mail proof). */
-    static SkyMailMessage ofCode(
+    static SkyNotifyMessage ofCode(
             String templateKey,
             String subjectKey,
             String code,
@@ -67,7 +67,7 @@ record SkyMailMessage(String templateKey, String recipientFullName, Map<String, 
         return of(templateKey, subjectKey, "", "", code, codeExpirationMinutes, user, realm);
     }
 
-    static SkyMailMessage of(
+    static SkyNotifyMessage of(
             String templateKey,
             String subjectKey,
             String link,
@@ -79,7 +79,7 @@ record SkyMailMessage(String templateKey, String recipientFullName, Map<String, 
         return of(templateKey, subjectKey, link, linkExpirationMinutes, code, codeExpirationMinutes, "", user, realm);
     }
 
-    static SkyMailMessage of(
+    static SkyNotifyMessage of(
             String templateKey,
             String subjectKey,
             String link,
@@ -89,7 +89,7 @@ record SkyMailMessage(String templateKey, String recipientFullName, Map<String, 
             String purpose,
             UserModel user,
             RealmModel realm) {
-        UserModel named = SkyMailTemplates.keepsNoRecord(templateKey) ? null : user;
+        UserModel named = SkyNotifyTemplates.keepsNoRecord(templateKey) ? null : user;
         Map<String, String> variables = new LinkedHashMap<>();
         variables.put(LINK, text(link));
         variables.put(LINK_EXPIRATION_MINUTES, text(linkExpirationMinutes));
@@ -100,13 +100,13 @@ record SkyMailMessage(String templateKey, String recipientFullName, Map<String, 
         variables.put(USERNAME, named == null ? "" : text(named.getUsername()));
         variables.put(REALM_DISPLAY_NAME, realmDisplayName(realm));
         variables.put(SUBJECT_KEY, text(subjectKey));
-        return new SkyMailMessage(templateKey, fullName(named), variables);
+        return new SkyNotifyMessage(templateKey, fullName(named), variables);
     }
 
     /**
      * The request body of {@code POST /v1/mail_tasks/single}. The recipient is the address
      * Keycloak resolved for this mail, so an address override (the new address of an e-mail
-     * change) reaches SkyMail exactly as Keycloak's own sender would have used it.
+     * change) reaches SkyNotify exactly as Keycloak's own sender would have used it.
      */
     String toRequestBody(String recipientEmail) throws IOException {
         Map<String, Object> body = new LinkedHashMap<>();
@@ -118,7 +118,7 @@ record SkyMailMessage(String templateKey, String recipientFullName, Map<String, 
             bodyVariables.put(name, variables.getOrDefault(name, ""));
         }
         body.put("body_variables", bodyVariables);
-        if (SkyMailTemplates.keepsNoRecord(templateKey)) {
+        if (SkyNotifyTemplates.keepsNoRecord(templateKey)) {
             body.put("erase_after_send", true);
         }
         return JsonSerialization.writeValueAsString(body);

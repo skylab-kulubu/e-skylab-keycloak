@@ -24,7 +24,7 @@ WHERE user_id = :'uid' AND name = 'skyEmailCodeConsecutiveFailures';
 SQL
 }
 counter_alarm_count() {
-  skymail_records | jq -s --arg to "$ALARM_TO" '[.[] | select(.event == "mail_task"
+  skynotify_records | jq -s --arg to "$ALARM_TO" '[.[] | select(.event == "mail_task"
     and .template_key == "keycloak.login-code-alarm" and .recipient_email == $to
     and .body_variables.subjectKey == "skyLoginCodeAlarmConsecutiveSubject")] | length'
 }

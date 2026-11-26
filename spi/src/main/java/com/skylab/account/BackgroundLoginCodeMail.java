@@ -1,6 +1,6 @@
 package com.skylab.account;
 
-import com.skylab.mail.SkyMailNotice;
+import com.skylab.mail.SkyNotifyNotice;
 import jakarta.ws.rs.core.HttpHeaders;
 import jakarta.ws.rs.core.MultivaluedHashMap;
 import jakarta.ws.rs.core.MultivaluedMap;
@@ -31,12 +31,12 @@ import java.util.concurrent.Executor;
 /**
  * Sends the Login code and the operator alarm after the request, on Keycloak's executor
  * {@value #EXECUTOR}, each in a session of its own: the sign-in page answers in the same time
- * whether or not a mail goes out (spec §7.4), and a slow SkyMail never holds a sign-in page.
+ * whether or not a mail goes out (spec §7.4), and a slow SkyNotify never holds a sign-in page.
  *
  * <p>The code mail is Keycloak's generic template send with {@link EmailCodeAuthenticator#MAIL_TEMPLATE}:
- * the SkyMail provider routes exactly that name to SkyMail's {@code keycloak.login-code} (ADR-0045),
- * and Keycloak's own SMTP renders this extension's FreeMarker copy when SkyMail is unreachable. The
- * background session gets the realm and the request's URI (SkyMail's token endpoint is derived from
+ * the SkyNotify provider routes exactly that name to SkyNotify's {@code keycloak.login-code} (ADR-0045),
+ * and Keycloak's own SMTP renders this extension's FreeMarker copy when SkyNotify is unreachable. The
+ * background session gets the realm and the request's URI (SkyNotify's token endpoint is derived from
  * it), as Keycloak's brute-force protector does for its own background work; it has no request
  * headers, so the mail is in the person's or the realm's language.
  *
@@ -135,9 +135,9 @@ final class BackgroundLoginCodeMail implements LoginCodeMail {
 
     /**
      * The operator alarm goes to every enabled member of the alarm group (default {@code /ADMIN})
-     * who has an e-mail address, one SkyMail single mail each, with keycloak-mailer's own
-     * {@code skymail:mails:send}: SkyMail's own group send ({@code POST /v1/mail_tasks}) would need
-     * {@code skymail:mails:write}, which this service account does not have and does not get.
+     * who has an e-mail address, one SkyNotify single mail each, with keycloak-mailer's own
+     * {@code skynotify:mails:send}: SkyNotify's own group send ({@code POST /v1/mail_tasks}) would need
+     * {@code skynotify:mails:write}, which this service account does not have and does not get.
      */
     @Override
     public void alarm(AuthenticationFlowContext context, String level, int dailyLimit) {
@@ -226,7 +226,7 @@ final class BackgroundLoginCodeMail implements LoginCodeMail {
         int failed = 0;
         for (UserModel recipient : recipients) {
             try {
-                SkyMailNotice.sendLoginCodeAlarm(session, realm, subjectKey, recipient, subject, text);
+                SkyNotifyNotice.sendLoginCodeAlarm(session, realm, subjectKey, recipient, subject, text);
             } catch (Exception exception) {
                 failed++;
                 LOG.debug("sky-email-code alarm failure", exception);
@@ -269,7 +269,7 @@ final class BackgroundLoginCodeMail implements LoginCodeMail {
                 : "Keycloak'ın " + realmName + " realm'inde bugün (UTC günü) " + (dailyLimit / 2)
                         + " e-posta kodu gönderildi; günlük genel sınır " + dailyLimit + ".\n")
                 + "Giriş kodları sınırdan sonra da gider. Beklenmedik bir artışsa Keycloak olaylarına bakın "
-                + "(LOGIN_ERROR, sky_email_code) ve SkyMail'in keycloak.login-code gönderimlerine bakın.\n"
+                + "(LOGIN_ERROR, sky_email_code) ve SkyNotify'ın keycloak.login-code gönderimlerine bakın.\n"
                 + "Bu posta Keycloak'ın e-posta kodu girişinden (sky-email-code) otomatik gelir.\n";
     }
 
@@ -331,7 +331,7 @@ final class BackgroundLoginCodeMail implements LoginCodeMail {
 
     /**
      * The request this mail belongs to, after it ended: only its URI (Keycloak's issuer, from which
-     * SkyMail's token endpoint is derived), no headers, no form. Keycloak's brute-force protector
+     * SkyNotify's token endpoint is derived), no headers, no form. Keycloak's brute-force protector
      * runs its background work with the same kind of request.
      */
     private record DetachedRequest(UriInfo uri) implements HttpRequest {

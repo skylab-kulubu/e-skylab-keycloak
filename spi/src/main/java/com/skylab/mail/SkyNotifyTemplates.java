@@ -10,17 +10,17 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * The mapping from a Keycloak system mail to the SkyMail system template that renders it.
+ * The mapping from a Keycloak system mail to the SkyNotify system template that renders it.
  *
  * <p>Keycloak names its mails twice: the {@code EmailTemplateProvider} method the caller uses and,
  * inside the generic {@code send(...)} overloads, the freemarker body template file. Both are
  * mapped here so a caller that goes through the generic overload — the Account Center personal
- * e-mail confirmation of K3c, for instance — reaches the same SkyMail template key.</p>
+ * e-mail confirmation of K3c, for instance — reaches the same SkyNotify template key.</p>
  *
  * <p>Anything unmapped becomes {@link #GENERIC} carrying the Keycloak subject key, so a mail
- * Keycloak gains in a later release still leaves through SkyMail instead of disappearing.</p>
+ * Keycloak gains in a later release still leaves through SkyNotify instead of disappearing.</p>
  */
-final class SkyMailTemplates {
+final class SkyNotifyTemplates {
 
     static final String VERIFY_EMAIL = "keycloak.verify-email";
     static final String RESET_PASSWORD = "keycloak.reset-password";
@@ -31,7 +31,7 @@ final class SkyMailTemplates {
     static final String LOGIN_CODE = "keycloak.login-code";
     /**
      * A person whose Account erasure is running asked for a Login code: the account is being
-     * deleted. Sent by Keycloak; named as SkyMail's other account deletion mails are.
+     * deleted. Sent by Keycloak; named as SkyNotify's other account deletion mails are.
      */
     static final String ACCOUNT_DELETION_IN_PROGRESS = "account.deletion-in-progress";
     /** The operator's alarm when the realm's Login codes reach half or all of the day's budget. */
@@ -44,7 +44,7 @@ final class SkyMailTemplates {
     static final String IDP_LINK_SUBJECT_KEY = "identityProviderLinkSubject";
     static final String EXECUTE_ACTIONS_SUBJECT_KEY = "executeActionsSubject";
 
-    /** Freemarker body template file (as Keycloak passes it) to SkyMail system template key. */
+    /** Freemarker body template file (as Keycloak passes it) to SkyNotify system template key. */
     private static final Map<String, String> BY_BODY_TEMPLATE = Map.of(
             "email-verification.ftl", VERIFY_EMAIL,
             "password-reset.ftl", RESET_PASSWORD,
@@ -56,13 +56,13 @@ final class SkyMailTemplates {
             SudoResource.MAIL_TEMPLATE.toLowerCase(Locale.ROOT), LOGIN_CODE,
             AccountErasureNotice.MAIL_TEMPLATE.toLowerCase(Locale.ROOT), ACCOUNT_DELETION_IN_PROGRESS);
 
-    private SkyMailTemplates() {
+    private SkyNotifyTemplates() {
     }
 
     /**
-     * Whether SkyMail keeps no record of this mail's recipient: the Account erasure notice goes
-     * after the person's Erasure command may have run in SkyMail, so nothing would erase its row
-     * later. SkyMail erases it once its outcome is written ({@code erase_after_send}); an image
+     * Whether SkyNotify keeps no record of this mail's recipient: the Account erasure notice goes
+     * after the person's Erasure command may have run in SkyNotify, so nothing would erase its row
+     * later. SkyNotify erases it once its outcome is written ({@code erase_after_send}); an image
      * from before that ignores the field and keeps the row, so the mail carries no name either.
      */
     static boolean keepsNoRecord(String templateKey) {
@@ -70,7 +70,7 @@ final class SkyMailTemplates {
     }
 
     /**
-     * The SkyMail template key for a freemarker body template, or {@link #GENERIC}. Leading theme
+     * The SkyNotify template key for a freemarker body template, or {@link #GENERIC}. Leading theme
      * directories ({@code text/}, {@code html/}) and letter case are ignored, and the
      * {@code .ftl} suffix is optional, so a caller may name the template either way.
      */
@@ -92,7 +92,7 @@ final class SkyMailTemplates {
     /**
      * Keycloak's own subject key for an event mail, built exactly as
      * {@code FreeMarkerEmailTemplateProvider#toCamelCase} builds it, so an unmapped event mail
-     * still reports the subject key SkyMail's generic template prints.
+     * still reports the subject key SkyNotify's generic template prints.
      */
     static String eventSubjectKey(EventType eventType) {
         StringBuilder subjectKey = new StringBuilder("event");

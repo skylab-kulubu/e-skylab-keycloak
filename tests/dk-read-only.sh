@@ -8,9 +8,9 @@
 #
 # Fixtures: realm e-skylab in production's shape before this change: core's 14 roles of the contract
 # table (13 write roles and url:access) seeded once (marked) to /ADMIN, /UYELER/YK and /UYELER/DK;
-# SkyMail's three Privileged roles seeded (system-mails:read and mails:tracking:read to the three,
+# SkyNotify's three Privileged roles seeded (system-mails:read and mails:tracking:read to the three,
 # announcements:send to ADMIN and YK), the suppression list's two write roles marked as seeded to
-# ADMIN and YK, and skymail:mails:approve on DK by hand; the event site client frontend-artlab with
+# ADMIN and YK, and skynotify:mails:approve on DK by hand; the event site client frontend-artlab with
 # cms:access (a composite of content:read and content:write) on the three and client:admin on ADMIN and
 # YK; forms with skyforms:* on /ADMIN and /UYELER/DK and the Forms seat skyforms:access on DK; the Java
 # era's realm role DK on /UYELER/DK; a subgroup /UYELER/DK/ALT; a YK person, a DK person, a person in
@@ -25,19 +25,19 @@
 #     PROBLEM (exit 1) and nothing is written;
 #   - the reconciler's core-roles step (operator session) creates core/global:read and audit:read and
 #     forms/skyforms:read-all and seeds them once: global:read and skyforms:read-all to /UYELER/DK
-#     only, audit:read to /ADMIN, /UYELER/YK and /UYELER/DK; it creates skymail:audit:read and seeds it
-#     to /UYELER/DK only (skymail-frontend-rewrite 32); skymail:access and skymail:mails:read, marked
+#     only, audit:read to /ADMIN, /UYELER/YK and /UYELER/DK; it creates skynotify:audit:read and seeds it
+#     to /UYELER/DK only (skymail-frontend-rewrite 32); skynotify:access and skynotify:mails:read, marked
 #     as seeded to ADMIN and YK, get DK once through the seed addition (the old mark kept in front),
-#     and nothing of SkyMail that writes or opens content comes to DK; the write roles' marks keep them where
+#     and nothing of SkyNotify that writes or opens content comes to DK; the write roles' marks keep them where
 #     they are; a second run seeds nothing;
 #   - dk-read-only.sh --check lists the 13 core write roles, frontend-artlab/cms:access and
-#     skymail:mails:approve to take away, content:read to grant in its place, the kept read roles, the
+#     skynotify:mails:approve to take away, content:read to grant in its place, the kept read roles, the
 #     kept app roles (url:access, skyforms:access: Yusuf's Y1 and Y5), skyforms:* kept for Forms and
 #     the realm role DK as a WARNING, and writes nothing (no admin event);
 #   - --apply names its backup in its first line, writes it (mode 0600) before any change, takes
 #     exactly that away and grants content:read; ADMIN's and YK's mappings do not change; the DK
 #     person's token then carries core [audit:read, global:read, url:access], frontend-artlab
-#     [content:read], skymail [audit:read, mails:tracking:read, system-mails:read], forms [skyforms:*, skyforms:access,
+#     [content:read], skynotify [audit:read, mails:tracking:read, system-mails:read], forms [skyforms:*, skyforms:access,
 #     skyforms:read-all]; the member of DK's subgroup carries the same core roles; the YK person's
 #     token only gains audit:read; the person in DK and YK keeps YK's write roles; --check then says
 #     "write roles held: none" with 0 changes, and a second --apply writes nothing (no admin event,
@@ -90,7 +90,7 @@ CORE_REMOVED_ROLES=(event:manage season:manage ticket:manage ticket:validate com
   competition:manage media:manage media:private:read certificate:manage users:manage groups:manage
   github:activity:read url:moderator)
 # DK's direct mappings once the step has run (the realm role DK stays: rol-temizligi F3).
-DK_AFTER='["core/audit:read","core/global:read","core/url:access","forms/skyforms:*","forms/skyforms:access","forms/skyforms:read-all","frontend-artlab/content:read","realm/DK","skymail/skymail:access","skymail/skymail:audit:read","skymail/skymail:mails:read","skymail/skymail:mails:tracking:read","skymail/skymail:system-mails:read"]'
+DK_AFTER='["core/audit:read","core/global:read","core/url:access","forms/skyforms:*","forms/skyforms:access","forms/skyforms:read-all","frontend-artlab/content:read","realm/DK","skynotify/skynotify:access","skynotify/skynotify:audit:read","skynotify/skynotify:mails:read","skynotify/skynotify:mails:tracking:read","skynotify/skynotify:system-mails:read"]'
 OLD_MARK='2026-10-04T09:00:00Z /ADMIN,/UYELER/YK,/UYELER/DK'
 CURRENT_STAGE=startup
 SESSION_PARITY_DIR=$(mktemp -d)
@@ -292,13 +292,13 @@ for client in core forms frontend-artlab; do
   kcadm create clients -r "$REALM" -s clientId=$client -s publicClient=false -s standardFlowEnabled=false \
     -s serviceAccountsEnabled=true >/dev/null
 done
-kcadm create clients -r "$REALM" -s clientId=skymail -s publicClient=true >/dev/null
+kcadm create clients -r "$REALM" -s clientId=skynotify -s publicClient=true >/dev/null
 for role in "${CORE_SEEDED_ROLES[@]}" url:create; do
   kcadm create "clients/$(client_uuid "$REALM" core)/roles" -r "$REALM" -s "name=$role" >/dev/null
 done
-for role in skymail:access skymail:mails:read skymail:system-mails:read skymail:mails:tracking:read skymail:announcements:send skymail:mails:approve \
-  skymail:suppressions:manage skymail:unsubscribes:reactivate; do
-  kcadm create "clients/$(client_uuid "$REALM" skymail)/roles" -r "$REALM" -s "name=$role" >/dev/null
+for role in skynotify:access skynotify:mails:read skynotify:system-mails:read skynotify:mails:tracking:read skynotify:announcements:send skynotify:mails:approve \
+  skynotify:suppressions:manage skynotify:unsubscribes:reactivate; do
+  kcadm create "clients/$(client_uuid "$REALM" skynotify)/roles" -r "$REALM" -s "name=$role" >/dev/null
 done
 for role in 'skyforms:*' skyforms:access; do
   kcadm create "clients/$(client_uuid "$REALM" forms)/roles" -r "$REALM" -s "name=$role" >/dev/null
@@ -318,30 +318,30 @@ create_group "$REALM" "$DK" ALT
 create_group "$SANDBOX" '' ADMIN
 for path in /ADMIN /UYELER/YK "$DK"; do
   grant "$path" core "${CORE_SEEDED_ROLES[@]}"
-  grant "$path" skymail skymail:system-mails:read skymail:mails:tracking:read
+  grant "$path" skynotify skynotify:system-mails:read skynotify:mails:tracking:read
   grant "$path" frontend-artlab cms:access
 done
 for path in /ADMIN /UYELER/YK; do
-  grant "$path" skymail skymail:announcements:send
+  grant "$path" skynotify skynotify:announcements:send
   grant "$path" frontend-artlab client:admin
 done
 for path in /ADMIN "$DK"; do grant "$path" forms 'skyforms:*'; done
 grant "$DK" forms skyforms:access
-grant "$DK" skymail skymail:mails:approve
+grant "$DK" skynotify skynotify:mails:approve
 kcadm create "groups/$(group_id "$REALM" "$DK")/role-mappings/realm" -r "$REALM" \
   -b "$(kcadm get roles/DK -r "$REALM" | jq -c '[{id, name}]')" >/dev/null
 for role in "${CORE_SEEDED_ROLES[@]}"; do mark core "$role" "$OLD_MARK"; done
-mark skymail skymail:system-mails:read "$OLD_MARK"
-mark skymail skymail:mails:tracking:read "$OLD_MARK"
-mark skymail skymail:announcements:send '2026-10-13T09:00:00Z /ADMIN,/UYELER/YK'
-# The code area's SkyMail and Forms roles of ekip-yetkileri ticket 03 as if already seeded (this
+mark skynotify skynotify:system-mails:read "$OLD_MARK"
+mark skynotify skynotify:mails:tracking:read "$OLD_MARK"
+mark skynotify skynotify:announcements:send '2026-10-13T09:00:00Z /ADMIN,/UYELER/YK'
+# The code area's SkyNotify and Forms roles of ekip-yetkileri ticket 03 as if already seeded (this
 # stage proves DK's read roles; tests/role-groups.sh and the integration harness prove those seeds).
-mark skymail skymail:access '2026-10-24T09:00:00Z /ADMIN,/UYELER/YK'
-# skymail:mails:read as production has it: seeded to ADMIN and YK before DK's addition (2026-11-22).
-mark skymail skymail:mails:read '2026-10-24T09:00:00Z /ADMIN,/UYELER/YK'
-mark skymail skymail:mails:approve '2026-10-24T09:00:00Z /UYELER/YK'
-mark skymail skymail:suppressions:manage '2026-10-25T09:00:00Z /ADMIN,/UYELER/YK'
-mark skymail skymail:unsubscribes:reactivate '2026-10-25T09:00:00Z /ADMIN,/UYELER/YK'
+mark skynotify skynotify:access '2026-10-24T09:00:00Z /ADMIN,/UYELER/YK'
+# skynotify:mails:read as production has it: seeded to ADMIN and YK before DK's addition (2026-11-22).
+mark skynotify skynotify:mails:read '2026-10-24T09:00:00Z /ADMIN,/UYELER/YK'
+mark skynotify skynotify:mails:approve '2026-10-24T09:00:00Z /UYELER/YK'
+mark skynotify skynotify:suppressions:manage '2026-10-25T09:00:00Z /ADMIN,/UYELER/YK'
+mark skynotify skynotify:unsubscribes:reactivate '2026-10-25T09:00:00Z /ADMIN,/UYELER/YK'
 mark forms skyforms:access "$OLD_MARK"
 # skyforms:* by id, as the reconciler marks it (a "*" never goes into an admin path).
 kcadm update "roles-by-id/$(kcadm get "clients/$(client_uuid "$REALM" forms)/roles" -r "$REALM" | jq -r '.[] | select(.name == "skyforms:*") | .id')" \
@@ -365,34 +365,34 @@ printf '    before the core-roles step: PROBLEM (no core/global:read on DK), exi
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='the core-roles step seeds DK'"'"'s read roles'
-dk_skymail_before=$(group_roles "$DK" | jq -c 'map(select(startswith("skymail/")))')
+dk_skynotify_before=$(group_roles "$DK" | jq -c 'map(select(startswith("skynotify/")))')
 seeded=$(core_roles_step)
 expect_line "$seeded" '[reconcile] client roles of core (16 resource roles): created (global:read, audit:read)' 'the core read roles were not created'
 expect_line "$seeded" "[reconcile] core role global:read: seeded once to $DK (granted to: $DK)" 'global:read was not seeded to DK alone'
 expect_line "$seeded" "[reconcile] core role audit:read: seeded once to /ADMIN,/UYELER/YK,$DK (granted to: /ADMIN, /UYELER/YK, $DK)" 'audit:read was not seeded to ADMIN, YK and DK'
 expect_line "$seeded" '[reconcile] Privileged roles of forms (3): created (skyforms:read-all)' 'skyforms:read-all was not created'
 expect_line "$seeded" "[reconcile] forms role skyforms:read-all: seeded once to $DK (granted to: $DK)" 'skyforms:read-all was not seeded to DK alone'
-# skymail:audit:read (skymail-frontend-rewrite 32): made by the step and seeded to DK alone; the
-# fixture's marked skymail roles stay where they are.
-expect_line "$seeded" '[reconcile] Privileged roles of skymail (12): created (skymail:audit:read); not in the realm, the application makes them, seeded once they exist:' \
-  'skymail:audit:read was not created'
-expect_line "$seeded" "[reconcile] skymail role skymail:audit:read: seeded once to $DK (granted to: $DK)" 'skymail:audit:read was not seeded to DK alone'
-reject_line "$seeded" 'skymail role skymail:system-mails:read' 'a marked skymail role was seeded again'
-# The seed addition (2026-11-22): SkyMail's seat and the sends to DK, once; the old mark stays in front.
-expect_line "$seeded" "[reconcile] skymail role skymail:access: seed addition, once to $DK (granted to: $DK)" 'skymail:access was not added to DK'
-expect_line "$seeded" "[reconcile] skymail role skymail:mails:read: seed addition, once to $DK (granted to: $DK)" 'skymail:mails:read was not added to DK'
-for role in skymail:access skymail:mails:read; do
-  [[ $(seed_mark skymail "$role") =~ ^2026-10-24T09:00:00Z\ /ADMIN,/UYELER/YK\;\ [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\ /UYELER/DK$ ]] \
-    || fail "the mark of $role does not keep the old seed and name DK's addition: $(seed_mark skymail "$role")"
+# skynotify:audit:read (skymail-frontend-rewrite 32): made by the step and seeded to DK alone; the
+# fixture's marked skynotify roles stay where they are.
+expect_line "$seeded" '[reconcile] Privileged roles of skynotify (12): created (skynotify:audit:read); not in the realm, the application makes them, seeded once they exist:' \
+  'skynotify:audit:read was not created'
+expect_line "$seeded" "[reconcile] skynotify role skynotify:audit:read: seeded once to $DK (granted to: $DK)" 'skynotify:audit:read was not seeded to DK alone'
+reject_line "$seeded" 'skynotify role skynotify:system-mails:read' 'a marked skynotify role was seeded again'
+# The seed addition (2026-11-22): SkyNotify's seat and the sends to DK, once; the old mark stays in front.
+expect_line "$seeded" "[reconcile] skynotify role skynotify:access: seed addition, once to $DK (granted to: $DK)" 'skynotify:access was not added to DK'
+expect_line "$seeded" "[reconcile] skynotify role skynotify:mails:read: seed addition, once to $DK (granted to: $DK)" 'skynotify:mails:read was not added to DK'
+for role in skynotify:access skynotify:mails:read; do
+  [[ $(seed_mark skynotify "$role") =~ ^2026-10-24T09:00:00Z\ /ADMIN,/UYELER/YK\;\ [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\ /UYELER/DK$ ]] \
+    || fail "the mark of $role does not keep the old seed and name DK's addition: $(seed_mark skynotify "$role")"
 done
-# What the step gave DK of SkyMail: the seat, the sends and the audit record, nothing that writes or
-# opens a send's content (skymail-backend mayRead: skymail:system-mails:read, skymail:mails:write).
-jq -e --argjson before "$dk_skymail_before" \
-  '(map(select(startswith("skymail/"))) - $before) == ["skymail/skymail:access","skymail/skymail:audit:read","skymail/skymail:mails:read"]' \
+# What the step gave DK of SkyNotify: the seat, the sends and the audit record, nothing that writes or
+# opens a send's content (skynotify-backend mayRead: skynotify:system-mails:read, skynotify:mails:write).
+jq -e --argjson before "$dk_skynotify_before" \
+  '(map(select(startswith("skynotify/"))) - $before) == ["skynotify/skynotify:access","skynotify/skynotify:audit:read","skynotify/skynotify:mails:read"]' \
   <<<"$(group_roles "$DK")" >/dev/null \
-  || fail "the step gave DK other SkyMail roles than the seat, the sends and the audit record: $(group_roles "$DK") (before $dk_skymail_before)"
+  || fail "the step gave DK other SkyNotify roles than the seat, the sends and the audit record: $(group_roles "$DK") (before $dk_skynotify_before)"
 for path in /ADMIN /UYELER/YK; do
-  group_roles "$path" | jq -e 'index("skymail/skymail:access") == null and index("skymail/skymail:mails:read") == null' >/dev/null \
+  group_roles "$path" | jq -e 'index("skynotify/skynotify:access") == null and index("skynotify/skynotify:mails:read") == null' >/dev/null \
     || fail "the seed addition granted $path (DK alone was added): $(group_roles "$path")"
 done
 reject_line "$seeded" 'core role event:manage' 'a marked write role was seeded again'
@@ -402,21 +402,21 @@ reject_line "$seeded" 'WARNING: no Privileged group' 'a Privileged group was rep
 [[ $(seed_mark core event:manage) == "$OLD_MARK" ]] || fail 'the mark of a write role changed'
 for path in /ADMIN /UYELER/YK; do
   group_roles "$path" | jq -e 'index("core/audit:read") != null and index("core/global:read") == null and index("forms/skyforms:read-all") == null
-    and index("skymail/skymail:audit:read") == null' >/dev/null \
+    and index("skynotify/skynotify:audit:read") == null' >/dev/null \
     || fail "$path does not hold audit:read alone of the read roles: $(group_roles "$path")"
 done
 group_roles "$DK" | jq -e 'index("core/audit:read") != null and index("core/global:read") != null and index("forms/skyforms:read-all") != null
-  and index("skymail/skymail:audit:read") != null' >/dev/null \
+  and index("skynotify/skynotify:audit:read") != null' >/dev/null \
   || fail "DK did not get its read roles: $(group_roles "$DK")"
 again=$(core_roles_step)
 reject_line "$again" ': seeded once' 'the second core-roles step seeded something'
 expect_line "$again" '[reconcile] group mappings of the core resource roles: unchanged' 'the second step did not leave the core mappings alone'
 expect_line "$again" '[reconcile] group mappings of the forms Privileged roles: unchanged' 'the second step did not leave the forms mapping alone'
-expect_line "$again" '[reconcile] group mappings of the skymail Privileged roles: unchanged' 'the second step did not leave the skymail mappings alone'
+expect_line "$again" '[reconcile] group mappings of the skynotify Privileged roles: unchanged' 'the second step did not leave the skynotify mappings alone'
 admin_after_seed=$(group_roles /ADMIN)
 yk_after_seed=$(group_roles /UYELER/YK)
 dk_after_seed=$(group_roles "$DK")
-printf '    core-roles: global:read, skyforms:read-all and skymail:audit:read to DK, audit:read to ADMIN, YK and DK, once; write roles untouched\n'
+printf '    core-roles: global:read, skyforms:read-all and skynotify:audit:read to DK, audit:read to ADMIN, YK and DK, once; write roles untouched\n'
 
 # ---------------------------------------------------------------------------------------------------
 CURRENT_STAGE='dk-read-only.sh --check plans and writes nothing'
@@ -428,10 +428,10 @@ done
 reject_line "$checked" 'core/url:access away' 'url:access was planned away (Y1: DK keeps its own short links)'
 reject_line "$checked" 'forms/skyforms:access away' 'the Forms seat was planned away'
 expect_line "$checked" "would take frontend-artlab/cms:access away from $DK" 'the site editor role was not planned away'
-expect_line "$checked" "would take skymail/skymail:mails:approve away from $DK" 'the SkyMail approval role was not planned away'
+expect_line "$checked" "would take skynotify/skynotify:mails:approve away from $DK" 'the SkyNotify approval role was not planned away'
 expect_line "$checked" "$DK: app roles kept (the holder's own, core's app roles): core/url:access, forms/skyforms:access" 'the app roles were not kept'
 expect_line "$checked" "would grant frontend-artlab/content:read to $DK (in place of cms:access)" 'content:read was not planned in its place'
-expect_line "$checked" "$DK: read roles kept: core/audit:read, core/global:read, forms/skyforms:read-all, skymail/skymail:access, skymail/skymail:audit:read, skymail/skymail:mails:read, skymail/skymail:mails:tracking:read, skymail/skymail:system-mails:read" 'the read roles were not listed'
+expect_line "$checked" "$DK: read roles kept: core/audit:read, core/global:read, forms/skyforms:read-all, skynotify/skynotify:access, skynotify/skynotify:audit:read, skynotify/skynotify:mails:read, skynotify/skynotify:mails:tracking:read, skynotify/skynotify:system-mails:read" 'the read roles were not listed'
 expect_line "$checked" "NOTE: $DK: Forms roles kept until forms-backend reads forms/skyforms:read-all: forms/skyforms:*" 'the Forms roles were not kept'
 expect_line "$checked" "WARNING: $DK holds realm/DK, which this step does not sort; kept" 'the realm role was not a WARNING'
 expect_line "$checked" "$DK: write roles held: 15 (" 'the write roles were not counted'
@@ -462,9 +462,9 @@ for role in "${CORE_REMOVED_ROLES[@]}"; do
   grep -Fxq "$DK"$'\t'core$'\t'"$role" <<<"$backup" || fail "the backup lacks core/$role"
 done
 grep -Fxq "$DK"$'\t'frontend-artlab$'\t'cms:access <<<"$backup" || fail 'the backup lacks frontend-artlab/cms:access'
-grep -Fxq "$DK"$'\t'skymail$'\t'skymail:mails:approve <<<"$backup" || fail 'the backup lacks skymail:mails:approve'
+grep -Fxq "$DK"$'\t'skynotify$'\t'skynotify:mails:approve <<<"$backup" || fail 'the backup lacks skynotify:mails:approve'
 dk_token=$(token_roles dk-person)
-[[ $dk_token == '{"core":["audit:read","global:read","url:access"],"forms":["skyforms:*","skyforms:access","skyforms:read-all"],"frontend-artlab":["content:read"],"skymail":["skymail:access","skymail:audit:read","skymail:mails:read","skymail:mails:tracking:read","skymail:system-mails:read"]}' ]] \
+[[ $dk_token == '{"core":["audit:read","global:read","url:access"],"forms":["skyforms:*","skyforms:access","skyforms:read-all"],"frontend-artlab":["content:read"],"skynotify":["skynotify:access","skynotify:audit:read","skynotify:mails:read","skynotify:mails:tracking:read","skynotify:system-mails:read"]}' ]] \
   || fail "the DK person's token is not read-only: $dk_token"
 [[ $(token_roles dk-sub-person) == "$dk_token" ]] || fail "the member of DK's subgroup does not inherit exactly DK's roles: $(token_roles dk-sub-person)"
 yk_token=$(token_roles yk-person)
@@ -510,7 +510,7 @@ grant "$DK" forms skyforms:read-all
 applied=$(run_expecting 0 "$REALM" --apply --forms --backup-file /tmp/dk-backup-forms.tsv)
 expect_line "$applied" "take forms/skyforms:* away from $DK" 'skyforms:* was not taken away'
 expect_line "$applied" 'applied 16 change(s), 1 warning(s), 0 problem(s)' 'the apply with --forms did not take the 15 and skyforms:* away'
-[[ $(group_roles "$DK") == '["core/audit:read","core/global:read","core/url:access","forms/skyforms:access","forms/skyforms:read-all","frontend-artlab/content:read","realm/DK","skymail/skymail:access","skymail/skymail:audit:read","skymail/skymail:mails:read","skymail/skymail:mails:tracking:read","skymail/skymail:system-mails:read"]' ]] \
+[[ $(group_roles "$DK") == '["core/audit:read","core/global:read","core/url:access","forms/skyforms:access","forms/skyforms:read-all","frontend-artlab/content:read","realm/DK","skynotify/skynotify:access","skynotify/skynotify:audit:read","skynotify/skynotify:mails:read","skynotify/skynotify:mails:tracking:read","skynotify/skynotify:system-mails:read"]' ]] \
   || fail "DK does not hold its read and app roles alone after --forms: $(group_roles "$DK")"
 docker exec "$CONTAINER" grep -Fxq "$DK"$'\t'forms$'\t''skyforms:*' /tmp/dk-backup-forms.tsv || fail 'the backup lacks skyforms:*'
 [[ $(token_roles dk-person | jq -c .forms) == '["skyforms:access","skyforms:read-all"]' ]] || fail 'the DK token still carries a Forms admin role, or lost the seat'
